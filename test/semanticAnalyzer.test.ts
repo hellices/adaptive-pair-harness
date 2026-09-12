@@ -52,6 +52,100 @@ describe("TypeScriptSemanticAnalyzer", () => {
     expect(evidence.some((item) => item.kind === "public-api-change")).toBe(true);
   });
 
+  it("reports a changed anonymous default-exported function signature", () => {
+    const evidence = analyzer.analyze(
+      episode(
+        "export default function (value: string): string { return value; }",
+        "export default function (value: number): string { return String(value); }",
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["default export"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports a changed method signature on an anonymous default-exported class", () => {
+    const evidence = analyzer.analyze(
+      episode(
+        "export default class { render(value: string): string { return value; } }",
+        "export default class { render(value: number): string { return String(value); } }",
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["default export#render"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports overload-only changes for exported functions", () => {
+    const evidence = analyzer.analyze(
+      episode(
+        [
+          "export function load(value: string): string;",
+          "export function load(value: string | number): string { return String(value); }",
+        ].join("\n"),
+        [
+          "export function load(value: string): string;",
+          "export function load(value: number): string;",
+          "export function load(value: string | number): string { return String(value); }",
+        ].join("\n"),
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["load"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports overload-only changes for exported class methods", () => {
+    const evidence = analyzer.analyze(
+      episode(
+        [
+          "export class Example {",
+          "  run(value: string): string;",
+          "  run(value: string | number): string {",
+          "    return String(value);",
+          "  }",
+          "}",
+        ].join("\n"),
+        [
+          "export class Example {",
+          "  run(value: string): string;",
+          "  run(value: number): string;",
+          "  run(value: string | number): string {",
+          "    return String(value);",
+          "  }",
+          "}",
+        ].join("\n"),
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["Example#run"],
+        }),
+      ]),
+    );
+  });
+
   it("does not intervene while the current source has parse errors", () => {
     const evidence = analyzer.analyze(
       episode("export function load() {}", "export function load("),
@@ -117,5 +211,79 @@ describe("TypeScriptSemanticAnalyzer", () => {
       expect(item.range.end.line).toBeGreaterThanOrEqual(item.range.start.line);
       expect(comparePositions(item.range.start, item.range.end)).toBeLessThan(0);
     }
+  });
+
+  it("assigns distinct complexity evidence ids to same-named nested functions in different scopes", () => {
+    const evidence = analyzer.analyze(
+      episode(
+        [
+          "function outerOne(value: number): number {",
+          "  function helper(input: number): number {",
+          "    if (input > 0) {",
+          "      return input;",
+          "    }",
+          "    if (input < 0) {",
+          "      return -input;",
+          "    }",
+          "    return 0;",
+          "  }",
+          "  return helper(value);",
+          "}",
+          "function outerTwo(value: number): number {",
+          "  function helper(input: number): number {",
+          "    if (input > 0) {",
+          "      return input;",
+          "    }",
+          "    if (input < 0) {",
+          "      return -input;",
+          "    }",
+          "    return 0;",
+          "  }",
+          "  return helper(value);",
+          "}",
+        ].join("\n"),
+        [
+          "function outerOne(value: number): number {",
+          "  function helper(input: number): number {",
+          "    if (input > 10) {",
+          "      return 10;",
+          "    }",
+          "    if (input > 0 && input < 10) {",
+          "      return input;",
+          "    }",
+          "    for (const item of [input]) {",
+          "      if (item === 0) {",
+          "        return 0;",
+          "      }",
+          "    }",
+          "    return input < 0 ? -input : input;",
+          "  }",
+          "  return helper(value);",
+          "}",
+          "function outerTwo(value: number): number {",
+          "  function helper(input: number): number {",
+          "    if (input > 10) {",
+          "      return 10;",
+          "    }",
+          "    if (input > 0 && input < 10) {",
+          "      return input;",
+          "    }",
+          "    for (const item of [input]) {",
+          "      if (item === 0) {",
+          "        return 0;",
+          "      }",
+          "    }",
+          "    return input < 0 ? -input : input;",
+          "  }",
+          "  return helper(value);",
+          "}",
+        ].join("\n"),
+      ),
+    );
+
+    const complexityEvidence = evidence.filter((item) => item.kind === "complexity-growth");
+
+    expect(complexityEvidence).toHaveLength(2);
+    expect(new Set(complexityEvidence.map((item) => item.id)).size).toBe(2);
   });
 });

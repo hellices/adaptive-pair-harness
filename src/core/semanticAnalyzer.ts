@@ -9,7 +9,7 @@ interface ImportRecord {
 interface SignatureRecord {
   readonly key: string;
   readonly displayName: string;
-  readonly signature: string;
+  readonly signatures: readonly string[];
   readonly range: PairRange;
 }
 
@@ -20,7 +20,14 @@ interface ComplexityRecord {
   readonly range: PairRange;
 }
 
+interface SubjectIdentity {
+  readonly key: string;
+  readonly displayName: string;
+}
+
 const ANALYZER_SOURCE = "typescript-semantic-analyzer";
+const DEFAULT_EXPORT_KEY = "default-export";
+const DEFAULT_EXPORT_DISPLAY = "default export";
 
 export class TypeScriptSemanticAnalyzer {
   public analyze(episode: EditEpisode): readonly Evidence[] {
@@ -130,7 +137,10 @@ const collectPublicApiChangeEvidence = (
 
   for (const [key, currentSignature] of currentSignatures.entries()) {
     const previousSignature = previousSignatures.get(key);
-    if (previousSignature === undefined || previousSignature.signature === currentSignature.signature) {
+    if (
+      previousSignature === undefined ||
+      sameOrderedValues(previousSignature.signatures, currentSignature.signatures)
+    ) {
       continue;
     }
 
@@ -157,18 +167,18 @@ const collectExportedSignatures = (
 
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement) && hasExportModifier(statement)) {
-      const name = statement.name?.text;
-      if (name === undefined) {
+      const identity = exportedFunctionIdentity(statement);
+      if (identity === undefined) {
         continue;
       }
 
-      const key = `function:${name}`;
-      signatures.set(key, {
-        key,
-        displayName: name,
-        signature: serializeFunctionLikeSignature(statement, sourceFile),
-        range: rangeForNameNode(sourceFile, statement.name, statement),
-      });
+      appendSignatureRecord(
+        signatures,
+        `function:${identity.key}`,
+        identity.displayName,
+        serializeFunctionLikeSignature(statement, sourceFile),
+        rangeForNameNode(sourceFile, statement.name, statement),
+      );
       continue;
     }
 
@@ -176,8 +186,8 @@ const collectExportedSignatures = (
       continue;
     }
 
-    const className = statement.name?.text;
-    if (className === undefined) {
+    const classIdentity = exportedClassIdentity(statement);
+    if (classIdentity === undefined) {
       continue;
     }
 
@@ -192,13 +202,13 @@ const collectExportedSignatures = (
       }
 
       const staticPrefix = hasModifier(member, ts.SyntaxKind.StaticKeyword) ? "." : "#";
-      const key = `method:${className}${staticPrefix}${methodName}`;
-      signatures.set(key, {
-        key,
-        displayName: `${className}${staticPrefix}${methodName}`,
-        signature: serializeFunctionLikeSignature(member, sourceFile),
-        range: rangeForNameNode(sourceFile, member.name, member),
-      });
+      appendSignatureRecord(
+        signatures,
+        `method:${classIdentity.key}${staticPrefix}${methodName}`,
+        `${classIdentity.displayName}${staticPrefix}${methodName}`,
+        serializeFunctionLikeSignature(member, sourceFile),
+        rangeForNameNode(sourceFile, member.name, member),
+      );
     }
   }
 
@@ -243,36 +253,36 @@ const collectComplexityRecords = (
 
   const visit = (node: ts.Node): void => {
     if (ts.isFunctionDeclaration(node)) {
-      const name = node.name?.text;
-      if (name !== undefined) {
-        records.set(`function:${name}`, {
-          key: `function:${name}`,
-          displayName: name,
+      const identity = functionIdentity(node);
+      if (identity !== undefined) {
+        records.set(`function:${identity.key}`, {
+          key: `function:${identity.key}`,
+          displayName: identity.displayName,
           branchCount: countBranches(node),
           range: rangeForNameNode(sourceFile, node.name, node),
         });
       }
     } else if (ts.isMethodDeclaration(node)) {
-      const classDeclaration = node.parent;
-      const className =
-        ts.isClassDeclaration(classDeclaration) ? classDeclaration.name?.text : undefined;
-      const methodName = propertyNameText(node.name);
-      if (className !== undefined && methodName !== undefined) {
-        const staticPrefix = hasModifier(node, ts.SyntaxKind.StaticKeyword) ? "." : "#";
-        records.set(`method:${className}${staticPrefix}${methodName}`, {
-          key: `method:${className}${staticPrefix}${methodName}`,
-          displayName: `${className}${staticPrefix}${methodName}`,
+      const identity = methodIdentity(node);
+      if (identity !== undefined) {
+        records.set(`method:${identity.key}`, {
+          key: `method:${identity.key}`,
+          displayName: identity.displayName,
           branchCount: countBranches(node),
           range: rangeForNameNode(sourceFile, node.name, node),
         });
       }
     } else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
       const initializer = node.initializer;
-      if (initializer !== undefined && isFunctionExpressionLike(initializer)) {
-        const name = node.name.text;
-        records.set(`function:${name}`, {
-          key: `function:${name}`,
-          displayName: name,
+      const identity = variableFunctionIdentity(node);
+      if (
+        initializer !== undefined &&
+        identity !== undefined &&
+        isFunctionExpressionLike(initializer)
+      ) {
+        records.set(`function:${identity.key}`, {
+          key: `function:${identity.key}`,
+          displayName: identity.displayName,
           branchCount: countBranches(initializer),
           range: rangeForNameNode(sourceFile, node.name, node),
         });
@@ -285,6 +295,179 @@ const collectComplexityRecords = (
   visit(sourceFile);
   return records;
 };
+
+const appendSignatureRecord = (
+  signatures: Map<string, SignatureRecord>,
+  key: string,
+  displayName: string,
+  signature: string,
+  range: PairRange,
+): void => {
+  const existing = signatures.get(key);
+  if (existing === undefined) {
+    signatures.set(key, {
+      key,
+      displayName,
+      signatures: [signature],
+      range,
+    });
+    return;
+  }
+
+  signatures.set(key, {
+    key,
+    displayName: existing.displayName,
+    signatures: [...existing.signatures, signature],
+    range: existing.range,
+  });
+};
+
+const functionIdentity = (node: ts.FunctionDeclaration): SubjectIdentity | undefined => {
+  const name = node.name?.text;
+  if (name !== undefined) {
+    return qualifyIdentity(enclosingScopeIdentity(node.parent), name, name);
+  }
+
+  if (!hasModifier(node, ts.SyntaxKind.DefaultKeyword) || !hasExportModifier(node)) {
+    return undefined;
+  }
+
+  return qualifyIdentity(
+    enclosingScopeIdentity(node.parent),
+    DEFAULT_EXPORT_KEY,
+    DEFAULT_EXPORT_DISPLAY,
+  );
+};
+
+const exportedFunctionIdentity = (node: ts.FunctionDeclaration): SubjectIdentity | undefined => {
+  const name = node.name?.text;
+  if (name !== undefined) {
+    return {
+      key: name,
+      displayName: name,
+    };
+  }
+
+  if (!hasModifier(node, ts.SyntaxKind.DefaultKeyword)) {
+    return undefined;
+  }
+
+  return {
+    key: DEFAULT_EXPORT_KEY,
+    displayName: DEFAULT_EXPORT_DISPLAY,
+  };
+};
+
+const classIdentity = (node: ts.ClassDeclaration): SubjectIdentity | undefined => {
+  const name = node.name?.text;
+  if (name !== undefined) {
+    return qualifyIdentity(enclosingScopeIdentity(node.parent), name, name);
+  }
+
+  if (!hasModifier(node, ts.SyntaxKind.DefaultKeyword) || !hasExportModifier(node)) {
+    return undefined;
+  }
+
+  return qualifyIdentity(
+    enclosingScopeIdentity(node.parent),
+    DEFAULT_EXPORT_KEY,
+    DEFAULT_EXPORT_DISPLAY,
+  );
+};
+
+const exportedClassIdentity = (node: ts.ClassDeclaration): SubjectIdentity | undefined => {
+  const name = node.name?.text;
+  if (name !== undefined) {
+    return {
+      key: name,
+      displayName: name,
+    };
+  }
+
+  if (!hasModifier(node, ts.SyntaxKind.DefaultKeyword)) {
+    return undefined;
+  }
+
+  return {
+    key: DEFAULT_EXPORT_KEY,
+    displayName: DEFAULT_EXPORT_DISPLAY,
+  };
+};
+
+const methodIdentity = (node: ts.MethodDeclaration): SubjectIdentity | undefined => {
+  const classDeclaration = node.parent;
+  if (!ts.isClassDeclaration(classDeclaration)) {
+    return undefined;
+  }
+
+  const ownerIdentity = classIdentity(classDeclaration);
+  const methodName = propertyNameText(node.name);
+  if (ownerIdentity === undefined || methodName === undefined) {
+    return undefined;
+  }
+
+  const staticPrefix = hasModifier(node, ts.SyntaxKind.StaticKeyword) ? "." : "#";
+
+  return {
+    key: `${ownerIdentity.key}${staticPrefix}${methodName}`,
+    displayName: `${ownerIdentity.displayName}${staticPrefix}${methodName}`,
+  };
+};
+
+const variableFunctionIdentity = (node: ts.VariableDeclaration): SubjectIdentity | undefined => {
+  if (!ts.isIdentifier(node.name)) {
+    return undefined;
+  }
+
+  return qualifyIdentity(enclosingScopeIdentity(node.parent), node.name.text, node.name.text);
+};
+
+const enclosingScopeIdentity = (node: ts.Node | undefined): SubjectIdentity | undefined => {
+  let current = node;
+
+  while (current !== undefined) {
+    if (ts.isMethodDeclaration(current)) {
+      return methodIdentity(current);
+    }
+
+    if (ts.isFunctionDeclaration(current)) {
+      return functionIdentity(current);
+    }
+
+    if (ts.isClassDeclaration(current)) {
+      return classIdentity(current);
+    }
+
+    if (ts.isVariableDeclaration(current)) {
+      const initializer = current.initializer;
+      if (initializer !== undefined && isFunctionExpressionLike(initializer)) {
+        return variableFunctionIdentity(current);
+      }
+    }
+
+    current = current.parent;
+  }
+};
+
+const qualifyIdentity = (
+  parent: SubjectIdentity | undefined,
+  key: string,
+  displayName: string,
+): SubjectIdentity => {
+  if (parent === undefined) {
+    return { key, displayName };
+  }
+
+  return {
+    key: `${parent.key}/${key}`,
+    displayName: `${parent.displayName}.${displayName}`,
+  };
+};
+
+const sameOrderedValues = (
+  left: readonly string[],
+  right: readonly string[],
+): boolean => left.length === right.length && left.every((value, index) => value === right[index]);
 
 const serializeFunctionLikeSignature = (
   declaration: ts.FunctionLikeDeclarationBase,
