@@ -47,9 +47,26 @@ const SIGNAL_DEFINITIONS: readonly SignalDefinition[] = [
   },
 ] as const;
 
-function normalizeWorkspacePath(workspacePath: string): string {
+function isAbsoluteWorkspacePath(workspacePath: string): boolean {
+  return pathPosix.isAbsolute(workspacePath) || /^[a-z]:\//i.test(workspacePath);
+}
+
+function normalizeWorkspacePath(workspacePath: string): string | undefined {
   const normalized = pathPosix.normalize(workspacePath.replaceAll("\\", "/"));
-  return normalized === "." ? "" : normalized;
+
+  if (normalized === ".") {
+    return "";
+  }
+
+  if (
+    isAbsoluteWorkspacePath(normalized) ||
+    normalized === ".." ||
+    normalized.startsWith("../")
+  ) {
+    return undefined;
+  }
+
+  return normalized;
 }
 
 function freezeSignal(signal: HarnessSignal): HarnessSignal {
@@ -84,6 +101,10 @@ export function discoverHarnessSignals(
 
   for (const workspacePath of input.workspacePaths) {
     const normalizedPath = normalizeWorkspacePath(workspacePath);
+    if (normalizedPath === undefined) {
+      continue;
+    }
+
     const lowerCasePath = normalizedPath.toLowerCase();
 
     for (const definition of SIGNAL_DEFINITIONS) {

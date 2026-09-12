@@ -38,6 +38,14 @@ interface StoredPairMemory {
 }
 
 const MEMORY_KEY = "adaptive-pair.memory";
+const INTERVENTION_STYLES = ["eco", "balanced", "active"] as const;
+const EVIDENCE_KINDS = [
+  "new-dependency",
+  "public-api-change",
+  "complexity-growth",
+  "diagnostic",
+  "external-harness",
+] as const;
 const DEFAULT_PREFERENCES: PairPreferences = Object.freeze({
   interventionStyle: "balanced",
   pauseThresholdMs: 1_000,
@@ -49,12 +57,22 @@ const EMPTY_MEMORY: StoredPairMemory = Object.freeze({
   approvedEvidence: Object.freeze([]),
 });
 
+export class InvalidPairMemoryError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "InvalidPairMemoryError";
+  }
+}
+
 function freezePreferences(preferences: PairPreferences): PairPreferences {
-  return Object.freeze(preferences);
+  return Object.freeze({
+    interventionStyle: preferences.interventionStyle,
+    pauseThresholdMs: preferences.pauseThresholdMs,
+  });
 }
 
 function freezeApprovedEvidence(
-  approvedEvidence: ApprovedEvidence[],
+  approvedEvidence: readonly ApprovedEvidence[],
 ): readonly ApprovedEvidence[] {
   return Object.freeze(
     approvedEvidence.map((entry) =>
@@ -69,7 +87,7 @@ function freezeApprovedEvidence(
 }
 
 function freezeDismissals(
-  dismissals: Record<string, readonly string[]>,
+  dismissals: Readonly<Record<string, readonly string[]>>,
 ): Readonly<Record<string, readonly string[]>> {
   const frozenDismissals: Record<string, readonly string[]> = {};
   for (const [repositoryId, evidenceIds] of Object.entries(dismissals)) {
@@ -82,14 +100,11 @@ function freezeDismissals(
 function freezeMemory(memory: StoredPairMemory): StoredPairMemory {
   return Object.freeze({
     version: memory.version,
-    preferences: freezePreferences({
-      interventionStyle: memory.preferences.interventionStyle,
-      pauseThresholdMs: memory.preferences.pauseThresholdMs,
-    }),
+    preferences: freezePreferences(memory.preferences),
     dismissedEvidenceByRepository: freezeDismissals(
-      memory.dismissedEvidenceByRepository as Record<string, readonly string[]>,
+      memory.dismissedEvidenceByRepository,
     ),
-    approvedEvidence: freezeApprovedEvidence([...memory.approvedEvidence]),
+    approvedEvidence: freezeApprovedEvidence(memory.approvedEvidence),
   });
 }
 
@@ -104,25 +119,152 @@ function cloneDismissals(
   return clonedDismissals;
 }
 
+function invalidMemory(message: string): InvalidPairMemoryError {
+  return new InvalidPairMemoryError(message);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validateInterventionStyle(value: unknown, path: string): PairPreferences["interventionStyle"] {
+  if (
+    typeof value !== "string" ||
+    !INTERVENTION_STYLES.includes(value as PairPreferences["interventionStyle"])
+  ) {
+    throw invalidMemory(
+      `${path} must be one of ${INTERVENTION_STYLES.join(", ")}; received ${JSON.stringify(value)}`,
+    );
+  }
+
+  return value as PairPreferences["interventionStyle"];
+}
+
+function validateFiniteNumber(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw invalidMemory(`${path} must be a finite number; received ${JSON.stringify(value)}`);
+  }
+
+  return value;
+}
+
+function validateString(value: unknown, path: string): string {
+  if (typeof value !== "string") {
+    throw invalidMemory(`${path} must be a string; received ${JSON.stringify(value)}`);
+  }
+
+  return value;
+}
+
+function validatePreferences(value: unknown): PairPreferences {
+  if (!isRecord(value)) {
+    throw invalidMemory(`preferences must be an object; received ${JSON.stringify(value)}`);
+  }
+
+  return freezePreferences({
+    interventionStyle: validateInterventionStyle(
+      value.interventionStyle,
+      "preferences.interventionStyle",
+    ),
+    pauseThresholdMs: validateFiniteNumber(
+      value.pauseThresholdMs,
+      "preferences.pauseThresholdMs",
+    ),
+  });
+}
+
+function validateDismissals(
+  value: unknown,
+): Readonly<Record<string, readonly string[]>> {
+  if (!isRecord(value)) {
+    throw invalidMemory(
+      `dismissedEvidenceByRepository must be an object; received ${JSON.stringify(value)}`,
+    );
+  }
+
+  const dismissals: Record<string, readonly string[]> = {};
+  for (const [repositoryId, evidenceIds] of Object.entries(value)) {
+    if (!Array.isArray(evidenceIds) || evidenceIds.some((evidenceId) => typeof evidenceId !== "string")) {
+      throw invalidMemory(
+        `dismissedEvidenceByRepository.${repositoryId} must be an array of strings; received ${JSON.stringify(evidenceIds)}`,
+      );
+    }
+
+    dismissals[repositoryId] = [...evidenceIds];
+  }
+
+  return freezeDismissals(dismissals);
+}
+
+function validateApprovedEvidenceKind(value: unknown, path: string): Evidence["kind"] {
+  if (typeof value !== "string" || !EVIDENCE_KINDS.includes(value as Evidence["kind"])) {
+    throw invalidMemory(
+      `${path} must be one of ${EVIDENCE_KINDS.join(", ")}; received ${JSON.stringify(value)}`,
+    );
+  }
+
+  return value as Evidence["kind"];
+}
+
+function validateApprovedEvidence(value: unknown): readonly ApprovedEvidence[] {
+  if (!Array.isArray(value)) {
+    throw invalidMemory(`approvedEvidence must be an array; received ${JSON.stringify(value)}`);
+  }
+
+  const approvedEvidence = value.map((entry, index) => {
+    if (!isRecord(entry)) {
+      throw invalidMemory(
+        `approvedEvidence[${index}] must be an object; received ${JSON.stringify(entry)}`,
+      );
+    }
+
+    return Object.freeze({
+      id: validateString(entry.id, `approvedEvidence[${index}].id`),
+      kind: validateApprovedEvidenceKind(entry.kind, `approvedEvidence[${index}].kind`),
+      title: validateString(entry.title, `approvedEvidence[${index}].title`),
+      approvedAt: validateFiniteNumber(entry.approvedAt, `approvedEvidence[${index}].approvedAt`),
+    });
+  });
+
+  return Object.freeze(approvedEvidence);
+}
+
+function validateStoredMemory(value: unknown): StoredPairMemory {
+  if (!isRecord(value)) {
+    throw invalidMemory(`persisted pair memory must be an object; received ${JSON.stringify(value)}`);
+  }
+
+  if (value.version !== 1) {
+    throw invalidMemory(`version must be 1; received ${JSON.stringify(value.version)}`);
+  }
+
+  return freezeMemory({
+    version: 1,
+    preferences: validatePreferences(value.preferences),
+    dismissedEvidenceByRepository: validateDismissals(value.dismissedEvidenceByRepository),
+    approvedEvidence: validateApprovedEvidence(value.approvedEvidence),
+  });
+}
+
 export class PairMemoryStore {
   private readonly memoryKey = MEMORY_KEY;
+
+  private mutationQueue: Promise<void> = Promise.resolve();
 
   public constructor(private readonly options: PairMemoryStoreOptions) {}
 
   public async load(): Promise<PairMemory> {
     const stored = await this.loadStoredMemory();
-    const dismissedEvidenceByRepository = stored.dismissedEvidenceByRepository[
-      this.options.repositoryId
-    ];
+    const dismissedEvidence = stored.dismissedEvidenceByRepository[this.options.repositoryId];
 
     return freezeMemory({
       version: 1,
       preferences: stored.preferences,
       dismissedEvidenceByRepository:
-        dismissedEvidenceByRepository === undefined
+        dismissedEvidence === undefined
           ? Object.freeze({})
           : freezeDismissals({
-              [this.options.repositoryId]: dismissedEvidenceByRepository,
+              [this.options.repositoryId]: dismissedEvidence,
             }),
       approvedEvidence: stored.approvedEvidence,
     });
@@ -131,8 +273,7 @@ export class PairMemoryStore {
   public async updatePreferences(
     preferences: Partial<PairPreferences>,
   ): Promise<void> {
-    const stored = await this.loadStoredMemory();
-    await this.saveStoredMemory({
+    await this.enqueueMutation((stored) => ({
       version: 1,
       preferences: freezePreferences({
         interventionStyle:
@@ -142,28 +283,30 @@ export class PairMemoryStore {
       }),
       dismissedEvidenceByRepository: stored.dismissedEvidenceByRepository,
       approvedEvidence: stored.approvedEvidence,
-    });
+    }));
   }
 
   public async dismissEvidence(evidenceId: string): Promise<void> {
-    const stored = await this.loadStoredMemory();
-    const dismissedEvidenceByRepository = cloneDismissals(
-      stored.dismissedEvidenceByRepository,
-    );
-    const currentDismissed = dismissedEvidenceByRepository[this.options.repositoryId] ?? [];
+    await this.enqueueMutation((stored) => {
+      const dismissedEvidenceByRepository = cloneDismissals(
+        stored.dismissedEvidenceByRepository,
+      );
+      const currentDismissed =
+        dismissedEvidenceByRepository[this.options.repositoryId] ?? [];
 
-    if (!currentDismissed.includes(evidenceId)) {
-      dismissedEvidenceByRepository[this.options.repositoryId] = [
-        ...currentDismissed,
-        evidenceId,
-      ];
-    }
+      if (!currentDismissed.includes(evidenceId)) {
+        dismissedEvidenceByRepository[this.options.repositoryId] = [
+          ...currentDismissed,
+          evidenceId,
+        ];
+      }
 
-    await this.saveStoredMemory({
-      version: 1,
-      preferences: stored.preferences,
-      dismissedEvidenceByRepository,
-      approvedEvidence: stored.approvedEvidence,
+      return {
+        version: 1,
+        preferences: stored.preferences,
+        dismissedEvidenceByRepository,
+        approvedEvidence: stored.approvedEvidence,
+      };
     });
   }
 
@@ -171,24 +314,25 @@ export class PairMemoryStore {
     evidence: Evidence,
     approvedAt: number = this.now(),
   ): Promise<void> {
-    const stored = await this.loadStoredMemory();
-    const updatedApprovedEvidence = stored.approvedEvidence.filter(
-      (approved) => approved.id !== evidence.id,
-    );
-    updatedApprovedEvidence.push(
-      Object.freeze({
-        id: evidence.id,
-        kind: evidence.kind,
-        title: evidence.title,
-        approvedAt,
-      }),
-    );
+    await this.enqueueMutation((stored) => {
+      const updatedApprovedEvidence = stored.approvedEvidence.filter(
+        (approved) => approved.id !== evidence.id,
+      );
+      updatedApprovedEvidence.push(
+        Object.freeze({
+          id: evidence.id,
+          kind: evidence.kind,
+          title: evidence.title,
+          approvedAt,
+        }),
+      );
 
-    await this.saveStoredMemory({
-      version: 1,
-      preferences: stored.preferences,
-      dismissedEvidenceByRepository: stored.dismissedEvidenceByRepository,
-      approvedEvidence: updatedApprovedEvidence,
+      return {
+        version: 1,
+        preferences: stored.preferences,
+        dismissedEvidenceByRepository: stored.dismissedEvidenceByRepository,
+        approvedEvidence: updatedApprovedEvidence,
+      };
     });
   }
 
@@ -196,18 +340,30 @@ export class PairMemoryStore {
     return this.options.now?.() ?? Date.now();
   }
 
+  private async enqueueMutation(
+    mutate: (stored: StoredPairMemory) => StoredPairMemory | Promise<StoredPairMemory>,
+  ): Promise<void> {
+    const mutation = this.mutationQueue.catch(() => undefined).then(async () => {
+      const stored = await this.loadStoredMemory();
+      const next = await mutate(stored);
+      await this.saveStoredMemory(next);
+    });
+
+    this.mutationQueue = mutation.then(
+      () => undefined,
+      () => undefined,
+    );
+
+    return mutation;
+  }
+
   private async loadStoredMemory(): Promise<StoredPairMemory> {
-    const stored = await this.options.store.get<StoredPairMemory>(this.memoryKey);
+    const stored = await this.options.store.get<unknown>(this.memoryKey);
     if (stored === undefined) {
       return EMPTY_MEMORY;
     }
 
-    return freezeMemory({
-      version: 1,
-      preferences: stored.preferences,
-      dismissedEvidenceByRepository: stored.dismissedEvidenceByRepository,
-      approvedEvidence: stored.approvedEvidence,
-    });
+    return validateStoredMemory(stored);
   }
 
   private async saveStoredMemory(memory: StoredPairMemory): Promise<void> {

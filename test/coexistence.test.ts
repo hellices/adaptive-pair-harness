@@ -34,4 +34,17 @@ describe("discoverHarnessSignals", () => {
       ),
     ).toBe(true);
   });
+
+  it("ignores absolute and escaping workspace paths when detecting superpowers plans", () => {
+    const signals = discoverHarnessSignals({
+      extensionIds: [],
+      workspacePaths: [
+        "../docs/superpowers/plans/2026-09-13-plan.md",
+        "/workspace/docs/superpowers/plans/2026-09-14-plan.md",
+        "C:\\workspace\\docs\\superpowers\\plans\\2026-09-15-plan.md",
+      ],
+    });
+
+    expect(signals).toEqual([]);
+  });
 });
