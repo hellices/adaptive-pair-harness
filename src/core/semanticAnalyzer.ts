@@ -286,14 +286,17 @@ const collectExportedSignatures = (
     readonly ts.FunctionLikeDeclaration[]
   >();
   const classesByName = new Map<string, ts.ClassDeclaration>();
+  const identifiersByName = new Map<string, ts.Identifier>();
 
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement) && statement.name !== undefined) {
+      identifiersByName.set(statement.name.text, statement.name);
       const existing = functionsByName.get(statement.name.text) ?? [];
       functionsByName.set(statement.name.text, [...existing, statement]);
       continue;
     }
     if (ts.isClassDeclaration(statement) && statement.name !== undefined) {
+      identifiersByName.set(statement.name.text, statement.name);
       classesByName.set(statement.name.text, statement);
       continue;
     }
@@ -302,6 +305,7 @@ const collectExportedSignatures = (
         if (!ts.isIdentifier(declaration.name)) {
           continue;
         }
+        identifiersByName.set(declaration.name.text, declaration.name);
         const initializer = unwrapFunctionExpression(declaration.initializer);
         if (initializer !== undefined) {
           functionsByName.set(declaration.name.text, [initializer]);
@@ -377,10 +381,35 @@ const collectExportedSignatures = (
     const functions = functionsByName.get(localName);
     if (functions !== undefined) {
       appendFunction(externalName, functions, rangeNode);
+      return;
     }
     const declaration = classesByName.get(localName);
     if (declaration !== undefined) {
       appendClass(externalName, declaration, rangeNode);
+      return;
+    }
+    const identifier = identifiersByName.get(localName);
+    if (identifier === undefined) {
+      return;
+    }
+    const displayName =
+      externalName === "default" ? DEFAULT_EXPORT_DISPLAY : externalName;
+    for (const signature of checker
+      .getTypeAtLocation(identifier)
+      .getCallSignatures()) {
+      appendSignatureRecord(
+        signatures,
+        `function:${externalName}`,
+        displayName,
+        checker.signatureToString(
+          signature,
+          identifier,
+          ts.TypeFormatFlags.NoTruncation |
+            ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope,
+          ts.SignatureKind.Call,
+        ),
+        rangeForNode(sourceFile, rangeNode ?? identifier),
+      );
     }
   };
 

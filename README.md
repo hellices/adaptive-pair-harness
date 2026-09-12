@@ -166,8 +166,10 @@ Sends a structured request to `adaptivePair.model.baseUrl` using the configured
 **Adaptive Pair: Set OpenAI-Compatible API Key** if your endpoint requires one.
 API keys are stored separately for each canonical endpoint origin, so changing
 the origin requires explicit key setup. Non-loopback endpoints require HTTPS;
-URL credentials, query strings, fragments, and unsafe URL forms are rejected.
-An invalid base URL disables this provider and falls back to `local-template`.
+raw URL credentials, query/fragment delimiters, ASCII whitespace/control
+characters, and unsafe URL forms are rejected. A valid base path such as `/v1`
+is preserved when `/chat/completions` is appended. An invalid base URL disables
+this provider and falls back to `local-template`.
 
 See the repository documentation for the full configuration reference:
 
@@ -181,7 +183,8 @@ See the repository documentation for the full configuration reference:
 - Remote requests send **structured evidence**, not full source buffers.
 - One centralized policy redacts or suppresses credentials in semantic,
   diagnostic, symbol, and Chat fields, including URL userinfo and sensitive
-  query values. Credential-bearing automatic evidence stays local.
+  query values, quoted credential assignments, and complete Basic/Bearer
+  authorization payloads. Credential-bearing automatic evidence stays local.
 - The latest local inline question is **not** forwarded back to remote chat
   providers.
 - Token budgets are enforced per 10-minute window and survive configuration or
@@ -189,8 +192,17 @@ See the repository documentation for the full configuration reference:
   - `eco`: 2 calls / 2,000 input / 360 output tokens
   - `balanced`: 4 calls / 6,000 input / 720 output tokens
   - `active`: 8 calls / 12,000 input / 1,440 output tokens
-- Remote completions are capped at 180 output tokens per call. OpenAI-compatible
-  requests also use a deadline and a bounded response body.
+- Each remote call pre-reserves up to its 180-token output allowance.
+  OpenAI-compatible requests send `max_tokens`, reject blank or conservatively
+  over-limit output, and account for the greater of reported and conservative
+  observed usage.
+- Copilot requests pass the supported `max_tokens` model option and use the
+  selected model's official `countTokens` API to cap displayed stream output
+  and account for the maximum observed token count. The stable VS Code API does
+  not promise a provider-side generation or billing hard limit; cancellation
+  at the display boundary is best effort, while the budget retains conservative
+  accounting.
+- OpenAI-compatible requests also use a deadline and a bounded response body.
 - If a remote request would exceed the budget, Adaptive Pair falls back to the
   local template for that intervention.
 

@@ -50,8 +50,16 @@ class TestCancellation implements VsCodeRequestCancellation {
 class RecordingLanguageModelApi implements VsCodeLanguageModelApi {
   public readonly selectors: Array<{ readonly vendor: "copilot" }> = [];
   public readonly prompts: string[] = [];
+  public readonly countedTexts: string[] = [];
+  public readonly requestedOutputCaps: Array<number | undefined> = [];
   public readonly cancellation = new TestCancellation();
   public sendCalls = 0;
+  public fragments: readonly string[] = [
+    "Did you intend ",
+    "this dependency?",
+  ];
+  public countTokensImplementation = (text: string): number =>
+    Math.max(1, Math.ceil(text.length / 4));
   public models: readonly CopilotModelReference[] = [
     {
       id: "copilot-model",
@@ -96,25 +104,40 @@ class RecordingLanguageModelApi implements VsCodeLanguageModelApi {
       : "unknown";
   }
 
+  public async countTokens(
+    model: CopilotModelReference,
+    text: string,
+    cancellation: VsCodeRequestCancellation,
+  ): Promise<number> {
+    void model;
+    void cancellation;
+    this.countedTexts.push(text);
+    return this.countTokensImplementation(text);
+  }
+
   public async sendRequest(
     model: CopilotModelReference,
     prompt: string,
     cancellation: VsCodeRequestCancellation,
+    maxOutputTokens?: number,
   ): Promise<AsyncIterable<string>> {
     void model;
     void cancellation;
     this.sendCalls += 1;
     this.prompts.push(prompt);
+    this.requestedOutputCaps.push(maxOutputTokens);
     if (this.sendError !== undefined) {
       throw this.sendError;
     }
     const streamError = this.streamError;
+    const fragments = this.fragments;
     return (async function* (): AsyncIterable<string> {
-      yield "Did you intend ";
-      if (streamError !== undefined) {
-        throw streamError;
+      for (const [index, fragment] of fragments.entries()) {
+        yield fragment;
+        if (index === 0 && streamError !== undefined) {
+          throw streamError;
+        }
       }
-      yield "this dependency?";
     })();
   }
 }
@@ -150,10 +173,42 @@ describe("VsCodeLanguageModelProvider", () => {
       new AbortController().signal,
     );
 
-    expect(response.text.length).toBeLessThanOrEqual(12);
-    expect(response.outputTokens).toBeLessThanOrEqual(3);
+    expect(api.countTokensImplementation(response.text)).toBeLessThanOrEqual(3);
+    expect(response.outputTokens).toBeGreaterThanOrEqual(
+      api.countTokensImplementation(response.text),
+    );
+    expect(api.requestedOutputCaps).toEqual([3]);
     expect(api.cancellation.cancelled).toBe(true);
   });
+
+  it.each([
+    ["CJK", "你好世界", 3],
+    ["code-dense", "()=>{x();}", 5],
+  ])(
+    "uses official token counts to cap %s output and account for the observed fragment",
+    async (_label, streamedText, maxOutputTokens) => {
+      const api = new RecordingLanguageModelApi();
+      api.fragments = [streamedText];
+      const prompt = buildCopilotPrompt(request);
+      api.countTokensImplementation = (text) =>
+        text === prompt ? 37 : Array.from(text).length;
+      const provider = new VsCodeLanguageModelProvider(api);
+
+      const response = await provider.generate(
+        {
+          ...request,
+          maxOutputTokens,
+        },
+        new AbortController().signal,
+      );
+
+      expect(Array.from(response.text)).toHaveLength(maxOutputTokens);
+      expect(response.outputTokens).toBe(Array.from(streamedText).length);
+      expect(api.countedTexts).toContain(streamedText);
+      expect(api.requestedOutputCaps).toEqual([maxOutputTokens]);
+      expect(api.cancellation.cancelled).toBe(true);
+    },
+  );
 
   it("throws a typed error when no Copilot model is available", async () => {
     const api = new RecordingLanguageModelApi();

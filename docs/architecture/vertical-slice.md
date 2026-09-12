@@ -51,8 +51,8 @@ The semantic analyzer is intentionally narrow.
 
 - new dependency imports
 - ESM and CommonJS exported API additions, signature changes, and removals,
-  including aliases, default exports, function-valued variables, and inferred
-  callable signatures
+  including aliases, default exports, function-valued variables, and
+  TypeScript-checker-resolved call signatures for callable identifier chains
 - substantial complexity growth
 
 ### Supported language boundary
@@ -84,8 +84,10 @@ The analyzer does not currently:
    resurfaced for 30 seconds after a successful render. Stop clears cooldown.
 3. **Budget**: remote-capable styles reserve input and output capacity inside a
    rolling 10-minute window. Budget state is hoisted across runtime rebuilds,
-   successful responses settle actual usage, and only known pre-dispatch
-   Copilot selection/consent failures release their exact reservation.
+   each request pre-reserves its full offered output allowance before dispatch,
+   successful responses settle exact or conservative observed usage, and only
+   known pre-dispatch Copilot selection/consent failures release their exact
+   reservation.
 
 If the budget denies the request, the runtime falls back to a local-template
 question instead of dropping the intervention entirely.
@@ -117,11 +119,16 @@ automatic evidence is kept local rather than sent after redaction.
 - **Local template**: deterministic local question, zero remote tokens
 - **Official VS Code Copilot**: uses the VS Code language model API and falls
   back locally when no model is available, access is denied, or proactive access
-  is unavailable
+  is unavailable. The request passes the supported `max_tokens` model option;
+  streamed display is bounded with the selected model's official `countTokens`
+  API and cancellation. VS Code does not guarantee a provider-side generation
+  or billing hard limit, so observed over-boundary fragments are conservatively
+  accounted.
 - **OpenAI-compatible**: posts JSON to `/chat/completions` at the configured
   safe base URL, optionally with an origin-bound bearer token from
   `SecretStorage`; requests have a deadline, 64 KiB response cap, and a
-  completion-token cap
+  completion-token cap. Blank output is rejected, and output accounting uses
+  the greater of reported completion usage and a conservative UTF-8 byte bound.
 
 ## Inline rendering lifecycle
 
@@ -181,7 +188,9 @@ repository files.
 - pair memory is repository-scoped inside workspace state, including
   document-owning roots in multi-root workspaces;
 - corrupt memory is preserved while in-memory defaults keep Pair usable, until
-  the user invokes the explicit reset command;
+  the user invokes the explicit reset command; reset completion is fenced to
+  the runtime generation that initiated it, so a replaced runtime cannot be
+  overwritten;
 - OpenAI-compatible keys are stored in `SecretStorage`, separately per
   validated canonical endpoint origin;
 - remote settings are application-scoped and cannot be supplied by a folder;

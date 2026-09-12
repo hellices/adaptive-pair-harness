@@ -1,7 +1,15 @@
 import { createHash } from "node:crypto";
 
 export const parseSafeRemoteEndpoint = (value: string): URL | undefined => {
-  if (value.length === 0 || value !== value.trim()) {
+  if (
+    value.length === 0 ||
+    value !== value.trim() ||
+    [...value].some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint <= 0x20 || codePoint === 0x7f ||
+        character === "?" || character === "#";
+    })
+  ) {
     return undefined;
   }
 

@@ -112,3 +112,85 @@
 - TypeScript checker-backed export analysis is intentionally per-document and
   does not resolve cross-file types; this remains within the navigator-only
   vertical-slice boundary.
+
+---
+
+## Whole-Branch Review Round 2
+
+- Date: 2026-09-12
+- Binding input: `.superpowers/sdd/final-review-round-2.md`
+- Status: **COMPLETE — no blocked finding**
+
+### Corrections implemented
+
+- Validates the raw endpoint before `URL` normalization. Literal `?`/`#`
+  delimiters (including empty trailing delimiters), ASCII whitespace/control
+  characters, and URL credentials are rejected. The OpenAI-compatible join
+  retains base paths such as `/v1`.
+- Central redaction now handles quoted credential assignments containing
+  spaces and removes complete Basic authorization payloads. These matches mark
+  the projection sensitive, retaining automatic evidence locally.
+- Callable identifier chains are resolved with the existing per-document
+  TypeScript `Program`/`TypeChecker`. Typed variables and TS/JS aliases are
+  compared under their external export names without exposing signature/source
+  text in evidence.
+- Memory reset captures the owning runtime generation before storage mutation
+  and publishes reset state only while that fence remains current.
+- Copilot generation now uses `LanguageModelChat.countTokens`, forwards the
+  supported `modelOptions.max_tokens` allowance, truncates/cancels displayed
+  streams at the model-token boundary, and reports the maximum observed output
+  count for settlement.
+- Output capacity is reserved before dispatch, including while other calls are
+  pending. OpenAI-compatible output rejects blank content and uses the maximum
+  of provider-reported completion usage and a conservative UTF-8 byte count;
+  an absent usage object, absent completion count, or zero usage cannot make
+  non-empty output free.
+- Public documentation now distinguishes display/budget enforcement from a
+  provider-side generation or billing limit. The stable VS Code API does not
+  guarantee the latter.
+
+### Focused RED/GREEN evidence
+
+- Endpoint validation: 7 expected failures, then 35 passing endpoint/router
+  tests.
+- Credential redaction: 2 expected failures, then 19 passing privacy/router
+  tests.
+- Callable aliases: 3 expected failures, then 26 passing semantic tests.
+- Reset lifecycle fence: 1 expected failure, then 11 passing lifecycle tests
+  at that boundary.
+- Copilot counting/capping: 2 expected failures, then 16 passing provider
+  tests.
+- OpenAI output accounting: 4 expected failures, then 16 passing router tests.
+- Concurrent reservation/accounting coverage passes in the runtime lifecycle
+  suite.
+- Self-review found that the first correction still required the enclosing
+  OpenAI `usage` object. A focused regression reproduced that rejection before
+  the conservative full-usage fallback passed.
+
+### Final verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **16 files, 176 tests passed**
+- `npm run package`: **PASS**
+- VSIX inspection: **155 files**
+  - packaged adapter contains `countTokens` and `max_tokens`
+  - source, tests, coverage, private Superpowers material, and source maps are
+    excluded
+- `git diff --check`: **PASS**
+- Production credential-value scan: **PASS**
+- Package metadata fake-URL scan: **PASS**
+- Production URL literals remain limited to the documented loopback default.
+
+### Residual concerns
+
+- The stable VS Code Language Model API accepts provider-specific
+  `modelOptions.max_tokens`, but does not contractually guarantee provider-side
+  generation or billing enforcement. Adaptive Pair therefore pre-reserves the
+  allowance, caps displayed output with the official tokenizer, cancels at the
+  boundary, and conservatively accounts already-observed over-boundary
+  fragments.
+- Live Copilot consent UI and third-party OpenAI-compatible services were not
+  exercised in this non-interactive environment; their adapters are covered by
+  contract tests.

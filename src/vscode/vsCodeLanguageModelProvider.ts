@@ -29,10 +29,16 @@ export interface VsCodeLanguageModelApi {
   canSendRequest(model: CopilotModelReference): boolean | undefined;
   createCancellationTokenSource(): VsCodeRequestCancellation;
   classifyError(error: unknown): VsCodeLanguageModelErrorKind;
+  countTokens(
+    model: CopilotModelReference,
+    text: string,
+    cancellation: VsCodeRequestCancellation,
+  ): PromiseLike<number>;
   sendRequest(
     model: CopilotModelReference,
     prompt: string,
     cancellation: VsCodeRequestCancellation,
+    maxOutputTokens: number,
   ): PromiseLike<AsyncIterable<string>>;
 }
 
@@ -125,39 +131,77 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
       }
 
       const prompt = buildCopilotPrompt(request);
-      const maxOutputCharacters =
-        Math.max(1, Math.floor(request.maxOutputTokens ?? 180)) * 4;
+      const maxOutputTokens = normalizeTokenCount(
+        request.maxOutputTokens ?? 180,
+      );
+      const inputTokens = normalizeTokenCount(
+        await this.callAndMapUnavailable(
+          () => this.api.countTokens(model, prompt, cancellation),
+          false,
+        ),
+      );
       const text = await this.callAndMapUnavailable(
         async () => {
           const stream = await this.api.sendRequest(
             model,
             prompt,
             cancellation,
+            maxOutputTokens,
           );
           let streamedText = "";
+          let observedOutputTokens = 0;
           for await (const fragment of stream) {
             signal.throwIfAborted();
-            const remaining = maxOutputCharacters - streamedText.length;
-            if (fragment.length >= remaining) {
-              streamedText += fragment.slice(0, remaining);
-              cancellation.cancel();
-              break;
+            if (fragment.length === 0) {
+              continue;
             }
-            streamedText += fragment;
+            const candidate = streamedText + fragment;
+            const candidateTokens = normalizeTokenCount(
+              await this.api.countTokens(model, candidate, cancellation),
+            );
+            observedOutputTokens = Math.max(
+              observedOutputTokens,
+              candidateTokens,
+            );
+            if (candidateTokens <= maxOutputTokens) {
+              streamedText = candidate;
+              if (candidateTokens === maxOutputTokens) {
+                cancellation.cancel();
+                break;
+              }
+              continue;
+            }
+
+            for (const character of fragment) {
+              const prefixCandidate = streamedText + character;
+              const prefixTokens = normalizeTokenCount(
+                await this.api.countTokens(
+                  model,
+                  prefixCandidate,
+                  cancellation,
+                ),
+              );
+              if (prefixTokens > maxOutputTokens) {
+                break;
+              }
+              streamedText = prefixCandidate;
+            }
+            cancellation.cancel();
+            break;
           }
-          return streamedText;
+          return { streamedText, observedOutputTokens };
         },
         true,
       );
 
-      if (text.trim().length === 0) {
+      if (text.streamedText.trim().length === 0) {
         throw new CopilotModelResponseError();
       }
 
       return {
-        text,
-        inputTokens: estimateTokens(prompt),
-        outputTokens: estimateTokens(text),
+        text: text.streamedText,
+        inputTokens,
+        outputTokens: text.observedOutputTokens,
       };
     } finally {
       signal.removeEventListener("abort", cancelRequest);
@@ -201,5 +245,9 @@ export const releaseUnusedCopilotReservation = (
   !error.requestMayHaveBeenSent &&
   budget.release(reservationId);
 
-const estimateTokens = (text: string): number =>
-  Math.max(1, Math.ceil(text.length / 4));
+const normalizeTokenCount = (tokens: number): number => {
+  if (!Number.isFinite(tokens) || tokens < 0) {
+    throw new Error("GitHub Copilot returned an invalid token count.");
+  }
+  return Math.max(1, Math.ceil(tokens));
+};

@@ -12,7 +12,7 @@ pairing remains off until the user starts a session.
 | `adaptivePair.debounceMs` | number | `500` | Delay before edit episodes are analyzed after typing stops. Values are clamped to `300`-`800`. |
 | `adaptivePair.interventionStyle` | `eco` \| `balanced` \| `active` | `balanced` | Sets the threshold and 10-minute token budget used for remote interventions. |
 | `adaptivePair.model.provider` | `local-template` \| `vscode-copilot` \| `openai-compatible` | `local-template` | Application-scoped provider selection. |
-| `adaptivePair.model.baseUrl` | string | `http://localhost:11434/v1` | Application-scoped OpenAI-compatible root. HTTPS is required except for exact loopback hosts. URL credentials, queries, and fragments are rejected. |
+| `adaptivePair.model.baseUrl` | string | `http://localhost:11434/v1` | Application-scoped OpenAI-compatible root. HTTPS is required except for exact loopback hosts. Raw URL credentials, query/fragment delimiters, and ASCII whitespace/control characters are rejected. |
 | `adaptivePair.model.name` | string | `qwen2.5-coder:7b` | Application-scoped model identifier used for OpenAI-compatible requests and token estimation. |
 
 The three remote-routing settings are deliberately application-scoped. Runtime
@@ -82,9 +82,11 @@ The extension sends requests to:
 
 Non-loopback endpoints must use HTTPS. Loopback HTTP is limited to
 `localhost`, the `127.0.0.0/8` range, and `[::1]`. Endpoint URLs containing
-userinfo, a query, a fragment, surrounding whitespace, or a non-HTTP(S) scheme
-are rejected. Requests time out after 15 seconds and response bodies are capped
-at 64 KiB.
+userinfo, a raw `?` or `#` delimiter (even with no value), ASCII whitespace or
+control characters, or a non-HTTP(S) scheme are rejected before URL
+normalization. A valid path prefix such as `/v1` is retained when
+`chat/completions` is joined. Requests time out after 15 seconds and response
+bodies are capped at 64 KiB.
 
 ## Exact data sent for a remote request
 
@@ -110,9 +112,10 @@ Every remote request is reduced to a bounded structured prompt containing:
 
 All string fields pass through the same suppression/redaction policy. It
 handles URL userinfo, sensitive query parameters, bearer/JWT and common token
-formats, credential assignments, control characters, and long opaque
-secret-like values. If an automatic intervention contains possible credential
-material, no remote provider is called; the local template is used instead.
+formats, complete Basic authorization payloads, quoted or unquoted credential
+assignments, control characters, and long opaque secret-like values. If an
+automatic intervention contains possible credential material, no remote
+provider is called; the local template is used instead.
 
 ### Diagnostic sanitization
 
@@ -147,8 +150,21 @@ Budgets are enforced over a rolling 10-minute window.
 
 Behavior:
 
-- input estimates are based on the serialized remote request payload;
-- each completion is capped at 180 output tokens and output usage is accounted;
+- pre-dispatch input estimates are based on the serialized remote request
+  payload; Copilot settles with its official model token count;
+- each request atomically reserves up to its 180-token output allowance before
+  dispatch, so concurrent calls cannot reuse pending capacity;
+- OpenAI-compatible requests send `max_tokens`, reject blank output, reject
+  conservatively over-limit output, and settle with the greater of reported
+  completion usage and a conservative UTF-8 byte upper bound;
+- Copilot requests pass the supported `max_tokens` model option, use the
+  selected model's official `countTokens` API at stream boundaries, cancel and
+  truncate displayed text at the allowance, and settle with the maximum
+  observed count;
+- the stable VS Code API does not guarantee that `modelOptions.max_tokens` is a
+  provider-side generation or billing hard limit. Display enforcement and
+  cancellation are best effort, and conservative accounting can exceed the
+  reserved allowance when an already-received fragment crosses it;
 - reservations and usage survive configuration and API-key runtime rebuilds;
 - only a Copilot selection/consent failure known to occur before prompt
   dispatch releases its exact reservation;

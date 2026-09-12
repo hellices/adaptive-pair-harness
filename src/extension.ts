@@ -330,7 +330,23 @@ const createLanguageModelApi = (
       }
       return "unknown";
     },
-    sendRequest: async (modelReference, prompt, cancellation) => {
+    countTokens: async (modelReference, text, cancellation) => {
+      const model = nativeModels.get(modelReference);
+      if (model === undefined) {
+        throw new Error("Selected GitHub Copilot model is no longer available.");
+      }
+      const source = nativeCancellationSources.get(cancellation);
+      if (source === undefined) {
+        throw new Error("GitHub Copilot request cancellation source is unavailable.");
+      }
+      return model.countTokens(text, source.token);
+    },
+    sendRequest: async (
+      modelReference,
+      prompt,
+      cancellation,
+      maxOutputTokens,
+    ) => {
       const model = nativeModels.get(modelReference);
       if (model === undefined) {
         throw new Error("Selected GitHub Copilot model is no longer available.");
@@ -344,6 +360,9 @@ const createLanguageModelApi = (
         {
           justification:
             "Generate navigator-only guidance from structured editor evidence.",
+          modelOptions: {
+            max_tokens: maxOutputTokens,
+          },
         },
         source.token,
       );

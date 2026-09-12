@@ -183,7 +183,14 @@ describe("readPairConfig", () => {
     "http://models.example/v1",
     "https://user:password@models.example/v1",
     "https://models.example/v1?api_key=secret",
+    "https://models.example/v1?",
     "https://models.example/v1#fragment",
+    "https://models.example/v1#",
+    "https://models.example/v 1",
+    "https://models.example/v\t1",
+    "https://models.example/v\n1",
+    "https://models.example/v\u00001",
+    "https://models.example/v\u007f1",
   ])("rejects unsafe OpenAI-compatible endpoint %s", (baseUrl) => {
     const config = readPairConfig(
       new TestConfiguration({

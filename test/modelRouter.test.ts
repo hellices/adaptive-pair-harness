@@ -183,7 +183,7 @@ describe("model routing", () => {
     await expect(provider.generate(request, new AbortController().signal)).resolves.toEqual({
       text: "Did you intend to introduce this dependency?",
       inputTokens: 42,
-      outputTokens: 11,
+      outputTokens: 44,
     });
 
     const parsedBody = JSON.parse(receivedBody) as ChatCompletionRequestBody;
@@ -330,6 +330,87 @@ describe("model routing", () => {
         new AbortController().signal,
       ),
     ).rejects.toThrow("output token limit");
+  });
+
+  it.each([
+    ["absent", "你好世界", undefined],
+    ["under-reported", "const result=value?.map(x=>x+1)??[];", 1],
+  ])(
+    "conservatively accounts for %s OpenAI-compatible completion usage",
+    async (_label, content, completionTokens) => {
+      const fetchImplementation: typeof fetch = async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content } }],
+            usage: {
+              prompt_tokens: 10,
+              ...(completionTokens === undefined
+                ? {}
+                : { completion_tokens: completionTokens }),
+            },
+          }),
+          { status: 200 },
+        );
+      const provider = new OpenAICompatibleProvider({
+        baseUrl: new URL("http://localhost:11434/v1"),
+        model: "qwen2.5-coder:7b",
+        fetch: fetchImplementation,
+      });
+
+      await expect(
+        provider.generate(request, new AbortController().signal),
+      ).resolves.toMatchObject({
+        text: content,
+        outputTokens: new TextEncoder().encode(content).byteLength,
+      });
+    },
+  );
+
+  it("conservatively accounts when OpenAI-compatible usage is omitted", async () => {
+    const content = "fallback accounting";
+    const fetchImplementation: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content } }],
+        }),
+        { status: 200 },
+      );
+    const provider = new OpenAICompatibleProvider({
+      baseUrl: new URL("http://localhost:11434/v1"),
+      model: "qwen2.5-coder:7b",
+      fetch: fetchImplementation,
+    });
+
+    await expect(
+      provider.generate(request, new AbortController().signal),
+    ).resolves.toMatchObject({
+      text: content,
+      inputTokens: expect.any(Number),
+      outputTokens: new TextEncoder().encode(content).byteLength,
+    });
+  });
+
+  it("rejects blank OpenAI-compatible output", async () => {
+    const fetchImplementation: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: " \n\t " } }],
+          usage: {
+            prompt_tokens: 10,
+            completion_tokens: 0,
+          },
+        }),
+        { status: 200 },
+      );
+    const provider = new OpenAICompatibleProvider({
+      baseUrl: new URL("http://localhost:11434/v1"),
+      model: "qwen2.5-coder:7b",
+      fetch: fetchImplementation,
+    });
+
+    await expect(
+      provider.generate(request, new AbortController().signal),
+    ).rejects.toThrow("empty response");
   });
 
   it("denies remote generation when a long model identifier pushes the serialized request over budget and prevents fetch", async () => {

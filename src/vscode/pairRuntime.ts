@@ -821,7 +821,11 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   }
 
   public async resetMemory(): Promise<void> {
+    const lifecycleFence = this.sessionLifecycle.captureFence();
     await this.memoryStore.reset();
+    if (!lifecycleFence.isCurrent()) {
+      return;
+    }
     this.memoryWarning = undefined;
     this.dismissedEvidenceIdsByRepository.clear();
     this.statusDetail = this.sessionLifecycle.active

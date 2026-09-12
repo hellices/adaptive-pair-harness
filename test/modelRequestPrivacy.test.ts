@@ -222,4 +222,61 @@ describe("remote model request privacy", () => {
     expect(prepared.sensitiveDataDetected).toBe(true);
     expect(prepared.request.evidence.detail).not.toContain("workspace-secret");
   });
+
+  it("redacts quoted credential assignments that contain spaces", () => {
+    const credential = "correct horse";
+    const prepared = prepareRemoteModelRequest({
+      goal: `Investigate password='${credential}'`,
+      interactionStyle: "ask-first",
+      evidence: {
+        id: "dependency:quoted-credential",
+        kind: "new-dependency",
+        severity: "warning",
+        title: "Credential-like assignment introduced",
+        detail: `The configuration contains password='${credential}'.`,
+        source: "typescript-semantic-analyzer",
+        confidence: 0.94,
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 10 },
+        },
+        references: [],
+      },
+    });
+    const serialized = JSON.stringify(prepared.request);
+
+    expect(prepared.sensitiveDataDetected).toBe(true);
+    expect(serialized).not.toContain(credential);
+    expect(serialized).toContain("[REDACTED]");
+  });
+
+  it("redacts the complete Basic authorization payload", () => {
+    const basicPayload = Buffer.from(
+      "example-user:example-password",
+      "utf8",
+    ).toString("base64");
+    const prepared = prepareRemoteModelRequest({
+      goal: "Inspect the authorization change.",
+      interactionStyle: "ask-first",
+      evidence: {
+        id: "dependency:basic-authorization",
+        kind: "new-dependency",
+        severity: "warning",
+        title: `Authorization: Basic ${basicPayload}`,
+        detail: "A request header changed.",
+        source: "typescript-semantic-analyzer",
+        confidence: 0.94,
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 10 },
+        },
+        references: [],
+      },
+    });
+    const serialized = JSON.stringify(prepared.request);
+
+    expect(prepared.sensitiveDataDetected).toBe(true);
+    expect(serialized).not.toContain(basicPayload);
+    expect(serialized).not.toContain(`Basic ${basicPayload}`);
+  });
 });

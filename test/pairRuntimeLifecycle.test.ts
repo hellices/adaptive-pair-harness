@@ -262,6 +262,8 @@ const languageModelApi = (
     dispose: () => undefined,
   }),
   classifyError: () => "unknown",
+  countTokens: async (_model, text) =>
+    Math.max(1, Math.ceil(text.length / 4)),
   sendRequest: async () =>
     (async function* (): AsyncIterable<string> {
       yield "response";
@@ -522,6 +524,73 @@ describe("PairRuntime lifecycle ownership", () => {
     replacement.dispose();
   });
 
+  it("pre-reserves output capacity across concurrent remote calls", async () => {
+    const providerCompletion = deferred<Response>();
+    const fetchImplementation = vi.fn(() => providerCompletion.promise);
+    vi.stubGlobal("fetch", fetchImplementation);
+    const budgetConfig = {
+      maxCalls: 2,
+      maxInputTokens: 6_000,
+      maxOutputTokens: 10,
+      maxOutputTokensPerCall: 10,
+      windowMs: 600_000,
+    };
+    const budget = new TokenBudget(budgetConfig);
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "openai-compatible",
+        baseUrl: new URL("https://models.example/v1"),
+        budget: budgetConfig,
+      }),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+      budget,
+    });
+    await runtime.startSession();
+
+    const first = runtime.generate(
+      "file:///workspace/first.ts",
+      "Ask.",
+      evidence,
+      new AbortController().signal,
+    );
+    await vi.waitFor(() => {
+      expect(fetchImplementation).toHaveBeenCalledOnce();
+    });
+    await expect(
+      runtime.generate(
+        "file:///workspace/second.ts",
+        "Ask concurrently.",
+        evidence,
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+    expect(fetchImplementation).toHaveBeenCalledOnce();
+
+    providerCompletion.resolve(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "okay" } }],
+          usage: { prompt_tokens: 10, completion_tokens: 0 },
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+    await expect(first).resolves.toMatchObject({
+      outputTokens: 4,
+    });
+    expect(budget.snapshot(Date.now()).remainingOutputTokens).toBe(6);
+    runtime.dispose();
+  });
+
   it("refunds an exact pre-dispatch Copilot reservation after stop", async () => {
     const selection = deferred<readonly CopilotModelReference[]>();
     const selectionFailure = new Error("selection denied");
@@ -634,6 +703,59 @@ describe("PairRuntime lifecycle ownership", () => {
 
     expect(shared.snapshot()).toEqual(replacementSnapshot);
     expect(shared.snapshot().latest).toEqual(replacementEvidence);
+    expect(oldStatus.writesAfterDispose).toEqual([]);
+    replacementRuntime.dispose();
+  });
+
+  it("does not let a deferred reset overwrite replacement runtime state", async () => {
+    const resetCompletion = deferred<void>();
+    let resetStarted = false;
+    const resetContext = {
+      workspaceState: {
+        get: () => undefined,
+        update: async () => {
+          resetStarted = true;
+          await resetCompletion.promise;
+        },
+      },
+    } as unknown as vscode.ExtensionContext;
+    const shared = sharedContext();
+    const oldRuntime = new PairRuntime({
+      config: config({ statusWarning: "old runtime warning" }),
+      extensionContext: resetContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await oldRuntime.startSession();
+
+    const pendingReset = oldRuntime.resetMemory();
+    await vi.waitFor(() => {
+      expect(resetStarted).toBe(true);
+    });
+    oldRuntime.dispose();
+    const oldStatus = vscodeState.statusItems[0]!;
+
+    const replacementRuntime = new PairRuntime({
+      config: config({ statusWarning: "replacement runtime detail" }),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await replacementRuntime.startSession();
+    const replacementEvidence = {
+      uri: "file:///workspace/replacement.ts",
+      evidence: { ...evidence, id: "replacement-reset-evidence" },
+      question: "Replacement reset question",
+    };
+    shared.publishEvidence(replacementEvidence);
+    const replacementSnapshot = shared.snapshot();
+
+    resetCompletion.resolve();
+    await pendingReset;
+
+    expect(shared.snapshot()).toEqual(replacementSnapshot);
     expect(oldStatus.writesAfterDispose).toEqual([]);
     replacementRuntime.dispose();
   });

@@ -65,9 +65,9 @@ interface OpenAICompatibleSuccessPayload {
       readonly content: string;
     };
   }>;
-  readonly usage: {
-    readonly prompt_tokens: number;
-    readonly completion_tokens: number;
+  readonly usage?: {
+    readonly prompt_tokens?: number;
+    readonly completion_tokens?: number;
   };
 }
 
@@ -161,10 +161,15 @@ export class OpenAICompatibleProvider implements ModelProvider {
       if (firstChoice === undefined) {
         throw new Error("OpenAI-compatible provider returned an invalid payload.");
       }
+      if (firstChoice.message.content.trim().length === 0) {
+        throw new Error("OpenAI-compatible provider returned an empty response.");
+      }
+      const outputTokens = Math.max(
+        payload.usage?.completion_tokens ?? 0,
+        conservativeTextTokenCount(firstChoice.message.content),
+      );
       if (
-        payload.usage.completion_tokens > requestBody.max_tokens ||
-        estimateSerializedTokens(firstChoice.message.content) >
-          requestBody.max_tokens
+        outputTokens > requestBody.max_tokens
       ) {
         throw new Error(
           "OpenAI-compatible provider exceeded the output token limit.",
@@ -173,8 +178,10 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
       return {
         text: firstChoice.message.content,
-        inputTokens: payload.usage.prompt_tokens,
-        outputTokens: payload.usage.completion_tokens,
+        inputTokens:
+          payload.usage?.prompt_tokens ??
+          estimateOpenAICompatibleInputTokens(requestBody),
+        outputTokens,
       };
     } catch (error: unknown) {
       if (timedOut && !signal.aborted) {
@@ -473,7 +480,10 @@ const SENSITIVE_QUERY_PARAMETER =
 const URL_PATTERN = /https?:\/\/[^\s<>"'`]+/giu;
 const ASSIGNED_SECRET_PATTERN =
   /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|credential|authorization)\b(\s*[:=]\s*)(["']?)([^\s,;"']+)\3/giu;
+const QUOTED_ASSIGNED_SECRET_PATTERN =
+  /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|credential|authorization)\b(\s*[:=]\s*)(["'])([^"'\\\r\n]*)\3/giu;
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/giu;
+const BASIC_PATTERN = /\bBasic\s+[A-Za-z0-9._~+/-]+=*/giu;
 const KNOWN_TOKEN_PATTERN =
   /(?:sk-[A-Za-z0-9_-]{8,}|github_pat_[A-Za-z0-9_]{12,}|gh[pousr]_[A-Za-z0-9]{12,}|AKIA[A-Z0-9]{16})/gu;
 const JWT_PATTERN =
@@ -521,8 +531,18 @@ const sanitizeRemoteText = (
     }
   };
   redact(BEARER_PATTERN, "Bearer [REDACTED]");
+  redact(BASIC_PATTERN, "[REDACTED]");
   redact(KNOWN_TOKEN_PATTERN, "[REDACTED]");
   redact(JWT_PATTERN, "[REDACTED]");
+  QUOTED_ASSIGNED_SECRET_PATTERN.lastIndex = 0;
+  if (QUOTED_ASSIGNED_SECRET_PATTERN.test(sanitized)) {
+    sensitiveDataDetected = true;
+    QUOTED_ASSIGNED_SECRET_PATTERN.lastIndex = 0;
+    sanitized = sanitized.replace(
+      QUOTED_ASSIGNED_SECRET_PATTERN,
+      "$1$2$3[REDACTED]$3",
+    );
+  }
   ASSIGNED_SECRET_PATTERN.lastIndex = 0;
   if (ASSIGNED_SECRET_PATTERN.test(sanitized)) {
     sensitiveDataDetected = true;
@@ -633,7 +653,11 @@ const isOpenAICompatibleSuccessPayload = (
   }
 
   const { choices, usage } = payload;
-  if (!Array.isArray(choices) || choices.length === 0 || !isRecord(usage)) {
+  if (
+    !Array.isArray(choices) ||
+    choices.length === 0 ||
+    (usage !== undefined && !isRecord(usage))
+  ) {
     return false;
   }
 
@@ -644,17 +668,21 @@ const isOpenAICompatibleSuccessPayload = (
 
   return (
     typeof firstChoice.message.content === "string" &&
-    typeof usage.prompt_tokens === "number" &&
-    Number.isFinite(usage.prompt_tokens) &&
-    usage.prompt_tokens >= 0 &&
-    typeof usage.completion_tokens === "number" &&
-    Number.isFinite(usage.completion_tokens) &&
-    usage.completion_tokens >= 0
+    (usage === undefined ||
+      (isOptionalTokenCount(usage.prompt_tokens) &&
+        isOptionalTokenCount(usage.completion_tokens)))
   );
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
+const isOptionalTokenCount = (value: unknown): boolean =>
+  value === undefined ||
+  (typeof value === "number" && Number.isFinite(value) && value >= 0);
+
 const normalizeOutputTokenLimit = (tokens: number): number =>
   Number.isFinite(tokens) ? Math.max(1, Math.floor(tokens)) : 180;
+
+const conservativeTextTokenCount = (text: string): number =>
+  Math.max(1, new TextEncoder().encode(text).byteLength);

@@ -149,6 +149,83 @@ describe("TypeScriptSemanticAnalyzer", () => {
     );
   });
 
+  it("resolves callable identifiers assigned to exported variables", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        [
+          "function impl(id: string): string { return id; }",
+          "export const load = impl;",
+        ].join("\n"),
+        [
+          "function impl(id: number): string { return String(id); }",
+          "export const load = impl;",
+        ].join("\n"),
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["load"],
+        }),
+      ]),
+    );
+    expect(JSON.stringify(evidence)).not.toContain("impl");
+  });
+
+  it("uses checker call signatures for typed callable aliases", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        [
+          "declare const impl: (id: string) => string;",
+          "export const load = impl;",
+        ].join("\n"),
+        [
+          "declare const impl: (id: number) => string;",
+          "export const load = impl;",
+        ].join("\n"),
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["load"],
+        }),
+      ]),
+    );
+  });
+
+  it("resolves CommonJS exports through JavaScript alias variables", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        [
+          "function impl(id) { return 1; }",
+          "const alias = impl;",
+          "module.exports.load = alias;",
+        ].join("\n"),
+        [
+          'function impl(id) { return "one"; }',
+          "const alias = impl;",
+          "module.exports.load = alias;",
+        ].join("\n"),
+        "javascript",
+        "file:///pair.js",
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["load"],
+        }),
+      ]),
+    );
+  });
+
   it("reports CommonJS JavaScript export signature changes", () => {
     const named = analyzeEvidence(
       episode(
