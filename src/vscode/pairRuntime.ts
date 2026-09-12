@@ -1,0 +1,656 @@
+import * as vscode from "vscode";
+import type { PairConfig } from "../config/pairConfig";
+import { discoverHarnessSignals } from "../core/coexistence";
+import { EditEpisodeAggregator } from "../core/editEpisodeAggregator";
+import { InterventionPolicy } from "../core/interventionPolicy";
+import { PairMemoryStore } from "../core/memoryStore";
+import {
+  LocalTemplateProvider,
+  ModelRouter,
+  OpenAICompatibleProvider,
+  estimateOpenAICompatibleInputTokens,
+} from "../core/modelRouter";
+import type {
+  ModelProvider,
+  ModelRequest,
+  ModelResponse,
+} from "../core/modelRouter";
+import { TypeScriptSemanticAnalyzer } from "../core/semanticAnalyzer";
+import { TokenBudget } from "../core/tokenBudget";
+import type {
+  EditEpisode,
+  Evidence,
+  PairRange,
+  Scheduler,
+} from "../core/types";
+import { InlinePairController } from "./inlinePairController";
+import type {
+  PairChatGenerator,
+  PairSessionSnapshot,
+  PairSharedContext,
+} from "./pairChatParticipant";
+import {
+  CopilotModelUnavailableError,
+  VsCodeLanguageModelProvider,
+} from "./vsCodeLanguageModelProvider";
+import type { VsCodeLanguageModelApi } from "./vsCodeLanguageModelProvider";
+
+const PAIR_GOAL = "Navigate with concise, evidence-backed, ask-first questions.";
+const SUPPORTED_LANGUAGE_IDS = new Set([
+  "typescript",
+  "typescriptreact",
+  "javascript",
+  "javascriptreact",
+]);
+
+interface RemainingBudget {
+  readonly calls: number;
+  readonly inputTokens: number;
+}
+
+export interface PairRuntimeOptions {
+  readonly config: PairConfig;
+  readonly extensionContext: vscode.ExtensionContext;
+  readonly sharedContext: PairSharedContext;
+  readonly languageModelApi: VsCodeLanguageModelApi;
+  readonly apiKey: string | undefined;
+}
+
+class TimeoutScheduler implements Scheduler, vscode.Disposable {
+  private nextId = 1;
+  private readonly timers = new Map<number, ReturnType<typeof setTimeout>>();
+
+  public schedule(delayMs: number, callback: () => void): number {
+    const id = this.nextId++;
+    const timer = setTimeout(() => {
+      this.timers.delete(id);
+      callback();
+    }, delayMs);
+    this.timers.set(id, timer);
+    return id;
+  }
+
+  public cancel(handle: unknown): void {
+    if (typeof handle !== "number") {
+      return;
+    }
+    const timer = this.timers.get(handle);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.timers.delete(handle);
+    }
+  }
+
+  public dispose(): void {
+    for (const timer of this.timers.values()) {
+      clearTimeout(timer);
+    }
+    this.timers.clear();
+  }
+}
+
+export class PairRuntime implements vscode.Disposable, PairChatGenerator {
+  private readonly disposables: vscode.Disposable[] = [];
+  private readonly previousTextByUri = new Map<string, string>();
+  private readonly requestByUri = new Map<string, AbortController>();
+  private readonly chatRequests = new Set<AbortController>();
+  private readonly analyzer = new TypeScriptSemanticAnalyzer();
+  private readonly scheduler = new TimeoutScheduler();
+  private readonly aggregator: EditEpisodeAggregator;
+  private readonly budget: TokenBudget;
+  private readonly policy: InterventionPolicy;
+  private readonly localProvider = new LocalTemplateProvider();
+  private readonly copilotProvider: VsCodeLanguageModelProvider;
+  private readonly router: ModelRouter;
+  private readonly memoryStore: PairMemoryStore;
+  private readonly inlineController: InlinePairController;
+  private readonly status: vscode.StatusBarItem;
+  private remainingBudget: RemainingBudget;
+  private effectiveProvider: PairConfig["provider"];
+  private dismissedEvidenceIds = new Set<string>();
+  private controlNotice: string | undefined;
+  private statusDetail: string | undefined;
+  private started = false;
+  private disposed = false;
+
+  public constructor(private readonly options: PairRuntimeOptions) {
+    this.budget = new TokenBudget(options.config.budget);
+    this.remainingBudget = {
+      calls: options.config.budget.maxCalls,
+      inputTokens: options.config.budget.maxInputTokens,
+    };
+    this.effectiveProvider = options.config.provider;
+    this.policy = new InterventionPolicy({
+      model: options.config.modelName,
+    });
+    this.copilotProvider = new VsCodeLanguageModelProvider(
+      options.languageModelApi,
+    );
+
+    const providers: ModelProvider[] = [
+      this.localProvider,
+      this.copilotProvider,
+    ];
+    if (
+      options.config.provider === "openai-compatible" &&
+      options.config.baseUrl !== undefined
+    ) {
+      providers.push(
+        new OpenAICompatibleProvider({
+          baseUrl: options.config.baseUrl,
+          model: options.config.modelName,
+          fetch,
+          ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
+        }),
+      );
+    }
+    this.router = new ModelRouter(providers);
+
+    const repositoryId =
+      vscode.workspace.workspaceFolders?.[0]?.uri.toString() ?? "no-workspace";
+    this.memoryStore = new PairMemoryStore({
+      repositoryId,
+      store: {
+        get: async <T>(key: string): Promise<T | undefined> =>
+          options.extensionContext.workspaceState.get<T>(key),
+        update: async <T>(key: string, value: T): Promise<void> =>
+          options.extensionContext.workspaceState.update(key, value),
+      },
+    });
+
+    const commentController = vscode.comments.createCommentController(
+      "adaptivePair",
+      "Adaptive Pair",
+    );
+    this.inlineController = new InlinePairController({
+      controller: commentController,
+      createMarkdown: (value) => new vscode.MarkdownString(value),
+      previewMode: vscode.CommentMode.Preview,
+    });
+    this.status = vscode.window.createStatusBarItem(
+      vscode.StatusBarAlignment.Right,
+      100,
+    );
+    this.status.name = "Adaptive Pair";
+    this.status.command = "adaptivePair.toggle";
+    this.status.show();
+
+    this.aggregator = new EditEpisodeAggregator(
+      options.config.debounceMs,
+      this.scheduler,
+      (episode) => {
+        void this.handleEpisode(episode);
+      },
+    );
+    this.statusDetail = options.config.statusWarning;
+    this.publishSession();
+    this.renderStatus();
+  }
+
+  public async start(): Promise<void> {
+    if (this.started || this.disposed) {
+      return;
+    }
+    this.started = true;
+
+    for (const document of vscode.workspace.textDocuments) {
+      if (isSupportedDocument(document)) {
+        this.previousTextByUri.set(document.uri.toString(), document.getText());
+      }
+    }
+
+    const memory = await this.memoryStore.load();
+    const repositoryId =
+      vscode.workspace.workspaceFolders?.[0]?.uri.toString() ?? "no-workspace";
+    this.dismissedEvidenceIds = new Set(
+      memory.dismissedEvidenceByRepository[repositoryId] ?? [],
+    );
+
+    this.disposables.push(
+      vscode.workspace.onDidOpenTextDocument((document) => {
+        if (isSupportedDocument(document)) {
+          this.previousTextByUri.set(document.uri.toString(), document.getText());
+        }
+      }),
+      vscode.workspace.onDidCloseTextDocument((document) => {
+        const key = document.uri.toString();
+        this.previousTextByUri.delete(key);
+        this.cancelRequest(key);
+      }),
+      vscode.workspace.onDidChangeTextDocument((event) => {
+        this.onDocumentChanged(event);
+      }),
+    );
+
+    await this.discoverCoexistence();
+    this.renderStatus();
+  }
+
+  public async reviewCurrentBlock(): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (editor === undefined || !isSupportedDocument(editor.document)) {
+      await vscode.window.showInformationMessage(
+        "Open a TypeScript or JavaScript editor to review the current block.",
+      );
+      return;
+    }
+
+    const range = normalizedSelectionRange(editor);
+    const evidence = diagnosticEvidenceForDocument(editor.document).find(
+      (candidate) => pairRangesOverlap(candidate.range, toPairRange(range)),
+    ) ?? {
+      id: `manual-review:${editor.document.uri.toString()}:${range.start.line}:${range.end.line}`,
+      kind: "diagnostic",
+      severity: "info",
+      title: "Current block review requested",
+      detail: `Review requested for lines ${range.start.line + 1}-${range.end.line + 1}. No source text was included.`,
+      source: "user-selection",
+      confidence: 1,
+      range: toPairRange(range),
+      references: ["selected range"],
+    };
+
+    await this.intervene(
+      editor.document,
+      evidence,
+      true,
+      PAIR_GOAL,
+    );
+  }
+
+  public async generate(
+    goal: string,
+    evidence: Evidence,
+    signal: AbortSignal,
+  ): Promise<ModelResponse> {
+    const requestController = new AbortController();
+    const cancelRequest = (): void => {
+      requestController.abort();
+    };
+    signal.addEventListener("abort", cancelRequest, { once: true });
+    if (signal.aborted) {
+      cancelRequest();
+    }
+    this.chatRequests.add(requestController);
+
+    try {
+      return await this.generateWithProvider(
+        {
+          goal,
+          evidence,
+          interactionStyle: "ask-first",
+        },
+        requestController.signal,
+        true,
+      );
+    } finally {
+      signal.removeEventListener("abort", cancelRequest);
+      this.chatRequests.delete(requestController);
+    }
+  }
+
+  private onDocumentChanged(event: vscode.TextDocumentChangeEvent): void {
+    const document = event.document;
+    if (!this.options.config.enabled || !isSupportedDocument(document)) {
+      return;
+    }
+
+    const key = document.uri.toString();
+    this.cancelRequest(key);
+    const currentText = document.getText();
+    const previousText = this.previousTextByUri.get(key);
+    this.previousTextByUri.set(key, currentText);
+    if (previousText === undefined || event.contentChanges.length === 0) {
+      return;
+    }
+
+    this.aggregator.record({
+      uri: key,
+      languageId: document.languageId,
+      previousText,
+      currentText,
+      version: document.version,
+      observedAt: Date.now(),
+    });
+  }
+
+  private async handleEpisode(episode: EditEpisode): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+
+    const document = vscode.workspace.textDocuments.find(
+      (candidate) => candidate.uri.toString() === episode.uri,
+    );
+    if (document === undefined || document.version !== episode.version) {
+      return;
+    }
+
+    const evidence = [
+      ...this.analyzer.analyze(episode),
+      ...diagnosticEvidenceForDocument(document),
+    ].filter((candidate) => !this.dismissedEvidenceIds.has(candidate.id));
+    const decision = this.policy.decide({
+      evidence,
+      style: this.options.config.interventionStyle,
+      now: Date.now(),
+      goal: PAIR_GOAL,
+    });
+    if (decision.kind === "quiet") {
+      return;
+    }
+
+    const selected = evidence.find(
+      (candidate) => candidate.id === decision.evidenceId,
+    );
+    if (selected === undefined) {
+      return;
+    }
+
+    if (!decision.useModel) {
+      this.renderIntervention(document, selected, decision.localMessage);
+      return;
+    }
+
+    await this.intervene(document, selected, false, PAIR_GOAL);
+  }
+
+  private async intervene(
+    document: vscode.TextDocument,
+    evidence: Evidence,
+    userInitiated: boolean,
+    goal: string,
+  ): Promise<void> {
+    const key = document.uri.toString();
+    this.cancelRequest(key);
+    const abortController = new AbortController();
+    this.requestByUri.set(key, abortController);
+    const expectedVersion = document.version;
+
+    try {
+      const response = await this.generateWithProvider(
+        {
+          goal,
+          evidence,
+          interactionStyle: "ask-first",
+        },
+        abortController.signal,
+        userInitiated,
+      );
+      if (
+        abortController.signal.aborted ||
+        document.version !== expectedVersion ||
+        this.requestByUri.get(key) !== abortController
+      ) {
+        return;
+      }
+      this.renderIntervention(document, evidence, response.text);
+    } catch (error: unknown) {
+      if (isAbortError(error)) {
+        return;
+      }
+      if (!(error instanceof Error)) {
+        throw error;
+      }
+      this.statusDetail = `model error: ${error.message}`;
+      this.renderStatus();
+      await vscode.window.showErrorMessage(
+        `Adaptive Pair model request failed: ${error.message}`,
+      );
+    } finally {
+      if (this.requestByUri.get(key) === abortController) {
+        this.requestByUri.delete(key);
+      }
+    }
+  }
+
+  private async generateWithProvider(
+    request: ModelRequest,
+    signal: AbortSignal,
+    userInitiated: boolean,
+  ): Promise<ModelResponse> {
+    const provider = this.options.config.provider;
+    if (provider === "local-template") {
+      return this.router.generate(provider, request, signal);
+    }
+
+    const admission = this.budget.tryReserve(
+      estimateOpenAICompatibleInputTokens(request, this.options.config.modelName),
+      Date.now(),
+    );
+    if (!admission.allowed) {
+      this.remainingBudget = {
+        calls:
+          admission.reason === "call-limit" ? 0 : this.remainingBudget.calls,
+        inputTokens:
+          admission.reason === "token-limit"
+            ? 0
+            : this.remainingBudget.inputTokens,
+      };
+      this.effectiveProvider = "local-template";
+      this.statusDetail = `remote ${admission.reason}; local-template fallback`;
+      this.publishSession();
+      this.renderStatus();
+      return this.router.generate("local-template", request, signal);
+    }
+
+    this.remainingBudget = {
+      calls: admission.remainingCalls,
+      inputTokens: admission.remainingInputTokens,
+    };
+    this.publishSession();
+
+    try {
+      const response =
+        provider === "vscode-copilot" && userInitiated
+          ? await this.copilotProvider.generateFromUserAction(request, signal)
+          : await this.router.generate(provider, request, signal);
+      this.effectiveProvider = provider;
+      this.statusDetail = this.options.config.statusWarning;
+      this.publishSession();
+      this.renderStatus();
+      return response;
+    } catch (error: unknown) {
+      return this.fallbackForUnavailableCopilot(error, request, signal);
+    }
+  }
+
+  private async fallbackForUnavailableCopilot(
+    error: unknown,
+    request: ModelRequest,
+    signal: AbortSignal,
+  ): Promise<ModelResponse> {
+    if (!(error instanceof CopilotModelUnavailableError)) {
+      throw error;
+    }
+    this.effectiveProvider = "local-template";
+    this.statusDetail = `Copilot unavailable (${error.reason}); local-template fallback`;
+    this.publishSession();
+    this.renderStatus();
+    return this.router.generate("local-template", request, signal);
+  }
+
+  private renderIntervention(
+    document: vscode.TextDocument,
+    evidence: Evidence,
+    question: string,
+  ): void {
+    this.inlineController.render(
+      document.uri,
+      safeRange(document, evidence.range),
+      question,
+      evidence,
+    );
+    this.options.sharedContext.publishEvidence({
+      uri: document.uri.toString(),
+      evidence,
+      question,
+    });
+  }
+
+  private cancelRequest(uri: string): void {
+    const existing = this.requestByUri.get(uri);
+    if (existing !== undefined) {
+      existing.abort();
+      this.requestByUri.delete(uri);
+    }
+  }
+
+  private async discoverCoexistence(): Promise<void> {
+    const workspaceUris = await vscode.workspace.findFiles(
+      "{AGENTS.md,**/AGENTS.md,docs/superpowers/plans/*-plan.md}",
+      "**/node_modules/**",
+      50,
+    );
+    const signals = discoverHarnessSignals({
+      extensionIds: vscode.extensions.all.map((extension) => extension.id),
+      workspacePaths: workspaceUris.map((uri) =>
+        vscode.workspace.asRelativePath(uri, false),
+      ),
+    });
+    if (signals.length === 0) {
+      return;
+    }
+
+    this.controlNotice = `${signals.map((signal) => signal.label).join(", ")}; observing only`;
+    this.publishSession();
+  }
+
+  private publishSession(): void {
+    const session: PairSessionSnapshot = {
+      goal: PAIR_GOAL,
+      role: "navigator",
+      provider: this.effectiveProvider,
+      remainingCalls: this.remainingBudget.calls,
+      remainingInputTokens: this.remainingBudget.inputTokens,
+      controlNotice: this.controlNotice,
+    };
+    this.options.sharedContext.updateSession(session);
+  }
+
+  private renderStatus(): void {
+    const details = [this.statusDetail, this.controlNotice].filter(
+      (detail): detail is string => detail !== undefined,
+    );
+    this.status.text = `$(hubot) Pair: You drive - Pair navigates${
+      details.length === 0 ? "" : ` · ${details.join(" · ")}`
+    }`;
+    this.status.tooltip =
+      "Adaptive Pair is navigator-only and does not edit files or run commands.";
+  }
+
+  public dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    for (const request of this.requestByUri.values()) {
+      request.abort();
+    }
+    this.requestByUri.clear();
+    for (const request of this.chatRequests) {
+      request.abort();
+    }
+    this.chatRequests.clear();
+    this.aggregator.dispose();
+    this.scheduler.dispose();
+    for (const disposable of this.disposables) {
+      disposable.dispose();
+    }
+    this.disposables.length = 0;
+    this.inlineController.dispose();
+    this.status.dispose();
+  }
+}
+
+const isSupportedDocument = (document: vscode.TextDocument): boolean =>
+  document.uri.scheme === "file" &&
+  SUPPORTED_LANGUAGE_IDS.has(document.languageId);
+
+const normalizedSelectionRange = (editor: vscode.TextEditor): vscode.Range => {
+  if (!editor.selection.isEmpty) {
+    return editor.selection;
+  }
+  return editor.document.lineAt(editor.selection.active.line).range;
+};
+
+const diagnosticEvidenceForDocument = (
+  document: vscode.TextDocument,
+): readonly Evidence[] =>
+  vscode.languages
+    .getDiagnostics(document.uri)
+    .slice(0, 20)
+    .map((diagnostic, index) => ({
+      id: `diagnostic:${document.uri.toString()}:${diagnostic.range.start.line}:${diagnostic.range.start.character}:${index}`,
+      kind: "diagnostic",
+      severity: diagnosticSeverity(diagnostic.severity),
+      title: "Editor diagnostic",
+      detail: diagnostic.message,
+      source: diagnostic.source ?? "vscode-diagnostics",
+      confidence: diagnostic.severity === vscode.DiagnosticSeverity.Error ? 0.97 : 0.82,
+      range: toPairRange(diagnostic.range),
+      references:
+        diagnostic.code === undefined ? [] : [String(diagnostic.code)],
+    }));
+
+const diagnosticSeverity = (
+  severity: vscode.DiagnosticSeverity,
+): Evidence["severity"] => {
+  switch (severity) {
+    case vscode.DiagnosticSeverity.Error:
+      return "error";
+    case vscode.DiagnosticSeverity.Warning:
+      return "warning";
+    default:
+      return "info";
+  }
+};
+
+const toPairRange = (range: vscode.Range): PairRange => ({
+  start: {
+    line: range.start.line,
+    character: range.start.character,
+  },
+  end: {
+    line: range.end.line,
+    character: range.end.character,
+  },
+});
+
+const pairRangesOverlap = (left: PairRange, right: PairRange): boolean => {
+  const leftStartsBeforeRightEnds =
+    left.start.line < right.end.line ||
+    (left.start.line === right.end.line &&
+      left.start.character <= right.end.character);
+  const rightStartsBeforeLeftEnds =
+    right.start.line < left.end.line ||
+    (right.start.line === left.end.line &&
+      right.start.character <= left.end.character);
+  return leftStartsBeforeRightEnds && rightStartsBeforeLeftEnds;
+};
+
+const safeRange = (
+  document: vscode.TextDocument,
+  range: PairRange,
+): vscode.Range => {
+  const lastLine = Math.max(0, document.lineCount - 1);
+  const startLine = Math.min(lastLine, Math.max(0, range.start.line));
+  const endLine = Math.min(lastLine, Math.max(startLine, range.end.line));
+  const startCharacter = Math.min(
+    document.lineAt(startLine).text.length,
+    Math.max(0, range.start.character),
+  );
+  const endCharacter = Math.min(
+    document.lineAt(endLine).text.length,
+    Math.max(endLine === startLine ? startCharacter : 0, range.end.character),
+  );
+  return new vscode.Range(
+    startLine,
+    startCharacter,
+    endLine,
+    endCharacter,
+  );
+};
+
+const isAbortError = (error: unknown): boolean =>
+  error instanceof DOMException && error.name === "AbortError";

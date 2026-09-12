@@ -21,7 +21,8 @@
     "onLanguage:javascriptreact",
     "onCommand:adaptivePair.toggle",
     "onCommand:adaptivePair.reviewCurrentBlock",
-    "onCommand:adaptivePair.setApiKey"
+    "onCommand:adaptivePair.setApiKey",
+    "onChatParticipant:adaptivePair.chat"
   ],
   "main": "./dist/src/extension.js",
   "contributes": {
@@ -37,6 +38,32 @@
       {
         "command": "adaptivePair.setApiKey",
         "title": "Adaptive Pair: Set OpenAI-Compatible API Key"
+      }
+    ],
+    "chatParticipants": [
+      {
+        "id": "adaptivePair.chat",
+        "name": "pair",
+        "fullName": "Adaptive Pair",
+        "description": "Discuss the latest evidence from the navigator-only Adaptive Pair session.",
+        "commands": [
+          {
+            "name": "explain",
+            "description": "Explain the current evidence and trade-off"
+          },
+          {
+            "name": "trace",
+            "description": "Describe relevant control and data flow"
+          },
+          {
+            "name": "session",
+            "description": "Show goal, role, provider, and remaining budget"
+          },
+          {
+            "name": "why",
+            "description": "Expand the latest inline question"
+          }
+        ]
       }
     ],
     "configuration": {
@@ -65,6 +92,7 @@
           "type": "string",
           "enum": [
             "local-template",
+            "vscode-copilot",
             "openai-compatible"
           ],
           "default": "local-template"
