@@ -93,11 +93,12 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
   public async generate(request: ModelRequest, signal: AbortSignal): Promise<ModelResponse> {
     signal.throwIfAborted();
+    const requestBody = buildOpenAICompatibleRequestBody(this.config.model, request);
 
     const response = await this.config.fetch(this.endpoint, {
       method: "POST",
       headers: buildHeaders(this.config.apiKey),
-      body: JSON.stringify(buildRequestBody(this.config.model, request)),
+      body: JSON.stringify(requestBody),
       signal,
     });
 
@@ -152,8 +153,26 @@ export const buildOpenAICompatiblePromptPayload = (
   stream: false,
 });
 
-export const estimateOpenAICompatibleInputTokens = (request: ModelRequest): number =>
-  estimateSerializedTokens(JSON.stringify(buildOpenAICompatiblePromptPayload(request)));
+export const buildOpenAICompatibleRequestBody = (
+  model: string,
+  request: ModelRequest,
+): ChatCompletionRequestBody => ({
+  model,
+  ...buildOpenAICompatiblePromptPayload(request),
+});
+
+export const estimateOpenAICompatibleInputTokens = (
+  requestOrBody: ModelRequest | ChatCompletionRequestBody,
+  model?: string,
+): number => {
+  const requestBody = isOpenAICompatibleRequestBody(requestOrBody)
+    ? requestOrBody
+    : model === undefined
+      ? buildOpenAICompatiblePromptPayload(requestOrBody)
+      : buildOpenAICompatibleRequestBody(model, requestOrBody);
+
+  return estimateSerializedTokens(JSON.stringify(requestBody));
+};
 
 const buildHeaders = (apiKey: string | undefined): HeadersInit => {
   if (apiKey === undefined) {
@@ -168,13 +187,13 @@ const buildHeaders = (apiKey: string | undefined): HeadersInit => {
   };
 };
 
-const buildRequestBody = (model: string, request: ModelRequest): ChatCompletionRequestBody => ({
-  model,
-  ...buildOpenAICompatiblePromptPayload(request),
-});
-
 const estimateSerializedTokens = (serializedPayload: string): number =>
   Math.max(1, Math.ceil(serializedPayload.length / 4));
+
+const isOpenAICompatibleRequestBody = (
+  request: ModelRequest | ChatCompletionRequestBody,
+): request is ChatCompletionRequestBody =>
+  "model" in request && "messages" in request && "stream" in request;
 
 const joinUrl = (baseUrl: URL, path: string): string => {
   const baseHref = baseUrl.href.endsWith("/") ? baseUrl.href : `${baseUrl.href}/`;

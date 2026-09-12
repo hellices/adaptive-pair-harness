@@ -42,6 +42,7 @@ const request: ModelRequest = {
 };
 
 const longGoal = "Ask a concise, evidence-backed question. ".repeat(8).trim();
+const longModel = "ultra-long-model-id-".repeat(10).slice(0, 120);
 
 class RecordingProvider implements ModelProvider {
   public readonly calls: Array<{
@@ -203,7 +204,7 @@ describe("model routing", () => {
     );
   });
 
-  it("does not call fetch when policy denies remote generation on token budget", async () => {
+  it("denies remote generation when a long model identifier pushes the serialized request over budget and prevents fetch", async () => {
     let fetchCalls = 0;
     const fetchImplementation: typeof fetch = async () => {
       fetchCalls += 1;
@@ -231,14 +232,15 @@ describe("model routing", () => {
     };
     const provider = new OpenAICompatibleProvider({
       baseUrl: new URL("http://localhost:11434/v1"),
-      model: "qwen2.5-coder:7b",
+      model: longModel,
       fetch: fetchImplementation,
     });
     const policy = new InterventionPolicy({
+      model: longModel,
       budget: new TokenBudget({
         windowMs: 60_000,
         maxCalls: 10,
-        maxInputTokens: 190,
+        maxInputTokens: 200,
       }),
       cooldownMs: 1_000,
     });

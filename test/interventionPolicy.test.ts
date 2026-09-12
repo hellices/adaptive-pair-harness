@@ -10,6 +10,7 @@ const sharedRange: PairRange = {
 
 const defaultGoal = "Ask a concise, evidence-backed question.";
 const longGoal = "Ask a concise, evidence-backed question. ".repeat(8).trim();
+const model = "qwen2.5-coder:7b";
 
 const createEvidence = (overrides: Partial<Evidence> = {}): Evidence => ({
   id: overrides.id ?? "evidence-default",
@@ -33,6 +34,7 @@ const createBudget = (): TokenBudget =>
 describe("InterventionPolicy", () => {
   it("asks about the highest-confidence new evidence", () => {
     const policy = new InterventionPolicy({
+      model,
       budget: createBudget(),
       cooldownMs: 1_000,
     });
@@ -64,6 +66,7 @@ describe("InterventionPolicy", () => {
 
   it("suppresses duplicate evidence during cooldown", () => {
     const policy = new InterventionPolicy({
+      model,
       budget: createBudget(),
       cooldownMs: 1_000,
     });
@@ -91,6 +94,7 @@ describe("InterventionPolicy", () => {
 
   it("reconsiders evidence after the cooldown expires", () => {
     const policy = new InterventionPolicy({
+      model,
       budget: createBudget(),
       cooldownMs: 1_000,
     });
@@ -119,6 +123,7 @@ describe("InterventionPolicy", () => {
 
   it("uses the configured style thresholds", () => {
     const exactThresholdPolicy = new InterventionPolicy({
+      model,
       budget: createBudget(),
       cooldownMs: 1_000,
     });
@@ -160,6 +165,7 @@ describe("InterventionPolicy", () => {
     });
 
     const belowThresholdPolicy = new InterventionPolicy({
+      model,
       budget: createBudget(),
       cooldownMs: 1_000,
     });
@@ -208,6 +214,7 @@ describe("InterventionPolicy", () => {
       maxInputTokens: 10_000,
     });
     const policy = new InterventionPolicy({
+      model,
       budget,
       cooldownMs: 1_000,
     });
@@ -239,6 +246,7 @@ describe("InterventionPolicy", () => {
       maxInputTokens: 190,
     });
     const policy = new InterventionPolicy({
+      model,
       budget,
       cooldownMs: 1_000,
     });

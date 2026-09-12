@@ -1,4 +1,5 @@
 import {
+  buildOpenAICompatibleRequestBody,
   createLocalInterventionQuestion,
   estimateOpenAICompatibleInputTokens,
 } from "./modelRouter";
@@ -27,6 +28,7 @@ export type PolicyDecision =
 export interface InterventionPolicyConfig {
   readonly budget?: TokenBudget;
   readonly cooldownMs?: number;
+  readonly model: string;
 }
 
 const STYLE_THRESHOLDS: Readonly<Record<InterventionStyle, number>> = {
@@ -41,10 +43,12 @@ export class InterventionPolicy {
   private readonly lastInterventionByEvidenceId = new Map<string, number>();
   private readonly budget: TokenBudget | undefined;
   private readonly cooldownMs: number;
+  private readonly model: string;
 
-  public constructor(config: InterventionPolicyConfig = {}) {
+  public constructor(config: InterventionPolicyConfig) {
     this.budget = config.budget;
     this.cooldownMs = config.cooldownMs ?? DEFAULT_COOLDOWN_MS;
+    this.model = config.model;
   }
 
   public decide(input: PolicyInput): PolicyDecision {
@@ -85,8 +89,9 @@ export class InterventionPolicy {
       evidence: selectedEvidence,
       interactionStyle: "ask-first",
     };
+    const requestBody = buildOpenAICompatibleRequestBody(this.model, remoteRequest);
     const reservation = this.budget?.tryReserve(
-      estimateOpenAICompatibleInputTokens(remoteRequest),
+      estimateOpenAICompatibleInputTokens(requestBody),
       input.now,
     );
 
