@@ -3,6 +3,10 @@ import type {
   ModelRequest,
   ModelResponse,
 } from "../core/modelRouter";
+import type {
+  TokenBudget,
+  TokenBudgetReservationId,
+} from "../core/tokenBudget";
 import {
   buildStructuredModelPrompt,
   createRemoteSafeModelRequest,
@@ -45,7 +49,10 @@ export type CopilotUnavailableReason =
   | "access-denied";
 
 export class CopilotModelUnavailableError extends Error {
-  public constructor(public readonly reason: CopilotUnavailableReason) {
+  public constructor(
+    public readonly reason: CopilotUnavailableReason,
+    public readonly requestMayHaveBeenSent = false,
+  ) {
     super(`GitHub Copilot model unavailable: ${reason}`);
     this.name = "CopilotModelUnavailableError";
   }
@@ -100,8 +107,9 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
         signal.throwIfAborted();
       }
 
-      const models = await this.callAndMapUnavailable(() =>
-        this.api.selectChatModels({ vendor: "copilot" }),
+      const models = await this.callAndMapUnavailable(
+        () => this.api.selectChatModels({ vendor: "copilot" }),
+        false,
       );
       signal.throwIfAborted();
       const model = models[0];
@@ -117,19 +125,22 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
       }
 
       const prompt = buildCopilotPrompt(request);
-      const text = await this.callAndMapUnavailable(async () => {
-        const stream = await this.api.sendRequest(
-          model,
-          prompt,
-          cancellation,
-        );
-        let streamedText = "";
-        for await (const fragment of stream) {
-          signal.throwIfAborted();
-          streamedText += fragment;
-        }
-        return streamedText;
-      });
+      const text = await this.callAndMapUnavailable(
+        async () => {
+          const stream = await this.api.sendRequest(
+            model,
+            prompt,
+            cancellation,
+          );
+          let streamedText = "";
+          for await (const fragment of stream) {
+            signal.throwIfAborted();
+            streamedText += fragment;
+          }
+          return streamedText;
+        },
+        true,
+      );
 
       if (text.trim().length === 0) {
         throw new CopilotModelResponseError();
@@ -148,15 +159,22 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
 
   private async callAndMapUnavailable<T>(
     operation: () => PromiseLike<T>,
+    requestMayHaveBeenSent: boolean,
   ): Promise<T> {
     try {
       return await operation();
     } catch (error: unknown) {
       switch (this.api.classifyError(error)) {
         case "no-permissions":
-          throw new CopilotModelUnavailableError("access-denied");
+          throw new CopilotModelUnavailableError(
+            "access-denied",
+            requestMayHaveBeenSent,
+          );
         case "not-found":
-          throw new CopilotModelUnavailableError("no-model");
+          throw new CopilotModelUnavailableError(
+            "no-model",
+            requestMayHaveBeenSent,
+          );
         case "blocked":
         case "cancelled":
         case "unknown":
@@ -165,6 +183,15 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
     }
   }
 }
+
+export const releaseUnusedCopilotReservation = (
+  budget: TokenBudget,
+  reservationId: TokenBudgetReservationId,
+  error: unknown,
+): boolean =>
+  error instanceof CopilotModelUnavailableError &&
+  !error.requestMayHaveBeenSent &&
+  budget.release(reservationId);
 
 const estimateTokens = (text: string): number =>
   Math.max(1, Math.ceil(text.length / 4));

@@ -5,13 +5,17 @@ export interface TokenBudgetConfig {
 }
 
 interface Reservation {
+  readonly id: number;
   readonly timestamp: number;
   readonly inputTokens: number;
 }
 
+export type TokenBudgetReservationId = number;
+
 export type BudgetDecision =
   | {
       readonly allowed: true;
+      readonly reservationId: TokenBudgetReservationId;
       readonly remainingCalls: number;
       readonly remainingInputTokens: number;
     }
@@ -28,6 +32,7 @@ export interface BudgetSnapshot {
 
 export class TokenBudget {
   private reservations: Reservation[] = [];
+  private nextReservationId = 1;
 
   public constructor(private readonly config: TokenBudgetConfig) {}
 
@@ -39,11 +44,17 @@ export class TokenBudget {
     const tokenLimitExceeded = currentTokens + inputTokens > this.config.maxInputTokens;
 
     if (!callLimitExceeded && !tokenLimitExceeded) {
-      this.reservations.push({ timestamp: now, inputTokens });
+      const reservationId = this.nextReservationId++;
+      this.reservations.push({
+        id: reservationId,
+        timestamp: now,
+        inputTokens,
+      });
       this.reservations.sort((left, right) => left.timestamp - right.timestamp);
 
       return {
         allowed: true,
+        reservationId,
         remainingCalls: this.config.maxCalls - this.reservations.length,
         remainingInputTokens: this.config.maxInputTokens - (currentTokens + inputTokens),
       };
@@ -65,6 +76,17 @@ export class TokenBudget {
       reason: "token-limit",
       retryAfterMs: tokenRetryAfter,
     };
+  }
+
+  public release(reservationId: TokenBudgetReservationId): boolean {
+    const index = this.reservations.findIndex(
+      (reservation) => reservation.id === reservationId,
+    );
+    if (index < 0) {
+      return false;
+    }
+    this.reservations.splice(index, 1);
+    return true;
   }
 
   public snapshot(now: number): BudgetSnapshot {

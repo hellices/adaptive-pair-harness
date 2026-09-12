@@ -5,6 +5,16 @@ import {
   createPairSessionCommandHandlers,
 } from "../src/vscode/pairRuntimeSupport";
 
+const deferred = <T>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
+
 describe("explicit pair session lifecycle", () => {
   it("stays dormant until start and clears every transient resource on stop", async () => {
     const listener = { dispose: vi.fn() };
@@ -74,6 +84,78 @@ describe("explicit pair session lifecycle", () => {
     expect(ports.clearTransientState).toHaveBeenCalledOnce();
   });
 
+  it("starts a new generation immediately after stopping a pending start", async () => {
+    const firstPreparation = deferred<void>();
+    const secondPreparation = deferred<void>();
+    const listener = { dispose: vi.fn() };
+    const ports = {
+      prepare: vi
+        .fn<() => Promise<void>>()
+        .mockImplementationOnce(() => firstPreparation.promise)
+        .mockImplementationOnce(() => secondPreparation.promise),
+      registerDocumentListeners: vi.fn(() => listener),
+      cancelPendingWork: vi.fn(),
+      clearTransientState: vi.fn(),
+    };
+    const lifecycle = new PairSessionLifecycle(() => true, ports);
+
+    const firstStart = lifecycle.start();
+    lifecycle.stop();
+    const secondStart = lifecycle.start();
+
+    expect(ports.prepare).toHaveBeenCalledTimes(2);
+    firstPreparation.resolve();
+    await expect(firstStart).resolves.toMatchObject({
+      kind: "already-stopped",
+      active: false,
+    });
+    expect(lifecycle.active).toBe(false);
+
+    secondPreparation.resolve();
+    await expect(secondStart).resolves.toMatchObject({
+      kind: "started",
+      active: true,
+    });
+    expect(ports.registerDocumentListeners).toHaveBeenCalledOnce();
+  });
+
+  it("does not let an old start completion deactivate a newer active generation", async () => {
+    const firstPreparation = deferred<void>();
+    const secondPreparation = deferred<void>();
+    const listener = { dispose: vi.fn() };
+    const ports = {
+      prepare: vi
+        .fn<() => Promise<void>>()
+        .mockImplementationOnce(() => firstPreparation.promise)
+        .mockImplementationOnce(() => secondPreparation.promise),
+      registerDocumentListeners: vi.fn(() => listener),
+      cancelPendingWork: vi.fn(),
+      clearTransientState: vi.fn(),
+    };
+    const lifecycle = new PairSessionLifecycle(() => true, ports);
+
+    const firstStart = lifecycle.start();
+    lifecycle.stop();
+    const secondStart = lifecycle.start();
+    expect(ports.prepare).toHaveBeenCalledTimes(2);
+
+    secondPreparation.resolve();
+    await expect(secondStart).resolves.toMatchObject({
+      kind: "started",
+      active: true,
+    });
+    firstPreparation.resolve();
+    await expect(firstStart).resolves.toMatchObject({
+      kind: "already-stopped",
+      active: false,
+    });
+
+    expect(lifecycle.active).toBe(true);
+    expect(listener.dispose).not.toHaveBeenCalled();
+    expect(ports.cancelPendingWork).toHaveBeenCalledOnce();
+    expect(ports.clearTransientState).toHaveBeenCalledOnce();
+  });
+
   it("wires public start, stop, and toggle handlers to the active runtime", async () => {
     let active = false;
     const messages: string[] = [];
@@ -110,6 +192,12 @@ describe("explicit pair session lifecycle", () => {
       readFileSync("package.json", "utf8"),
     ) as {
       activationEvents: string[];
+      engines: {
+        vscode: string;
+      };
+      devDependencies: {
+        "@types/vscode": string;
+      };
       contributes: {
         commands: Array<{ command: string }>;
         chatParticipants: Array<{
@@ -144,5 +232,7 @@ describe("explicit pair session lifecycle", () => {
         expect.objectContaining({ command: "adaptivePair.toggle" }),
       ]),
     );
+    expect(manifest.engines.vscode).toBe("^1.136.0");
+    expect(manifest.devDependencies["@types/vscode"]).toBe("^1.136.0");
   });
 });

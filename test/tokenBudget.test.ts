@@ -89,4 +89,29 @@ describe("TokenBudget", () => {
       remainingInputTokens: 100,
     });
   });
+
+  it("releases only the exact unused reservation", () => {
+    const budget = new TokenBudget({
+      windowMs: 1_000,
+      maxCalls: 2,
+      maxInputTokens: 100,
+    });
+    const first = budget.tryReserve(40, 0);
+    const second = budget.tryReserve(40, 0);
+    if (!first.allowed || !second.allowed) {
+      throw new Error("Expected both reservations to be admitted.");
+    }
+
+    expect(budget.release(first.reservationId)).toBe(true);
+    expect(budget.release(first.reservationId)).toBe(false);
+    expect(budget.snapshot(1)).toEqual({
+      remainingCalls: 1,
+      remainingInputTokens: 60,
+    });
+    expect(budget.tryReserve(60, 1).allowed).toBe(true);
+    expect(budget.tryReserve(1, 1)).toMatchObject({
+      allowed: false,
+      reason: "call-limit",
+    });
+  });
 });

@@ -8,11 +8,15 @@ import {
   type ModelSymbolContext,
 } from "../core/modelRouter";
 import type { Evidence, PairRange } from "../core/types";
-import type { PairSessionControlPort } from "./pairRuntimeSupport";
+import type {
+  PairDisposable,
+  PairSessionControlPort,
+} from "./pairRuntimeSupport";
 
 export interface PairSessionSnapshot {
   readonly enabled: boolean;
   readonly active: boolean;
+  readonly generation: number;
   readonly goal: string;
   readonly role: "navigator";
   readonly provider: PairProvider;
@@ -35,8 +39,18 @@ export interface PairContextSnapshot {
 
 export class PairSharedContext {
   private latest: PairPublishedEvidence | undefined;
+  private session: PairSessionSnapshot;
 
-  public constructor(private session: PairSessionSnapshot) {}
+  public constructor(
+    session: Omit<PairSessionSnapshot, "generation"> & {
+      readonly generation?: number;
+    },
+  ) {
+    this.session = {
+      ...session,
+      generation: session.generation ?? 0,
+    };
+  }
 
   public updateSession(session: PairSessionSnapshot): void {
     this.session = session;
@@ -199,6 +213,9 @@ const NO_SYMBOL_CONTEXT: PairSymbolContextProvider = {
 export interface PairChatParticipantOptions {
   readonly symbolContextProvider?: PairSymbolContextProvider;
   readonly sessionControl?: PairSessionControlPort;
+  readonly requestLifecycle?: {
+    register(uri: string, request: AbortController): PairDisposable;
+  };
   readonly isOfficialCancellationError?: (error: unknown) => boolean;
 }
 
@@ -220,6 +237,7 @@ export const registerPairChatParticipant = (
     token,
   ) => {
     const abortController = new AbortController();
+    let traceRegistration: PairDisposable | undefined;
     if (token.isCancellationRequested) {
       abortController.abort();
     }
@@ -248,18 +266,65 @@ export const registerPairChatParticipant = (
         return;
       }
 
-      const snapshot = context.snapshot();
+      let snapshot = context.snapshot();
       const symbol =
         request.command === "trace" &&
         snapshot.session.enabled &&
         snapshot.session.active &&
         snapshot.latest !== undefined
-          ? await symbolContextProvider.forEvidence(
-              snapshot.latest.uri,
-              snapshot.latest.evidence.range,
-              abortController.signal,
-            )
+          ? await (async (): Promise<ModelSymbolContext | undefined> => {
+              const traceGeneration = snapshot.session.generation;
+              const traceUri = snapshot.latest!.uri;
+              const traceRange = snapshot.latest!.evidence.range;
+              traceRegistration = options.requestLifecycle?.register(
+                traceUri,
+                abortController,
+              );
+              if (abortController.signal.aborted) {
+                return undefined;
+              }
+              const resolved = await symbolContextProvider.forEvidence(
+                traceUri,
+                traceRange,
+                abortController.signal,
+              );
+              if (abortController.signal.aborted) {
+                return undefined;
+              }
+              const current = context.snapshot();
+              if (
+                !current.session.enabled ||
+                !current.session.active ||
+                current.session.generation !== traceGeneration ||
+                current.latest?.uri !== traceUri ||
+                !pairRangesEqual(current.latest.evidence.range, traceRange)
+              ) {
+                return undefined;
+              }
+              snapshot = current;
+              return resolved;
+            })()
           : undefined;
+      if (abortController.signal.aborted) {
+        return;
+      }
+      if (request.command === "trace" && symbol === undefined) {
+        const current = context.snapshot();
+        if (
+          !current.session.enabled ||
+          !current.session.active ||
+          current.session.generation !== snapshot.session.generation ||
+          current.latest?.uri !== snapshot.latest?.uri ||
+          (current.latest !== undefined &&
+            snapshot.latest !== undefined &&
+            !pairRangesEqual(
+              current.latest.evidence.range,
+              snapshot.latest.evidence.range,
+            ))
+        ) {
+          return;
+        }
+      }
       const plan = buildPairChatPlan(request.command, snapshot, {
         prompt: request.prompt,
         ...(symbol === undefined ? {} : { symbol }),
@@ -293,9 +358,16 @@ export const registerPairChatParticipant = (
         },
       };
     } finally {
+      traceRegistration?.dispose();
       cancellationListener.dispose();
     }
   };
 
   return register("adaptivePair.chat", handler);
 };
+
+const pairRangesEqual = (left: PairRange, right: PairRange): boolean =>
+  left.start.line === right.start.line &&
+  left.start.character === right.start.character &&
+  left.end.line === right.end.line &&
+  left.end.character === right.end.character;

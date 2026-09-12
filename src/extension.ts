@@ -21,6 +21,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const sharedContext = new PairSharedContext({
     enabled: true,
     active: false,
+    generation: 0,
     goal: "Navigate with concise, evidence-backed, ask-first questions.",
     role: "navigator",
     provider: "local-template",
@@ -124,6 +125,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             };
           }
           return activeRuntime.stopSession();
+        },
+      },
+      requestLifecycle: {
+        register: (uri, request) => {
+          const activeRuntime = runtime;
+          if (activeRuntime === undefined) {
+            request.abort();
+            return { dispose: () => undefined };
+          }
+          return activeRuntime.registerChatRequest(uri, request);
         },
       },
       isOfficialCancellationError: isOfficialVsCodeCancellationError,

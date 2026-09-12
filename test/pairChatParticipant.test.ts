@@ -7,6 +7,14 @@ import {
 import type { Evidence } from "../src/core/types";
 import type * as vscode from "vscode";
 
+const deferred = <T>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+};
+
 const evidence: Evidence = {
   id: "dependency:repository",
   kind: "new-dependency",
@@ -488,6 +496,105 @@ describe("pair chat planning", () => {
       expect.any(AbortSignal),
     );
     expect(generate).toHaveBeenCalledOnce();
+  });
+
+  it("invalidates deferred trace resolution across stop and restart", async () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      generation: 1,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "vscode-copilot",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    context.publishEvidence({
+      uri: "file:///workspace/evidence.ts",
+      evidence,
+      question: "Did you intend this dependency?",
+    });
+    const symbolResolution = deferred<{
+      name: string;
+      kind: string;
+      range: Evidence["range"];
+    }>();
+    const registered = new Map<string, AbortController>();
+    const register = vi.fn((uri: string, request: AbortController) => {
+      registered.set(uri, request);
+      return {
+        dispose: () => {
+          if (registered.get(uri) === request) {
+            registered.delete(uri);
+          }
+        },
+      };
+    });
+    let handler: vscode.ChatRequestHandler | undefined;
+    const generate = vi.fn(async () => ({
+      text: "stale trace",
+      inputTokens: 1,
+      outputTokens: 1,
+    }));
+    registerPairChatParticipant(
+      (_id, registeredHandler) => {
+        handler = registeredHandler;
+        return { dispose: () => undefined } as vscode.ChatParticipant;
+      },
+      context,
+      { generate },
+      {
+        symbolContextProvider: {
+          forEvidence: vi.fn(() => symbolResolution.promise),
+        },
+        requestLifecycle: { register },
+      },
+    );
+
+    const pendingTrace = handler!(
+      { command: "trace", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      { markdown: () => undefined } as unknown as vscode.ChatResponseStream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      } as vscode.CancellationToken,
+    );
+    expect(register).toHaveBeenCalledWith(
+      "file:///workspace/evidence.ts",
+      expect.any(AbortController),
+    );
+
+    for (const request of registered.values()) {
+      request.abort();
+    }
+    context.clearEvidence();
+    context.updateSession({
+      ...context.snapshot().session,
+      active: false,
+      generation: 2,
+    });
+    context.updateSession({
+      ...context.snapshot().session,
+      active: true,
+      generation: 3,
+    });
+    context.publishEvidence({
+      uri: "file:///workspace/evidence.ts",
+      evidence,
+      question: "New session evidence",
+    });
+    symbolResolution.resolve({
+      name: "loadRepository",
+      kind: "Function",
+      range: evidence.range,
+    });
+    await pendingTrace;
+
+    expect(generate).not.toHaveBeenCalled();
+    expect(registered.size).toBe(0);
   });
 
   it.each(["AbortError", "Canceled", "CancellationError"])(

@@ -27,7 +27,12 @@ export interface PairSessionActionResult {
 export class PairSessionLifecycle {
   private listener: PairDisposable | undefined;
   private generation = 0;
-  private startPromise: Promise<PairSessionActionResult> | undefined;
+  private pendingStart:
+    | {
+        readonly generation: number;
+        readonly promise: Promise<PairSessionActionResult>;
+      }
+    | undefined;
   private isDisposed = false;
   private isActive = false;
 
@@ -38,6 +43,10 @@ export class PairSessionLifecycle {
 
   public get active(): boolean {
     return this.isActive;
+  }
+
+  public get sessionGeneration(): number {
+    return this.generation;
   }
 
   public start(): Promise<PairSessionActionResult> {
@@ -63,25 +72,27 @@ export class PairSessionLifecycle {
         message: "Adaptive Pair session is already active.",
       });
     }
-    if (this.startPromise !== undefined) {
-      return this.startPromise;
+    if (this.pendingStart?.generation === this.generation) {
+      return this.pendingStart.promise;
     }
 
     const generation = ++this.generation;
-    const start = this.startOnce(generation);
-    this.startPromise = start;
+    const promise = this.startOnce(generation);
+    const pendingStart = { generation, promise };
+    this.pendingStart = pendingStart;
     const clearStart = (): void => {
-      if (this.startPromise === start) {
-        this.startPromise = undefined;
+      if (this.pendingStart === pendingStart) {
+        this.pendingStart = undefined;
       }
     };
-    void start.then(clearStart, clearStart);
-    return start;
+    void promise.then(clearStart, clearStart);
+    return promise;
   }
 
   public stop(): PairSessionActionResult {
-    const wasActive = this.isActive || this.startPromise !== undefined;
+    const wasActive = this.isActive || this.pendingStart !== undefined;
     this.generation += 1;
+    this.pendingStart = undefined;
     this.isActive = false;
     this.listener?.dispose();
     this.listener = undefined;
@@ -110,15 +121,20 @@ export class PairSessionLifecycle {
     try {
       await this.ports.prepare();
     } catch (error: unknown) {
-      this.ports.cancelPendingWork();
-      this.ports.clearTransientState();
+      if (generation === this.generation) {
+        this.ports.cancelPendingWork();
+        this.ports.clearTransientState();
+      }
       throw error;
     }
-    if (
-      this.isDisposed ||
-      generation !== this.generation ||
-      !this.isEnabled()
-    ) {
+    if (this.isDisposed || generation !== this.generation) {
+      return {
+        kind: "already-stopped",
+        active: false,
+        message: "Adaptive Pair session remained stopped.",
+      };
+    }
+    if (!this.isEnabled()) {
       this.ports.cancelPendingWork();
       this.ports.clearTransientState();
       return {

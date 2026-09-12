@@ -33,6 +33,7 @@ import type {
 import {
   CopilotModelUnavailableError,
   VsCodeLanguageModelProvider,
+  releaseUnusedCopilotReservation,
 } from "./vsCodeLanguageModelProvider";
 import type { VsCodeLanguageModelApi } from "./vsCodeLanguageModelProvider";
 import {
@@ -220,13 +221,30 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
 
   public async startSession(): Promise<PairSessionActionResult> {
     const result = await this.sessionLifecycle.start();
-    this.invocationGate.setActive(result.active);
-    this.statusDetail = result.active
+    const active = this.sessionLifecycle.active;
+    this.invocationGate.setActive(active);
+    this.statusDetail = active
       ? this.options.config.statusWarning
       : this.inactiveStatusDetail();
     this.publishSession();
     this.renderStatus();
     return result;
+  }
+
+  public registerChatRequest(
+    uri: string,
+    request: AbortController,
+  ): vscode.Disposable {
+    if (this.disposed || !this.sessionLifecycle.active) {
+      request.abort();
+      return { dispose: () => undefined };
+    }
+    this.chatRequests.add(uri, request);
+    return {
+      dispose: () => {
+        this.chatRequests.remove(uri, request);
+      },
+    };
   }
 
   public stopSession(): PairSessionActionResult {
@@ -564,7 +582,12 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       this.renderStatus();
       return response;
     } catch (error: unknown) {
-      return this.fallbackForUnavailableCopilot(error, request, signal);
+      return this.fallbackForUnavailableCopilot(
+        error,
+        request,
+        signal,
+        admission.reservationId,
+      );
     }
   }
 
@@ -572,10 +595,12 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     error: unknown,
     request: ModelRequest,
     signal: AbortSignal,
+    reservationId: number,
   ): Promise<ModelResponse> {
     if (!(error instanceof CopilotModelUnavailableError)) {
       throw error;
     }
+    releaseUnusedCopilotReservation(this.budget, reservationId, error);
     this.effectiveProvider = "local-template";
     this.statusDetail = `Copilot unavailable (${error.reason}); local-template fallback`;
     this.publishSession();
@@ -670,6 +695,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     const session: PairSessionSnapshot = {
       enabled: this.invocationGate.enabled,
       active: this.invocationGate.sessionActive,
+      generation: this.sessionLifecycle.sessionGeneration,
       goal: PAIR_GOAL,
       role: "navigator",
       provider: this.effectiveProvider,
