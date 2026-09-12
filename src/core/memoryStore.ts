@@ -57,6 +57,8 @@ const EMPTY_MEMORY: StoredPairMemory = Object.freeze({
   approvedEvidence: Object.freeze([]),
 });
 
+const mutationQueues = new WeakMap<KeyValueStore, Promise<void>>();
+
 export class InvalidPairMemoryError extends Error {
   public constructor(message: string) {
     super(message);
@@ -249,8 +251,6 @@ function validateStoredMemory(value: unknown): StoredPairMemory {
 export class PairMemoryStore {
   private readonly memoryKey = MEMORY_KEY;
 
-  private mutationQueue: Promise<void> = Promise.resolve();
-
   public constructor(private readonly options: PairMemoryStoreOptions) {}
 
   public async load(): Promise<PairMemory> {
@@ -343,15 +343,19 @@ export class PairMemoryStore {
   private async enqueueMutation(
     mutate: (stored: StoredPairMemory) => StoredPairMemory | Promise<StoredPairMemory>,
   ): Promise<void> {
-    const mutation = this.mutationQueue.catch(() => undefined).then(async () => {
+    const previousMutation = mutationQueues.get(this.options.store) ?? Promise.resolve();
+    const mutation = previousMutation.catch(() => undefined).then(async () => {
       const stored = await this.loadStoredMemory();
       const next = await mutate(stored);
       await this.saveStoredMemory(next);
     });
 
-    this.mutationQueue = mutation.then(
-      () => undefined,
-      () => undefined,
+    mutationQueues.set(
+      this.options.store,
+      mutation.then(
+        () => undefined,
+        () => undefined,
+      ),
     );
 
     return mutation;

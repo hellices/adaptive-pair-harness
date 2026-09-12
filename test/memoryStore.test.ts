@@ -192,6 +192,49 @@ describe("PairMemoryStore", () => {
     });
   });
 
+  it("serializes concurrent mutations across store instances that share the same adapter", async () => {
+    const store = new ControlledUpdateKeyValueStore();
+    const memoryStoreA = new PairMemoryStore({
+      store,
+      repositoryId: repositoryA,
+    });
+    const memoryStoreB = new PairMemoryStore({
+      store,
+      repositoryId: repositoryB,
+    });
+
+    const updatePreferences = memoryStoreA.updatePreferences({
+      interventionStyle: "active",
+    });
+    const dismissEvidence = memoryStoreB.dismissEvidence(evidence.id);
+
+    await vi.waitFor(() => {
+      expect(store.updateCallCount).toBeGreaterThanOrEqual(1);
+    });
+    store.releaseUpdate(0);
+
+    await vi.waitFor(() => {
+      expect(store.updateCallCount).toBeGreaterThanOrEqual(2);
+    });
+    store.releaseUpdate(1);
+
+    await Promise.all([updatePreferences, dismissEvidence]);
+
+    await expect(memoryStoreA.load()).resolves.toMatchObject({
+      preferences: {
+        interventionStyle: "active",
+      },
+    });
+    await expect(memoryStoreB.load()).resolves.toMatchObject({
+      preferences: {
+        interventionStyle: "active",
+      },
+      dismissedEvidenceByRepository: {
+        [repositoryB]: [evidence.id],
+      },
+    });
+  });
+
   it("allows later valid mutations after an earlier write failure", async () => {
     const store = new FailingUpdateKeyValueStore(1);
     const memoryStore = new PairMemoryStore({
