@@ -483,24 +483,30 @@ const createSymbolContextProvider = (): PairSymbolContextProvider => ({
     if (symbols === undefined) {
       return undefined;
     }
-    return findCurrentSymbol(
-      symbols,
-      document.uri,
-      evidencePosition(document, range),
-    );
+    const evidence = evidenceRange(document, range);
+    return findCurrentSymbol(symbols, document.uri, evidence.start, evidence.end);
   },
 });
 
-const evidencePosition = (
+const evidenceRange = (
   document: vscode.TextDocument,
   range: PairRange,
+): vscode.Range =>
+  new vscode.Range(
+    evidencePosition(document, range.start),
+    evidencePosition(document, range.end),
+  );
+
+const evidencePosition = (
+  document: vscode.TextDocument,
+  position: PairRange["start"],
 ): vscode.Position => {
   const line = Math.min(
-    Math.max(range.start.line, 0),
+    Math.max(position.line, 0),
     Math.max(document.lineCount - 1, 0),
   );
   const character = Math.min(
-    Math.max(range.start.character, 0),
+    Math.max(position.character, 0),
     document.lineAt(line).text.length,
   );
   return new vscode.Position(line, character);

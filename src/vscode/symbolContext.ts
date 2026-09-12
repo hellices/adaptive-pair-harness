@@ -4,7 +4,8 @@ import type { ModelSymbolContext } from "../core/modelRouter";
 export const findCurrentSymbol = (
   symbols: readonly (vscode.DocumentSymbol | vscode.SymbolInformation)[],
   documentUri: vscode.Uri,
-  position: vscode.Position,
+  evidenceStart: vscode.Position,
+  evidenceEnd: vscode.Position,
 ): ModelSymbolContext | undefined => {
   const candidates: Array<{
     readonly name: string;
@@ -13,7 +14,7 @@ export const findCurrentSymbol = (
   }> = [];
 
   const collectDocumentSymbol = (symbol: vscode.DocumentSymbol): void => {
-    if (!symbol.range.contains(position)) {
+    if (!containsEvidence(symbol.range, evidenceStart, evidenceEnd)) {
       return;
     }
     candidates.push(symbol);
@@ -27,7 +28,7 @@ export const findCurrentSymbol = (
       collectDocumentSymbol(symbol);
     } else if (
       symbol.location.uri.toString() === documentUri.toString() &&
-      symbol.location.range.contains(position)
+      containsEvidence(symbol.location.range, evidenceStart, evidenceEnd)
     ) {
       candidates.push({
         name: symbol.name,
@@ -65,6 +66,12 @@ export const findCurrentSymbol = (
     },
   };
 };
+
+const containsEvidence = (
+  range: vscode.Range,
+  start: vscode.Position,
+  end: vscode.Position,
+): boolean => range.contains(start) && range.contains(end);
 
 const compareSymbolSpecificity = (
   left: { readonly name: string; readonly range: vscode.Range },

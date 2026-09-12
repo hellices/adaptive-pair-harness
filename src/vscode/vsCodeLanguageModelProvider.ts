@@ -128,12 +128,16 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
       { userInitiated },
     );
     try {
+      signal.throwIfAborted();
       let previousUnavailable: CopilotModelUnavailableError | undefined;
       for (;;) {
         const dispatch = await candidates.next(previousUnavailable);
+        signal.throwIfAborted();
         previousUnavailable = undefined;
         try {
-          return await dispatch.send();
+          const response = await dispatch.send();
+          signal.throwIfAborted();
+          return response;
         } catch (error: unknown) {
           if (!(error instanceof CopilotModelUnavailableError)) {
             throw error;
@@ -158,7 +162,9 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
       { userInitiated },
     );
     try {
+      signal.throwIfAborted();
       const dispatch = await candidates.next();
+      signal.throwIfAborted();
       return {
         inputTokens: dispatch.inputTokens,
         send: dispatch.send,
@@ -199,6 +205,7 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
       const models = await this.callAndMapUnavailable(
         () => this.api.selectChatModels({ vendor: "copilot" }),
         false,
+        signal,
       );
       signal.throwIfAborted();
       const prompt = buildCopilotPrompt(request);
@@ -237,9 +244,11 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
                 await this.callAndMapUnavailable(
                   () => this.api.countTokens(model, prompt, cancellation),
                   false,
+                  signal,
                 ),
               );
             } catch (error: unknown) {
+              signal.throwIfAborted();
               if (!(error instanceof CopilotModelUnavailableError)) {
                 throw error;
               }
@@ -290,6 +299,7 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
           cancellation,
           maxOutputTokens,
         );
+        signal.throwIfAborted();
         let streamedText = "";
         let observedOutputTokens = 0;
         for await (const fragment of stream) {
@@ -298,9 +308,13 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
             continue;
           }
           const candidate = streamedText + fragment;
-          const candidateTokens = normalizeTokenCount(
-            await this.api.countTokens(model, candidate, cancellation),
+          const countedCandidateTokens = await this.api.countTokens(
+            model,
+            candidate,
+            cancellation,
           );
+          signal.throwIfAborted();
+          const candidateTokens = normalizeTokenCount(countedCandidateTokens);
           observedOutputTokens = Math.max(
             observedOutputTokens,
             candidateTokens,
@@ -316,13 +330,13 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
 
           for (const character of fragment) {
             const prefixCandidate = streamedText + character;
-            const prefixTokens = normalizeTokenCount(
-              await this.api.countTokens(
-                model,
-                prefixCandidate,
-                cancellation,
-              ),
+            const countedPrefixTokens = await this.api.countTokens(
+              model,
+              prefixCandidate,
+              cancellation,
             );
+            signal.throwIfAborted();
+            const prefixTokens = normalizeTokenCount(countedPrefixTokens);
             if (prefixTokens > maxOutputTokens) {
               break;
             }
@@ -331,15 +345,18 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
           cancellation.cancel();
           break;
         }
+        signal.throwIfAborted();
         return { streamedText, observedOutputTokens };
       },
       true,
+      signal,
     );
 
     if (text.streamedText.trim().length === 0) {
       throw new CopilotModelResponseError();
     }
 
+    signal.throwIfAborted();
     return {
       text: text.streamedText,
       inputTokens,
@@ -350,9 +367,11 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
   private async callAndMapUnavailable<T>(
     operation: () => PromiseLike<T>,
     requestMayHaveBeenSent: boolean,
+    signal: AbortSignal,
   ): Promise<T> {
+    let result: T;
     try {
-      return await operation();
+      result = await operation();
     } catch (error: unknown) {
       switch (this.api.classifyError(error)) {
         case "no-permissions":
@@ -371,6 +390,8 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
           throw error;
       }
     }
+    signal.throwIfAborted();
+    return result;
   }
 }
 

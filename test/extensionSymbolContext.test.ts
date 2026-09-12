@@ -91,7 +91,9 @@ describe("document symbol context", () => {
       children: [innermost, middle],
     } as unknown as vscode.DocumentSymbol;
 
-    expect(findCurrentSymbol([outer], documentUri, position)).toMatchObject({
+    expect(
+      findCurrentSymbol([outer], documentUri, position, position),
+    ).toMatchObject({
       name: "innermost",
       kind: "Function",
       range: {
@@ -120,6 +122,7 @@ describe("document symbol context", () => {
         ],
         documentUri,
         position,
+        position,
       ),
     ).toMatchObject({
       name: "innermost",
@@ -129,4 +132,53 @@ describe("document symbol context", () => {
       },
     });
   });
+
+  it.each([
+    ["DocumentSymbol first", false],
+    ["SymbolInformation first", true],
+  ])(
+    "requires both evidence endpoints and remains deterministic with %s",
+    (_label, flatFirst) => {
+      const inner = {
+        name: "start-only-inner",
+        kind: 11,
+        range: range(5, 4, 5, 9),
+        selectionRange: range(5, 4, 5, 9),
+        children: [],
+      } as unknown as vscode.DocumentSymbol;
+      const outer = {
+        name: "outer",
+        kind: 11,
+        range: range(0, 0, 20, 0),
+        selectionRange: range(0, 0, 0, 5),
+        children: [inner],
+      } as unknown as vscode.DocumentSymbol;
+      const smallestContaining = {
+        name: "complete-evidence",
+        kind: 5,
+        location: {
+          uri: documentUri,
+          range: range(4, 0, 7, 0),
+        },
+      } as vscode.SymbolInformation;
+      const symbols = flatFirst
+        ? [smallestContaining, outer]
+        : [outer, smallestContaining];
+
+      expect(
+        findCurrentSymbol(
+          symbols,
+          documentUri,
+          position,
+          { line: 6, character: 2 } as vscode.Position,
+        ),
+      ).toMatchObject({
+        name: "complete-evidence",
+        range: {
+          start: { line: 4, character: 0 },
+          end: { line: 7, character: 0 },
+        },
+      });
+    },
+  );
 });

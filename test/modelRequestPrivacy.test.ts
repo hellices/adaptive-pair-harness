@@ -306,6 +306,60 @@ describe("remote model request privacy", () => {
     }
   });
 
+  it.each([
+    [
+      "a comma-delimited POSIX path",
+      "foo,/Users/alice/private.ts",
+      /^foo,\[local-resource:[a-f0-9]{16}\]$/u,
+    ],
+    [
+      "an unquoted POSIX path with spaces",
+      "Review /Users/alice/My Project/private.ts",
+      /^Review \[local-resource:[a-f0-9]{16}\]$/u,
+    ],
+    [
+      "an unquoted POSIX filename with multiple spaces",
+      "Review /Users/alice/My Private File.ts",
+      /^Review \[local-resource:[a-f0-9]{16}\]$/u,
+    ],
+    [
+      "a lowercase unquoted POSIX filename with multiple spaces",
+      "Review /Users/alice/my private file.ts",
+      /^Review \[local-resource:[a-f0-9]{16}\]$/u,
+    ],
+    [
+      "a comma-delimited Windows path with spaces",
+      "foo,C:\\Users\\Alice Smith\\Project\\private.ts",
+      /^foo,\[local-resource:[a-f0-9]{16}\]$/u,
+    ],
+    [
+      "a comma-delimited file URI with spaces",
+      "foo,file:///Users/alice/My Project/private.ts",
+      /^foo,\[local-resource:[a-f0-9]{16}\]$/u,
+    ],
+    [
+      "a comma-delimited vscode-remote URI with spaces",
+      "foo,vscode-remote://ssh-remote+host/home/alice/My Project/private.ts",
+      /^foo,\[local-resource:[a-f0-9]{16}\]$/u,
+    ],
+  ])("projects %s as one complete sensitive value", (_label, text, expected) => {
+    const prepared = prepareRemoteModelRequest(requestContaining(text));
+
+    expect(prepared.sensitiveDataDetected).toBe(true);
+    expect(prepared.request.goal).toMatch(expected);
+    expect(prepared.request.goal).not.toContain("Project/private.ts");
+    expect(prepared.request.goal).not.toContain("Project\\private.ts");
+  });
+
+  it("preserves ordinary prose, URLs, and package specifiers", () => {
+    const benign =
+      "Install @scope/package, compare foo/bar, visit https://example.test/docs/private.ts, and choose yes/no.";
+    const prepared = prepareRemoteModelRequest(requestContaining(benign));
+
+    expect(prepared.sensitiveDataDetected).toBe(false);
+    expect(prepared.request.goal).toBe(benign);
+  });
+
   it("marks sensitive automatic evidence for local-only handling", () => {
     const prepared = prepareRemoteModelRequest({
       goal: "Ask about this edit.",

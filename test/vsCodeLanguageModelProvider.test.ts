@@ -266,6 +266,69 @@ describe("VsCodeLanguageModelProvider", () => {
     expect(api.cancellation.cancelled).toBe(true);
   });
 
+  it("returns no response when cancellation arrives during the final token count", async () => {
+    const api = new RecordingLanguageModelApi();
+    api.fragments = ["Complete response"];
+    const provider = new VsCodeLanguageModelProvider(api);
+    const abortController = new AbortController();
+    const originalCountTokens = api.countTokens.bind(api);
+    let countCalls = 0;
+    let announceFinalCount!: () => void;
+    const finalCountStarted = new Promise<void>((resolve) => {
+      announceFinalCount = resolve;
+    });
+    let resolveFinalCount!: (tokens: number) => void;
+    const finalCount = new Promise<number>((resolve) => {
+      resolveFinalCount = resolve;
+    });
+    api.countTokens = async (model, text, cancellation) => {
+      countCalls += 1;
+      if (countCalls === 2) {
+        announceFinalCount();
+        return finalCount;
+      }
+      return originalCountTokens(model, text, cancellation);
+    };
+    let responseObserved = false;
+    const operation = provider
+      .generate(request, abortController.signal)
+      .then((response) => {
+        responseObserved = true;
+        return response;
+      });
+
+    await finalCountStarted;
+    abortController.abort();
+    resolveFinalCount(4);
+
+    await expect(operation).rejects.toMatchObject({ name: "AbortError" });
+    expect(responseObserved).toBe(false);
+    expect(api.cancellation.cancelled).toBe(true);
+    expect(api.cancellation.disposed).toBe(true);
+  });
+
+  it.each(["generate", "prepare"] as const)(
+    "disposes prepared candidates when cancellation wins before %s resumes",
+    async (operation) => {
+      const api = new RecordingLanguageModelApi();
+      const provider = new VsCodeLanguageModelProvider(api);
+      const abortController = new AbortController();
+      const originalPrepareCandidates =
+        provider.prepareCandidates.bind(provider);
+      provider.prepareCandidates = async (...arguments_) => {
+        const candidates = await originalPrepareCandidates(...arguments_);
+        abortController.abort();
+        return candidates;
+      };
+
+      await expect(
+        provider[operation](request, abortController.signal),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(api.cancellation.cancelled).toBe(true);
+      expect(api.cancellation.disposed).toBe(true);
+    },
+  );
+
   it("requires prior consent for proactive requests but allows user-initiated consent", async () => {
     const api = new RecordingLanguageModelApi();
     api.access = undefined;

@@ -756,3 +756,67 @@
   third-party OpenAI-compatible service were not exercised in this
   non-interactive environment. Provider, lifecycle, cleanup, and budget
   boundaries are covered by focused contract tests.
+
+## Remaining Copilot re-review fixes (2026-09-13)
+
+### Corrections implemented
+
+- Replaced the absolute-path regular-expression chain with a boundary scanner.
+  It projects complete POSIX, Windows, UNC, `file:`, and `vscode-remote:`
+  resources after punctuation and keeps unquoted spaced path segments together,
+  including multi-word filenames. It skips relative package specifiers,
+  ordinary slash-separated prose, and non-local URLs.
+- Symbol resolution now receives both clamped evidence endpoints. Nested and
+  flat candidates must contain both endpoints, and the existing total
+  specificity ordering selects the smallest containing range independently of
+  provider ordering.
+- Copilot dispatch now rechecks lifecycle cancellation after model selection,
+  request dispatch, every token count, stream completion, and immediately
+  before returning a response. A fulfilled final token count cannot publish a
+  stale response. Candidate resources are also disposed if cancellation wins
+  immediately after preparation.
+
+### TDD evidence
+
+- Path scanner: five original regressions failed for comma boundaries and
+  unquoted spaced POSIX, Windows, `file:`, and `vscode-remote:` values; all
+  passed after the scanner replaced the path regexes.
+- Symbol containment: both mixed provider orderings initially chose the inner
+  symbol that contained only the evidence start; both passed after requiring
+  start-and-end containment.
+- Copilot cancellation: the deferred final-count regression initially resolved
+  with a response, then rejected with `AbortError` after post-await checks were
+  added.
+- Self-review added failing regressions for multi-word POSIX filenames and
+  cancellation between candidate preparation and caller resumption. The full
+  suite then exposed two preserved-behavior regressions (`./repository` and a
+  rejected pre-dispatch selection); both were corrected before final
+  verification.
+
+### Verification
+
+- Focused tests: **3 files, 123 tests passed**.
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **17 files, 323 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 88.32%, branches 80.10%, functions 92.32%, lines 88.44%
+- `npm run package`: **PASS**
+- `npm audit`: **PASS — 0 vulnerabilities**
+- VSIX inspection: **156 files**
+  - required compiled sanitizer, symbol, provider, and extension modules are
+    present;
+  - source, tests, coverage, private review material, source maps, and
+    workspace/CI files are excluded.
+- `git diff --check`: **PASS**
+- Production and packaged first-party secret-pattern scans: **PASS**
+- Packaged repository/bugs/homepage URL assertions: **PASS**
+- Changed-file self-review found and fixed the spaced-filename and
+  post-preparation disposal gaps; no remaining high-confidence issue was found.
+
+### Residual concerns
+
+- Live VS Code document-symbol providers and GitHub Copilot model APIs were not
+  available in this non-interactive environment. Their range, cancellation,
+  token-count, and disposal boundaries are covered by focused contract tests.
