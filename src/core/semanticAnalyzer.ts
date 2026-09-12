@@ -549,7 +549,17 @@ const collectExportedSignatures = (
     localName: string,
     identity: ExportIdentity,
     rangeNode?: ts.Node,
+    isTypeOnly?: boolean,
   ): void => {
+    if (isTypeOnly !== undefined) {
+      appendSignatureRecord(
+        signatureTarget,
+        `function:${identity.key}`,
+        identity.displayName,
+        `local-export:${isTypeOnly ? "type-only" : "value"}`,
+        rangeForNode(sourceFile, rangeNode ?? sourceFile),
+      );
+    }
     const identifier = identifiersByName.get(localName);
     if (identifier !== undefined && variableNames.has(localName)) {
       const callSignatures = checker
@@ -660,6 +670,7 @@ const collectExportedSignatures = (
             localName,
             exportIdentity(externalName),
             element.name,
+            statement.isTypeOnly || element.isTypeOnly,
           );
         } else if (ts.isStringLiteral(statement.moduleSpecifier)) {
           appendSignatureRecord(
@@ -752,6 +763,7 @@ type AppendLocalExport = (
   localName: string,
   identity: ExportIdentity,
   rangeNode?: ts.Node,
+  isTypeOnly?: boolean,
 ) => void;
 
 interface CommonJsExportAssignment {

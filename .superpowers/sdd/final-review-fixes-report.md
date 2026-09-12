@@ -1201,3 +1201,58 @@
 - Live GitHub Copilot streaming was unavailable in this non-interactive
   environment. Injected fragment streams and official-token-count fakes cover
   the changed cap, no-cap, and end-of-stream boundaries.
+
+---
+
+## Secondary review local-export and repository-scope fixes (2026-09-13)
+
+### Corrections implemented
+
+- Local ESM named export lists now add the effective
+  `statement.isTypeOnly || element.isTypeOnly` mode to the exported signature.
+  Both `export type { load as fetchItem }` and
+  `export { type load as fetchItem }` therefore report a
+  `public-api-change` when replacing a value export.
+- The export-mode signature uses the external alias while retaining the
+  callable signatures already collected for the local declaration.
+- The repository-isolation test now captures `memoryStoreB.load()` and uses an
+  exact `toEqual({})` assertion for `dismissedEvidenceByRepository`. Existing
+  production filtering required no change.
+
+### TDD evidence
+
+- RED: both focused local value-to-type-only transition cases returned no
+  evidence; the focused run reported **2 failures and 66 passes**.
+- GREEN: the focused semantic and memory run passed with **2 files and 68
+  tests**. The existing external-alias callable-signature test remained green.
+- The stronger repository-scope assertion passed immediately, confirming the
+  existing load filter already returns no dismissal keys from another
+  repository.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **17 files, 382 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 89.19%, branches 81.25%, functions 92.08%, lines 89.32%
+- `npm run package`: **PASS — 156 files, 4.35 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- VSIX content and compiled-marker scans: **PASS**
+  - compiled semantic analyzer contains the local export-mode marker;
+  - source, tests, coverage, private review material, source maps, workspace,
+    and CI files are absent.
+- Runtime dependency root scan: **PASS — `typescript` only**
+- Production and packaged secret-pattern scans: **PASS**
+- Production URL and packaged repository/bugs/homepage metadata scans:
+  **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review found no remaining high-confidence export-mode,
+  external-alias, callable-signature, repository-isolation, or packaging
+  issue.
+- The analyzer intentionally reports syntactic value/type export-mode changes;
+  it does not attempt cross-module runtime resolution, matching the existing
+  named re-export behavior.

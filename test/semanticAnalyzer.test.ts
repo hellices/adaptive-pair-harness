@@ -422,6 +422,31 @@ describe("TypeScriptSemanticAnalyzer", () => {
   });
 
   it.each([
+    ["statement", "export { load as fetchItem };", "export type { load as fetchItem };"],
+    ["element", "export { load as fetchItem };", "export { type load as fetchItem };"],
+  ])(
+    "reports a local %s value-to-type-only export transition",
+    (_label, previousExport, currentExport) => {
+      const declaration = "const load = (id: string): string => id;";
+      const evidence = analyzeEvidence(
+        episode(
+          [declaration, previousExport].join("\n"),
+          [declaration, currentExport].join("\n"),
+        ),
+      );
+
+      expect(evidence).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "public-api-change",
+            references: ["fetchItem"],
+          }),
+        ]),
+      );
+    },
+  );
+
+  it.each([
     [
       "statement value to type-only",
       'export { Foo } from "./foo";',

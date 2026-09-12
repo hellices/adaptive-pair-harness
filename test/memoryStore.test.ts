@@ -564,13 +564,14 @@ describe("PairMemoryStore", () => {
         [repositoryA]: [evidenceHash],
       },
     });
-    await expect(memoryStoreB.load()).resolves.toMatchObject({
+    const memoryB = await memoryStoreB.load();
+    expect(memoryB).toMatchObject({
       preferences: {
         interventionStyle: "active",
         pauseThresholdMs: 2_500,
       },
-      dismissedEvidenceByRepository: {},
     });
+    expect(memoryB.dismissedEvidenceByRepository).toEqual({});
   });
 
   it("serializes concurrent mutations so preference changes, approvals, and dismissals are all preserved", async () => {
