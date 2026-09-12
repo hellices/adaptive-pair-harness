@@ -1,0 +1,10 @@
+.github/**
+.superpowers/**
+coverage/**
+docs/**
+src/**
+test/**
+dist/test/**
+*.map
+eslint.config.mjs
+tsconfig.json

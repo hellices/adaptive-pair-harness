@@ -1,0 +1,103 @@
+{
+  "name": "adaptive-pair-harness",
+  "displayName": "Adaptive Pair Harness",
+  "description": "A realtime, evidence-backed AI pair for VS Code.",
+  "version": "0.1.0",
+  "publisher": "adaptive-pair",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.95.0",
+    "node": ">=20"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:typescript",
+    "onLanguage:typescriptreact",
+    "onLanguage:javascript",
+    "onLanguage:javascriptreact",
+    "onCommand:adaptivePair.toggle",
+    "onCommand:adaptivePair.reviewCurrentBlock"
+  ],
+  "main": "./dist/src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "adaptivePair.toggle",
+        "title": "Adaptive Pair: Toggle Navigator"
+      },
+      {
+        "command": "adaptivePair.reviewCurrentBlock",
+        "title": "Adaptive Pair: Review Current Block"
+      },
+      {
+        "command": "adaptivePair.setApiKey",
+        "title": "Adaptive Pair: Set OpenAI-Compatible API Key"
+      }
+    ],
+    "configuration": {
+      "title": "Adaptive Pair",
+      "properties": {
+        "adaptivePair.enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "adaptivePair.debounceMs": {
+          "type": "number",
+          "default": 500,
+          "minimum": 300,
+          "maximum": 800
+        },
+        "adaptivePair.interventionStyle": {
+          "type": "string",
+          "enum": [
+            "eco",
+            "balanced",
+            "active"
+          ],
+          "default": "balanced"
+        },
+        "adaptivePair.model.provider": {
+          "type": "string",
+          "enum": [
+            "local-template",
+            "openai-compatible"
+          ],
+          "default": "local-template"
+        },
+        "adaptivePair.model.baseUrl": {
+          "type": "string",
+          "default": "http://localhost:11434/v1"
+        },
+        "adaptivePair.model.name": {
+          "type": "string",
+          "default": "qwen2.5-coder:7b"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "clean": "rm -rf dist coverage *.vsix",
+    "compile": "tsc -p tsconfig.json",
+    "lint": "eslint src test",
+    "test": "vitest run --coverage",
+    "check": "npm run compile && npm run lint && npm run test",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.4.1",
+    "@types/vscode": "^1.136.0",
+    "@vitest/coverage-v8": "^5.0.0",
+    "@vscode/vsce": "^3.9.2",
+    "eslint": "^10.10.0",
+    "typescript-eslint": "^8.69.1-alpha.0",
+    "vitest": "^5.0.0"
+  }
+}
