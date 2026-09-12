@@ -49,6 +49,7 @@ class RecordingLanguageModelApi implements VsCodeLanguageModelApi {
   public readonly selectors: Array<{ readonly vendor: "copilot" }> = [];
   public readonly prompts: string[] = [];
   public readonly cancellation = new TestCancellation();
+  public sendCalls = 0;
   public models: readonly CopilotModelReference[] = [
     {
       id: "copilot-model",
@@ -56,11 +57,23 @@ class RecordingLanguageModelApi implements VsCodeLanguageModelApi {
     },
   ];
   public access: boolean | undefined = true;
+  public selectError: Error | undefined;
+  public sendError: Error | undefined;
+  public streamError: Error | undefined;
+  public onSelect: (() => void) | undefined;
+  public errorKinds = new Map<
+    Error,
+    "no-permissions" | "not-found" | "blocked" | "cancelled" | "unknown"
+  >();
 
   public async selectChatModels(
     selector: { readonly vendor: "copilot" },
   ): Promise<readonly CopilotModelReference[]> {
     this.selectors.push(selector);
+    this.onSelect?.();
+    if (this.selectError !== undefined) {
+      throw this.selectError;
+    }
     return this.models;
   }
 
@@ -73,6 +86,14 @@ class RecordingLanguageModelApi implements VsCodeLanguageModelApi {
     return this.cancellation;
   }
 
+  public classifyError(
+    error: unknown,
+  ): "no-permissions" | "not-found" | "blocked" | "cancelled" | "unknown" {
+    return error instanceof Error
+      ? (this.errorKinds.get(error) ?? "unknown")
+      : "unknown";
+  }
+
   public async sendRequest(
     model: CopilotModelReference,
     prompt: string,
@@ -80,9 +101,17 @@ class RecordingLanguageModelApi implements VsCodeLanguageModelApi {
   ): Promise<AsyncIterable<string>> {
     void model;
     void cancellation;
+    this.sendCalls += 1;
     this.prompts.push(prompt);
+    if (this.sendError !== undefined) {
+      throw this.sendError;
+    }
+    const streamError = this.streamError;
     return (async function* (): AsyncIterable<string> {
       yield "Did you intend ";
+      if (streamError !== undefined) {
+        throw streamError;
+      }
       yield "this dependency?";
     })();
   }
@@ -130,6 +159,23 @@ describe("VsCodeLanguageModelProvider", () => {
     expect(api.cancellation.disposed).toBe(true);
   });
 
+  it("does not start a model request when cancellation arrives during selection", async () => {
+    const api = new RecordingLanguageModelApi();
+    const provider = new VsCodeLanguageModelProvider(api);
+    const abortController = new AbortController();
+    api.onSelect = () => {
+      abortController.abort();
+    };
+
+    await expect(
+      provider.generate(request, abortController.signal),
+    ).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(api.sendCalls).toBe(0);
+    expect(api.cancellation.cancelled).toBe(true);
+  });
+
   it("requires prior consent for proactive requests but allows user-initiated consent", async () => {
     const api = new RecordingLanguageModelApi();
     api.access = undefined;
@@ -146,4 +192,76 @@ describe("VsCodeLanguageModelProvider", () => {
       text: "Did you intend this dependency?",
     });
   });
+
+  it.each([
+    ["no-permissions", "access-denied"],
+    ["not-found", "no-model"],
+  ] as const)(
+    "maps official %s failures to typed unavailability",
+    async (kind, reason) => {
+      const api = new RecordingLanguageModelApi();
+      const failure = new Error(kind);
+      api.sendError = failure;
+      api.errorKinds.set(failure, kind);
+      const provider = new VsCodeLanguageModelProvider(api);
+
+      await expect(
+        provider.generateFromUserAction(
+          request,
+          new AbortController().signal,
+        ),
+      ).rejects.toMatchObject({
+        name: "CopilotModelUnavailableError",
+        reason,
+      });
+    },
+  );
+
+  it("maps unavailable errors raised while consuming the response stream", async () => {
+    const api = new RecordingLanguageModelApi();
+    const failure = new Error("model disappeared");
+    api.streamError = failure;
+    api.errorKinds.set(failure, "not-found");
+    const provider = new VsCodeLanguageModelProvider(api);
+
+    await expect(
+      provider.generateFromUserAction(request, new AbortController().signal),
+    ).rejects.toMatchObject({
+      name: "CopilotModelUnavailableError",
+      reason: "no-model",
+    });
+  });
+
+  it("maps unavailable model-selection errors", async () => {
+    const api = new RecordingLanguageModelApi();
+    const failure = new Error("selection denied");
+    api.selectError = failure;
+    api.errorKinds.set(failure, "no-permissions");
+    const provider = new VsCodeLanguageModelProvider(api);
+
+    await expect(
+      provider.generateFromUserAction(request, new AbortController().signal),
+    ).rejects.toMatchObject({
+      name: "CopilotModelUnavailableError",
+      reason: "access-denied",
+    });
+  });
+
+  it.each(["blocked", "unknown", "cancelled"] as const)(
+    "propagates official %s failures without unavailable fallback",
+    async (kind) => {
+      const api = new RecordingLanguageModelApi();
+      const failure = new Error(kind);
+      api.sendError = failure;
+      api.errorKinds.set(failure, kind);
+      const provider = new VsCodeLanguageModelProvider(api);
+
+      await expect(
+        provider.generateFromUserAction(
+          request,
+          new AbortController().signal,
+        ),
+      ).rejects.toBe(failure);
+    },
+  );
 });

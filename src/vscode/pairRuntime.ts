@@ -13,6 +13,7 @@ import {
 import type {
   ModelProvider,
   ModelRequest,
+  ModelRequestContext,
   ModelResponse,
 } from "../core/modelRouter";
 import { TypeScriptSemanticAnalyzer } from "../core/semanticAnalyzer";
@@ -34,6 +35,16 @@ import {
   VsCodeLanguageModelProvider,
 } from "./vsCodeLanguageModelProvider";
 import type { VsCodeLanguageModelApi } from "./vsCodeLanguageModelProvider";
+import {
+  PairDisabledError,
+  PairDocumentState,
+  PairInvocationGate,
+  PairRequestRegistry,
+  buildPairStatusText,
+  diagnosticCodeReference,
+  selectManualEvidence,
+} from "./pairRuntimeSupport";
+import type { PairInvocationSource } from "./pairRuntimeSupport";
 
 const PAIR_GOAL = "Navigate with concise, evidence-backed, ask-first questions.";
 const SUPPORTED_LANGUAGE_IDS = new Set([
@@ -42,11 +53,6 @@ const SUPPORTED_LANGUAGE_IDS = new Set([
   "javascript",
   "javascriptreact",
 ]);
-
-interface RemainingBudget {
-  readonly calls: number;
-  readonly inputTokens: number;
-}
 
 export interface PairRuntimeOptions {
   readonly config: PairConfig;
@@ -91,9 +97,9 @@ class TimeoutScheduler implements Scheduler, vscode.Disposable {
 
 export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   private readonly disposables: vscode.Disposable[] = [];
-  private readonly previousTextByUri = new Map<string, string>();
+  private readonly documentState = new PairDocumentState();
   private readonly requestByUri = new Map<string, AbortController>();
-  private readonly chatRequests = new Set<AbortController>();
+  private readonly chatRequests = new PairRequestRegistry();
   private readonly analyzer = new TypeScriptSemanticAnalyzer();
   private readonly scheduler = new TimeoutScheduler();
   private readonly aggregator: EditEpisodeAggregator;
@@ -105,7 +111,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   private readonly memoryStore: PairMemoryStore;
   private readonly inlineController: InlinePairController;
   private readonly status: vscode.StatusBarItem;
-  private remainingBudget: RemainingBudget;
+  private readonly invocationGate: PairInvocationGate;
   private effectiveProvider: PairConfig["provider"];
   private dismissedEvidenceIds = new Set<string>();
   private controlNotice: string | undefined;
@@ -115,10 +121,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
 
   public constructor(private readonly options: PairRuntimeOptions) {
     this.budget = new TokenBudget(options.config.budget);
-    this.remainingBudget = {
-      calls: options.config.budget.maxCalls,
-      inputTokens: options.config.budget.maxInputTokens,
-    };
+    this.invocationGate = new PairInvocationGate(options.config.enabled);
     this.effectiveProvider = options.config.provider;
     this.policy = new InterventionPolicy({
       model: options.config.modelName,
@@ -195,7 +198,9 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
 
     for (const document of vscode.workspace.textDocuments) {
       if (isSupportedDocument(document)) {
-        this.previousTextByUri.set(document.uri.toString(), document.getText());
+        const key = document.uri.toString();
+        const text = document.getText();
+        this.documentState.seed(key, text);
       }
     }
 
@@ -209,13 +214,13 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     this.disposables.push(
       vscode.workspace.onDidOpenTextDocument((document) => {
         if (isSupportedDocument(document)) {
-          this.previousTextByUri.set(document.uri.toString(), document.getText());
+          const key = document.uri.toString();
+          const text = document.getText();
+          this.documentState.seed(key, text);
         }
       }),
       vscode.workspace.onDidCloseTextDocument((document) => {
-        const key = document.uri.toString();
-        this.previousTextByUri.delete(key);
-        this.cancelRequest(key);
+        this.closeDocument(document.uri);
       }),
       vscode.workspace.onDidChangeTextDocument((event) => {
         this.onDocumentChanged(event);
@@ -227,6 +232,13 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   }
 
   public async reviewCurrentBlock(): Promise<void> {
+    if (!this.invocationGate.enabled) {
+      await vscode.window.showInformationMessage(
+        "Adaptive Pair is disabled. Enable it to review the current block.",
+      );
+      return;
+    }
+
     const editor = vscode.window.activeTextEditor;
     if (editor === undefined || !isSupportedDocument(editor.document)) {
       await vscode.window.showInformationMessage(
@@ -236,32 +248,53 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     }
 
     const range = normalizedSelectionRange(editor);
-    const evidence = diagnosticEvidenceForDocument(editor.document).find(
-      (candidate) => pairRangesOverlap(candidate.range, toPairRange(range)),
-    ) ?? {
-      id: `manual-review:${editor.document.uri.toString()}:${range.start.line}:${range.end.line}`,
-      kind: "diagnostic",
-      severity: "info",
-      title: "Current block review requested",
-      detail: `Review requested for lines ${range.start.line + 1}-${range.end.line + 1}. No source text was included.`,
-      source: "user-selection",
-      confidence: 1,
-      range: toPairRange(range),
-      references: ["selected range"],
-    };
+    const key = editor.document.uri.toString();
+    const selection = toPairRange(range);
+    const currentText = editor.document.getText();
+    const previousAnalyzedText =
+      this.documentState.lastAnalyzedText(key) ?? currentText;
+    const hasUnanalyzedChanges = previousAnalyzedText !== currentText;
+    const analyzed = hasUnanalyzedChanges
+      ? this.analyzer.analyze({
+            uri: key,
+            languageId: editor.document.languageId,
+            previousText: previousAnalyzedText,
+            currentText,
+            version: editor.document.version,
+            observedAt: Date.now(),
+          })
+      : [];
+    this.aggregator.cancel(key);
+    if (hasUnanalyzedChanges) {
+      this.documentState.recordAnalysis(key, currentText, analyzed);
+    }
+    const evidence = selectManualEvidence({
+      selection,
+      diagnostics: diagnosticEvidenceForDocument(editor.document),
+      latest: this.documentState.latestEvidence(key),
+      analyzed,
+    });
+    if (evidence === undefined) {
+      await vscode.window.showInformationMessage(
+        "Adaptive Pair found no active evidence for the current block.",
+      );
+      return;
+    }
 
     await this.intervene(
       editor.document,
       evidence,
-      true,
+      "manual",
       PAIR_GOAL,
     );
   }
 
   public async generate(
+    uri: string,
     goal: string,
     evidence: Evidence,
     signal: AbortSignal,
+    context: ModelRequestContext = {},
   ): Promise<ModelResponse> {
     const requestController = new AbortController();
     const cancelRequest = (): void => {
@@ -271,7 +304,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     if (signal.aborted) {
       cancelRequest();
     }
-    this.chatRequests.add(requestController);
+    this.chatRequests.add(uri, requestController);
 
     try {
       return await this.generateWithProvider(
@@ -279,27 +312,27 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
           goal,
           evidence,
           interactionStyle: "ask-first",
+          context,
         },
         requestController.signal,
-        true,
+        "chat",
       );
     } finally {
       signal.removeEventListener("abort", cancelRequest);
-      this.chatRequests.delete(requestController);
+      this.chatRequests.remove(uri, requestController);
     }
   }
 
   private onDocumentChanged(event: vscode.TextDocumentChangeEvent): void {
     const document = event.document;
-    if (!this.options.config.enabled || !isSupportedDocument(document)) {
+    if (!this.invocationGate.enabled || !isSupportedDocument(document)) {
       return;
     }
 
     const key = document.uri.toString();
     this.cancelRequest(key);
     const currentText = document.getText();
-    const previousText = this.previousTextByUri.get(key);
-    this.previousTextByUri.set(key, currentText);
+    const previousText = this.documentState.updateText(key, currentText);
     if (previousText === undefined || event.contentChanges.length === 0) {
       return;
     }
@@ -315,7 +348,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   }
 
   private async handleEpisode(episode: EditEpisode): Promise<void> {
-    if (this.disposed) {
+    if (this.disposed || !this.invocationGate.enabled) {
       return;
     }
 
@@ -330,6 +363,11 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       ...this.analyzer.analyze(episode),
       ...diagnosticEvidenceForDocument(document),
     ].filter((candidate) => !this.dismissedEvidenceIds.has(candidate.id));
+    this.documentState.recordAnalysis(
+      episode.uri,
+      episode.currentText,
+      evidence,
+    );
     const decision = this.policy.decide({
       evidence,
       style: this.options.config.interventionStyle,
@@ -352,13 +390,13 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       return;
     }
 
-    await this.intervene(document, selected, false, PAIR_GOAL);
+    await this.intervene(document, selected, "automatic", PAIR_GOAL);
   }
 
   private async intervene(
     document: vscode.TextDocument,
     evidence: Evidence,
-    userInitiated: boolean,
+    source: "automatic" | "manual",
     goal: string,
   ): Promise<void> {
     const key = document.uri.toString();
@@ -375,7 +413,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
           interactionStyle: "ask-first",
         },
         abortController.signal,
-        userInitiated,
+        source,
       );
       if (
         abortController.signal.aborted ||
@@ -386,7 +424,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       }
       this.renderIntervention(document, evidence, response.text);
     } catch (error: unknown) {
-      if (isAbortError(error)) {
+      if (abortController.signal.aborted || isCancellationError(error)) {
         return;
       }
       if (!(error instanceof Error)) {
@@ -407,6 +445,20 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   private async generateWithProvider(
     request: ModelRequest,
     signal: AbortSignal,
+    source: PairInvocationSource,
+  ): Promise<ModelResponse> {
+    const result = await this.invocationGate.run(source, async () =>
+      this.generateWhileEnabled(request, signal, source !== "automatic"),
+    );
+    if (result.kind === "disabled") {
+      throw new PairDisabledError(source);
+    }
+    return result.value;
+  }
+
+  private async generateWhileEnabled(
+    request: ModelRequest,
+    signal: AbortSignal,
     userInitiated: boolean,
   ): Promise<ModelResponse> {
     const provider = this.options.config.provider;
@@ -419,14 +471,6 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       Date.now(),
     );
     if (!admission.allowed) {
-      this.remainingBudget = {
-        calls:
-          admission.reason === "call-limit" ? 0 : this.remainingBudget.calls,
-        inputTokens:
-          admission.reason === "token-limit"
-            ? 0
-            : this.remainingBudget.inputTokens,
-      };
       this.effectiveProvider = "local-template";
       this.statusDetail = `remote ${admission.reason}; local-template fallback`;
       this.publishSession();
@@ -434,10 +478,6 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       return this.router.generate("local-template", request, signal);
     }
 
-    this.remainingBudget = {
-      calls: admission.remainingCalls,
-      inputTokens: admission.remainingInputTokens,
-    };
     this.publishSession();
 
     try {
@@ -496,6 +536,16 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     }
   }
 
+  private closeDocument(uri: vscode.Uri): void {
+    const key = uri.toString();
+    this.documentState.close(key);
+    this.aggregator.cancel(key);
+    this.cancelRequest(key);
+    this.chatRequests.cancelUri(key);
+    this.options.sharedContext.clearEvidence(key);
+    this.inlineController.disposeUri(uri);
+  }
+
   private async discoverCoexistence(): Promise<void> {
     const workspaceUris = await vscode.workspace.findFiles(
       "{AGENTS.md,**/AGENTS.md,docs/superpowers/plans/*-plan.md}",
@@ -516,14 +566,21 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     this.publishSession();
   }
 
-  private publishSession(): void {
+  public refreshSession(now = Date.now()): void {
+    this.publishSession(now);
+  }
+
+  private publishSession(now = Date.now()): void {
+    const remainingBudget = this.budget.snapshot(now);
     const session: PairSessionSnapshot = {
+      enabled: this.invocationGate.enabled,
       goal: PAIR_GOAL,
       role: "navigator",
       provider: this.effectiveProvider,
-      remainingCalls: this.remainingBudget.calls,
-      remainingInputTokens: this.remainingBudget.inputTokens,
+      remainingCalls: remainingBudget.remainingCalls,
+      remainingInputTokens: remainingBudget.remainingInputTokens,
       controlNotice: this.controlNotice,
+      configurationWarning: this.options.config.statusWarning,
     };
     this.options.sharedContext.updateSession(session);
   }
@@ -532,11 +589,14 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     const details = [this.statusDetail, this.controlNotice].filter(
       (detail): detail is string => detail !== undefined,
     );
-    this.status.text = `$(hubot) Pair: You drive - Pair navigates${
-      details.length === 0 ? "" : ` · ${details.join(" · ")}`
-    }`;
+    this.status.text = buildPairStatusText(
+      this.invocationGate.enabled,
+      details,
+    );
     this.status.tooltip =
-      "Adaptive Pair is navigator-only and does not edit files or run commands.";
+      this.invocationGate.enabled
+        ? "Adaptive Pair is navigator-only and does not edit files or run commands."
+        : "Adaptive Pair is disabled and will not invoke model providers.";
   }
 
   public dispose(): void {
@@ -548,10 +608,9 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       request.abort();
     }
     this.requestByUri.clear();
-    for (const request of this.chatRequests) {
-      request.abort();
-    }
-    this.chatRequests.clear();
+    this.chatRequests.cancelAll();
+    this.documentState.clear();
+    this.options.sharedContext.clearEvidence();
     this.aggregator.dispose();
     this.scheduler.dispose();
     for (const disposable of this.disposables) {
@@ -589,8 +648,7 @@ const diagnosticEvidenceForDocument = (
       source: diagnostic.source ?? "vscode-diagnostics",
       confidence: diagnostic.severity === vscode.DiagnosticSeverity.Error ? 0.97 : 0.82,
       range: toPairRange(diagnostic.range),
-      references:
-        diagnostic.code === undefined ? [] : [String(diagnostic.code)],
+      references: diagnosticCodeReference(diagnostic.code),
     }));
 
 const diagnosticSeverity = (
@@ -617,18 +675,6 @@ const toPairRange = (range: vscode.Range): PairRange => ({
   },
 });
 
-const pairRangesOverlap = (left: PairRange, right: PairRange): boolean => {
-  const leftStartsBeforeRightEnds =
-    left.start.line < right.end.line ||
-    (left.start.line === right.end.line &&
-      left.start.character <= right.end.character);
-  const rightStartsBeforeLeftEnds =
-    right.start.line < left.end.line ||
-    (right.start.line === left.end.line &&
-      right.start.character <= left.end.character);
-  return leftStartsBeforeRightEnds && rightStartsBeforeLeftEnds;
-};
-
 const safeRange = (
   document: vscode.TextDocument,
   range: PairRange,
@@ -652,5 +698,28 @@ const safeRange = (
   );
 };
 
-const isAbortError = (error: unknown): boolean =>
-  error instanceof DOMException && error.name === "AbortError";
+const isCancellationError = (error: unknown): boolean => {
+  if (
+    error instanceof vscode.CancellationError ||
+    (error instanceof DOMException && error.name === "AbortError")
+  ) {
+    return true;
+  }
+  if (
+    error instanceof vscode.LanguageModelError &&
+    error.cause instanceof Error
+  ) {
+    return (
+      error.cause instanceof vscode.CancellationError ||
+      error.cause.name === "AbortError" ||
+      error.cause.name === "Canceled" ||
+      error.cause.name === "CancellationError"
+    );
+  }
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" ||
+      error.name === "Canceled" ||
+      error.name === "CancellationError")
+  );
+};

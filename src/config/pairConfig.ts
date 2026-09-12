@@ -46,18 +46,21 @@ export function readPairConfig(workspace: ConfigurationReader): PairConfig {
       ? configuredStyle
       : "balanced";
   const configuredProvider = workspace.get("model.provider");
-  let provider: PairProvider =
+  const validProvider =
     configuredProvider === "vscode-copilot" ||
     configuredProvider === "openai-compatible" ||
-    configuredProvider === "local-template"
-      ? configuredProvider
-      : "local-template";
+    configuredProvider === "local-template";
+  let provider: PairProvider = validProvider
+    ? configuredProvider
+    : "local-template";
   const configuredBaseUrl = workspace.get("model.baseUrl");
   const baseUrl = parseUrl(
     typeof configuredBaseUrl === "string" ? configuredBaseUrl : DEFAULT_BASE_URL,
   );
   let statusWarning: string | undefined;
-  if (provider === "openai-compatible" && baseUrl === undefined) {
+  if (configuredProvider !== undefined && !validProvider) {
+    statusWarning = `Unknown model provider "${String(configuredProvider)}"; using local-template.`;
+  } else if (provider === "openai-compatible" && baseUrl === undefined) {
     provider = "local-template";
     statusWarning =
       "OpenAI-compatible provider disabled: adaptivePair.model.baseUrl is invalid.";

@@ -1,9 +1,21 @@
-import type { Evidence } from "./types";
+import type { Evidence, PairRange } from "./types";
+
+export interface ModelSymbolContext {
+  readonly name: string;
+  readonly kind: string;
+  readonly range: PairRange;
+}
+
+export interface ModelRequestContext {
+  readonly userPrompt?: string;
+  readonly symbol?: ModelSymbolContext;
+}
 
 export interface ModelRequest {
   readonly goal: string;
   readonly evidence: Evidence;
   readonly interactionStyle: "ask-first";
+  readonly context?: ModelRequestContext;
 }
 
 export interface ModelResponse {
@@ -128,30 +140,98 @@ export const createLocalInterventionQuestion = (evidence: Evidence): string =>
 
 export const buildOpenAICompatiblePromptPayload = (
   request: ModelRequest,
-): OpenAICompatiblePromptPayload => ({
-  messages: [
-    {
-      role: "system",
-      content:
-        "You are an ask-first programming pair. Ask one concise question grounded only in the provided evidence.",
-    },
-    {
-      role: "user",
-      content: [
-        `Goal: ${request.goal}`,
-        `Interaction style: ${request.interactionStyle}`,
-        `Evidence kind: ${request.evidence.kind}`,
-        `Severity: ${request.evidence.severity}`,
-        `Title: ${request.evidence.title}`,
-        `Detail: ${request.evidence.detail}`,
-        `Source: ${request.evidence.source}`,
-        `Confidence: ${request.evidence.confidence.toFixed(2)}`,
-        `References: ${request.evidence.references.join(", ") || "none"}`,
-      ].join("\n"),
-    },
-  ],
-  stream: false,
-});
+): OpenAICompatiblePromptPayload => {
+  const safeRequest = createRemoteSafeModelRequest(request);
+
+  return {
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are an ask-first programming pair. Ask one concise question grounded only in the provided evidence.",
+      },
+      {
+        role: "user",
+        content: buildStructuredModelPrompt(safeRequest),
+      },
+    ],
+    stream: false,
+  };
+};
+
+export const createRemoteSafeModelRequest = (
+  request: ModelRequest,
+): ModelRequest => {
+  const context = sanitizeModelRequestContext(request.context);
+  return {
+    goal: boundSingleLine(request.goal, 600),
+    evidence:
+      request.evidence.kind === "diagnostic"
+        ? sanitizeDiagnosticEvidence(request.evidence)
+        : sanitizeGeneralEvidence(request.evidence),
+    interactionStyle: request.interactionStyle,
+    ...(context === undefined ? {} : { context }),
+  };
+};
+
+export const sanitizeModelRequestContext = (
+  context: ModelRequestContext | undefined,
+): ModelRequestContext | undefined => {
+  if (context === undefined) {
+    return undefined;
+  }
+
+  const userPrompt =
+    context.userPrompt === undefined
+      ? undefined
+      : boundSingleLine(context.userPrompt, 500);
+  const symbol =
+    context.symbol === undefined
+      ? undefined
+      : {
+          name: boundSingleLine(context.symbol.name, 120),
+          kind: boundSingleLine(context.symbol.kind, 60),
+          range: context.symbol.range,
+        };
+  if (userPrompt === undefined && symbol === undefined) {
+    return undefined;
+  }
+
+  return {
+    ...(userPrompt === undefined ? {} : { userPrompt }),
+    ...(symbol === undefined ? {} : { symbol }),
+  };
+};
+
+export const buildStructuredModelPrompt = (request: ModelRequest): string => {
+  const lines = [
+    `Goal: ${request.goal}`,
+    `Interaction style: ${request.interactionStyle}`,
+    `Evidence kind: ${request.evidence.kind}`,
+    `Severity: ${request.evidence.severity}`,
+    `Title: ${request.evidence.title}`,
+    `Detail: ${request.evidence.detail}`,
+    `Source: ${request.evidence.source}`,
+    `Confidence: ${request.evidence.confidence.toFixed(2)}`,
+    `Range: ${formatRange(request.evidence.range)}`,
+    `References: ${request.evidence.references.join(", ") || "none"}`,
+  ];
+  if (request.evidence.kind === "diagnostic") {
+    lines.push(
+      `Diagnostic code: ${request.evidence.references.join(", ") || "none"}`,
+    );
+  }
+  if (request.context?.userPrompt !== undefined) {
+    lines.push(`User prompt: ${request.context.userPrompt}`);
+  }
+  if (request.context?.symbol !== undefined) {
+    lines.push(
+      `Current symbol: ${request.context.symbol.name} (${request.context.symbol.kind})`,
+      `Symbol range: ${formatRange(request.context.symbol.range)}`,
+    );
+  }
+  return lines.join("\n");
+};
 
 export const buildOpenAICompatibleRequestBody = (
   model: string,
@@ -189,6 +269,40 @@ const buildHeaders = (apiKey: string | undefined): HeadersInit => {
 
 const estimateSerializedTokens = (serializedPayload: string): number =>
   Math.max(1, Math.ceil(serializedPayload.length / 4));
+
+const sanitizeDiagnosticEvidence = (evidence: Evidence): Evidence => {
+  const codes = evidence.references
+    .map((reference) => boundSingleLine(reference, 40))
+    .filter((reference) => /^[A-Za-z0-9_.-]+$/u.test(reference))
+    .slice(0, 3);
+  return {
+    ...evidence,
+    title: "Editor diagnostic",
+    detail: "See VS Code Problems for the complete diagnostic message.",
+    source: boundSingleLine(evidence.source, 80),
+    references: codes,
+  };
+};
+
+const sanitizeGeneralEvidence = (evidence: Evidence): Evidence => ({
+  ...evidence,
+  title: boundSingleLine(evidence.title, 160),
+  detail: boundSingleLine(evidence.detail, 500),
+  source: boundSingleLine(evidence.source, 80),
+  references: evidence.references
+    .map((reference) => boundSingleLine(reference, 120))
+    .slice(0, 8),
+});
+
+const boundSingleLine = (value: string, maxLength: number): string =>
+  value
+    .replace(/\p{Cc}+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, maxLength);
+
+const formatRange = (range: PairRange): string =>
+  `${range.start.line}:${range.start.character}-${range.end.line}:${range.end.character}`;
 
 const isOpenAICompatibleRequestBody = (
   request: ModelRequest | ChatCompletionRequestBody,

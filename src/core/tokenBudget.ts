@@ -21,6 +21,11 @@ export type BudgetDecision =
       readonly retryAfterMs: number;
     };
 
+export interface BudgetSnapshot {
+  readonly remainingCalls: number;
+  readonly remainingInputTokens: number;
+}
+
 export class TokenBudget {
   private reservations: Reservation[] = [];
 
@@ -59,6 +64,15 @@ export class TokenBudget {
       allowed: false,
       reason: "token-limit",
       retryAfterMs: tokenRetryAfter,
+    };
+  }
+
+  public snapshot(now: number): BudgetSnapshot {
+    this.purgeExpired(now);
+    return {
+      remainingCalls: this.config.maxCalls - this.reservations.length,
+      remainingInputTokens:
+        this.config.maxInputTokens - this.currentInputTokens(),
     };
   }
 

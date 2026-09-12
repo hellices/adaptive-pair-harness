@@ -90,4 +90,16 @@ describe("readPairConfig", () => {
     expect(config.baseUrl).toBeUndefined();
     expect(config.statusWarning).toContain("OpenAI-compatible");
   });
+
+  it("surfaces an explicit warning for an invalid provider value", () => {
+    const config = readPairConfig(
+      new TestConfiguration({
+        "model.provider": "mystery-provider",
+      }),
+    );
+
+    expect(config.provider).toBe("local-template");
+    expect(config.statusWarning).toContain("mystery-provider");
+    expect(config.statusWarning).toContain("local-template");
+  });
 });

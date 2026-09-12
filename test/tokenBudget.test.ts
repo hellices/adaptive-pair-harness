@@ -62,4 +62,31 @@ describe("TokenBudget", () => {
       retryAfterMs: 1_000,
     });
   });
+
+  it("returns a fresh snapshot after expired reservations are purged", () => {
+    const budget = new TokenBudget({
+      windowMs: 1_000,
+      maxCalls: 2,
+      maxInputTokens: 100,
+    });
+
+    expect(budget.tryReserve(70, 0)).toMatchObject({
+      allowed: true,
+      remainingCalls: 1,
+      remainingInputTokens: 30,
+    });
+    const snapshot = (
+      budget as TokenBudget & {
+        snapshot(now: number): {
+          readonly remainingCalls: number;
+          readonly remainingInputTokens: number;
+        };
+      }
+    ).snapshot;
+    expect(snapshot).toBeTypeOf("function");
+    expect(snapshot.call(budget, 1_000)).toEqual({
+      remainingCalls: 2,
+      remainingInputTokens: 100,
+    });
+  });
 });

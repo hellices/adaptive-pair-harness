@@ -62,6 +62,12 @@ export class InlinePairController implements vscode.Disposable {
     this.threadsByUri.set(key, thread);
   }
 
+  public disposeUri(uri: vscode.Uri): void {
+    const key = uri.toString();
+    this.threadsByUri.get(key)?.dispose();
+    this.threadsByUri.delete(key);
+  }
+
   public dispose(): void {
     for (const thread of this.threadsByUri.values()) {
       thread.dispose();

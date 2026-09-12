@@ -3,6 +3,10 @@ import type {
   ModelRequest,
   ModelResponse,
 } from "../core/modelRouter";
+import {
+  buildStructuredModelPrompt,
+  createRemoteSafeModelRequest,
+} from "../core/modelRouter";
 
 export interface CopilotModelReference {
   readonly id: string;
@@ -20,12 +24,20 @@ export interface VsCodeLanguageModelApi {
   ): PromiseLike<readonly CopilotModelReference[]>;
   canSendRequest(model: CopilotModelReference): boolean | undefined;
   createCancellationTokenSource(): VsCodeRequestCancellation;
+  classifyError(error: unknown): VsCodeLanguageModelErrorKind;
   sendRequest(
     model: CopilotModelReference,
     prompt: string,
     cancellation: VsCodeRequestCancellation,
   ): PromiseLike<AsyncIterable<string>>;
 }
+
+export type VsCodeLanguageModelErrorKind =
+  | "no-permissions"
+  | "not-found"
+  | "blocked"
+  | "cancelled"
+  | "unknown";
 
 export type CopilotUnavailableReason =
   | "no-model"
@@ -49,15 +61,7 @@ export class CopilotModelResponseError extends Error {
 export const buildCopilotPrompt = (request: ModelRequest): string =>
   [
     "You are an ask-first programming pair. Ask one concise question grounded only in the structured evidence.",
-    `Goal: ${request.goal}`,
-    `Interaction style: ${request.interactionStyle}`,
-    `Evidence kind: ${request.evidence.kind}`,
-    `Severity: ${request.evidence.severity}`,
-    `Title: ${request.evidence.title}`,
-    `Detail: ${request.evidence.detail}`,
-    `Source: ${request.evidence.source}`,
-    `Confidence: ${request.evidence.confidence.toFixed(2)}`,
-    `References: ${request.evidence.references.join(", ") || "none"}`,
+    buildStructuredModelPrompt(createRemoteSafeModelRequest(request)),
   ].join("\n");
 
 export class VsCodeLanguageModelProvider implements ModelProvider {
@@ -96,7 +100,10 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
         signal.throwIfAborted();
       }
 
-      const models = await this.api.selectChatModels({ vendor: "copilot" });
+      const models = await this.callAndMapUnavailable(() =>
+        this.api.selectChatModels({ vendor: "copilot" }),
+      );
+      signal.throwIfAborted();
       const model = models[0];
       if (model === undefined) {
         throw new CopilotModelUnavailableError("no-model");
@@ -110,12 +117,19 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
       }
 
       const prompt = buildCopilotPrompt(request);
-      const stream = await this.api.sendRequest(model, prompt, cancellation);
-      let text = "";
-      for await (const fragment of stream) {
-        signal.throwIfAborted();
-        text += fragment;
-      }
+      const text = await this.callAndMapUnavailable(async () => {
+        const stream = await this.api.sendRequest(
+          model,
+          prompt,
+          cancellation,
+        );
+        let streamedText = "";
+        for await (const fragment of stream) {
+          signal.throwIfAborted();
+          streamedText += fragment;
+        }
+        return streamedText;
+      });
 
       if (text.trim().length === 0) {
         throw new CopilotModelResponseError();
@@ -129,6 +143,25 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
     } finally {
       signal.removeEventListener("abort", cancelRequest);
       cancellation.dispose();
+    }
+  }
+
+  private async callAndMapUnavailable<T>(
+    operation: () => PromiseLike<T>,
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch (error: unknown) {
+      switch (this.api.classifyError(error)) {
+        case "no-permissions":
+          throw new CopilotModelUnavailableError("access-denied");
+        case "not-found":
+          throw new CopilotModelUnavailableError("no-model");
+        case "blocked":
+        case "cancelled":
+        case "unknown":
+          throw error;
+      }
     }
   }
 }

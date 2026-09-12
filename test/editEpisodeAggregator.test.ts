@@ -99,4 +99,33 @@ describe("EditEpisodeAggregator", () => {
 
     expect(episodes).toHaveLength(2);
   });
+
+  it("cancels one document without emitting even if its stale callback runs", () => {
+    const callbacks = new Map<number, () => void>();
+    let nextHandle = 1;
+    const scheduler: Scheduler = {
+      schedule: (_delayMs, callback) => {
+        const handle = nextHandle++;
+        callbacks.set(handle, callback);
+        return handle;
+      },
+      cancel: () => {
+        // Deliberately retain callbacks to simulate an already-queued timer.
+      },
+    };
+    const episodes: EditEpisode[] = [];
+    const aggregator = new EditEpisodeAggregator(500, scheduler, (episode) => {
+      episodes.push(episode);
+    });
+
+    aggregator.record(snapshot("before", "after", 2, "file:///closed.ts"));
+    const cancel = (
+      aggregator as EditEpisodeAggregator & { cancel(uri: string): void }
+    ).cancel;
+    expect(cancel).toBeTypeOf("function");
+    cancel.call(aggregator, "file:///closed.ts");
+    callbacks.get(1)?.();
+
+    expect(episodes).toEqual([]);
+  });
 });

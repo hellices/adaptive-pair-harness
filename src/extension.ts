@@ -1,6 +1,8 @@
 import * as vscode from "vscode";
 import { readPairConfig } from "./config/pairConfig";
+import type { ModelSymbolContext } from "./core/modelRouter";
 import { PairSharedContext, registerPairChatParticipant } from "./vscode/pairChatParticipant";
+import type { PairSymbolContextProvider } from "./vscode/pairChatParticipant";
 import { PairRuntime } from "./vscode/pairRuntime";
 import type {
   CopilotModelReference,
@@ -12,12 +14,14 @@ const API_KEY_SECRET = "adaptivePair.openaiCompatibleApiKey";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const sharedContext = new PairSharedContext({
+    enabled: true,
     goal: "Navigate with concise, evidence-backed, ask-first questions.",
     role: "navigator",
     provider: "local-template",
     remainingCalls: 0,
     remainingInputTokens: 0,
     controlNotice: undefined,
+    configurationWarning: undefined,
   });
   const languageModelApi = createLanguageModelApi(context);
   let runtime: PairRuntime | undefined;
@@ -67,16 +71,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const participant = registerPairChatParticipant(
     (id, handler) => vscode.chat.createChatParticipant(id, handler),
-    sharedContext,
     {
-      generate: async (goal, evidence, signal) => {
+      snapshot: () => {
+        runtime?.refreshSession();
+        return sharedContext.snapshot();
+      },
+    },
+    {
+      generate: async (uri, goal, evidence, signal, requestContext) => {
         const activeRuntime = runtime;
         if (activeRuntime === undefined) {
           throw new Error("Adaptive Pair runtime is rebuilding.");
         }
-        return activeRuntime.generate(goal, evidence, signal);
+        return activeRuntime.generate(
+          uri,
+          goal,
+          evidence,
+          signal,
+          requestContext,
+        );
       },
     },
+    createSymbolContextProvider(),
   );
 
   const toggle = vscode.commands.registerCommand(
@@ -196,6 +212,27 @@ const createLanguageModelApi = (
       nativeCancellationSources.set(handle, source);
       return handle;
     },
+    classifyError: (error) => {
+      if (
+        error instanceof vscode.CancellationError ||
+        (error instanceof DOMException && error.name === "AbortError")
+      ) {
+        return "cancelled";
+      }
+      if (!(error instanceof vscode.LanguageModelError)) {
+        return "unknown";
+      }
+      if (error.code === vscode.LanguageModelError.NoPermissions.name) {
+        return "no-permissions";
+      }
+      if (error.code === vscode.LanguageModelError.NotFound.name) {
+        return "not-found";
+      }
+      if (error.code === vscode.LanguageModelError.Blocked.name) {
+        return "blocked";
+      }
+      return "unknown";
+    },
     sendRequest: async (modelReference, prompt, cancellation) => {
       const model = nativeModels.get(modelReference);
       if (model === undefined) {
@@ -217,5 +254,87 @@ const createLanguageModelApi = (
     },
   };
 };
+
+const createSymbolContextProvider = (): PairSymbolContextProvider => ({
+  current: async (signal) => {
+    signal.throwIfAborted();
+    const editor = vscode.window.activeTextEditor;
+    if (editor === undefined) {
+      return undefined;
+    }
+    const symbols = await vscode.commands.executeCommand<
+      readonly (vscode.DocumentSymbol | vscode.SymbolInformation)[] | undefined
+    >("vscode.executeDocumentSymbolProvider", editor.document.uri);
+    signal.throwIfAborted();
+    if (symbols === undefined) {
+      return undefined;
+    }
+    return findCurrentSymbol(
+      symbols,
+      editor.document.uri,
+      editor.selection.active,
+    );
+  },
+});
+
+const findCurrentSymbol = (
+  symbols: readonly (vscode.DocumentSymbol | vscode.SymbolInformation)[],
+  documentUri: vscode.Uri,
+  position: vscode.Position,
+): ModelSymbolContext | undefined => {
+  const candidates: Array<{
+    readonly name: string;
+    readonly kind: vscode.SymbolKind;
+    readonly range: vscode.Range;
+  }> = [];
+
+  const collectDocumentSymbol = (symbol: vscode.DocumentSymbol): void => {
+    if (!symbol.range.contains(position)) {
+      return;
+    }
+    candidates.push(symbol);
+    for (const child of symbol.children) {
+      collectDocumentSymbol(child);
+    }
+  };
+
+  for (const symbol of symbols) {
+    if (isDocumentSymbol(symbol)) {
+      collectDocumentSymbol(symbol);
+    } else if (
+      symbol.location.uri.toString() === documentUri.toString() &&
+      symbol.location.range.contains(position)
+    ) {
+      candidates.push({
+        name: symbol.name,
+        kind: symbol.kind,
+        range: symbol.location.range,
+      });
+    }
+  }
+
+  const current = candidates.at(-1);
+  if (current === undefined) {
+    return undefined;
+  }
+  return {
+    name: current.name,
+    kind: vscode.SymbolKind[current.kind] ?? String(current.kind),
+    range: {
+      start: {
+        line: current.range.start.line,
+        character: current.range.start.character,
+      },
+      end: {
+        line: current.range.end.line,
+        character: current.range.end.character,
+      },
+    },
+  };
+};
+
+const isDocumentSymbol = (
+  symbol: vscode.DocumentSymbol | vscode.SymbolInformation,
+): symbol is vscode.DocumentSymbol => "selectionRange" in symbol;
 
 export function deactivate(): void {}

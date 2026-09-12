@@ -51,6 +51,15 @@ export class EditEpisodeAggregator {
     this.pendingByUri.set(snapshot.uri, pending);
   }
 
+  public cancel(uri: string): void {
+    const pending = this.pendingByUri.get(uri);
+    if (pending === undefined) {
+      return;
+    }
+    this.pendingByUri.delete(uri);
+    this.scheduler.cancel(pending.timer);
+  }
+
   public dispose(): void {
     if (this.disposed) {
       return;
