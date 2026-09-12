@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { InterventionPolicy } from "../src/core/interventionPolicy";
 import {
   LocalTemplateProvider,
   ModelRouter,
   OpenAICompatibleProvider,
 } from "../src/core/modelRouter";
+import { TokenBudget } from "../src/core/tokenBudget";
 import type { Evidence, PairRange } from "../src/core/types";
 import type { ModelProvider, ModelRequest, ModelResponse } from "../src/core/modelRouter";
 
@@ -38,6 +40,8 @@ const request: ModelRequest = {
   evidence,
   interactionStyle: "ask-first",
 };
+
+const longGoal = "Ask a concise, evidence-backed question. ".repeat(8).trim();
 
 class RecordingProvider implements ModelProvider {
   public readonly calls: Array<{
@@ -197,5 +201,68 @@ describe("model routing", () => {
     await expect(provider.generate(request, new AbortController().signal)).rejects.toThrow(
       "OpenAI-compatible provider returned an invalid payload.",
     );
+  });
+
+  it("does not call fetch when policy denies remote generation on token budget", async () => {
+    let fetchCalls = 0;
+    const fetchImplementation: typeof fetch = async () => {
+      fetchCalls += 1;
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: "Did you intend to introduce this dependency?",
+              },
+            },
+          ],
+          usage: {
+            prompt_tokens: 42,
+            completion_tokens: 11,
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+    };
+    const provider = new OpenAICompatibleProvider({
+      baseUrl: new URL("http://localhost:11434/v1"),
+      model: "qwen2.5-coder:7b",
+      fetch: fetchImplementation,
+    });
+    const policy = new InterventionPolicy({
+      budget: new TokenBudget({
+        windowMs: 60_000,
+        maxCalls: 10,
+        maxInputTokens: 190,
+      }),
+      cooldownMs: 1_000,
+    });
+    const deniedRequest: ModelRequest = {
+      ...request,
+      goal: longGoal,
+    };
+    const decision = policy.decide({
+      evidence: [evidence],
+      style: "balanced",
+      now: 1_000,
+      goal: deniedRequest.goal,
+    });
+
+    if (decision.kind === "intervene" && decision.useModel) {
+      await provider.generate(deniedRequest, new AbortController().signal);
+    }
+
+    expect(decision).toMatchObject({
+      kind: "intervene",
+      evidenceId: evidence.id,
+      useModel: false,
+      localMessage: expect.stringContaining(evidence.title),
+    });
+    expect(fetchCalls).toBe(0);
   });
 });

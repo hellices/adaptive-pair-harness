@@ -1,4 +1,8 @@
-import { createLocalInterventionQuestion } from "./modelRouter";
+import {
+  createLocalInterventionQuestion,
+  estimateOpenAICompatibleInputTokens,
+} from "./modelRouter";
+import type { ModelRequest } from "./modelRouter";
 import type { TokenBudget } from "./tokenBudget";
 import type { Evidence } from "./types";
 
@@ -8,6 +12,7 @@ export interface PolicyInput {
   readonly evidence: readonly Evidence[];
   readonly style: InterventionStyle;
   readonly now: number;
+  readonly goal: string;
 }
 
 export type PolicyDecision =
@@ -75,7 +80,15 @@ export class InterventionPolicy {
     }
 
     const localMessage = createLocalInterventionQuestion(selectedEvidence);
-    const reservation = this.budget?.tryReserve(estimateInputTokens(selectedEvidence), input.now);
+    const remoteRequest: ModelRequest = {
+      goal: input.goal,
+      evidence: selectedEvidence,
+      interactionStyle: "ask-first",
+    };
+    const reservation = this.budget?.tryReserve(
+      estimateOpenAICompatibleInputTokens(remoteRequest),
+      input.now,
+    );
 
     this.lastInterventionByEvidenceId.set(selectedEvidence.id, input.now);
 
@@ -113,15 +126,3 @@ const compareEvidencePriority = (left: Evidence, right: Evidence): number => {
 
   return right.confidence - left.confidence;
 };
-
-const estimateInputTokens = (evidence: Evidence): number =>
-  Math.max(
-    1,
-    Math.ceil(
-      (evidence.title.length +
-        evidence.detail.length +
-        evidence.source.length +
-        evidence.references.join(" ").length) /
-        4,
-    ),
-  );

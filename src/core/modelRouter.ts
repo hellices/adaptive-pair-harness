@@ -24,13 +24,16 @@ export interface OpenAICompatibleProviderConfig {
   readonly apiKey?: string;
 }
 
-interface ChatCompletionRequestBody {
-  readonly model: string;
+interface OpenAICompatiblePromptPayload {
   readonly messages: ReadonlyArray<{
     readonly role: "system" | "user";
     readonly content: string;
   }>;
   readonly stream: false;
+}
+
+interface ChatCompletionRequestBody extends OpenAICompatiblePromptPayload {
+  readonly model: string;
 }
 
 interface OpenAICompatibleSuccessPayload {
@@ -122,21 +125,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
 export const createLocalInterventionQuestion = (evidence: Evidence): string =>
   `${evidence.title}: ${evidence.detail} Did you intend this change?`;
 
-const buildHeaders = (apiKey: string | undefined): HeadersInit => {
-  if (apiKey === undefined) {
-    return {
-      "content-type": "application/json",
-    };
-  }
-
-  return {
-    "content-type": "application/json",
-    authorization: `Bearer ${apiKey}`,
-  };
-};
-
-const buildRequestBody = (model: string, request: ModelRequest): ChatCompletionRequestBody => ({
-  model,
+export const buildOpenAICompatiblePromptPayload = (
+  request: ModelRequest,
+): OpenAICompatiblePromptPayload => ({
   messages: [
     {
       role: "system",
@@ -160,6 +151,30 @@ const buildRequestBody = (model: string, request: ModelRequest): ChatCompletionR
   ],
   stream: false,
 });
+
+export const estimateOpenAICompatibleInputTokens = (request: ModelRequest): number =>
+  estimateSerializedTokens(JSON.stringify(buildOpenAICompatiblePromptPayload(request)));
+
+const buildHeaders = (apiKey: string | undefined): HeadersInit => {
+  if (apiKey === undefined) {
+    return {
+      "content-type": "application/json",
+    };
+  }
+
+  return {
+    "content-type": "application/json",
+    authorization: `Bearer ${apiKey}`,
+  };
+};
+
+const buildRequestBody = (model: string, request: ModelRequest): ChatCompletionRequestBody => ({
+  model,
+  ...buildOpenAICompatiblePromptPayload(request),
+});
+
+const estimateSerializedTokens = (serializedPayload: string): number =>
+  Math.max(1, Math.ceil(serializedPayload.length / 4));
 
 const joinUrl = (baseUrl: URL, path: string): string => {
   const baseHref = baseUrl.href.endsWith("/") ? baseUrl.href : `${baseUrl.href}/`;
