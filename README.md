@@ -182,9 +182,10 @@ See the repository documentation for the full configuration reference:
 - `local-template` keeps all generation local to the extension process.
 - Remote requests send **structured evidence**, not full source buffers.
 - One centralized policy redacts or suppresses credentials in semantic,
-  diagnostic, symbol, and Chat fields, including URL userinfo and sensitive
-  query values, quoted credential assignments, and complete Basic/Bearer
-  authorization payloads. Credential-bearing automatic evidence stays local.
+  diagnostic, symbol, and Chat fields, including HTTP/DSN userinfo, sensitive
+  query values, quoted JSON/assignment values, long base64/base64url values,
+  and complete Basic/Bearer authorization payloads. Credential-bearing
+  automatic evidence stays local.
 - The latest local inline question is **not** forwarded back to remote chat
   providers.
 - Token budgets are enforced per 10-minute window and survive configuration or
@@ -253,6 +254,8 @@ harness.
 
 ### Corrupt local memory
 
+Personal Pair memory is stored in VS Code global state. Repository dismissals
+remain isolated under repository-specific keys in that global record.
 Pair starts with safe in-memory defaults, preserves the corrupt stored record,
 and shows a warning. Use **Adaptive Pair: Reset Local Memory** only when you
 intend to replace that record with clean defaults.

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { basename, dirname, resolve } from "node:path";
 import ts from "typescript";
 import type { EditEpisode, Evidence, PairRange } from "./types";
 
@@ -111,24 +112,48 @@ const createSemanticSource = (
     allowJs: true,
     checkJs: true,
     module: ts.ModuleKind.CommonJS,
-    noLib: true,
     noResolve: true,
     skipLibCheck: true,
     target: ts.ScriptTarget.Latest,
   };
   const defaultHost = ts.createCompilerHost(compilerOptions, true);
+  const standardLibraryDirectory = dirname(
+    resolve(ts.getDefaultLibFilePath(compilerOptions)),
+  );
+  const isStandardLibraryFile = (fileName: string): boolean => {
+    const resolvedFileName = resolve(fileName);
+    return (
+      dirname(resolvedFileName) === standardLibraryDirectory &&
+      /^lib(?:\..+)?\.d\.ts$/u.test(basename(resolvedFileName))
+    );
+  };
   const host: ts.CompilerHost = {
     ...defaultHost,
     fileExists: (fileName) =>
-      fileName === sourceFile.fileName || defaultHost.fileExists(fileName),
-    getSourceFile: (fileName, languageVersionOrOptions) =>
+      fileName === sourceFile.fileName ||
+      (isStandardLibraryFile(fileName) && defaultHost.fileExists(fileName)),
+    getSourceFile: (
+      fileName,
+      languageVersionOrOptions,
+      onError,
+      shouldCreateNewSourceFile,
+    ) =>
       fileName === sourceFile.fileName
         ? sourceFile
-        : defaultHost.getSourceFile(fileName, languageVersionOrOptions),
+        : isStandardLibraryFile(fileName)
+          ? defaultHost.getSourceFile(
+              fileName,
+              languageVersionOrOptions,
+              onError,
+              shouldCreateNewSourceFile,
+            )
+          : undefined,
     readFile: (fileName) =>
       fileName === sourceFile.fileName
         ? text
-        : defaultHost.readFile(fileName),
+        : isStandardLibraryFile(fileName)
+          ? defaultHost.readFile(fileName)
+          : undefined,
   };
   const program = ts.createProgram(
     [sourceFile.fileName],
@@ -287,6 +312,7 @@ const collectExportedSignatures = (
   >();
   const classesByName = new Map<string, ts.ClassDeclaration>();
   const identifiersByName = new Map<string, ts.Identifier>();
+  const variableNames = new Set<string>();
 
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement) && statement.name !== undefined) {
@@ -306,6 +332,7 @@ const collectExportedSignatures = (
           continue;
         }
         identifiersByName.set(declaration.name.text, declaration.name);
+        variableNames.add(declaration.name.text);
         const initializer = unwrapFunctionExpression(declaration.initializer);
         if (initializer !== undefined) {
           functionsByName.set(declaration.name.text, [initializer]);
@@ -378,6 +405,32 @@ const collectExportedSignatures = (
     externalName: string,
     rangeNode?: ts.Node,
   ): void => {
+    const identifier = identifiersByName.get(localName);
+    if (identifier !== undefined && variableNames.has(localName)) {
+      const callSignatures = checker
+        .getTypeAtLocation(identifier)
+        .getCallSignatures();
+      if (callSignatures.length > 0) {
+        const displayName =
+          externalName === "default" ? DEFAULT_EXPORT_DISPLAY : externalName;
+        for (const signature of callSignatures) {
+          appendSignatureRecord(
+            signatures,
+            `function:${externalName}`,
+            displayName,
+            checker.signatureToString(
+              signature,
+              identifier,
+              ts.TypeFormatFlags.NoTruncation |
+                ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope,
+              ts.SignatureKind.Call,
+            ),
+            rangeForNode(sourceFile, rangeNode ?? identifier),
+          );
+        }
+        return;
+      }
+    }
     const functions = functionsByName.get(localName);
     if (functions !== undefined) {
       appendFunction(externalName, functions, rangeNode);
@@ -388,7 +441,6 @@ const collectExportedSignatures = (
       appendClass(externalName, declaration, rangeNode);
       return;
     }
-    const identifier = identifiersByName.get(localName);
     if (identifier === undefined) {
       return;
     }

@@ -125,6 +125,66 @@ describe("TypeScriptSemanticAnalyzer", () => {
     );
   });
 
+  it("prioritizes explicit callable variable annotations over initializer syntax", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        [
+          "export const load: (id: string) => string =",
+          "  (id: any) => String(id);",
+        ].join("\n"),
+        [
+          "export const load: (id: number) => string =",
+          "  (id: any) => String(id);",
+        ].join("\n"),
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["load"],
+        }),
+      ]),
+    );
+  });
+
+  it("infers changed array element types from the standard library", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        "export const values = () => [1];",
+        'export const values = () => ["one"];',
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["values"],
+        }),
+      ]),
+    );
+  });
+
+  it("infers changed async return types from the standard library", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        "export const load = async () => 1;",
+        'export const load = async () => "one";',
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["load"],
+        }),
+      ]),
+    );
+  });
+
   it("tracks local export lists by their external aliases", () => {
     const evidence = analyzeEvidence(
       episode(

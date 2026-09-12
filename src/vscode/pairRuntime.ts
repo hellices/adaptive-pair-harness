@@ -168,9 +168,9 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       vscode.workspace.workspaceFolders?.[0]?.uri.toString() ?? "no-workspace";
     this.memoryBackend = {
       get: async <T>(key: string): Promise<T | undefined> =>
-        options.extensionContext.workspaceState.get<T>(key),
+        options.extensionContext.globalState.get<T>(key),
       update: async <T>(key: string, value: T): Promise<void> =>
-        options.extensionContext.workspaceState.update(key, value),
+        options.extensionContext.globalState.update(key, value),
     };
     this.memoryStore = new PairMemoryStore({
       repositoryId,

@@ -271,6 +271,10 @@ const languageModelApi = (
 });
 
 const extensionContext = {
+  globalState: {
+    get: () => undefined,
+    update: async () => undefined,
+  },
   workspaceState: {
     get: () => undefined,
     update: async () => undefined,
@@ -312,13 +316,45 @@ beforeEach(() => {
 });
 
 describe("PairRuntime lifecycle ownership", () => {
+  it("persists personal memory through global state, not workspace state", async () => {
+    const globalUpdate = vi.fn(async () => undefined);
+    const workspaceUpdate = vi.fn(async () => undefined);
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext: {
+        globalState: {
+          get: () => undefined,
+          update: globalUpdate,
+        },
+        workspaceState: {
+          get: () => undefined,
+          update: workspaceUpdate,
+        },
+      } as unknown as vscode.ExtensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+
+    await runtime.resetMemory();
+
+    expect(globalUpdate).toHaveBeenCalledWith(
+      "adaptive-pair.memory",
+      expect.objectContaining({
+        dismissedEvidenceByRepository: {},
+      }),
+    );
+    expect(workspaceUpdate).not.toHaveBeenCalled();
+    runtime.dispose();
+  });
+
   it("starts with visible in-memory defaults when stored memory is corrupt", async () => {
     let stored: unknown = {
       version: 1,
       preferences: { interventionStyle: "invalid" },
     };
     const corruptContext = {
-      workspaceState: {
+      globalState: {
         get: () => stored,
         update: async (_key: string, value: unknown) => {
           stored = value;
@@ -711,7 +747,7 @@ describe("PairRuntime lifecycle ownership", () => {
     const resetCompletion = deferred<void>();
     let resetStarted = false;
     const resetContext = {
-      workspaceState: {
+      globalState: {
         get: () => undefined,
         update: async () => {
           resetStarted = true;

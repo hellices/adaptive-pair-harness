@@ -194,3 +194,79 @@
 - Live Copilot consent UI and third-party OpenAI-compatible services were not
   exercised in this non-interactive environment; their adapters are covered by
   contract tests.
+
+---
+
+## Whole-Branch Review Round 3
+
+- Date: 2026-09-12
+- Binding input: `.superpowers/sdd/final-review-round-3.md`
+- Status: **COMPLETE — no blocked finding**
+
+### Corrections implemented
+
+- Central redaction now recognizes JSON-quoted sensitive keys with quoted
+  values containing spaces, strips userinfo from HTTP and non-HTTP DSNs, and
+  consumes complete long base64/base64url values including padding. A
+  40-character threshold and credential-like character check preserve obvious
+  short benign values. Every match sets the sensitive-data signal that keeps
+  automatic evidence local.
+- Exported callable variables now serialize checker-resolved public call
+  signatures before falling back to initializer syntax. Explicit annotation
+  changes are therefore visible even when the initializer remains typed with
+  `any`.
+- The per-source TypeScript `Program` now loads standard library declarations
+  from the installed TypeScript package. Its host exposes only the analyzed
+  source and those standard-library files, while project resolution remains
+  disabled. Array element and async return inference are covered.
+- Personal memory now uses `ExtensionContext.globalState`. Repository
+  dismissals remain partitioned by repository ID inside the shared global
+  record, preserving multi-root behavior.
+- README, configuration, and architecture documentation now describe the
+  expanded redaction policy and global-memory boundary.
+
+### Focused RED/GREEN evidence
+
+- Privacy regressions reproduced failures for JSON keys and non-HTTP DSNs.
+  Stricter full-value assertions then exposed both padded encodings, and
+  self-review added a failing 40-character padded boundary case. The privacy
+  suite finishes with 13 passing tests.
+- Callable annotation, array element, and async return regressions all failed
+  before the semantic fixes; the semantic suite finishes with 29 passing
+  tests.
+- The global-state wiring regression failed while `workspaceState` received
+  the write. Lifecycle and memory suites finish with 22 passing tests after the
+  backend change.
+- Combined focused coverage finishes with 64 passing tests.
+
+### Final verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **16 files, 186 tests passed**
+- `npm run package`: **PASS**
+- VSIX inspection: **155 files**
+  - packaged runtime contains global-state wiring, checker-first callable
+    serialization, restricted standard-library loading, and complete padded
+    value redaction;
+  - installed TypeScript standard libraries and public docs are included;
+  - source, tests, coverage, private Superpowers material, and source maps are
+    excluded.
+- `git diff --check`: **PASS**
+- Production credential-value scan: **PASS**
+- Package metadata fake-URL scan: **PASS**
+- Production URL literals remain limited to the documented loopback default.
+- Self-review found and fixed the minimum-length padded-base64 boundary; no
+  remaining high-confidence correctness, security, or lifecycle finding was
+  identified.
+
+### Residual concerns
+
+- Official Copilot consent UI and a live third-party OpenAI-compatible service
+  were not exercised in this non-interactive environment; adapters remain
+  covered by mocked contract tests.
+- Semantic analysis remains intentionally per-document and does not resolve
+  project files or cross-file user-defined types. Loading packaged TypeScript
+  standard libraries improves built-in inference without widening that privacy
+  boundary.

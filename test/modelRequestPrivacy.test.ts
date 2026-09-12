@@ -10,6 +10,25 @@ import {
 import { buildCopilotPrompt } from "../src/vscode/vsCodeLanguageModelProvider";
 import type { ModelRequest } from "../src/core/modelRouter";
 
+const requestContaining = (text: string): ModelRequest => ({
+  goal: text,
+  interactionStyle: "ask-first",
+  evidence: {
+    id: "dependency:privacy-regression",
+    kind: "new-dependency",
+    severity: "warning",
+    title: "Credential-like text introduced",
+    detail: text,
+    source: "typescript-semantic-analyzer",
+    confidence: 0.94,
+    range: {
+      start: { line: 0, character: 0 },
+      end: { line: 0, character: 10 },
+    },
+    references: [],
+  },
+});
+
 describe("remote model request privacy", () => {
   it("removes unbounded third-party diagnostic text and preserves safe metadata", () => {
     const secret = "sk-do-not-forward-this-secret";
@@ -248,6 +267,65 @@ describe("remote model request privacy", () => {
     expect(prepared.sensitiveDataDetected).toBe(true);
     expect(serialized).not.toContain(credential);
     expect(serialized).toContain("[REDACTED]");
+  });
+
+  it("redacts JSON quoted sensitive keys with spaced quoted values", () => {
+    const credential = "correct horse battery staple";
+    const prepared = prepareRemoteModelRequest(
+      requestContaining(`{"password": "${credential}"}`),
+    );
+    const serialized = JSON.stringify(prepared.request);
+
+    expect(prepared.sensitiveDataDetected).toBe(true);
+    expect(serialized).not.toContain(credential);
+    expect(serialized).toContain("[REDACTED]");
+  });
+
+  it("redacts userinfo credentials from non-HTTP DSNs", () => {
+    const dsn =
+      "amqps://queue-user:queue-password@broker.example.test/private-vhost";
+    const prepared = prepareRemoteModelRequest(requestContaining(dsn));
+    const serialized = JSON.stringify(prepared.request);
+
+    expect(prepared.sensitiveDataDetected).toBe(true);
+    expect(serialized).not.toContain("queue-user");
+    expect(serialized).not.toContain("queue-password");
+    expect(serialized).toContain("amqps://broker.example.test/private-vhost");
+  });
+
+  it.each([
+    [
+      "base64",
+      "QWxhZGRpbjpvcGVuIHNlc2FtZSB3aXRoIGFkZGl0aW9uYWwgYnl0ZXM=",
+    ],
+    [
+      "base64url",
+      "-yBFao-02f4jSG2St9wBJktwlbrfBClOc5i94gcsUXabwOUKL1R5nsPoDTJXfKE=",
+    ],
+    [
+      "40-character base64",
+      "MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1ub3Bxcg==",
+    ],
+  ])("redacts long padded %s credential-like values", (_kind, credential) => {
+    const prepared = prepareRemoteModelRequest(
+      requestContaining(`opaque=${credential}`),
+    );
+    const serialized = JSON.stringify(prepared.request);
+
+    expect(prepared.sensitiveDataDetected).toBe(true);
+    expect(serialized).not.toContain(credential);
+    expect(serialized).toContain("[REDACTED]");
+    expect(prepared.request.goal).toBe("opaque=[REDACTED]");
+  });
+
+  it("preserves obvious short benign base64 values", () => {
+    const benign = "YWJjZGVmZ2hpamtsbW5vcA==";
+    const prepared = prepareRemoteModelRequest(
+      requestContaining(`sample=${benign}`),
+    );
+
+    expect(prepared.sensitiveDataDetected).toBe(false);
+    expect(JSON.stringify(prepared.request)).toContain(benign);
   });
 
   it("redacts the complete Basic authorization payload", () => {

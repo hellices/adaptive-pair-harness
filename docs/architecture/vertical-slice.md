@@ -182,11 +182,11 @@ Detection does **not** imply:
 
 ## Persistence and privacy boundary
 
-Persistent state is stored in VS Code workspace state and secret storage, not in
+Persistent state is stored in VS Code global state and secret storage, not in
 repository files.
 
-- pair memory is repository-scoped inside workspace state, including
-  document-owning roots in multi-root workspaces;
+- personal pair memory is shared through global state, while repository
+  dismissals stay keyed by document-owning roots inside that global record;
 - corrupt memory is preserved while in-memory defaults keep Pair usable, until
   the user invokes the explicit reset command; reset completion is fenced to
   the runtime generation that initiated it, so a replaced runtime cannot be

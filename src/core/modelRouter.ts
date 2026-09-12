@@ -477,25 +477,28 @@ const boundSingleLine = (value: string, maxLength: number): string =>
 
 const SENSITIVE_QUERY_PARAMETER =
   /^(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|credential|authorization|signature|sig)$/iu;
-const URL_PATTERN = /https?:\/\/[^\s<>"'`]+/giu;
+const URI_PATTERN = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s<>"'`]+/gu;
 const ASSIGNED_SECRET_PATTERN =
   /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|credential|authorization)\b(\s*[:=]\s*)(["']?)([^\s,;"']+)\3/giu;
 const QUOTED_ASSIGNED_SECRET_PATTERN =
   /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|credential|authorization)\b(\s*[:=]\s*)(["'])([^"'\\\r\n]*)\3/giu;
+const JSON_QUOTED_ASSIGNED_SECRET_PATTERN =
+  /"(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|credential|authorization)"(\s*:\s*)"((?:\\.|[^"\\\r\n])*)"/giu;
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/giu;
 const BASIC_PATTERN = /\bBasic\s+[A-Za-z0-9._~+/-]+=*/giu;
 const KNOWN_TOKEN_PATTERN =
   /(?:sk-[A-Za-z0-9_-]{8,}|github_pat_[A-Za-z0-9_]{12,}|gh[pousr]_[A-Za-z0-9]{12,}|AKIA[A-Z0-9]{16})/gu;
 const JWT_PATTERN =
   /\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu;
-const LONG_OPAQUE_PATTERN = /\b[A-Za-z0-9_+/=-]{40,}\b/gu;
+const LONG_OPAQUE_PATTERN =
+  /(?<![A-Za-z0-9_+/-])[A-Za-z0-9_+/-]{38,}={0,2}(?![A-Za-z0-9_+/=-])/gu;
 
 const sanitizeRemoteText = (
   value: string,
   maxLength: number,
 ): SanitizedValue<string> => {
   let sensitiveDataDetected = false;
-  let sanitized = value.replace(URL_PATTERN, (candidate) => {
+  let sanitized = value.replace(URI_PATTERN, (candidate) => {
     try {
       const parsed = new URL(candidate);
       let changed = false;
@@ -534,6 +537,10 @@ const sanitizeRemoteText = (
   redact(BASIC_PATTERN, "[REDACTED]");
   redact(KNOWN_TOKEN_PATTERN, "[REDACTED]");
   redact(JWT_PATTERN, "[REDACTED]");
+  redact(
+    JSON_QUOTED_ASSIGNED_SECRET_PATTERN,
+    '"$1"$2"[REDACTED]"',
+  );
   QUOTED_ASSIGNED_SECRET_PATTERN.lastIndex = 0;
   if (QUOTED_ASSIGNED_SECRET_PATTERN.test(sanitized)) {
     sensitiveDataDetected = true;
@@ -570,7 +577,7 @@ const sanitizeRemoteText = (
 const looksLikeLongSecret = (value: string): boolean =>
   value.length >= 40 &&
   /[A-Za-z]/u.test(value) &&
-  /\d/u.test(value);
+  (/[0-9_+/-]/u.test(value) || /=+$/u.test(value));
 
 const formatRange = (range: PairRange): string =>
   `${range.start.line}:${range.start.character}-${range.end.line}:${range.end.character}`;

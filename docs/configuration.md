@@ -31,7 +31,9 @@ Adaptive Pair does not write secrets to workspace files.
   command explicitly for the new origin.
 - If no API key is stored, OpenAI-compatible requests are sent without an
   `Authorization` header.
-- Pair memory lives in VS Code workspace state, not in tracked project files.
+- Personal Pair memory lives in VS Code global state, not in tracked project
+  files. Repository dismissals remain keyed by repository within that global
+  record.
 
 ## Provider setup
 
@@ -111,11 +113,12 @@ Every remote request is reduced to a bounded structured prompt containing:
   - current symbol `name`, `kind`, and `range`
 
 All string fields pass through the same suppression/redaction policy. It
-handles URL userinfo, sensitive query parameters, bearer/JWT and common token
-formats, complete Basic authorization payloads, quoted or unquoted credential
-assignments, control characters, and long opaque secret-like values. If an
-automatic intervention contains possible credential material, no remote
-provider is called; the local template is used instead.
+handles HTTP and non-HTTP DSN userinfo, sensitive query parameters, bearer/JWT
+and common token formats, complete Basic authorization payloads, quoted JSON
+keys and quoted or unquoted credential assignments, control characters, and
+long base64/base64url or opaque secret-like values. If an automatic
+intervention contains possible credential material, no remote provider is
+called; the local template is used instead.
 
 ### Diagnostic sanitization
 
