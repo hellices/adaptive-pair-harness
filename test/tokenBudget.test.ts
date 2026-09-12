@@ -46,4 +46,20 @@ describe("TokenBudget", () => {
     });
     expect(budget.tryReserve(5, 10).allowed).toBe(true);
   });
+
+  it("waits for both call and token capacity when both are exhausted", () => {
+    const budget = new TokenBudget({
+      windowMs: 1_000,
+      maxCalls: 2,
+      maxInputTokens: 100,
+    });
+
+    expect(budget.tryReserve(10, 0).allowed).toBe(true);
+    expect(budget.tryReserve(90, 900).allowed).toBe(true);
+    expect(budget.tryReserve(50, 900)).toMatchObject({
+      allowed: false,
+      reason: "call-limit",
+      retryAfterMs: 1_000,
+    });
+  });
 });

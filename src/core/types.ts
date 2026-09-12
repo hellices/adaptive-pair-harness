@@ -8,6 +8,14 @@ export interface PairRange {
   readonly end: PairPosition;
 }
 
+export interface Intervention {
+  readonly evidenceId: string;
+  readonly message: string;
+  readonly range: PairRange;
+  readonly source: "local" | "model";
+  readonly createdAt: number;
+}
+
 export interface EditEpisode {
   readonly uri: string;
   readonly languageId: string;

@@ -29,30 +29,36 @@ export class TokenBudget {
   public tryReserve(inputTokens: number, now: number): BudgetDecision {
     this.purgeExpired(now);
 
-    if (this.reservations.length >= this.config.maxCalls) {
+    const currentTokens = this.currentInputTokens();
+    const callLimitExceeded = this.reservations.length >= this.config.maxCalls;
+    const tokenLimitExceeded = currentTokens + inputTokens > this.config.maxInputTokens;
+
+    if (!callLimitExceeded && !tokenLimitExceeded) {
+      this.reservations.push({ timestamp: now, inputTokens });
+      this.reservations.sort((left, right) => left.timestamp - right.timestamp);
+
+      return {
+        allowed: true,
+        remainingCalls: this.config.maxCalls - this.reservations.length,
+        remainingInputTokens: this.config.maxInputTokens - (currentTokens + inputTokens),
+      };
+    }
+
+    const callRetryAfter = callLimitExceeded ? this.retryAfterForNextExpiry(now) : 0;
+    const tokenRetryAfter = tokenLimitExceeded ? this.retryAfterForTokenCapacity(now, inputTokens) : 0;
+
+    if (callLimitExceeded) {
       return {
         allowed: false,
         reason: "call-limit",
-        retryAfterMs: this.retryAfterForNextExpiry(now),
+        retryAfterMs: Math.max(callRetryAfter, tokenRetryAfter),
       };
     }
-
-    const currentTokens = this.currentInputTokens();
-    if (currentTokens + inputTokens > this.config.maxInputTokens) {
-      return {
-        allowed: false,
-        reason: "token-limit",
-        retryAfterMs: this.retryAfterForTokenCapacity(now, inputTokens),
-      };
-    }
-
-    this.reservations.push({ timestamp: now, inputTokens });
-    this.reservations.sort((left, right) => left.timestamp - right.timestamp);
 
     return {
-      allowed: true,
-      remainingCalls: this.config.maxCalls - this.reservations.length,
-      remainingInputTokens: this.config.maxInputTokens - (currentTokens + inputTokens),
+      allowed: false,
+      reason: "token-limit",
+      retryAfterMs: tokenRetryAfter,
     };
   }
 
