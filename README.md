@@ -1,5 +1,7 @@
 # Adaptive Pair Harness
 
+[Open in GitHub Codespaces](https://codespaces.new/hellices/adaptive-pair-harness?quickstart=1)
+
 Adaptive Pair Harness is an open-source VS Code extension that watches active
 TypeScript and JavaScript edits, detects a small set of high-signal changes,
 and asks concise navigator-style questions inline.
@@ -60,7 +62,8 @@ explicitly start one.
 
 This is the fastest end-to-end validation path.
 
-1. Open the repository in **GitHub Codespaces**.
+1. Select [Open in GitHub Codespaces](https://codespaces.new/hellices/adaptive-pair-harness?quickstart=1)
+   or create a codespace from the repository's **Code** menu.
 2. Wait for the dev container to finish `npm ci`.
 3. In the Codespaces terminal, run:
 
