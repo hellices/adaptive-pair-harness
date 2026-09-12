@@ -13,6 +13,7 @@
 - Require Node.js 22.12 or newer, recommend Node.js 24 LTS, and require VS Code 1.95 or newer.
 - Compile with TypeScript `strict: true`; do not use `any` or unchecked casts.
 - Namespace commands, settings, storage, and output as `adaptivePair` or `adaptive-pair`.
+- Load dormant: do not observe edits or invoke models until the user explicitly starts a pair session.
 - Treat all edits not applied by this extension as `user-supplied`; this slice applies no edits.
 - Do not send raw keystrokes, complete files, terminal output, or repository indexes to a model.
 - Run local analysis only after a configurable 300-800 ms semantic debounce.
@@ -97,6 +98,8 @@ Create `package.json` with:
     "onLanguage:typescriptreact",
     "onLanguage:javascript",
     "onLanguage:javascriptreact",
+    "onCommand:adaptivePair.startSession",
+    "onCommand:adaptivePair.stopSession",
     "onCommand:adaptivePair.toggle",
     "onCommand:adaptivePair.reviewCurrentBlock"
   ],
@@ -104,8 +107,16 @@ Create `package.json` with:
   "contributes": {
     "commands": [
       {
+        "command": "adaptivePair.startSession",
+        "title": "Adaptive Pair: Start Pairing Session"
+      },
+      {
+        "command": "adaptivePair.stopSession",
+        "title": "Adaptive Pair: Stop Pairing Session"
+      },
+      {
         "command": "adaptivePair.toggle",
-        "title": "Adaptive Pair: Toggle Navigator"
+        "title": "Adaptive Pair: Toggle Pairing Session"
       },
       {
         "command": "adaptivePair.reviewCurrentBlock",
@@ -114,6 +125,13 @@ Create `package.json` with:
       {
         "command": "adaptivePair.setApiKey",
         "title": "Adaptive Pair: Set OpenAI-Compatible API Key"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "adaptivePair.toggle",
+        "key": "ctrl+shift+alt+p",
+        "mac": "cmd+shift+alt+p"
       }
     ],
     "configuration": {
@@ -836,6 +854,8 @@ commands:
 - `/trace` - describe the current symbol's relevant control/data flow;
 - `/session` - show goal, role, provider, and remaining token budget;
 - `/why` - expand the most recent inline question.
+- `/start` - explicitly start a pair session for the current workspace;
+- `/stop` - stop the session and clear all transient pair state.
 
 Register it with `vscode.chat.createChatParticipant`. The participant consumes
 the same active evidence, model router, cancellation, and memory as the inline
@@ -864,20 +884,27 @@ participant.
 
 `PairRuntime` must:
 
-1. seed previous text for open documents;
-2. listen to TypeScript and JavaScript document changes;
-3. aggregate stable edits;
-4. cancel stale model requests per URI;
-5. analyze the latest episode;
-6. apply memory dismissal and intervention policy;
-7. use local, official VS Code Copilot, or configured OpenAI-compatible
+1. start dormant and register no document-analysis work until `startSession`;
+2. seed previous text for open documents only when a session starts;
+3. listen to TypeScript and JavaScript document changes only while active;
+4. aggregate stable edits;
+5. cancel stale model requests per URI;
+6. analyze the latest episode;
+7. apply memory dismissal and intervention policy;
+8. use local, official VS Code Copilot, or configured OpenAI-compatible
    provider;
-8. verify the document version still matches before rendering;
-9. update the status item with `You drive - Pair navigates`;
-10. discover external harness signals and append an observe-only notice without
+9. verify the document version still matches before rendering;
+10. update the status item with `Pair: off` or `You drive - Pair navigates`;
+11. discover external harness signals and append an observe-only notice without
     changing driver state.
-11. publish the latest evidence and session snapshot to the shared `@pair`
+12. publish the latest evidence and session snapshot to the shared `@pair`
     participant context.
+13. on `stopSession`, cancel timers and model calls, unregister active
+    document listeners, clear latest evidence and previous text, dispose all
+    Comment Threads, and return to dormant state.
+
+Session activity is in-memory and does not resume automatically after VS Code
+restart or workspace reload.
 
 - [ ] **Step 6: Wire commands, Chat, and secret storage**
 
@@ -885,6 +912,8 @@ Update `src/extension.ts` to:
 
 - construct and start `PairRuntime`;
 - register the `adaptivePair.chat` Chat participant;
+- register `adaptivePair.startSession` and `adaptivePair.stopSession` for users
+  and cooperating agents;
 - register `adaptivePair.toggle`;
 - register `adaptivePair.reviewCurrentBlock`;
 - register `adaptivePair.setApiKey`;
@@ -912,8 +941,18 @@ code --extensionDevelopmentPath="$PWD"
 ```
 
 In a TypeScript file, add a new import and pause for the configured debounce.
-Expected: an inline Comment Thread appears at the import and the status bar
-shows `Pair: You drive`.
+Expected before start: no analysis occurs and status shows `Pair: off`.
+
+Run `Adaptive Pair: Start Pairing Session` or press the contributed toggle
+shortcut, then add a new import and pause.
+
+Expected after start: an inline Comment Thread appears at the import and the
+status bar shows `Pair: You drive`.
+
+Run `Adaptive Pair: Stop Pairing Session`, edit again, and wait.
+
+Expected after stop: no new thread or model call occurs and existing transient
+threads are cleared.
 
 - [ ] **Step 9: Verify GitHub Copilot and Chat integration**
 
@@ -922,7 +961,8 @@ With GitHub Copilot installed and authenticated:
 1. set `adaptivePair.model.provider` to `vscode-copilot`;
 2. trigger `Adaptive Pair: Review Current Block`;
 3. approve the VS Code model-access consent prompt if shown.
-4. open VS Code Chat and run `@pair /why`.
+4. open VS Code Chat and run `@pair /start`, followed by `@pair /why`;
+5. run `@pair /stop` and confirm later Chat commands do not invoke a model.
 
 Expected: the inline response is generated by a model returned from
 `vscode.lm.selectChatModels({ vendor: "copilot" })`, and `@pair /why` expands the

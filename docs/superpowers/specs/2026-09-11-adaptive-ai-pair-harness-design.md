@@ -157,7 +157,24 @@ and already have well-funded incumbents.
 
 ## 5. Core Development Cycle
 
-### 5.1 Project and user setup
+### 5.1 Explicit session activation
+
+Installing or activating the extension does not start observation. Every
+workspace begins with `Pair: off`. A user starts a transient pair session
+through one of these explicit actions:
+
+- `Adaptive Pair: Start Pairing Session`;
+- the contributed toggle keybinding;
+- `@pair /start` in VS Code Chat;
+- `adaptivePair.startSession` invoked by a cooperating agent.
+
+Stopping through the corresponding command or `@pair /stop` cancels pending
+analysis and model calls, unregisters active document listeners, removes
+transient inline threads, and clears session evidence. Session activity is not
+restored automatically after reload. The extension may remain loaded only to
+show status and accept a future start command.
+
+### 5.2 Project and user setup
 
 The harness:
 
@@ -179,7 +196,7 @@ The initial capability dimensions are:
 
 Self-assessment is an initial hypothesis, not a score.
 
-### 5.2 Pair choreography
+### 5.3 Pair choreography
 
 The default state is:
 
