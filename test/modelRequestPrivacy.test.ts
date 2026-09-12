@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   buildOpenAICompatiblePromptPayload,
 } from "../src/core/modelRouter";
+import {
+  PairSharedContext,
+  buildPairChatPlan,
+} from "../src/vscode/pairChatParticipant";
 import { buildCopilotPrompt } from "../src/vscode/vsCodeLanguageModelProvider";
 import type { ModelRequest } from "../src/core/modelRouter";
 
@@ -87,5 +91,51 @@ describe("remote model request privacy", () => {
       expect(payload).not.toContain("selectionText");
       expect(payload).not.toContain("sourceText");
     }
+  });
+
+  it("never promotes tainted diagnostic text or the latest local question into remote Chat fields", () => {
+    const secret = "prod-secret-should-never-leave";
+    const sourceCode = "const adminToken = readSecretFromDisk();";
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "vscode-copilot",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    context.publishEvidence({
+      uri: "file:///workspace/private.ts",
+      evidence: {
+        id: "diagnostic:file:///workspace/private.ts:3:1",
+        kind: "diagnostic",
+        severity: "error",
+        title: "Editor diagnostic",
+        detail: `${sourceCode} // ${secret}`,
+        source: "typescript",
+        confidence: 0.97,
+        range: {
+          start: { line: 3, character: 1 },
+          end: { line: 3, character: 12 },
+        },
+        references: ["TS2322"],
+      },
+      question: `Why does ${sourceCode} contain ${secret}?`,
+    });
+
+    const plan = buildPairChatPlan("why", context.snapshot(), {
+      prompt: "Please explain this diagnostic.",
+    });
+    expect(plan.kind).toBe("generate");
+    const serialized = JSON.stringify(plan);
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain(sourceCode);
+    expect(serialized).toContain(
+      "See VS Code Problems for the complete diagnostic message.",
+    );
+    expect(serialized).toContain("Please explain this diagnostic.");
   });
 });

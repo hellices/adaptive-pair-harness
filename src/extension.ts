@@ -1,9 +1,14 @@
 import * as vscode from "vscode";
 import { readPairConfig } from "./config/pairConfig";
 import type { ModelSymbolContext } from "./core/modelRouter";
-import { PairSharedContext, registerPairChatParticipant } from "./vscode/pairChatParticipant";
+import type { PairRange } from "./core/types";
+import {
+  PairSharedContext,
+  registerPairChatParticipant,
+} from "./vscode/pairChatParticipant";
 import type { PairSymbolContextProvider } from "./vscode/pairChatParticipant";
 import { PairRuntime } from "./vscode/pairRuntime";
+import { createPairSessionCommandHandlers } from "./vscode/pairRuntimeSupport";
 import type {
   CopilotModelReference,
   VsCodeLanguageModelApi,
@@ -15,6 +20,7 @@ const API_KEY_SECRET = "adaptivePair.openaiCompatibleApiKey";
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const sharedContext = new PairSharedContext({
     enabled: true,
+    active: false,
     goal: "Navigate with concise, evidence-backed, ask-first questions.",
     role: "navigator",
     provider: "local-template",
@@ -45,7 +51,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       apiKey,
     });
     runtime = next;
-    await next.start();
     if (extensionDisposed || runtime !== next) {
       next.dispose();
     }
@@ -92,20 +97,54 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         );
       },
     },
-    createSymbolContextProvider(),
+    {
+      symbolContextProvider: createSymbolContextProvider(),
+      sessionControl: {
+        isSessionActive: () => runtime?.isSessionActive() ?? false,
+        startSession: async () => {
+          const activeRuntime = runtime;
+          if (activeRuntime === undefined) {
+            return {
+              kind: "already-stopped",
+              active: false,
+              message:
+                "Adaptive Pair runtime is rebuilding. Try again in a moment.",
+            };
+          }
+          return activeRuntime.startSession();
+        },
+        stopSession: () => {
+          const activeRuntime = runtime;
+          if (activeRuntime === undefined) {
+            return {
+              kind: "already-stopped",
+              active: false,
+              message:
+                "Adaptive Pair runtime is rebuilding. Try again in a moment.",
+            };
+          }
+          return activeRuntime.stopSession();
+        },
+      },
+      isOfficialCancellationError: isOfficialVsCodeCancellationError,
+    },
   );
 
+  const sessionHandlers = createPairSessionCommandHandlers(
+    () => runtime,
+    (message) => vscode.window.showInformationMessage(message),
+  );
+  const startSession = vscode.commands.registerCommand(
+    "adaptivePair.startSession",
+    sessionHandlers.start,
+  );
+  const stopSession = vscode.commands.registerCommand(
+    "adaptivePair.stopSession",
+    sessionHandlers.stop,
+  );
   const toggle = vscode.commands.registerCommand(
     "adaptivePair.toggle",
-    async () => {
-      const configuration = vscode.workspace.getConfiguration("adaptivePair");
-      const current = configuration.get<boolean>("enabled", true);
-      await configuration.update(
-        "enabled",
-        !current,
-        vscode.ConfigurationTarget.Workspace,
-      );
-    },
+    sessionHandlers.toggle,
   );
   const reviewCurrentBlock = vscode.commands.registerCommand(
     "adaptivePair.reviewCurrentBlock",
@@ -151,6 +190,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     participant,
+    startSession,
+    stopSession,
     toggle,
     reviewCurrentBlock,
     setApiKey,
@@ -213,10 +254,7 @@ const createLanguageModelApi = (
       return handle;
     },
     classifyError: (error) => {
-      if (
-        error instanceof vscode.CancellationError ||
-        (error instanceof DOMException && error.name === "AbortError")
-      ) {
+      if (isOfficialVsCodeCancellationError(error)) {
         return "cancelled";
       }
       if (!(error instanceof vscode.LanguageModelError)) {
@@ -256,26 +294,43 @@ const createLanguageModelApi = (
 };
 
 const createSymbolContextProvider = (): PairSymbolContextProvider => ({
-  current: async (signal) => {
+  forEvidence: async (uri, range, signal) => {
     signal.throwIfAborted();
-    const editor = vscode.window.activeTextEditor;
-    if (editor === undefined) {
+    const document = vscode.workspace.textDocuments.find(
+      (candidate) => candidate.uri.toString() === uri,
+    );
+    if (document === undefined) {
       return undefined;
     }
     const symbols = await vscode.commands.executeCommand<
       readonly (vscode.DocumentSymbol | vscode.SymbolInformation)[] | undefined
-    >("vscode.executeDocumentSymbolProvider", editor.document.uri);
+    >("vscode.executeDocumentSymbolProvider", document.uri);
     signal.throwIfAborted();
     if (symbols === undefined) {
       return undefined;
     }
     return findCurrentSymbol(
       symbols,
-      editor.document.uri,
-      editor.selection.active,
+      document.uri,
+      evidencePosition(document, range),
     );
   },
 });
+
+const evidencePosition = (
+  document: vscode.TextDocument,
+  range: PairRange,
+): vscode.Position => {
+  const line = Math.min(
+    Math.max(range.start.line, 0),
+    Math.max(document.lineCount - 1, 0),
+  );
+  const character = Math.min(
+    Math.max(range.start.character, 0),
+    document.lineAt(line).text.length,
+  );
+  return new vscode.Position(line, character);
+};
 
 const findCurrentSymbol = (
   symbols: readonly (vscode.DocumentSymbol | vscode.SymbolInformation)[],
@@ -336,5 +391,10 @@ const findCurrentSymbol = (
 const isDocumentSymbol = (
   symbol: vscode.DocumentSymbol | vscode.SymbolInformation,
 ): symbol is vscode.DocumentSymbol => "selectionRange" in symbol;
+
+const isOfficialVsCodeCancellationError = (error: unknown): boolean =>
+  error instanceof vscode.CancellationError ||
+  (error instanceof vscode.LanguageModelError &&
+    error.cause instanceof vscode.CancellationError);
 
 export function deactivate(): void {}

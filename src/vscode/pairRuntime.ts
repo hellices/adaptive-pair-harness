@@ -38,13 +38,19 @@ import type { VsCodeLanguageModelApi } from "./vsCodeLanguageModelProvider";
 import {
   PairDisabledError,
   PairDocumentState,
+  PairInactiveError,
   PairInvocationGate,
   PairRequestRegistry,
+  PairSessionLifecycle,
   buildPairStatusText,
   diagnosticCodeReference,
   selectManualEvidence,
+  shouldSuppressCancellation,
 } from "./pairRuntimeSupport";
-import type { PairInvocationSource } from "./pairRuntimeSupport";
+import type {
+  PairInvocationSource,
+  PairSessionActionResult,
+} from "./pairRuntimeSupport";
 
 const PAIR_GOAL = "Navigate with concise, evidence-backed, ask-first questions.";
 const SUPPORTED_LANGUAGE_IDS = new Set([
@@ -96,7 +102,6 @@ class TimeoutScheduler implements Scheduler, vscode.Disposable {
 }
 
 export class PairRuntime implements vscode.Disposable, PairChatGenerator {
-  private readonly disposables: vscode.Disposable[] = [];
   private readonly documentState = new PairDocumentState();
   private readonly requestByUri = new Map<string, AbortController>();
   private readonly chatRequests = new PairRequestRegistry();
@@ -112,16 +117,16 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   private readonly inlineController: InlinePairController;
   private readonly status: vscode.StatusBarItem;
   private readonly invocationGate: PairInvocationGate;
+  private readonly sessionLifecycle: PairSessionLifecycle;
   private effectiveProvider: PairConfig["provider"];
   private dismissedEvidenceIds = new Set<string>();
   private controlNotice: string | undefined;
   private statusDetail: string | undefined;
-  private started = false;
   private disposed = false;
 
   public constructor(private readonly options: PairRuntimeOptions) {
     this.budget = new TokenBudget(options.config.budget);
-    this.invocationGate = new PairInvocationGate(options.config.enabled);
+    this.invocationGate = new PairInvocationGate(options.config.enabled, false);
     this.effectiveProvider = options.config.provider;
     this.policy = new InterventionPolicy({
       model: options.config.modelName,
@@ -185,25 +190,57 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
         void this.handleEpisode(episode);
       },
     );
-    this.statusDetail = options.config.statusWarning;
+    this.sessionLifecycle = new PairSessionLifecycle(
+      () => this.options.config.enabled,
+      {
+        prepare: async () => {
+          await this.prepareSession();
+        },
+        registerDocumentListeners: () => this.registerDocumentListeners(),
+        cancelPendingWork: () => {
+          this.cancelPendingWork();
+        },
+        clearTransientState: () => {
+          this.clearTransientState();
+        },
+      },
+    );
+    this.statusDetail = this.inactiveStatusDetail();
     this.publishSession();
     this.renderStatus();
   }
 
   public async start(): Promise<void> {
-    if (this.started || this.disposed) {
-      return;
-    }
-    this.started = true;
+    await this.startSession();
+  }
 
-    for (const document of vscode.workspace.textDocuments) {
-      if (isSupportedDocument(document)) {
-        const key = document.uri.toString();
-        const text = document.getText();
-        this.documentState.seed(key, text);
-      }
-    }
+  public isSessionActive(): boolean {
+    return this.sessionLifecycle.active;
+  }
 
+  public async startSession(): Promise<PairSessionActionResult> {
+    const result = await this.sessionLifecycle.start();
+    this.invocationGate.setActive(result.active);
+    this.statusDetail = result.active
+      ? this.options.config.statusWarning
+      : this.inactiveStatusDetail();
+    this.publishSession();
+    this.renderStatus();
+    return result;
+  }
+
+  public stopSession(): PairSessionActionResult {
+    this.invocationGate.setActive(false);
+    const result = this.sessionLifecycle.stop();
+    this.effectiveProvider = this.options.config.provider;
+    this.controlNotice = undefined;
+    this.statusDetail = this.inactiveStatusDetail();
+    this.publishSession();
+    this.renderStatus();
+    return result;
+  }
+
+  private async prepareSession(): Promise<void> {
     const memory = await this.memoryStore.load();
     const repositoryId =
       vscode.workspace.workspaceFolders?.[0]?.uri.toString() ?? "no-workspace";
@@ -211,7 +248,16 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       memory.dismissedEvidenceByRepository[repositoryId] ?? [],
     );
 
-    this.disposables.push(
+    for (const document of vscode.workspace.textDocuments) {
+      if (isSupportedDocument(document)) {
+        this.documentState.seed(document.uri.toString(), document.getText());
+      }
+    }
+    await this.discoverCoexistence();
+  }
+
+  private registerDocumentListeners(): vscode.Disposable {
+    const listeners = [
       vscode.workspace.onDidOpenTextDocument((document) => {
         if (isSupportedDocument(document)) {
           const key = document.uri.toString();
@@ -225,16 +271,26 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       vscode.workspace.onDidChangeTextDocument((event) => {
         this.onDocumentChanged(event);
       }),
-    );
-
-    await this.discoverCoexistence();
-    this.renderStatus();
+    ];
+    return {
+      dispose: () => {
+        for (const listener of listeners) {
+          listener.dispose();
+        }
+      },
+    };
   }
 
   public async reviewCurrentBlock(): Promise<void> {
     if (!this.invocationGate.enabled) {
       await vscode.window.showInformationMessage(
         "Adaptive Pair is disabled. Enable it to review the current block.",
+      );
+      return;
+    }
+    if (!this.sessionLifecycle.active) {
+      await vscode.window.showInformationMessage(
+        "Adaptive Pair is off. Start a pairing session before reviewing the current block.",
       );
       return;
     }
@@ -325,7 +381,11 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
 
   private onDocumentChanged(event: vscode.TextDocumentChangeEvent): void {
     const document = event.document;
-    if (!this.invocationGate.enabled || !isSupportedDocument(document)) {
+    if (
+      !this.invocationGate.enabled ||
+      !this.invocationGate.sessionActive ||
+      !isSupportedDocument(document)
+    ) {
       return;
     }
 
@@ -348,7 +408,11 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   }
 
   private async handleEpisode(episode: EditEpisode): Promise<void> {
-    if (this.disposed || !this.invocationGate.enabled) {
+    if (
+      this.disposed ||
+      !this.invocationGate.enabled ||
+      !this.invocationGate.sessionActive
+    ) {
       return;
     }
 
@@ -424,7 +488,13 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       }
       this.renderIntervention(document, evidence, response.text);
     } catch (error: unknown) {
-      if (abortController.signal.aborted || isCancellationError(error)) {
+      if (
+        shouldSuppressCancellation(
+          abortController.signal.aborted,
+          error,
+          isOfficialVsCodeCancellationError,
+        )
+      ) {
         return;
       }
       if (!(error instanceof Error)) {
@@ -452,6 +522,9 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     );
     if (result.kind === "disabled") {
       throw new PairDisabledError(source);
+    }
+    if (result.kind === "inactive") {
+      throw new PairInactiveError(source);
     }
     return result.value;
   }
@@ -536,6 +609,28 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     }
   }
 
+  private cancelPendingWork(): void {
+    this.aggregator.clear();
+    for (const request of this.requestByUri.values()) {
+      request.abort();
+    }
+    this.requestByUri.clear();
+    this.chatRequests.cancelAll();
+  }
+
+  private clearTransientState(): void {
+    this.documentState.clear();
+    this.options.sharedContext.clearEvidence();
+    this.inlineController.clear();
+  }
+
+  private inactiveStatusDetail(): string | undefined {
+    if (!this.options.config.enabled) {
+      return "disabled by adaptivePair.enabled";
+    }
+    return this.options.config.statusWarning;
+  }
+
   private closeDocument(uri: vscode.Uri): void {
     const key = uri.toString();
     this.documentState.close(key);
@@ -574,6 +669,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     const remainingBudget = this.budget.snapshot(now);
     const session: PairSessionSnapshot = {
       enabled: this.invocationGate.enabled,
+      active: this.invocationGate.sessionActive,
       goal: PAIR_GOAL,
       role: "navigator",
       provider: this.effectiveProvider,
@@ -590,13 +686,15 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       (detail): detail is string => detail !== undefined,
     );
     this.status.text = buildPairStatusText(
-      this.invocationGate.enabled,
+      this.invocationGate.sessionActive,
       details,
     );
     this.status.tooltip =
-      this.invocationGate.enabled
+      !this.invocationGate.enabled
+        ? "Adaptive Pair is disabled by adaptivePair.enabled and will not invoke model providers."
+        : this.invocationGate.sessionActive
         ? "Adaptive Pair is navigator-only and does not edit files or run commands."
-        : "Adaptive Pair is disabled and will not invoke model providers.";
+        : "Adaptive Pair is off. Start a session to enable navigator guidance.";
   }
 
   public dispose(): void {
@@ -604,19 +702,14 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       return;
     }
     this.disposed = true;
-    for (const request of this.requestByUri.values()) {
-      request.abort();
-    }
-    this.requestByUri.clear();
-    this.chatRequests.cancelAll();
-    this.documentState.clear();
-    this.options.sharedContext.clearEvidence();
+    this.invocationGate.setActive(false);
+    this.sessionLifecycle.dispose();
+    this.effectiveProvider = this.options.config.provider;
+    this.controlNotice = undefined;
+    this.statusDetail = this.inactiveStatusDetail();
+    this.publishSession();
     this.aggregator.dispose();
     this.scheduler.dispose();
-    for (const disposable of this.disposables) {
-      disposable.dispose();
-    }
-    this.disposables.length = 0;
     this.inlineController.dispose();
     this.status.dispose();
   }
@@ -698,28 +791,7 @@ const safeRange = (
   );
 };
 
-const isCancellationError = (error: unknown): boolean => {
-  if (
-    error instanceof vscode.CancellationError ||
-    (error instanceof DOMException && error.name === "AbortError")
-  ) {
-    return true;
-  }
-  if (
-    error instanceof vscode.LanguageModelError &&
-    error.cause instanceof Error
-  ) {
-    return (
-      error.cause instanceof vscode.CancellationError ||
-      error.cause.name === "AbortError" ||
-      error.cause.name === "Canceled" ||
-      error.cause.name === "CancellationError"
-    );
-  }
-  return (
-    error instanceof Error &&
-    (error.name === "AbortError" ||
-      error.name === "Canceled" ||
-      error.name === "CancellationError")
-  );
-};
+const isOfficialVsCodeCancellationError = (error: unknown): boolean =>
+  error instanceof vscode.CancellationError ||
+  (error instanceof vscode.LanguageModelError &&
+    error.cause instanceof vscode.CancellationError);

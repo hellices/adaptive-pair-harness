@@ -128,4 +128,26 @@ describe("EditEpisodeAggregator", () => {
 
     expect(episodes).toEqual([]);
   });
+
+  it("clears pending episodes without preventing a later session", () => {
+    const scheduler = new FakeScheduler();
+    const episodes: EditEpisode[] = [];
+    const aggregator = new EditEpisodeAggregator(200, scheduler, (episode) => {
+      episodes.push(episode);
+    });
+
+    aggregator.record(snapshot("first-before", "first-after", 1));
+    aggregator.clear();
+    scheduler.advanceBy(200);
+    expect(episodes).toEqual([]);
+
+    aggregator.record(snapshot("second-before", "second-after", 2));
+    scheduler.advanceBy(200);
+    expect(episodes).toEqual([
+      expect.objectContaining({
+        previousText: "second-before",
+        currentText: "second-after",
+      }),
+    ]);
+  });
 });

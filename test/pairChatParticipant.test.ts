@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   PairSharedContext,
   buildPairChatPlan,
@@ -26,6 +26,7 @@ describe("pair chat planning", () => {
   it("asks for active code when no evidence is shared", () => {
     const context = new PairSharedContext({
       enabled: true,
+      active: true,
       goal: "Navigate with evidence-backed questions.",
       role: "navigator",
       provider: "local-template",
@@ -45,6 +46,7 @@ describe("pair chat planning", () => {
   it("reports the shared session without creating separate chat state", () => {
     const context = new PairSharedContext({
       enabled: true,
+      active: true,
       goal: "Navigate with evidence-backed questions.",
       role: "navigator",
       provider: "vscode-copilot",
@@ -74,6 +76,7 @@ describe("pair chat planning", () => {
   it("expands the most recent inline question from the same evidence", () => {
     const context = new PairSharedContext({
       enabled: true,
+      active: true,
       goal: "Navigate with evidence-backed questions.",
       role: "navigator",
       provider: "local-template",
@@ -92,13 +95,14 @@ describe("pair chat planning", () => {
       kind: "generate",
       uri: "file:///workspace/pair.ts",
       evidence,
-      goal: expect.stringContaining("Did you intend this dependency?"),
+      goal: expect.not.stringContaining("Did you intend this dependency?"),
     });
   });
 
   it("does not invoke Chat generation while Pair is disabled", async () => {
     const context = new PairSharedContext({
       enabled: false,
+      active: false,
       goal: "Navigate with evidence-backed questions.",
       role: "navigator",
       provider: "vscode-copilot",
@@ -151,6 +155,7 @@ describe("pair chat planning", () => {
   it("includes a bounded explicit prompt and current symbol identity for trace", () => {
     const context = new PairSharedContext({
       enabled: true,
+      active: true,
       goal: "Navigate with evidence-backed questions.",
       role: "navigator",
       provider: "vscode-copilot",
@@ -200,6 +205,7 @@ describe("pair chat planning", () => {
   it("does not call a model for trace when no public symbol context is available", () => {
     const context = new PairSharedContext({
       enabled: true,
+      active: true,
       goal: "Navigate with evidence-backed questions.",
       role: "navigator",
       provider: "vscode-copilot",
@@ -228,6 +234,7 @@ describe("pair chat planning", () => {
   it("clears latest evidence only when its document closes", () => {
     const context = new PairSharedContext({
       enabled: true,
+      active: true,
       goal: "Navigate with evidence-backed questions.",
       role: "navigator",
       provider: "local-template",
@@ -255,6 +262,7 @@ describe("pair chat planning", () => {
   it("clears all latest evidence when the runtime session is disposed", () => {
     const context = new PairSharedContext({
       enabled: true,
+      active: true,
       goal: "Navigate with evidence-backed questions.",
       role: "navigator",
       provider: "local-template",
@@ -281,6 +289,7 @@ describe("pair chat planning", () => {
   it("reports configuration warnings in shared session output", () => {
     const context = new PairSharedContext({
       enabled: true,
+      active: true,
       goal: "Navigate with evidence-backed questions.",
       role: "navigator",
       provider: "local-template",
@@ -297,4 +306,240 @@ describe("pair chat planning", () => {
       ),
     });
   });
+
+  it("blocks ordinary Chat generation while permission is enabled but the session is inactive", async () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: false,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "vscode-copilot",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    context.publishEvidence({
+      uri: "file:///workspace/pair.ts",
+      evidence,
+      question: "Did you intend this dependency?",
+    });
+    let handler: vscode.ChatRequestHandler | undefined;
+    const generate = vi.fn(async () => ({
+      text: "remote",
+      inputTokens: 1,
+      outputTokens: 1,
+    }));
+    const markdown: string[] = [];
+    registerPairChatParticipant(
+      (_id, registeredHandler) => {
+        handler = registeredHandler;
+        return { dispose: () => undefined } as vscode.ChatParticipant;
+      },
+      context,
+      { generate },
+    );
+
+    await handler!(
+      { command: "why", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      {
+        markdown: (value: string) => {
+          markdown.push(value);
+        },
+      } as unknown as vscode.ChatResponseStream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      } as vscode.CancellationToken,
+    );
+
+    expect(generate).not.toHaveBeenCalled();
+    expect(markdown.join("\n")).toContain("off");
+    expect(markdown.join("\n")).toContain("/start");
+  });
+
+  it("handles Chat start and stop while inactive without invoking a model", async () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: false,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "local-template",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    let handler: vscode.ChatRequestHandler | undefined;
+    const generate = vi.fn(async () => ({
+      text: "remote",
+      inputTokens: 1,
+      outputTokens: 1,
+    }));
+    const startSession = vi.fn(async () => ({
+      kind: "started" as const,
+      active: true,
+      message: "session started",
+    }));
+    const stopSession = vi.fn(() => ({
+      kind: "stopped" as const,
+      active: false,
+      message: "session stopped",
+    }));
+    registerPairChatParticipant(
+      (_id, registeredHandler) => {
+        handler = registeredHandler;
+        return { dispose: () => undefined } as vscode.ChatParticipant;
+      },
+      context,
+      { generate },
+      {
+        sessionControl: {
+          isSessionActive: () => false,
+          startSession,
+          stopSession,
+        },
+      },
+    );
+    const markdown: string[] = [];
+    const response = {
+      markdown: (value: string) => {
+        markdown.push(value);
+      },
+    } as unknown as vscode.ChatResponseStream;
+    const token = {
+      isCancellationRequested: false,
+      onCancellationRequested: () => ({ dispose: () => undefined }),
+    } as vscode.CancellationToken;
+
+    await handler!(
+      { command: "start", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      response,
+      token,
+    );
+    await handler!(
+      { command: "stop", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      response,
+      token,
+    );
+
+    expect(startSession).toHaveBeenCalledOnce();
+    expect(stopSession).toHaveBeenCalledOnce();
+    expect(generate).not.toHaveBeenCalled();
+    expect(markdown).toEqual(["session started", "session stopped"]);
+  });
+
+  it("resolves trace context from the latest evidence URI and range", async () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "vscode-copilot",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    context.publishEvidence({
+      uri: "file:///workspace/evidence.ts",
+      evidence,
+      question: "Did you intend this dependency?",
+    });
+    let handler: vscode.ChatRequestHandler | undefined;
+    const forEvidence = vi.fn(async () => ({
+      name: "loadRepository",
+      kind: "Function",
+      range: evidence.range,
+    }));
+    const generate = vi.fn(async () => ({
+      text: "trace",
+      inputTokens: 1,
+      outputTokens: 1,
+    }));
+    registerPairChatParticipant(
+      (_id, registeredHandler) => {
+        handler = registeredHandler;
+        return { dispose: () => undefined } as vscode.ChatParticipant;
+      },
+      context,
+      { generate },
+      {
+        symbolContextProvider: { forEvidence },
+      },
+    );
+
+    await handler!(
+      { command: "trace", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      { markdown: () => undefined } as unknown as vscode.ChatResponseStream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      } as vscode.CancellationToken,
+    );
+
+    expect(forEvidence).toHaveBeenCalledWith(
+      "file:///workspace/evidence.ts",
+      evidence.range,
+      expect.any(AbortSignal),
+    );
+    expect(generate).toHaveBeenCalledOnce();
+  });
+
+  it.each(["AbortError", "Canceled", "CancellationError"])(
+    "surfaces a random %s-named error when the Chat token is not cancelled",
+    async (name) => {
+      const context = new PairSharedContext({
+        enabled: true,
+        active: true,
+        goal: "Navigate with evidence-backed questions.",
+        role: "navigator",
+        provider: "vscode-copilot",
+        remainingCalls: 4,
+        remainingInputTokens: 6_000,
+        controlNotice: undefined,
+        configurationWarning: undefined,
+      });
+      context.publishEvidence({
+        uri: "file:///workspace/pair.ts",
+        evidence,
+        question: "Did you intend this dependency?",
+      });
+      let handler: vscode.ChatRequestHandler | undefined;
+      const failure = new Error("must surface");
+      failure.name = name;
+      registerPairChatParticipant(
+        (_id, registeredHandler) => {
+          handler = registeredHandler;
+          return { dispose: () => undefined } as vscode.ChatParticipant;
+        },
+        context,
+        {
+          generate: async () => {
+            throw failure;
+          },
+        },
+      );
+
+      const result = await handler!(
+        { command: "why", prompt: "" } as vscode.ChatRequest,
+        {} as vscode.ChatContext,
+        { markdown: () => undefined } as unknown as vscode.ChatResponseStream,
+        {
+          isCancellationRequested: false,
+          onCancellationRequested: () => ({ dispose: () => undefined }),
+        } as vscode.CancellationToken,
+      );
+
+      expect(result).toEqual({
+        errorDetails: {
+          message: "Adaptive Pair could not answer: must surface",
+        },
+      });
+    },
+  );
 });

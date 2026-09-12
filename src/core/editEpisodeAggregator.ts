@@ -60,15 +60,19 @@ export class EditEpisodeAggregator {
     this.scheduler.cancel(pending.timer);
   }
 
+  public clear(): void {
+    for (const pending of this.pendingByUri.values()) {
+      this.scheduler.cancel(pending.timer);
+    }
+    this.pendingByUri.clear();
+  }
+
   public dispose(): void {
     if (this.disposed) {
       return;
     }
 
     this.disposed = true;
-    for (const pending of this.pendingByUri.values()) {
-      this.scheduler.cancel(pending.timer);
-    }
-    this.pendingByUri.clear();
+    this.clear();
   }
 }

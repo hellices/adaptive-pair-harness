@@ -74,4 +74,43 @@ describe("inline pair comment", () => {
     inline.dispose();
     expect(disposed).toEqual(["file:///a.ts", "file:///b.ts"]);
   });
+
+  it("clears all session threads and remains reusable", () => {
+    const disposed: string[] = [];
+    const controller = {
+      createCommentThread: (uri: vscode.Uri) => ({
+        canReply: false,
+        label: undefined,
+        comments: [],
+        dispose: () => {
+          disposed.push(uri.toString());
+        },
+      }),
+      dispose: () => undefined,
+    } as unknown as vscode.CommentController;
+    const inline = new InlinePairController({
+      controller,
+      createMarkdown: (value) => value as unknown as vscode.MarkdownString,
+      previewMode: 0 as vscode.CommentMode,
+    });
+    const range = {
+      start: { line: 0, character: 0 },
+      end: { line: 0, character: 1 },
+    } as vscode.Range;
+    const uriA = { toString: () => "file:///a.ts" } as vscode.Uri;
+    const uriB = { toString: () => "file:///b.ts" } as vscode.Uri;
+
+    inline.render(uriA, range, "Question A?", evidence);
+    inline.render(uriB, range, "Question B?", evidence);
+    inline.clear();
+    inline.render(uriA, range, "Question A again?", evidence);
+
+    expect(disposed).toEqual(["file:///a.ts", "file:///b.ts"]);
+    inline.dispose();
+    expect(disposed).toEqual([
+      "file:///a.ts",
+      "file:///b.ts",
+      "file:///a.ts",
+    ]);
+  });
 });

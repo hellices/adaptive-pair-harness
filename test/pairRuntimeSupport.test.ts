@@ -39,7 +39,25 @@ describe("Pair runtime support", () => {
     },
   );
 
-  it("shows disabled status instead of the active navigator status", async () => {
+  it("does not invoke providers while a permitted session is inactive", async () => {
+    const module = await import("../src/vscode/pairRuntimeSupport");
+    const invokeProvider = vi.fn(async () => "called");
+    const gate = new module.PairInvocationGate(true, false);
+
+    await expect(gate.run("chat", invokeProvider)).resolves.toEqual({
+      kind: "inactive",
+      source: "chat",
+    });
+    expect(invokeProvider).not.toHaveBeenCalled();
+
+    gate.setActive(true);
+    await expect(gate.run("chat", invokeProvider)).resolves.toMatchObject({
+      kind: "completed",
+      value: "called",
+    });
+  });
+
+  it("shows off status instead of the active navigator status", async () => {
     const module = await import("../src/vscode/pairRuntimeSupport").catch(
       () => ({ buildPairStatusText: undefined }),
     );
@@ -49,9 +67,30 @@ describe("Pair runtime support", () => {
         "Invalid provider; using local-template.",
       ]),
     ).toBe(
-      "$(circle-slash) Pair: Disabled · Invalid provider; using local-template.",
+      "$(circle-slash) Pair: off · Invalid provider; using local-template.",
     );
   });
+
+  it.each(["AbortError", "Canceled", "CancellationError"])(
+    "does not suppress a random %s-named error without cancellation",
+    async (name) => {
+      const module = await import("../src/vscode/pairRuntimeSupport");
+      const error = new Error("must surface");
+      error.name = name;
+
+      expect(
+        module.shouldSuppressCancellation(false, error, () => false),
+      ).toBe(false);
+      expect(
+        module.shouldSuppressCancellation(true, error, () => false),
+      ).toBe(true);
+      expect(
+        module.shouldSuppressCancellation(false, error, (candidate) =>
+          candidate === error,
+        ),
+      ).toBe(true);
+    },
+  );
 
   it("reuses actual latest evidence for manual review", async () => {
     const module = await import("../src/vscode/pairRuntimeSupport").catch(

@@ -1,15 +1,18 @@
 import type * as vscode from "vscode";
 import type { PairProvider } from "../config/pairConfig";
 import {
+  createRemoteSafeModelRequest,
   sanitizeModelRequestContext,
   type ModelRequestContext,
   type ModelResponse,
   type ModelSymbolContext,
 } from "../core/modelRouter";
-import type { Evidence } from "../core/types";
+import type { Evidence, PairRange } from "../core/types";
+import type { PairSessionControlPort } from "./pairRuntimeSupport";
 
 export interface PairSessionSnapshot {
   readonly enabled: boolean;
+  readonly active: boolean;
   readonly goal: string;
   readonly role: "navigator";
   readonly provider: PairProvider;
@@ -85,6 +88,14 @@ export const buildPairChatPlan = (
     };
   }
 
+  if (!context.session.active) {
+    return {
+      kind: "message",
+      markdown:
+        "Adaptive Pair is off. Run `@pair /start` or **Adaptive Pair: Start Pairing Session** first.",
+    };
+  }
+
   if (command === "session") {
     const sessionLines = [
       `**Goal:** ${context.session.goal}`,
@@ -122,11 +133,10 @@ export const buildPairChatPlan = (
     };
   }
 
-  return {
-    kind: "generate",
-    uri: latest.uri,
+  const safeRequest = createRemoteSafeModelRequest({
+    goal: goalForCommand(command),
     evidence: latest.evidence,
-    goal: goalForCommand(command, latest),
+    interactionStyle: "ask-first",
     context:
       sanitizeModelRequestContext({
         ...(requestContext.prompt.trim().length === 0
@@ -136,18 +146,24 @@ export const buildPairChatPlan = (
           ? {}
           : { symbol: requestContext.symbol }),
       }) ?? {},
+  });
+  return {
+    kind: "generate",
+    uri: latest.uri,
+    evidence: safeRequest.evidence,
+    goal: safeRequest.goal,
+    context: safeRequest.context ?? {},
   };
 };
 
 const goalForCommand = (
   command: string | undefined,
-  latest: PairPublishedEvidence,
 ): string => {
   switch (command) {
     case "trace":
       return "Describe the relevant control and data flow for this evidence without inventing code context.";
     case "why":
-      return `Expand why the latest inline question matters: ${latest.question}`;
+      return "Explain why the current evidence matters and ask one useful follow-up question.";
     case "explain":
     default:
       return "Explain the current evidence and its trade-off, then ask one useful follow-up question.";
@@ -169,12 +185,22 @@ export interface PairChatContextSource {
 }
 
 export interface PairSymbolContextProvider {
-  current(signal: AbortSignal): Promise<ModelSymbolContext | undefined>;
+  forEvidence(
+    uri: string,
+    range: PairRange,
+    signal: AbortSignal,
+  ): Promise<ModelSymbolContext | undefined>;
 }
 
 const NO_SYMBOL_CONTEXT: PairSymbolContextProvider = {
-  current: async () => undefined,
+  forEvidence: async () => undefined,
 };
+
+export interface PairChatParticipantOptions {
+  readonly symbolContextProvider?: PairSymbolContextProvider;
+  readonly sessionControl?: PairSessionControlPort;
+  readonly isOfficialCancellationError?: (error: unknown) => boolean;
+}
 
 export const registerPairChatParticipant = (
   register: (
@@ -183,8 +209,10 @@ export const registerPairChatParticipant = (
   ) => vscode.ChatParticipant,
   context: PairChatContextSource,
   generator: PairChatGenerator,
-  symbolContextProvider: PairSymbolContextProvider = NO_SYMBOL_CONTEXT,
+  options: PairChatParticipantOptions = {},
 ): vscode.ChatParticipant => {
+  const symbolContextProvider =
+    options.symbolContextProvider ?? NO_SYMBOL_CONTEXT;
   const handler: vscode.ChatRequestHandler = async (
     request,
     _chatContext,
@@ -199,12 +227,38 @@ export const registerPairChatParticipant = (
       abortController.abort();
     });
     try {
+      if (abortController.signal.aborted) {
+        return;
+      }
+      if (request.command === "start" || request.command === "stop") {
+        const sessionControl = options.sessionControl;
+        if (sessionControl === undefined) {
+          response.markdown(
+            "Adaptive Pair session controls are temporarily unavailable.",
+          );
+          return;
+        }
+        const result =
+          request.command === "start"
+            ? await sessionControl.startSession()
+            : sessionControl.stopSession();
+        if (!abortController.signal.aborted) {
+          response.markdown(result.message);
+        }
+        return;
+      }
+
       const snapshot = context.snapshot();
       const symbol =
         request.command === "trace" &&
         snapshot.session.enabled &&
+        snapshot.session.active &&
         snapshot.latest !== undefined
-          ? await symbolContextProvider.current(abortController.signal)
+          ? await symbolContextProvider.forEvidence(
+              snapshot.latest.uri,
+              snapshot.latest.evidence.range,
+              abortController.signal,
+            )
           : undefined;
       const plan = buildPairChatPlan(request.command, snapshot, {
         prompt: request.prompt,
@@ -224,7 +278,10 @@ export const registerPairChatParticipant = (
       );
       response.markdown(generated.text);
     } catch (error: unknown) {
-      if (abortController.signal.aborted || isCancellationErrorLike(error)) {
+      if (
+        abortController.signal.aborted ||
+        options.isOfficialCancellationError?.(error) === true
+      ) {
         return;
       }
       if (!(error instanceof Error)) {
@@ -242,9 +299,3 @@ export const registerPairChatParticipant = (
 
   return register("adaptivePair.chat", handler);
 };
-
-const isCancellationErrorLike = (error: unknown): boolean =>
-  error instanceof Error &&
-  (error.name === "AbortError" ||
-    error.name === "Canceled" ||
-    error.name === "CancellationError");

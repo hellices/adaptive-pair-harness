@@ -19,6 +19,8 @@
     "onLanguage:typescriptreact",
     "onLanguage:javascript",
     "onLanguage:javascriptreact",
+    "onCommand:adaptivePair.startSession",
+    "onCommand:adaptivePair.stopSession",
     "onCommand:adaptivePair.toggle",
     "onCommand:adaptivePair.reviewCurrentBlock",
     "onCommand:adaptivePair.setApiKey",
@@ -28,8 +30,16 @@
   "contributes": {
     "commands": [
       {
+        "command": "adaptivePair.startSession",
+        "title": "Adaptive Pair: Start Pairing Session"
+      },
+      {
+        "command": "adaptivePair.stopSession",
+        "title": "Adaptive Pair: Stop Pairing Session"
+      },
+      {
         "command": "adaptivePair.toggle",
-        "title": "Adaptive Pair: Toggle Navigator"
+        "title": "Adaptive Pair: Toggle Pairing Session"
       },
       {
         "command": "adaptivePair.reviewCurrentBlock",
@@ -62,8 +72,23 @@
           {
             "name": "why",
             "description": "Expand the latest inline question"
+          },
+          {
+            "name": "start",
+            "description": "Start a pair session for this workspace"
+          },
+          {
+            "name": "stop",
+            "description": "Stop the pair session and clear transient context"
           }
         ]
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "adaptivePair.toggle",
+        "key": "ctrl+alt+p",
+        "mac": "cmd+alt+p"
       }
     ],
     "configuration": {
