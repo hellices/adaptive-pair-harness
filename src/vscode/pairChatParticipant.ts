@@ -237,7 +237,7 @@ export const registerPairChatParticipant = (
     token,
   ) => {
     const abortController = new AbortController();
-    let traceRegistration: PairDisposable | undefined;
+    let requestRegistration: PairDisposable | undefined;
     if (token.isCancellationRequested) {
       abortController.abort();
     }
@@ -267,6 +267,19 @@ export const registerPairChatParticipant = (
       }
 
       let snapshot = context.snapshot();
+      if (
+        snapshot.session.enabled &&
+        snapshot.session.active &&
+        snapshot.latest !== undefined
+      ) {
+        requestRegistration = options.requestLifecycle?.register(
+          snapshot.latest.uri,
+          abortController,
+        );
+        if (abortController.signal.aborted) {
+          return;
+        }
+      }
       const symbol =
         request.command === "trace" &&
         snapshot.session.enabled &&
@@ -276,13 +289,6 @@ export const registerPairChatParticipant = (
               const traceGeneration = snapshot.session.generation;
               const traceUri = snapshot.latest!.uri;
               const traceRange = snapshot.latest!.evidence.range;
-              traceRegistration = options.requestLifecycle?.register(
-                traceUri,
-                abortController,
-              );
-              if (abortController.signal.aborted) {
-                return undefined;
-              }
               const resolved = await symbolContextProvider.forEvidence(
                 traceUri,
                 traceRange,
@@ -341,6 +347,13 @@ export const registerPairChatParticipant = (
         abortController.signal,
         plan.context,
       );
+      const current = context.snapshot();
+      if (
+        abortController.signal.aborted ||
+        !isCurrentGeneratedResponse(current, snapshot, plan)
+      ) {
+        return;
+      }
       response.markdown(generated.text);
     } catch (error: unknown) {
       if (
@@ -358,7 +371,7 @@ export const registerPairChatParticipant = (
         },
       };
     } finally {
-      traceRegistration?.dispose();
+      requestRegistration?.dispose();
       cancellationListener.dispose();
     }
   };
@@ -371,3 +384,15 @@ const pairRangesEqual = (left: PairRange, right: PairRange): boolean =>
   left.start.character === right.start.character &&
   left.end.line === right.end.line &&
   left.end.character === right.end.character;
+
+const isCurrentGeneratedResponse = (
+  current: PairContextSnapshot,
+  started: PairContextSnapshot,
+  plan: Extract<PairChatPlan, { readonly kind: "generate" }>,
+): boolean =>
+  current.session.enabled &&
+  current.session.active &&
+  current.session.generation === started.session.generation &&
+  current.latest?.uri === plan.uri &&
+  current.latest.evidence.id === plan.evidence.id &&
+  pairRangesEqual(current.latest.evidence.range, plan.evidence.range);

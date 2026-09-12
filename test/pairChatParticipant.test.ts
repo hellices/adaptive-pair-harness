@@ -597,6 +597,193 @@ describe("pair chat planning", () => {
     expect(registered.size).toBe(0);
   });
 
+  it("does not write deferred model output after stop", async () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      generation: 1,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "vscode-copilot",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    context.publishEvidence({
+      uri: "file:///workspace/evidence.ts",
+      evidence,
+      question: "Did you intend this dependency?",
+    });
+    const modelCompletion = deferred<{
+      text: string;
+      inputTokens: number;
+      outputTokens: number;
+    }>();
+    let handler: vscode.ChatRequestHandler | undefined;
+    const markdown = vi.fn();
+    const registered = new Set<AbortController>();
+    let providerSignal: AbortSignal | undefined;
+    registerPairChatParticipant(
+      (_id, registeredHandler) => {
+        handler = registeredHandler;
+        return { dispose: () => undefined } as vscode.ChatParticipant;
+      },
+      context,
+      {
+        generate: vi.fn(
+          (
+            _uri: string,
+            _goal: string,
+            _evidence: Evidence,
+            signal: AbortSignal,
+          ) => {
+            providerSignal = signal;
+            return modelCompletion.promise;
+          },
+        ),
+      },
+      {
+        requestLifecycle: {
+          register: (_uri, request) => {
+            registered.add(request);
+            return {
+              dispose: () => {
+                registered.delete(request);
+              },
+            };
+          },
+        },
+      },
+    );
+
+    const pendingResponse = handler!(
+      { command: "why", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      { markdown } as unknown as vscode.ChatResponseStream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      } as vscode.CancellationToken,
+    );
+    for (const request of registered) {
+      request.abort();
+    }
+    context.clearEvidence();
+    context.updateSession({
+      ...context.snapshot().session,
+      active: false,
+      generation: 2,
+    });
+    modelCompletion.resolve({
+      text: "stale output",
+      inputTokens: 1,
+      outputTokens: 1,
+    });
+    await pendingResponse;
+
+    expect(providerSignal?.aborted).toBe(true);
+    expect(markdown).not.toHaveBeenCalled();
+    expect(registered.size).toBe(0);
+  });
+
+  it("does not write old model output after stop and restart", async () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      generation: 1,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "vscode-copilot",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    const latest = {
+      uri: "file:///workspace/evidence.ts",
+      evidence,
+      question: "Did you intend this dependency?",
+    };
+    context.publishEvidence(latest);
+    const modelCompletion = deferred<{
+      text: string;
+      inputTokens: number;
+      outputTokens: number;
+    }>();
+    let handler: vscode.ChatRequestHandler | undefined;
+    const markdown = vi.fn();
+    const registered = new Set<AbortController>();
+    let providerSignal: AbortSignal | undefined;
+    registerPairChatParticipant(
+      (_id, registeredHandler) => {
+        handler = registeredHandler;
+        return { dispose: () => undefined } as vscode.ChatParticipant;
+      },
+      context,
+      {
+        generate: vi.fn(
+          (
+            _uri: string,
+            _goal: string,
+            _evidence: Evidence,
+            signal: AbortSignal,
+          ) => {
+            providerSignal = signal;
+            return modelCompletion.promise;
+          },
+        ),
+      },
+      {
+        requestLifecycle: {
+          register: (_uri, request) => {
+            registered.add(request);
+            return {
+              dispose: () => {
+                registered.delete(request);
+              },
+            };
+          },
+        },
+      },
+    );
+
+    const pendingResponse = handler!(
+      { command: "why", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      { markdown } as unknown as vscode.ChatResponseStream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      } as vscode.CancellationToken,
+    );
+    for (const request of registered) {
+      request.abort();
+    }
+    context.clearEvidence();
+    context.updateSession({
+      ...context.snapshot().session,
+      active: false,
+      generation: 2,
+    });
+    context.updateSession({
+      ...context.snapshot().session,
+      active: true,
+      generation: 3,
+    });
+    context.publishEvidence(latest);
+    modelCompletion.resolve({
+      text: "old generation output",
+      inputTokens: 1,
+      outputTokens: 1,
+    });
+    await pendingResponse;
+
+    expect(providerSignal?.aborted).toBe(true);
+    expect(markdown).not.toHaveBeenCalled();
+    expect(registered.size).toBe(0);
+  });
+
   it.each(["AbortError", "Canceled", "CancellationError"])(
     "surfaces a random %s-named error when the Chat token is not cancelled",
     async (name) => {

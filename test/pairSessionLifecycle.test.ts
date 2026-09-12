@@ -15,6 +15,11 @@ const deferred = <T>() => {
   return { promise, resolve, reject };
 };
 
+interface PreparationContext {
+  readonly signal: AbortSignal;
+  isCurrent(): boolean;
+}
+
 describe("explicit pair session lifecycle", () => {
   it("stays dormant until start and clears every transient resource on stop", async () => {
     const listener = { dispose: vi.fn() };
@@ -154,6 +159,97 @@ describe("explicit pair session lifecycle", () => {
     expect(listener.dispose).not.toHaveBeenCalled();
     expect(ports.cancelPendingWork).toHaveBeenCalledOnce();
     expect(ports.clearTransientState).toHaveBeenCalledOnce();
+  });
+
+  it("keeps startup state cleared when deferred preparation resolves after stop", async () => {
+    const preparation = deferred<void>();
+    const previousTexts = new Map<string, string>();
+    const dismissedEvidenceIds = new Set<string>();
+    let controlNotice: string | undefined;
+    const ports = {
+      prepare: vi.fn(async (context?: PreparationContext) => {
+        const preparedTexts = new Map([["file:///old.ts", "old seed"]]);
+        const preparedDismissals = new Set(["old-evidence"]);
+        const preparedNotice = "old harness";
+        await preparation.promise;
+        if (context !== undefined && !context.isCurrent()) {
+          return;
+        }
+        for (const [uri, text] of preparedTexts) {
+          previousTexts.set(uri, text);
+        }
+        for (const evidenceId of preparedDismissals) {
+          dismissedEvidenceIds.add(evidenceId);
+        }
+        controlNotice = preparedNotice;
+      }),
+      registerDocumentListeners: vi.fn(() => ({ dispose: vi.fn() })),
+      cancelPendingWork: vi.fn(),
+      clearTransientState: vi.fn(() => {
+        previousTexts.clear();
+        dismissedEvidenceIds.clear();
+        controlNotice = undefined;
+      }),
+    };
+    const lifecycle = new PairSessionLifecycle(() => true, ports);
+
+    const pendingStart = lifecycle.start();
+    lifecycle.stop();
+    preparation.resolve();
+    await pendingStart;
+
+    expect(previousTexts.size).toBe(0);
+    expect(dismissedEvidenceIds.size).toBe(0);
+    expect(controlNotice).toBeUndefined();
+    expect(ports.registerDocumentListeners).not.toHaveBeenCalled();
+    expect(lifecycle.active).toBe(false);
+  });
+
+  it("commits only the new seed after stop and restart", async () => {
+    const firstPreparation = deferred<void>();
+    const secondPreparation = deferred<void>();
+    const previousTexts = new Map<string, string>();
+    let preparationNumber = 0;
+    const ports = {
+      prepare: vi.fn(async (context?: PreparationContext) => {
+        preparationNumber += 1;
+        const currentPreparation = preparationNumber;
+        const seed = currentPreparation === 1 ? "old seed" : "new seed";
+        await (
+          currentPreparation === 1
+            ? firstPreparation.promise
+            : secondPreparation.promise
+        );
+        if (context !== undefined && !context.isCurrent()) {
+          return;
+        }
+        previousTexts.clear();
+        previousTexts.set("file:///pair.ts", seed);
+      }),
+      registerDocumentListeners: vi.fn(() => ({ dispose: vi.fn() })),
+      cancelPendingWork: vi.fn(),
+      clearTransientState: vi.fn(() => {
+        previousTexts.clear();
+      }),
+    };
+    const lifecycle = new PairSessionLifecycle(() => true, ports);
+
+    const firstStart = lifecycle.start();
+    lifecycle.stop();
+    const secondStart = lifecycle.start();
+
+    secondPreparation.resolve();
+    await secondStart;
+    expect(previousTexts.get("file:///pair.ts")).toBe("new seed");
+
+    firstPreparation.resolve();
+    await firstStart;
+
+    expect(previousTexts).toEqual(
+      new Map([["file:///pair.ts", "new seed"]]),
+    );
+    expect(ports.registerDocumentListeners).toHaveBeenCalledOnce();
+    expect(lifecycle.active).toBe(true);
   });
 
   it("wires public start, stop, and toggle handlers to the active runtime", async () => {

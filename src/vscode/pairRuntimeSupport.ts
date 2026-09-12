@@ -7,10 +7,15 @@ export interface PairDisposable {
 }
 
 export interface PairSessionLifecyclePorts {
-  prepare(): Promise<void>;
+  prepare(context: PairSessionPreparationContext): Promise<void>;
   registerDocumentListeners(): PairDisposable;
   cancelPendingWork(): void;
   clearTransientState(): void;
+}
+
+export interface PairSessionPreparationContext {
+  readonly signal: AbortSignal;
+  isCurrent(): boolean;
 }
 
 export interface PairSessionActionResult {
@@ -31,7 +36,8 @@ export class PairSessionLifecycle {
     | {
         readonly generation: number;
         readonly promise: Promise<PairSessionActionResult>;
-      }
+      readonly abortController: AbortController;
+    }
     | undefined;
   private isDisposed = false;
   private isActive = false;
@@ -77,8 +83,9 @@ export class PairSessionLifecycle {
     }
 
     const generation = ++this.generation;
-    const promise = this.startOnce(generation);
-    const pendingStart = { generation, promise };
+    const abortController = new AbortController();
+    const promise = this.startOnce(generation, abortController);
+    const pendingStart = { generation, promise, abortController };
     this.pendingStart = pendingStart;
     const clearStart = (): void => {
       if (this.pendingStart === pendingStart) {
@@ -91,8 +98,10 @@ export class PairSessionLifecycle {
 
   public stop(): PairSessionActionResult {
     const wasActive = this.isActive || this.pendingStart !== undefined;
+    const pendingStart = this.pendingStart;
     this.generation += 1;
     this.pendingStart = undefined;
+    pendingStart?.abortController.abort();
     this.isActive = false;
     this.listener?.dispose();
     this.listener = undefined;
@@ -117,9 +126,17 @@ export class PairSessionLifecycle {
 
   private async startOnce(
     generation: number,
+    abortController: AbortController,
   ): Promise<PairSessionActionResult> {
+    const preparationContext: PairSessionPreparationContext = {
+      signal: abortController.signal,
+      isCurrent: () =>
+        !this.isDisposed &&
+        !abortController.signal.aborted &&
+        generation === this.generation,
+    };
     try {
-      await this.ports.prepare();
+      await this.ports.prepare(preparationContext);
     } catch (error: unknown) {
       if (generation === this.generation) {
         this.ports.cancelPendingWork();
@@ -127,7 +144,7 @@ export class PairSessionLifecycle {
       }
       throw error;
     }
-    if (this.isDisposed || generation !== this.generation) {
+    if (!preparationContext.isCurrent()) {
       return {
         kind: "already-stopped",
         active: false,

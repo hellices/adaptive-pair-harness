@@ -50,6 +50,7 @@ import {
 } from "./pairRuntimeSupport";
 import type {
   PairInvocationSource,
+  PairSessionPreparationContext,
   PairSessionActionResult,
 } from "./pairRuntimeSupport";
 
@@ -194,8 +195,8 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     this.sessionLifecycle = new PairSessionLifecycle(
       () => this.options.config.enabled,
       {
-        prepare: async () => {
-          await this.prepareSession();
+        prepare: async (context) => {
+          await this.prepareSession(context);
         },
         registerDocumentListeners: () => this.registerDocumentListeners(),
         cancelPendingWork: () => {
@@ -258,20 +259,32 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     return result;
   }
 
-  private async prepareSession(): Promise<void> {
+  private async prepareSession(
+    context: PairSessionPreparationContext,
+  ): Promise<void> {
     const memory = await this.memoryStore.load();
     const repositoryId =
       vscode.workspace.workspaceFolders?.[0]?.uri.toString() ?? "no-workspace";
-    this.dismissedEvidenceIds = new Set(
+    const dismissedEvidenceIds = new Set(
       memory.dismissedEvidenceByRepository[repositoryId] ?? [],
     );
+    const documentSeeds = vscode.workspace.textDocuments
+      .filter(isSupportedDocument)
+      .map((document) => ({
+        uri: document.uri.toString(),
+        text: document.getText(),
+      }));
+    const controlNotice = await this.discoverCoexistence();
 
-    for (const document of vscode.workspace.textDocuments) {
-      if (isSupportedDocument(document)) {
-        this.documentState.seed(document.uri.toString(), document.getText());
-      }
+    if (!context.isCurrent()) {
+      return;
     }
-    await this.discoverCoexistence();
+
+    this.dismissedEvidenceIds = dismissedEvidenceIds;
+    for (const seed of documentSeeds) {
+      this.documentState.seed(seed.uri, seed.text);
+    }
+    this.controlNotice = controlNotice;
   }
 
   private registerDocumentListeners(): vscode.Disposable {
@@ -666,7 +679,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     this.inlineController.disposeUri(uri);
   }
 
-  private async discoverCoexistence(): Promise<void> {
+  private async discoverCoexistence(): Promise<string | undefined> {
     const workspaceUris = await vscode.workspace.findFiles(
       "{AGENTS.md,**/AGENTS.md,docs/superpowers/plans/*-plan.md}",
       "**/node_modules/**",
@@ -679,11 +692,10 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       ),
     });
     if (signals.length === 0) {
-      return;
+      return undefined;
     }
 
-    this.controlNotice = `${signals.map((signal) => signal.label).join(", ")}; observing only`;
-    this.publishSession();
+    return `${signals.map((signal) => signal.label).join(", ")}; observing only`;
   }
 
   public refreshSession(now = Date.now()): void {
