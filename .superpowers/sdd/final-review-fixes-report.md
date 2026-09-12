@@ -1256,3 +1256,53 @@
 - The analyzer intentionally reports syntactic value/type export-mode changes;
   it does not attempt cross-module runtime resolution, matching the existing
   named re-export behavior.
+
+---
+
+## Local export signature normalization fix (2026-09-13)
+
+### Correction implemented
+
+- Local ESM export lists now add a signature mode marker only when the
+  statement or element is effectively type-only.
+- Ordinary local-list value exports retain only their callable signatures, so
+  `export const load = ...` and `const load = ...; export { load };` normalize
+  identically in both refactor directions.
+- Statement-level and element-level value-to-type-only and type-only-to-value
+  transitions remain detectable under the external export identity.
+
+### TDD evidence
+
+- RED: the direct-to-local-list value-export regression produced one false
+  `public-api-change`.
+- GREEN: the focused semantic analyzer suite passed with **50 tests**, including
+  both normalization directions and all four statement/element mode
+  transitions.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **17 files, 385 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 89.19%, branches 81.22%, functions 92.08%, lines 89.32%
+- `npm run package`: **PASS — 156 files, 4.35 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- VSIX content and compiled-marker scans: **PASS**
+  - compiled output contains `local-export:type-only` and no
+    `local-export:value`;
+  - source, tests, coverage, private review material, source maps, workspace,
+    and CI files are absent.
+- Runtime dependency root scan: **PASS — `typescript` only**
+- Production and packaged secret-pattern and fake-URL scans: **PASS**
+- Packaged repository, bugs, and homepage metadata assertions: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review found no remaining high-confidence normalization,
+  transition-detection, or packaging issue.
+- The analyzer remains intentionally per-document and does not resolve
+  cross-module runtime bindings; this change only normalizes equivalent local
+  declaration/export syntax.

@@ -421,11 +421,48 @@ describe("TypeScriptSemanticAnalyzer", () => {
     );
   });
 
+  it("normalizes equivalent direct and local-list value exports", () => {
+    const direct = "export const load = (id: string): string => id;";
+    const localList = [
+      "const load = (id: string): string => id;",
+      "export { load };",
+    ].join("\n");
+
+    for (const [previous, current] of [
+      [direct, localList],
+      [localList, direct],
+    ] as const) {
+      const evidence = analyzeEvidence(episode(previous, current));
+
+      expect(
+        evidence.filter((item) => item.kind === "public-api-change"),
+      ).toEqual([]);
+    }
+  });
+
   it.each([
-    ["statement", "export { load as fetchItem };", "export type { load as fetchItem };"],
-    ["element", "export { load as fetchItem };", "export { type load as fetchItem };"],
+    [
+      "statement value-to-type-only",
+      "export { load as fetchItem };",
+      "export type { load as fetchItem };",
+    ],
+    [
+      "statement type-only-to-value",
+      "export type { load as fetchItem };",
+      "export { load as fetchItem };",
+    ],
+    [
+      "element value-to-type-only",
+      "export { load as fetchItem };",
+      "export { type load as fetchItem };",
+    ],
+    [
+      "element type-only-to-value",
+      "export { type load as fetchItem };",
+      "export { load as fetchItem };",
+    ],
   ])(
-    "reports a local %s value-to-type-only export transition",
+    "reports a local %s export transition",
     (_label, previousExport, currentExport) => {
       const declaration = "const load = (id: string): string => id;";
       const evidence = analyzeEvidence(

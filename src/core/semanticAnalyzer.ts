@@ -551,12 +551,12 @@ const collectExportedSignatures = (
     rangeNode?: ts.Node,
     isTypeOnly?: boolean,
   ): void => {
-    if (isTypeOnly !== undefined) {
+    if (isTypeOnly === true) {
       appendSignatureRecord(
         signatureTarget,
         `function:${identity.key}`,
         identity.displayName,
-        `local-export:${isTypeOnly ? "type-only" : "value"}`,
+        "local-export:type-only",
         rangeForNode(sourceFile, rangeNode ?? sourceFile),
       );
     }
