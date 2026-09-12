@@ -1495,3 +1495,55 @@
 - A lexical block inserted before a sibling at the same nesting level will
   necessarily renumber later anonymous block identities; edits confined within
   an existing earlier block do not.
+
+---
+
+## Class static-block lexical identity finding (2026-09-13)
+
+### Correction implemented
+
+- `ClassStaticBlockDeclaration` now participates directly in lexical-scope
+  identity traversal; its body block is excluded from ordinary block identity so
+  a static scope contributes exactly one path segment.
+- Each static scope receives a deterministic ordinal among only the owning
+  class's static blocks. The internal segment is combined with the existing
+  class identity, while user-facing class, method, nested-function, namespace,
+  and arrow display names remain unchanged.
+- Same-named arrows in sibling static blocks therefore occupy separate
+  complexity-map records, and edits inside an earlier static block do not
+  renumber a later static block.
+
+### TDD evidence
+
+- RED: the focused semantic suite reported **1 failure and 51 passes**. The new
+  regression expected one complexity item for the first `Worker.helper`, but
+  received none because the unchanged second static-block arrow overwrote the
+  first arrow's current complexity record.
+- GREEN: the focused semantic suite passed **52 tests**. Exactly one item is
+  emitted for the first arrow, with `Worker.helper`, 6 branches up from 2, and
+  the first static block's source range.
+
+### Verification
+
+- Focused semantic suite: **PASS — 1 file, 52 tests**
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **17 files, 409 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 89.55%, branches 81.81%, functions 92.37%, lines 89.67%
+- `npm run package`: **PASS — 156 files, 4.35 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript` only**
+- VSIX exclusion and compiled static-block behavior-marker scans: **PASS**
+- Production credential-pattern, fake-URL, and packaged metadata scans:
+  **PASS**
+
+### Self-review and residual concerns
+
+- Existing focused semantic regressions for methods, classes, nested functions,
+  namespaces, outer arrows, and ordinary sibling lexical blocks remain green.
+- The static-block ordinal is intentionally structural: inserting or deleting a
+  static block before another will renumber later identities, while editing a
+  static block's contents will not.
+- No remaining high-confidence lexical-identity or packaging concern was found.

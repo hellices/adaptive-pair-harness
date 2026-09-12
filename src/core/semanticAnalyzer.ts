@@ -1189,11 +1189,11 @@ const variableFunctionIdentity = (node: ts.VariableDeclaration): SubjectIdentity
 
 const enclosingScopeIdentity = (node: ts.Node | undefined): SubjectIdentity | undefined => {
   let current = node;
-  const lexicalBlockPath: number[] = [];
+  const lexicalBlockPath: string[] = [];
 
   while (current !== undefined) {
-    if (isIdentityBearingLexicalBlock(current)) {
-      lexicalBlockPath.unshift(lexicalBlockOrdinal(current));
+    if (isIdentityBearingLexicalScope(current)) {
+      lexicalBlockPath.unshift(lexicalScopeIdentitySegment(current));
     }
 
     if (ts.isMethodDeclaration(current)) {
@@ -1233,12 +1233,34 @@ const enclosingScopeIdentity = (node: ts.Node | undefined): SubjectIdentity | un
   }
 };
 
-const isIdentityBearingLexicalBlock = (node: ts.Node): node is ts.Block =>
-  ts.isBlock(node) &&
-  !(
-    isFunctionLikeContainer(node.parent) &&
-    node.parent.body === node
-  );
+type IdentityBearingLexicalScope =
+  | ts.Block
+  | ts.ClassStaticBlockDeclaration;
+
+const isIdentityBearingLexicalScope = (
+  node: ts.Node,
+): node is IdentityBearingLexicalScope =>
+  ts.isClassStaticBlockDeclaration(node) ||
+  (ts.isBlock(node) &&
+    !(
+      (isFunctionLikeContainer(node.parent) ||
+        ts.isClassStaticBlockDeclaration(node.parent)) &&
+      node.parent.body === node
+    ));
+
+const lexicalScopeIdentitySegment = (
+  scope: IdentityBearingLexicalScope,
+): string =>
+  ts.isClassStaticBlockDeclaration(scope)
+    ? `static-block:${classStaticBlockOrdinal(scope)}`
+    : `block:${lexicalBlockOrdinal(scope)}`;
+
+const classStaticBlockOrdinal = (
+  block: ts.ClassStaticBlockDeclaration,
+): number =>
+  block.parent.members
+    .filter(ts.isClassStaticBlockDeclaration)
+    .findIndex((candidate) => candidate === block);
 
 const lexicalBlockOrdinal = (block: ts.Block): number => {
   let container = block.parent;
@@ -1282,14 +1304,14 @@ const lexicalBlockOrdinal = (block: ts.Block): number => {
 
 const withLexicalBlockPath = (
   identity: SubjectIdentity | undefined,
-  path: readonly number[],
+  path: readonly string[],
 ): SubjectIdentity | undefined => {
   if (identity === undefined || path.length === 0) {
     return identity;
   }
 
   return {
-    key: `${identity.key}/${path.map((ordinal) => `block:${ordinal}`).join("/")}`,
+    key: `${identity.key}/${path.join("/")}`,
     displayName: identity.displayName,
   };
 };

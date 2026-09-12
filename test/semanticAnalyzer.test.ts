@@ -1348,6 +1348,56 @@ describe("TypeScriptSemanticAnalyzer", () => {
     });
   });
 
+  it("attributes complexity growth to the first same-named arrow in sibling class static blocks", () => {
+    const simpleStaticBlock = [
+      "  static {",
+      "    const helper = (input: number): number => {",
+      "      if (input > 0) return input;",
+      "      if (input < 0) return -input;",
+      "      return 0;",
+      "    };",
+      "  }",
+    ];
+    const complexStaticBlock = [
+      "  static {",
+      "    const helper = (input: number): number => {",
+      "      if (input > 10) return 10;",
+      "      if (input > 0 && input < 10) return input;",
+      "      for (const item of [input]) {",
+      "        if (item === 0) return 0;",
+      "      }",
+      "      return input < 0 ? -input : input;",
+      "    };",
+      "  }",
+    ];
+    const source = (
+      firstBlock: readonly string[],
+      secondBlock: readonly string[],
+    ): string =>
+      [
+        "class Worker {",
+        ...firstBlock,
+        ...secondBlock,
+        "}",
+      ].join("\n");
+
+    const evidence = analyzeEvidence(
+      episode(
+        source(simpleStaticBlock, simpleStaticBlock),
+        source(complexStaticBlock, simpleStaticBlock),
+      ),
+    ).filter((item) => item.kind === "complexity-growth");
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]).toMatchObject({
+      detail: "Worker.helper now has 6 branches, up from 2.",
+      references: ["Worker.helper"],
+      range: {
+        start: { line: 2, character: 10 },
+      },
+    });
+  });
+
   it("compares the next stable edit with the last stable source", () => {
     const lastStable =
       "export function load(id: string): string { return id; }";
