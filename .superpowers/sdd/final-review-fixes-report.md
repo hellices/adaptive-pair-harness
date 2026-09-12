@@ -270,3 +270,78 @@
   project files or cross-file user-defined types. Loading packaged TypeScript
   standard libraries improves built-in inference without widening that privacy
   boundary.
+
+---
+
+## Remaining Whole-Branch Review Fixes
+
+- Date: 2026-09-12
+- Status: **COMPLETE — no blocked finding**
+
+### Corrections implemented
+
+- Replaced the permissive default TypeScript compiler host with an explicit
+  restricted host. The analyzed source remains in memory; filesystem reads and
+  existence checks are admitted only for `lib*.d.ts` files in the canonical
+  installed TypeScript library directory. Directory enumeration is disabled,
+  `realpath` is non-probing outside the allowed boundary, and module/type
+  resolution hooks return unresolved results without consulting the
+  filesystem.
+- Added an instrumented semantic regression that wraps every relevant
+  `ts.sys` filesystem operation and exercises hostile path/type/import
+  references. It rejects any probe outside the TypeScript lib directory while
+  simultaneously proving that array and Promise inference still detects a
+  public API change.
+- Centralized sensitive-key normalization for URL query parameters, quoted
+  JSON, and assignment syntax. Separator/case variants and compound keys ending
+  in `apiKey`, `privateKey`, `password`, `passwd`, `token`, or `secret` are
+  redacted, including OAuth-style `client_secret`, `clientSecret`,
+  `client-secret`, and `accessToken`.
+- Tightened long base64/base64url detection. A long value now needs valid
+  terminal padding or a credible lowercase/uppercase/digit mix with sufficient
+  character entropy. Padded 40-character credentials, known token prefixes,
+  and mixed unpadded tokens remain protected, while package/path names such as
+  `@microsoft/applicationinsights-web-snippet` remain intact.
+
+### Focused RED/GREEN evidence
+
+- The compiler-host regression failed with an observed
+  `directoryExists` probe of `/private/project`, then the semantic suite passed
+  with **30 tests** after the restricted host was installed.
+- Normalized-key regressions first failed for client-secret/private-key forms;
+  compound password/passwd/token/secret regressions also failed before suffix
+  classification was added.
+- Package/path and low-entropy fixtures produced **4 expected failures** before
+  the base64 heuristic was refined.
+- Combined semantic/privacy verification passed with **68 tests**; the final
+  privacy suite passed with **46 tests**.
+
+### Final verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **16 files, 220 tests passed**
+- `npm run package`: **PASS**
+- VSIX inspection: **155 files**
+  - restricted compiler-host resolution and normalized/entropy-aware
+    redaction are present in the packaged runtime;
+  - TypeScript standard libraries and public docs are included;
+  - source, tests, coverage, private Superpowers material, source maps, and
+    workspace/CI files are excluded;
+  - runtime dependency roots contain only `typescript`.
+- `git diff --check`: **PASS**
+- Production credential-literal scan: **PASS**
+- Package metadata fake-URL scan: **PASS**
+- Production URL literals remain limited to the documented loopback default.
+- Self-review found no remaining high-confidence correctness, security, or
+  lifecycle issue in the changed paths.
+
+### Residual concerns
+
+- Official Copilot consent UI and a live third-party OpenAI-compatible service
+  were not exercised in this non-interactive environment; adapters remain
+  covered by mocked contract tests.
+- Semantic analysis intentionally remains per-document and refuses project or
+  cross-file resolution. Only the installed TypeScript standard library is
+  available to the checker.

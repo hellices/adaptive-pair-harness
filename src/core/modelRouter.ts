@@ -475,15 +475,36 @@ const boundSingleLine = (value: string, maxLength: number): string =>
     .trim()
     .slice(0, maxLength);
 
-const SENSITIVE_QUERY_PARAMETER =
-  /^(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|credential|authorization|signature|sig)$/iu;
+const SENSITIVE_KEYS = new Set([
+  "authorization",
+  "credential",
+  "sig",
+  "signature",
+]);
+const SENSITIVE_KEY_SUFFIXES = [
+  "apikey",
+  "password",
+  "passwd",
+  "privatekey",
+  "secret",
+  "token",
+] as const;
+const normalizeSensitiveKey = (key: string): string =>
+  key.replace(/[^A-Za-z0-9]/gu, "").toLowerCase();
+const isSensitiveKey = (key: string): boolean => {
+  const normalizedKey = normalizeSensitiveKey(key);
+  return (
+    SENSITIVE_KEYS.has(normalizedKey) ||
+    SENSITIVE_KEY_SUFFIXES.some((suffix) => normalizedKey.endsWith(suffix))
+  );
+};
 const URI_PATTERN = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s<>"'`]+/gu;
 const ASSIGNED_SECRET_PATTERN =
-  /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|credential|authorization)\b(\s*[:=]\s*)(["']?)([^\s,;"']+)\3/giu;
+  /\b([A-Za-z][A-Za-z0-9_-]*)(\s*[:=]\s*)(["']?)([^\s,;"']+)\3/gu;
 const QUOTED_ASSIGNED_SECRET_PATTERN =
-  /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|credential|authorization)\b(\s*[:=]\s*)(["'])([^"'\\\r\n]*)\3/giu;
+  /\b([A-Za-z][A-Za-z0-9_-]*)(\s*[:=]\s*)(["'])([^"'\\\r\n]*)\3/gu;
 const JSON_QUOTED_ASSIGNED_SECRET_PATTERN =
-  /"(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|credential|authorization)"(\s*:\s*)"((?:\\.|[^"\\\r\n])*)"/giu;
+  /"([A-Za-z][A-Za-z0-9_-]*)"(\s*:\s*)"((?:\\.|[^"\\\r\n])*)"/gu;
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/giu;
 const BASIC_PATTERN = /\bBasic\s+[A-Za-z0-9._~+/-]+=*/giu;
 const KNOWN_TOKEN_PATTERN =
@@ -509,7 +530,7 @@ const sanitizeRemoteText = (
       }
       for (const [key, queryValue] of parsed.searchParams.entries()) {
         if (
-          SENSITIVE_QUERY_PARAMETER.test(key) ||
+          isSensitiveKey(key) ||
           looksLikeLongSecret(queryValue)
         ) {
           parsed.searchParams.set(key, "[REDACTED]");
@@ -537,28 +558,46 @@ const sanitizeRemoteText = (
   redact(BASIC_PATTERN, "[REDACTED]");
   redact(KNOWN_TOKEN_PATTERN, "[REDACTED]");
   redact(JWT_PATTERN, "[REDACTED]");
-  redact(
+  sanitized = sanitized.replace(
     JSON_QUOTED_ASSIGNED_SECRET_PATTERN,
-    '"$1"$2"[REDACTED]"',
+    (candidate, key: string, separator: string) => {
+      if (!isSensitiveKey(key)) {
+        return candidate;
+      }
+      sensitiveDataDetected = true;
+      return `"${key}"${separator}"[REDACTED]"`;
+    },
   );
-  QUOTED_ASSIGNED_SECRET_PATTERN.lastIndex = 0;
-  if (QUOTED_ASSIGNED_SECRET_PATTERN.test(sanitized)) {
-    sensitiveDataDetected = true;
-    QUOTED_ASSIGNED_SECRET_PATTERN.lastIndex = 0;
-    sanitized = sanitized.replace(
-      QUOTED_ASSIGNED_SECRET_PATTERN,
-      "$1$2$3[REDACTED]$3",
-    );
-  }
-  ASSIGNED_SECRET_PATTERN.lastIndex = 0;
-  if (ASSIGNED_SECRET_PATTERN.test(sanitized)) {
-    sensitiveDataDetected = true;
-    ASSIGNED_SECRET_PATTERN.lastIndex = 0;
-    sanitized = sanitized.replace(
-      ASSIGNED_SECRET_PATTERN,
-      "$1$2$3[REDACTED]$3",
-    );
-  }
+  sanitized = sanitized.replace(
+    QUOTED_ASSIGNED_SECRET_PATTERN,
+    (
+      candidate,
+      key: string,
+      separator: string,
+      quote: string,
+    ) => {
+      if (!isSensitiveKey(key)) {
+        return candidate;
+      }
+      sensitiveDataDetected = true;
+      return `${key}${separator}${quote}[REDACTED]${quote}`;
+    },
+  );
+  sanitized = sanitized.replace(
+    ASSIGNED_SECRET_PATTERN,
+    (
+      candidate,
+      key: string,
+      separator: string,
+      quote: string,
+    ) => {
+      if (!isSensitiveKey(key)) {
+        return candidate;
+      }
+      sensitiveDataDetected = true;
+      return `${key}${separator}${quote}[REDACTED]${quote}`;
+    },
+  );
   LONG_OPAQUE_PATTERN.lastIndex = 0;
   sanitized = sanitized.replace(LONG_OPAQUE_PATTERN, (candidate) => {
     if (!looksLikeLongSecret(candidate)) {
@@ -574,10 +613,38 @@ const sanitizeRemoteText = (
   };
 };
 
-const looksLikeLongSecret = (value: string): boolean =>
-  value.length >= 40 &&
-  /[A-Za-z]/u.test(value) &&
-  (/[0-9_+/-]/u.test(value) || /=+$/u.test(value));
+const looksLikeLongSecret = (value: string): boolean => {
+  if (
+    value.length < 40 ||
+    !/^[A-Za-z0-9_+/-]+={0,2}$/u.test(value)
+  ) {
+    return false;
+  }
+  if (/={1,2}$/u.test(value) && value.length % 4 === 0) {
+    return true;
+  }
+
+  const token = value.replace(/=+$/u, "");
+  const hasCredibleCharacterMix = [
+    token.match(/[a-z]/gu)?.length ?? 0,
+    token.match(/[A-Z]/gu)?.length ?? 0,
+    token.match(/[0-9]/gu)?.length ?? 0,
+  ].every((count) => count >= 2);
+  return hasCredibleCharacterMix && calculateCharacterEntropy(token) >= 3.5;
+};
+
+const calculateCharacterEntropy = (value: string): number => {
+  const frequencies = new Map<string, number>();
+  for (const character of value) {
+    frequencies.set(character, (frequencies.get(character) ?? 0) + 1);
+  }
+  let entropy = 0;
+  for (const count of frequencies.values()) {
+    const probability = count / value.length;
+    entropy -= probability * Math.log2(probability);
+  }
+  return entropy;
+};
 
 const formatRange = (range: PairRange): string =>
   `${range.start.line}:${range.start.character}-${range.end.line}:${range.end.character}`;

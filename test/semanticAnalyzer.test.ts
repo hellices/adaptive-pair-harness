@@ -1,8 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import ts from "typescript";
 import { TypeScriptSemanticAnalyzer } from "../src/core/semanticAnalyzer";
 import type { EditEpisode, Evidence, PairRange } from "../src/core/types";
 
 const analyzer = new TypeScriptSemanticAnalyzer();
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 const episode = (
   previousText: string,
@@ -32,6 +38,113 @@ const comparePositions = (left: PairRange["start"], right: PairRange["start"]): 
 };
 
 describe("TypeScriptSemanticAnalyzer", () => {
+  it("keeps every filesystem probe inside the installed TypeScript lib directory", () => {
+    const compilerOptions: ts.CompilerOptions = {
+      target: ts.ScriptTarget.Latest,
+    };
+    const installedLibraryDirectory = resolve(
+      dirname(ts.getDefaultLibFilePath(compilerOptions)),
+    );
+    const libraryDirectory =
+      ts.sys.realpath?.(installedLibraryDirectory) ??
+      installedLibraryDirectory;
+    const probes: Array<{ readonly operation: string; readonly path: string }> =
+      [];
+    const recordProbe = (operation: string, path: string): void => {
+      probes.push({ operation, path: resolve(path) });
+    };
+    const originalFileExists = ts.sys.fileExists;
+    const originalReadFile = ts.sys.readFile;
+    const originalReadDirectory = ts.sys.readDirectory;
+    vi.spyOn(ts.sys, "fileExists").mockImplementation((path) => {
+      recordProbe("fileExists", path);
+      return originalFileExists(path);
+    });
+    vi.spyOn(ts.sys, "readFile").mockImplementation((path, encoding) => {
+      recordProbe("readFile", path);
+      return originalReadFile(path, encoding);
+    });
+    vi.spyOn(ts.sys, "readDirectory").mockImplementation(
+      (path, extensions, exclude, include, depth) => {
+        recordProbe("readDirectory", path);
+        return originalReadDirectory(
+          path,
+          extensions,
+          exclude,
+          include,
+          depth,
+        );
+      },
+    );
+    const originalDirectoryExists = ts.sys.directoryExists;
+    if (originalDirectoryExists !== undefined) {
+      vi.spyOn(ts.sys, "directoryExists").mockImplementation((path) => {
+        recordProbe("directoryExists", path);
+        return originalDirectoryExists(path);
+      });
+    }
+    const originalGetDirectories = ts.sys.getDirectories;
+    if (originalGetDirectories !== undefined) {
+      vi.spyOn(ts.sys, "getDirectories").mockImplementation((path) => {
+        recordProbe("getDirectories", path);
+        return originalGetDirectories(path);
+      });
+    }
+    const originalRealpath = ts.sys.realpath;
+    if (originalRealpath !== undefined) {
+      const systemWithRealpath = ts.sys as ts.System & {
+        realpath: (path: string) => string;
+      };
+      vi.spyOn(systemWithRealpath, "realpath").mockImplementation((path) => {
+        const realPath = originalRealpath(path);
+        recordProbe("realpath", realPath);
+        return realPath;
+      });
+    }
+
+    const result = analyzer.analyze(
+      episode(
+        [
+          '/// <reference path="/private/project/secret.d.ts" />',
+          '/// <reference types="outside-package" />',
+          'import type { Secret } from "/private/project/secret";',
+          "export const values = async () => [1];",
+        ].join("\n"),
+        [
+          '/// <reference path="/private/project/secret.d.ts" />',
+          '/// <reference types="outside-package" />',
+          'import type { Secret } from "/private/project/secret";',
+          'export const values = async () => ["one"];',
+        ].join("\n"),
+        "typescript",
+        "file:///private/project/pair.ts",
+      ),
+    );
+
+    expect(result.stability).toBe("stable");
+    expect(result.evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["values"],
+        }),
+      ]),
+    );
+    expect(probes.length).toBeGreaterThan(0);
+    for (const probe of probes) {
+      const pathWithinLibrary = relative(libraryDirectory, probe.path);
+      expect(
+        pathWithinLibrary === "" ||
+          (!pathWithinLibrary.startsWith("..") &&
+            !isAbsolute(pathWithinLibrary)),
+        `${probe.operation} escaped the TypeScript lib directory: ${probe.path}`,
+      ).toBe(true);
+      if (probe.operation === "fileExists" || probe.operation === "readFile") {
+        expect(basename(probe.path)).toMatch(/^lib(?:\..+)?\.d\.ts$/u);
+      }
+    }
+  });
+
   it("reports a newly introduced import", () => {
     const evidence = analyzeEvidence(
       episode(

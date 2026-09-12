@@ -29,6 +29,23 @@ const requestContaining = (text: string): ModelRequest => ({
   },
 });
 
+const sensitiveKeyVariants = [
+  "client_secret",
+  "clientSecret",
+  "client-secret",
+  "api_key",
+  "accessToken",
+  "privateKey",
+  "password",
+  "passwd",
+  "token",
+  "secret",
+  "database_password",
+  "userPasswd",
+  "auth_token",
+  "signingSecret",
+] as const;
+
 describe("remote model request privacy", () => {
   it("removes unbounded third-party diagnostic text and preserves safe metadata", () => {
     const secret = "sk-do-not-forward-this-secret";
@@ -281,6 +298,36 @@ describe("remote model request privacy", () => {
     expect(serialized).toContain("[REDACTED]");
   });
 
+  it.each(sensitiveKeyVariants)(
+    "redacts quoted JSON values for the normalized %s key",
+    (key) => {
+      const credential = `json credential value for ${key}`;
+      const prepared = prepareRemoteModelRequest(
+        requestContaining(`{"${key}": "${credential}"}`),
+      );
+      const serialized = JSON.stringify(prepared.request);
+
+      expect(prepared.sensitiveDataDetected).toBe(true);
+      expect(serialized).not.toContain(credential);
+      expect(serialized).toContain("[REDACTED]");
+    },
+  );
+
+  it.each(sensitiveKeyVariants)(
+    "redacts quoted assignments for the normalized %s key",
+    (key) => {
+      const credential = `assignment credential value for ${key}`;
+      const prepared = prepareRemoteModelRequest(
+        requestContaining(`${key} = '${credential}'`),
+      );
+      const serialized = JSON.stringify(prepared.request);
+
+      expect(prepared.sensitiveDataDetected).toBe(true);
+      expect(serialized).not.toContain(credential);
+      expect(serialized).toContain("[REDACTED]");
+    },
+  );
+
   it("redacts userinfo credentials from non-HTTP DSNs", () => {
     const dsn =
       "amqps://queue-user:queue-password@broker.example.test/private-vhost";
@@ -326,6 +373,31 @@ describe("remote model request privacy", () => {
 
     expect(prepared.sensitiveDataDetected).toBe(false);
     expect(JSON.stringify(prepared.request)).toContain(benign);
+  });
+
+  it.each([
+    "@microsoft/applicationinsights-web-snippet",
+    "packages/applicationinsights-web-snippet/dist/browser",
+    "company/platform-observability-instrumentation",
+    "Aa0_".repeat(12),
+  ])("preserves the benign package, path, or low-entropy value %s", (benign) => {
+    const prepared = prepareRemoteModelRequest(requestContaining(benign));
+
+    expect(prepared.sensitiveDataDetected).toBe(false);
+    expect(JSON.stringify(prepared.request)).toContain(benign);
+  });
+
+  it("redacts credible mixed-character unpadded token values", () => {
+    const credential =
+      "A9bC2dE5fG8hJ1kL4mN7pQ0rS3tU6vW9xY2z_AbCdEfGhJk";
+    const prepared = prepareRemoteModelRequest(
+      requestContaining(`opaque=${credential}`),
+    );
+    const serialized = JSON.stringify(prepared.request);
+
+    expect(prepared.sensitiveDataDetected).toBe(true);
+    expect(serialized).not.toContain(credential);
+    expect(serialized).toContain("[REDACTED]");
   });
 
   it("redacts the complete Basic authorization payload", () => {

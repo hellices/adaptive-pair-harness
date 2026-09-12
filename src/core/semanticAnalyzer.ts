@@ -116,44 +116,113 @@ const createSemanticSource = (
     skipLibCheck: true,
     target: ts.ScriptTarget.Latest,
   };
-  const defaultHost = ts.createCompilerHost(compilerOptions, true);
-  const standardLibraryDirectory = dirname(
-    resolve(ts.getDefaultLibFilePath(compilerOptions)),
+  const installedLibraryFile = resolve(
+    ts.getDefaultLibFilePath(compilerOptions),
   );
-  const isStandardLibraryFile = (fileName: string): boolean => {
+  const installedLibraryDirectory = dirname(installedLibraryFile);
+  const standardLibraryDirectory =
+    ts.sys.realpath?.(installedLibraryDirectory) ??
+    installedLibraryDirectory;
+  const standardLibraryFile = (fileName: string): string | undefined => {
     const resolvedFileName = resolve(fileName);
-    return (
-      dirname(resolvedFileName) === standardLibraryDirectory &&
-      /^lib(?:\..+)?\.d\.ts$/u.test(basename(resolvedFileName))
+    const fileBaseName = basename(resolvedFileName);
+    if (!/^lib(?:\..+)?\.d\.ts$/u.test(fileBaseName)) {
+      return undefined;
+    }
+    if (
+      dirname(resolvedFileName) !== installedLibraryDirectory &&
+      dirname(resolvedFileName) !== standardLibraryDirectory
+    ) {
+      return undefined;
+    }
+    return resolve(standardLibraryDirectory, fileBaseName);
+  };
+  const readStandardLibraryFile = (fileName: string): string | undefined => {
+    const libraryFile = standardLibraryFile(fileName);
+    return libraryFile === undefined ? undefined : ts.sys.readFile(libraryFile);
+  };
+  const getSourceFile: ts.CompilerHost["getSourceFile"] = (
+    fileName,
+    languageVersionOrOptions,
+    onError,
+  ) => {
+    if (fileName === sourceFile.fileName) {
+      return sourceFile;
+    }
+    const libraryFile = standardLibraryFile(fileName);
+    if (libraryFile === undefined) {
+      return undefined;
+    }
+    const libraryText = readStandardLibraryFile(libraryFile);
+    if (libraryText === undefined) {
+      onError?.(`Unable to read TypeScript standard library: ${libraryFile}`);
+      return undefined;
+    }
+    return ts.createSourceFile(
+      libraryFile,
+      libraryText,
+      languageVersionOrOptions,
+      true,
+      ts.ScriptKind.TS,
     );
   };
   const host: ts.CompilerHost = {
-    ...defaultHost,
+    directoryExists: (directoryName) => {
+      const resolvedDirectory = resolve(directoryName);
+      return (
+        resolvedDirectory === installedLibraryDirectory ||
+        resolvedDirectory === standardLibraryDirectory
+      );
+    },
     fileExists: (fileName) =>
       fileName === sourceFile.fileName ||
-      (isStandardLibraryFile(fileName) && defaultHost.fileExists(fileName)),
-    getSourceFile: (
+      (() => {
+        const libraryFile = standardLibraryFile(fileName);
+        return libraryFile !== undefined && ts.sys.fileExists(libraryFile);
+      })(),
+    getCanonicalFileName: (fileName) =>
+      ts.sys.useCaseSensitiveFileNames ? fileName : fileName.toLowerCase(),
+    getCurrentDirectory: () => standardLibraryDirectory,
+    getDefaultLibFileName: () =>
+      resolve(standardLibraryDirectory, basename(installedLibraryFile)),
+    getDefaultLibLocation: () => standardLibraryDirectory,
+    getDirectories: () => [],
+    getNewLine: () => ts.sys.newLine,
+    getSourceFile,
+    getSourceFileByPath: (
       fileName,
+      _path,
       languageVersionOrOptions,
       onError,
       shouldCreateNewSourceFile,
     ) =>
-      fileName === sourceFile.fileName
-        ? sourceFile
-        : isStandardLibraryFile(fileName)
-          ? defaultHost.getSourceFile(
-              fileName,
-              languageVersionOrOptions,
-              onError,
-              shouldCreateNewSourceFile,
-            )
-          : undefined,
+      getSourceFile(
+        fileName,
+        languageVersionOrOptions,
+        onError,
+        shouldCreateNewSourceFile,
+      ),
+    readDirectory: () => [],
     readFile: (fileName) =>
       fileName === sourceFile.fileName
         ? text
-        : isStandardLibraryFile(fileName)
-          ? defaultHost.readFile(fileName)
-          : undefined,
+        : readStandardLibraryFile(fileName),
+    realpath: (fileName) =>
+      fileName === sourceFile.fileName
+        ? fileName
+        : (standardLibraryFile(fileName) ?? fileName),
+    resolveModuleNameLiterals: (moduleLiterals) =>
+      moduleLiterals.map(() => ({ resolvedModule: undefined })),
+    resolveModuleNames: (moduleNames) =>
+      moduleNames.map(() => undefined),
+    resolveTypeReferenceDirectiveReferences: (typeDirectiveReferences) =>
+      typeDirectiveReferences.map(() => ({
+        resolvedTypeReferenceDirective: undefined,
+      })),
+    resolveTypeReferenceDirectives: (typeReferenceDirectiveNames) =>
+      typeReferenceDirectiveNames.map(() => undefined),
+    useCaseSensitiveFileNames: () => ts.sys.useCaseSensitiveFileNames,
+    writeFile: () => undefined,
   };
   const program = ts.createProgram(
     [sourceFile.fileName],
