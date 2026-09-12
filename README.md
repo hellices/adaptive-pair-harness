@@ -41,6 +41,10 @@ explicitly start one.
 - JavaScript
 - JavaScript React
 
+Supported documents may use either the local `file:` scheme or VS Code's
+`vscode-remote:` scheme, including Codespaces and Remote SSH workspaces.
+Unrelated schemes remain ignored.
+
 ### Evidence types
 
 - **New import dependency** — a newly introduced module import
@@ -110,11 +114,24 @@ Adaptive Pair never auto-starts.
 - **Toggle**: `Adaptive Pair: Toggle Pairing Session`
 - **Shortcut**: `Ctrl+Shift+Alt+P` / `Cmd+Shift+Alt+P`
 - **Manual review**: `Adaptive Pair: Review Current Block`
+- **Dismiss current evidence for its owning repository**:
+  `Adaptive Pair: Dismiss Current Evidence`
+- **Approve the current privacy-safe evidence summary**:
+  `Adaptive Pair: Approve Current Evidence`
+- **Choose and persist intervention style**:
+  `Adaptive Pair: Set Intervention Style`
 - **OpenAI-compatible API key**: `Adaptive Pair: Set OpenAI-Compatible API Key`
 - **Memory recovery**: `Adaptive Pair: Reset Local Memory`
 
 Stopping a session clears transient inline state and shared evidence for the
-current session.
+current session. Resetting local memory also stops an active or still-preparing
+session before publishing the reset state.
+
+The configured intervention style is used when no preference has been saved.
+The style picker stores its selection in VS Code global state, and the saved
+style is applied to thresholds and budgets when later sessions start.
+Dismissals are stored only under the workspace root that owns the evidence;
+approvals store the bounded evidence summary, not source buffers.
 
 ## Using `@pair` Chat and inline comments
 
@@ -226,7 +243,8 @@ harness.
 
 - Confirm the session is started.
 - Confirm `adaptivePair.enabled` is still `true`.
-- Use a TypeScript or JavaScript file under the `file:` scheme.
+- Use a TypeScript or JavaScript document under the `file:` or
+  `vscode-remote:` scheme.
 - Make one of the supported evidence-producing changes, or run
   **Adaptive Pair: Review Current Block**.
 - Wait for the debounce window after editing.
@@ -264,7 +282,8 @@ Personal Pair memory is stored in VS Code global state. Repository dismissals
 remain isolated under repository-specific keys in that global record.
 Pair starts with safe in-memory defaults, preserves the corrupt stored record,
 and shows a warning. Use **Adaptive Pair: Reset Local Memory** only when you
-intend to replace that record with clean defaults.
+intend to replace that record with clean defaults; reset stops any active or
+pending session first.
 
 ## Current limitations
 

@@ -503,3 +503,83 @@
 - Over-limit provider usage can intentionally exceed the configured rolling
   cap in accounting. Remaining budget clamps to zero rather than hiding usage
   that the already-dispatched request actually consumed.
+
+---
+
+## GitHub Copilot Review Findings Follow-up
+
+- Date: 2026-09-12
+- Binding input: `.superpowers/sdd/copilot-review-findings.md`
+- Status: **COMPLETE — all binding and suppressed findings addressed**
+
+### Corrections implemented
+
+- Document eligibility now accepts TypeScript/JavaScript documents using
+  either `file:` or `vscode-remote:` and continues to reject unrelated schemes
+  and languages.
+- Added Command Palette actions to dismiss current evidence, approve its
+  privacy-safe summary, and select/persist `eco`, `balanced`, or `active`
+  intervention style. Persisted styles are applied to policy thresholds and
+  managed budgets on later session starts. Dismissals are written under the
+  workspace root that owns the evidence, including remote and multi-root
+  workspaces, and are honored by manual review.
+- The complete local intervention question is normalized and capped at 1,000
+  characters after title, detail, and prompt text are concatenated.
+- Runtime rebuild now rechecks extension disposal immediately after
+  asynchronous secret retrieval and creates no replacement runtime or VS Code
+  resources when disposal won the race.
+- Shared Chat state now carries an opaque monotonic revision advanced by
+  runtime replacement and evidence changes. Symbol-resolution, model-success,
+  and model-error post-await paths fence against that revision instead of
+  sanitized evidence IDs.
+- Memory reset stops active or pending session work before resetting storage,
+  preventing deferred preparation from republishing stale state.
+- Rejected preparation from a stopped or replaced generation resolves with the
+  stopped result; current-generation preparation failures continue to reject.
+- README, configuration reference, architecture, activation events, and
+  command contributions now describe the implemented behavior.
+
+### Focused RED/GREEN evidence
+
+- Remote URI eligibility: 1 expected failure, then pass.
+- Complete local-question bound: 1 expected failure, then pass.
+- Stale preparation rejection: 1 expected failure, then both stale and current
+  preparation-failure tests passed.
+- Secret lookup/disposal: 1 expected failure, then pass.
+- Opaque Chat revision: 3 expected failures covering redaction-changing IDs,
+  stale model output, and stale symbol resolution; all passed after the
+  revision fence.
+- Reset during deferred preparation: 1 expected failure, then pass.
+- Memory/UI wiring: 5 expected failures for missing runtime actions, loaded
+  style behavior, and manifest contributions; all passed after wiring.
+- Manual dismissal: 1 expected failure showing dismissed diagnostics could be
+  selected again, then pass after filtering all manual evidence sources.
+- Focused final run: **7 files, 124 tests passed**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **16 files, 281 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 88.38%, branches 79.00%, functions 91.48%, lines 88.55%
+- `npm run package`: **PASS**
+- `npm audit`: **PASS — 0 vulnerabilities**
+- VSIX inspection: **155 files**
+  - new commands and public documentation are present;
+  - source, tests, coverage, private review material, source maps, and
+    workspace/CI files are excluded;
+  - production dependency root remains `typescript@5.9.3`.
+- `git diff --check`: **PASS**
+- Production secret-pattern scan: **PASS**
+- Packaged metadata fake-URL scan: **PASS**
+- Changed-file self-review found no remaining high-confidence correctness,
+  privacy, lifecycle, or concurrency issue.
+
+### Residual concerns
+
+- Official Copilot consent/UI behavior, Command Palette interaction, and a live
+  third-party OpenAI-compatible service were not exercised in this
+  non-interactive environment. Their boundaries are covered by unit and
+  contract tests.

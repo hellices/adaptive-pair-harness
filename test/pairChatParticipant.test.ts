@@ -600,6 +600,190 @@ describe("pair chat planning", () => {
     expect(registered.size).toBe(0);
   });
 
+  it("accepts a current response when remote sanitization changes the evidence id", async () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      generation: 1,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "vscode-copilot",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    const sensitiveIdEvidence = {
+      ...evidence,
+      id: "authorization=Bearer secret-value",
+    };
+    context.publishEvidence({
+      uri: "file:///workspace/evidence.ts",
+      evidence: sensitiveIdEvidence,
+      question: "Did you intend this dependency?",
+    });
+    const plan = buildPairChatPlan("why", context.snapshot());
+    expect(plan).toMatchObject({ kind: "generate" });
+    if (plan.kind !== "generate") {
+      throw new Error("Expected generation plan.");
+    }
+    expect(plan.evidence.id).not.toBe(sensitiveIdEvidence.id);
+
+    let handler: vscode.ChatRequestHandler | undefined;
+    const markdown = vi.fn();
+    registerPairChatParticipant(
+      (_id, registeredHandler) => {
+        handler = registeredHandler;
+        return { dispose: () => undefined } as vscode.ChatParticipant;
+      },
+      context,
+      {
+        generate: async () => ({
+          text: "current sanitized response",
+          inputTokens: 1,
+          outputTokens: 1,
+        }),
+      },
+    );
+
+    await handler!(
+      { command: "why", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      { markdown } as unknown as vscode.ChatResponseStream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      } as vscode.CancellationToken,
+    );
+
+    expect(markdown).toHaveBeenCalledWith("current sanitized response");
+  });
+
+  it("rejects stale model output across a runtime rebuild with identical visible state", async () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      generation: 1,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "vscode-copilot",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    const latest = {
+      uri: "file:///workspace/evidence.ts",
+      evidence,
+      question: "Did you intend this dependency?",
+    };
+    context.publishEvidence(latest);
+    const modelCompletion = deferred<{
+      text: string;
+      inputTokens: number;
+      outputTokens: number;
+    }>();
+    let handler: vscode.ChatRequestHandler | undefined;
+    const markdown = vi.fn();
+    registerPairChatParticipant(
+      (_id, registeredHandler) => {
+        handler = registeredHandler;
+        return { dispose: () => undefined } as vscode.ChatParticipant;
+      },
+      context,
+      {
+        generate: () => modelCompletion.promise,
+      },
+    );
+
+    const pendingResponse = handler!(
+      { command: "why", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      { markdown } as unknown as vscode.ChatResponseStream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      } as vscode.CancellationToken,
+    );
+    context.beginRuntime();
+    context.updateSession({ ...context.snapshot().session, generation: 1 });
+    context.publishEvidence(latest);
+    modelCompletion.resolve({
+      text: "stale rebuilt-runtime output",
+      inputTokens: 1,
+      outputTokens: 1,
+    });
+    await pendingResponse;
+
+    expect(markdown).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale trace resolution across a runtime rebuild with identical visible state", async () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      generation: 1,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "vscode-copilot",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    const latest = {
+      uri: "file:///workspace/evidence.ts",
+      evidence,
+      question: "Did you intend this dependency?",
+    };
+    context.publishEvidence(latest);
+    const symbolResolution = deferred<{
+      name: string;
+      kind: string;
+      range: Evidence["range"];
+    }>();
+    let handler: vscode.ChatRequestHandler | undefined;
+    const generate = vi.fn(async () => ({
+      text: "stale trace",
+      inputTokens: 1,
+      outputTokens: 1,
+    }));
+    registerPairChatParticipant(
+      (_id, registeredHandler) => {
+        handler = registeredHandler;
+        return { dispose: () => undefined } as vscode.ChatParticipant;
+      },
+      context,
+      { generate },
+      {
+        symbolContextProvider: {
+          forEvidence: () => symbolResolution.promise,
+        },
+      },
+    );
+
+    const pendingTrace = handler!(
+      { command: "trace", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      { markdown: vi.fn() } as unknown as vscode.ChatResponseStream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      } as vscode.CancellationToken,
+    );
+    context.beginRuntime();
+    context.updateSession({ ...context.snapshot().session, generation: 1 });
+    context.publishEvidence(latest);
+    symbolResolution.resolve({
+      name: "loadRepository",
+      kind: "Function",
+      range: evidence.range,
+    });
+    await pendingTrace;
+
+    expect(generate).not.toHaveBeenCalled();
+  });
+
   it("does not write deferred model output after stop", async () => {
     const context = new PairSharedContext({
       enabled: true,

@@ -7,6 +7,15 @@ export interface PairDisposable {
   dispose(): void;
 }
 
+export const createRuntimeAfterSecretLookup = async <TRuntime>(
+  lookupSecret: () => PromiseLike<string | undefined>,
+  isDisposed: () => boolean,
+  createRuntime: (apiKey: string | undefined) => TRuntime,
+): Promise<TRuntime | undefined> => {
+  const apiKey = await lookupSecret();
+  return isDisposed() ? undefined : createRuntime(apiKey);
+};
+
 export interface PairSessionLifecyclePorts {
   prepare(context: PairSessionPreparationContext): Promise<void>;
   registerDocumentListeners(): PairDisposable;
@@ -156,10 +165,15 @@ export class PairSessionLifecycle {
     try {
       await this.ports.prepare(preparationContext);
     } catch (error: unknown) {
-      if (generation === this.generation) {
-        this.ports.cancelPendingWork();
-        this.ports.clearTransientState();
+      if (!preparationContext.isCurrent()) {
+        return {
+          kind: "already-stopped",
+          active: false,
+          message: "Adaptive Pair session remained stopped.",
+        };
       }
+      this.ports.cancelPendingWork();
+      this.ports.clearTransientState();
       throw error;
     }
     if (!preparationContext.isCurrent()) {

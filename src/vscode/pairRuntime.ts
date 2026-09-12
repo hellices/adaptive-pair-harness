@@ -1,5 +1,8 @@
 import * as vscode from "vscode";
-import type { PairConfig } from "../config/pairConfig";
+import {
+  budgetForInterventionStyle,
+  type PairConfig,
+} from "../config/pairConfig";
 import { discoverHarnessSignals } from "../core/coexistence";
 import { EditEpisodeAggregator } from "../core/editEpisodeAggregator";
 import { InterventionPolicy } from "../core/interventionPolicy";
@@ -29,6 +32,7 @@ import type {
 import { InlinePairController } from "./inlinePairController";
 import type {
   PairChatGenerator,
+  PairRuntimeRevision,
   PairSessionSnapshot,
   PairSharedContext,
 } from "./pairChatParticipant";
@@ -65,6 +69,7 @@ const SUPPORTED_LANGUAGE_IDS = new Set([
   "javascript",
   "javascriptreact",
 ]);
+const SUPPORTED_DOCUMENT_SCHEMES = new Set(["file", "vscode-remote"]);
 
 export interface PairRuntimeOptions {
   readonly config: PairConfig;
@@ -73,6 +78,16 @@ export interface PairRuntimeOptions {
   readonly languageModelApi: VsCodeLanguageModelApi;
   readonly apiKey: string | undefined;
   readonly budget?: TokenBudget;
+  readonly budgetFollowsInterventionStyle?: boolean;
+}
+
+export interface PairMemoryActionResult {
+  readonly kind:
+    | "dismissed"
+    | "approved"
+    | "style-updated"
+    | "no-evidence";
+  readonly message: string;
 }
 
 class TimeoutScheduler implements Scheduler, vscode.Disposable {
@@ -126,7 +141,10 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   private readonly status: vscode.StatusBarItem;
   private readonly invocationGate: PairInvocationGate;
   private readonly sessionLifecycle: PairSessionLifecycle;
+  private readonly runtimeRevision: PairRuntimeRevision;
+  private readonly budgetFollowsInterventionStyle: boolean;
   private effectiveProvider: PairConfig["provider"];
+  private interventionStyle: PairConfig["interventionStyle"];
   private dismissedEvidenceIdsByRepository = new Map<
     string,
     ReadonlySet<string>
@@ -137,9 +155,14 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   private disposed = false;
 
   public constructor(private readonly options: PairRuntimeOptions) {
+    this.runtimeRevision = options.sharedContext.beginRuntime();
     this.budget = options.budget ?? new TokenBudget(options.config.budget);
+    this.budgetFollowsInterventionStyle =
+      options.budget === undefined ||
+      options.budgetFollowsInterventionStyle === true;
     this.invocationGate = new PairInvocationGate(options.config.enabled, false);
     this.effectiveProvider = options.config.provider;
+    this.interventionStyle = options.config.interventionStyle;
     this.policy = new InterventionPolicy({});
     this.copilotProvider = new VsCodeLanguageModelProvider(
       options.languageModelApi,
@@ -301,6 +324,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     const recoveredMemory = recoveredByRepository[0]?.recovered ?? {
       memory: (await this.memoryStore.loadOrDefault()).memory,
       warning: undefined,
+      source: "default" as const,
     };
     const dismissedEvidenceIdsByRepository = new Map(
       recoveredByRepository.map(({ repositoryId, recovered }) => [
@@ -316,6 +340,15 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       return;
     }
     this.memoryWarning = recoveredMemory.warning;
+    this.interventionStyle =
+      recoveredMemory.source === "stored"
+        ? recoveredMemory.memory.preferences.interventionStyle
+        : recoveredMemory.source === "corrupt"
+          ? "balanced"
+          : this.options.config.interventionStyle;
+    if (recoveredMemory.source !== "default") {
+      this.applyInterventionStyleBudget();
+    }
     if (recoveredMemory.warning !== undefined) {
       void vscode.window.showWarningMessage(recoveredMemory.warning);
     }
@@ -420,11 +453,20 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       );
       return;
     }
+    const dismissedEvidenceIds = this.dismissedEvidenceIdsForUri(
+      editor.document.uri,
+    );
+    const excludeDismissed = (candidates: readonly Evidence[]) =>
+      candidates.filter(
+        (candidate) => !dismissedEvidenceIds.has(candidate.id),
+      );
     const evidence = selectManualEvidence({
       selection,
-      diagnostics: diagnosticEvidenceForDocument(editor.document),
-      latest: this.documentState.latestEvidence(key),
-      analyzed: analysis.evidence,
+      diagnostics: excludeDismissed(
+        diagnosticEvidenceForDocument(editor.document),
+      ),
+      latest: excludeDismissed(this.documentState.latestEvidence(key)),
+      analyzed: excludeDismissed(analysis.evidence),
     });
     if (evidence === undefined) {
       await vscode.window.showInformationMessage(
@@ -492,7 +534,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     this.cancelRequest(key);
     this.chatRequests.cancelUri(key);
     this.documentState.invalidateEvidence(key);
-    this.options.sharedContext.clearEvidence(key);
+    this.options.sharedContext.clearEvidence(key, this.runtimeRevision);
     this.inlineController.disposeUri(document.uri);
     const currentText = document.getText();
     const previousText = this.documentState.updateText(key, currentText);
@@ -557,7 +599,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     );
     const decision = this.policy.decide({
       evidence,
-      style: this.options.config.interventionStyle,
+      style: this.interventionStyle,
       now: Date.now(),
       goal: PAIR_GOAL,
     });
@@ -840,7 +882,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       uri: document.uri.toString(),
       evidence,
       question,
-    });
+    }, this.runtimeRevision);
   }
 
   private cancelRequest(uri: string): void {
@@ -863,7 +905,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   private clearTransientState(): void {
     this.documentState.clear();
     this.policy.resetTransient();
-    this.options.sharedContext.clearEvidence();
+    this.options.sharedContext.clearEvidence(undefined, this.runtimeRevision);
     this.inlineController.clear();
   }
 
@@ -881,12 +923,15 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   }
 
   public async resetMemory(): Promise<void> {
+    this.stopSession();
     const lifecycleFence = this.sessionLifecycle.captureFence();
     await this.memoryStore.reset();
     if (!lifecycleFence.isCurrent()) {
       return;
     }
     this.memoryWarning = undefined;
+    this.interventionStyle = "balanced";
+    this.applyInterventionStyleBudget();
     this.dismissedEvidenceIdsByRepository.clear();
     this.statusDetail = this.sessionLifecycle.active
       ? this.configurationWarning()
@@ -898,13 +943,85 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     );
   }
 
+  public async dismissCurrentEvidence(): Promise<PairMemoryActionResult> {
+    const snapshot = this.options.sharedContext.snapshot();
+    const latest = snapshot.latest;
+    if (latest === undefined) {
+      return {
+        kind: "no-evidence",
+        message: "Adaptive Pair has no current evidence to dismiss.",
+      };
+    }
+
+    const uri = vscode.Uri.parse(latest.uri);
+    const repositoryId = this.repositoryIdForUri(uri);
+    await this.memoryStoreForRepository(repositoryId).dismissEvidence(
+      latest.evidence.id,
+    );
+    if (!this.disposed) {
+      const dismissed = new Set(
+        this.dismissedEvidenceIdsByRepository.get(repositoryId) ?? [],
+      );
+      dismissed.add(latest.evidence.id);
+      this.dismissedEvidenceIdsByRepository.set(repositoryId, dismissed);
+      if (
+        this.options.sharedContext.snapshot().revision === snapshot.revision
+      ) {
+        this.documentState.invalidateEvidence(latest.uri);
+        this.options.sharedContext.clearEvidence(
+          latest.uri,
+          this.runtimeRevision,
+        );
+        this.inlineController.disposeUri(uri);
+      }
+    }
+    return {
+      kind: "dismissed",
+      message: "Adaptive Pair dismissed the current evidence for this repository.",
+    };
+  }
+
+  public async approveCurrentEvidence(): Promise<PairMemoryActionResult> {
+    const latest = this.options.sharedContext.snapshot().latest;
+    if (latest === undefined) {
+      return {
+        kind: "no-evidence",
+        message: "Adaptive Pair has no current evidence to approve.",
+      };
+    }
+
+    await this.memoryStore.approveEvidence(latest.evidence);
+    return {
+      kind: "approved",
+      message: "Adaptive Pair saved the current evidence summary as approved.",
+    };
+  }
+
+  public async setInterventionStyle(
+    style: PairConfig["interventionStyle"],
+  ): Promise<PairMemoryActionResult> {
+    await this.memoryStore.updatePreferences({
+      interventionStyle: style,
+    });
+    if (!this.disposed) {
+      this.interventionStyle = style;
+      this.applyInterventionStyleBudget();
+      this.publishSession();
+      this.renderStatus();
+    }
+    return {
+      kind: "style-updated",
+      message: `Adaptive Pair intervention style is now ${style}.`,
+    };
+  }
+
   private closeDocument(uri: vscode.Uri): void {
     const key = uri.toString();
     this.documentState.close(key);
     this.aggregator.cancel(key);
     this.cancelRequest(key);
     this.chatRequests.cancelUri(key);
-    this.options.sharedContext.clearEvidence(key);
+    this.options.sharedContext.clearEvidence(key, this.runtimeRevision);
     this.inlineController.disposeUri(uri);
   }
 
@@ -913,6 +1030,21 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       uri,
       vscode.workspace.getWorkspaceFolder,
     );
+  }
+
+  private memoryStoreForRepository(repositoryId: string): PairMemoryStore {
+    return new PairMemoryStore({
+      repositoryId,
+      store: this.memoryBackend,
+    });
+  }
+
+  private applyInterventionStyleBudget(): void {
+    if (this.budgetFollowsInterventionStyle) {
+      this.budget.reconfigure(
+        budgetForInterventionStyle(this.interventionStyle),
+      );
+    }
   }
 
   private dismissedEvidenceIdsForUri(
@@ -963,7 +1095,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       controlNotice: this.controlNotice,
       configurationWarning: this.configurationWarning(),
     };
-    this.options.sharedContext.updateSession(session);
+    this.options.sharedContext.updateSession(session, this.runtimeRevision);
   }
 
   private renderStatus(): void {
@@ -1001,7 +1133,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
 }
 
 const isSupportedDocument = (document: vscode.TextDocument): boolean =>
-  document.uri.scheme === "file" &&
+  SUPPORTED_DOCUMENT_SCHEMES.has(document.uri.scheme) &&
   SUPPORTED_LANGUAGE_IDS.has(document.languageId);
 
 const normalizedSelectionRange = (editor: vscode.TextEditor): vscode.Range => {

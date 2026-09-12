@@ -34,13 +34,21 @@ export interface PairPublishedEvidence {
 }
 
 export interface PairContextSnapshot {
+  readonly revision: number;
   readonly session: PairSessionSnapshot;
   readonly latest: PairPublishedEvidence | undefined;
 }
 
+declare const pairRuntimeRevisionBrand: unique symbol;
+export type PairRuntimeRevision = number & {
+  readonly [pairRuntimeRevisionBrand]: true;
+};
+
 export class PairSharedContext {
   private latest: PairPublishedEvidence | undefined;
   private session: PairSessionSnapshot;
+  private revision = 0;
+  private currentRuntimeRevision = 0;
 
   public constructor(
     session: Omit<PairSessionSnapshot, "generation"> & {
@@ -53,22 +61,68 @@ export class PairSharedContext {
     };
   }
 
-  public updateSession(session: PairSessionSnapshot): void {
+  public beginRuntime(): PairRuntimeRevision {
+    this.currentRuntimeRevision += 1;
+    this.revision += 1;
+    this.latest = undefined;
+    return this.currentRuntimeRevision as PairRuntimeRevision;
+  }
+
+  public updateSession(
+    session: PairSessionSnapshot,
+    runtimeRevision?: PairRuntimeRevision,
+  ): void {
+    if (
+      runtimeRevision !== undefined &&
+      runtimeRevision !== this.currentRuntimeRevision
+    ) {
+      return;
+    }
+    if (
+      session.enabled !== this.session.enabled ||
+      session.active !== this.session.active ||
+      session.generation !== this.session.generation
+    ) {
+      this.revision += 1;
+    }
     this.session = session;
   }
 
-  public publishEvidence(latest: PairPublishedEvidence): void {
+  public publishEvidence(
+    latest: PairPublishedEvidence,
+    runtimeRevision?: PairRuntimeRevision,
+  ): void {
+    if (
+      runtimeRevision !== undefined &&
+      runtimeRevision !== this.currentRuntimeRevision
+    ) {
+      return;
+    }
+    this.revision += 1;
     this.latest = latest;
   }
 
-  public clearEvidence(uri?: string): void {
+  public clearEvidence(
+    uri?: string,
+    runtimeRevision?: PairRuntimeRevision,
+  ): void {
+    if (
+      runtimeRevision !== undefined &&
+      runtimeRevision !== this.currentRuntimeRevision
+    ) {
+      return;
+    }
     if (uri === undefined || this.latest?.uri === uri) {
+      if (this.latest !== undefined) {
+        this.revision += 1;
+      }
       this.latest = undefined;
     }
   }
 
   public snapshot(): PairContextSnapshot {
     return {
+      revision: this.revision,
       session: this.session,
       latest: this.latest,
     };
@@ -260,6 +314,7 @@ export const registerPairChatParticipant = (
   ) => {
     const abortController = new AbortController();
     let requestRegistration: PairDisposable | undefined;
+    let requestRevision: number | undefined;
     if (token.isCancellationRequested) {
       abortController.abort();
     }
@@ -289,6 +344,7 @@ export const registerPairChatParticipant = (
       }
 
       let snapshot = context.snapshot();
+      requestRevision = snapshot.revision;
       if (
         snapshot.session.enabled &&
         snapshot.session.active &&
@@ -308,7 +364,7 @@ export const registerPairChatParticipant = (
         snapshot.session.active &&
         snapshot.latest !== undefined
           ? await (async (): Promise<ModelSymbolContext | undefined> => {
-              const traceGeneration = snapshot.session.generation;
+              const traceRevision = snapshot.revision;
               const traceUri = snapshot.latest!.uri;
               const traceRange = snapshot.latest!.evidence.range;
               const resolved = await symbolContextProvider.forEvidence(
@@ -323,9 +379,7 @@ export const registerPairChatParticipant = (
               if (
                 !current.session.enabled ||
                 !current.session.active ||
-                current.session.generation !== traceGeneration ||
-                current.latest?.uri !== traceUri ||
-                !pairRangesEqual(current.latest.evidence.range, traceRange)
+                current.revision !== traceRevision
               ) {
                 return undefined;
               }
@@ -341,14 +395,7 @@ export const registerPairChatParticipant = (
         if (
           !current.session.enabled ||
           !current.session.active ||
-          current.session.generation !== snapshot.session.generation ||
-          current.latest?.uri !== snapshot.latest?.uri ||
-          (current.latest !== undefined &&
-            snapshot.latest !== undefined &&
-            !pairRangesEqual(
-              current.latest.evidence.range,
-              snapshot.latest.evidence.range,
-            ))
+          current.revision !== snapshot.revision
         ) {
           return;
         }
@@ -373,7 +420,7 @@ export const registerPairChatParticipant = (
       const current = context.snapshot();
       if (
         abortController.signal.aborted ||
-        !isCurrentGeneratedResponse(current, snapshot, plan)
+        !isCurrentGeneratedResponse(current, snapshot)
       ) {
         return;
       }
@@ -381,7 +428,9 @@ export const registerPairChatParticipant = (
     } catch (error: unknown) {
       if (
         abortController.signal.aborted ||
-        options.isOfficialCancellationError?.(error) === true
+        options.isOfficialCancellationError?.(error) === true ||
+        (requestRevision !== undefined &&
+          context.snapshot().revision !== requestRevision)
       ) {
         return;
       }
@@ -402,20 +451,10 @@ export const registerPairChatParticipant = (
   return register("adaptivePair.chat", handler);
 };
 
-const pairRangesEqual = (left: PairRange, right: PairRange): boolean =>
-  left.start.line === right.start.line &&
-  left.start.character === right.start.character &&
-  left.end.line === right.end.line &&
-  left.end.character === right.end.character;
-
 const isCurrentGeneratedResponse = (
   current: PairContextSnapshot,
   started: PairContextSnapshot,
-  plan: Extract<PairChatPlan, { readonly kind: "generate" }>,
 ): boolean =>
   current.session.enabled &&
   current.session.active &&
-  current.session.generation === started.session.generation &&
-  current.latest?.uri === plan.uri &&
-  current.latest.evidence.id === plan.evidence.id &&
-  pairRangesEqual(current.latest.evidence.range, plan.evidence.range);
+  current.revision === started.revision;

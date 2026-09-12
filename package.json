@@ -33,6 +33,9 @@
     "onCommand:adaptivePair.reviewCurrentBlock",
     "onCommand:adaptivePair.setApiKey",
     "onCommand:adaptivePair.resetMemory",
+    "onCommand:adaptivePair.dismissCurrentEvidence",
+    "onCommand:adaptivePair.approveCurrentEvidence",
+    "onCommand:adaptivePair.setInterventionStyle",
     "onChatParticipant:adaptivePair.chat"
   ],
   "main": "./dist/src/extension.js",
@@ -61,6 +64,18 @@
       {
         "command": "adaptivePair.resetMemory",
         "title": "Adaptive Pair: Reset Local Memory"
+      },
+      {
+        "command": "adaptivePair.dismissCurrentEvidence",
+        "title": "Adaptive Pair: Dismiss Current Evidence"
+      },
+      {
+        "command": "adaptivePair.approveCurrentEvidence",
+        "title": "Adaptive Pair: Approve Current Evidence"
+      },
+      {
+        "command": "adaptivePair.setInterventionStyle",
+        "title": "Adaptive Pair: Set Intervention Style"
       }
     ],
     "chatParticipants": [
@@ -124,7 +139,8 @@
             "balanced",
             "active"
           ],
-          "default": "balanced"
+          "default": "balanced",
+          "description": "Initial intervention style when local Pair memory has no saved preference. Use Adaptive Pair: Set Intervention Style to persist a selection."
         },
         "adaptivePair.model.provider": {
           "scope": "application",

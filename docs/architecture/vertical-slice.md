@@ -7,7 +7,8 @@ not the full future design.
 
 The shipped slice is a **navigator-only** VS Code extension that:
 
-- watches open TypeScript/JavaScript documents after an explicit session start;
+- watches open TypeScript/JavaScript `file:` and `vscode-remote:` documents
+  after an explicit session start;
 - aggregates short edit bursts into an edit episode;
 - derives bounded evidence from semantic analysis and editor diagnostics;
 - decides whether to stay quiet, ask a local question, or call a configured
@@ -23,13 +24,18 @@ project changes.
 1. **Activation** initializes shared session state as enabled-but-inactive.
 2. **Configuration rebuild** reads local behavior settings plus
    application-scoped remote routing. Workspace/folder remote overrides are
-   ignored. OpenAI-compatible keys are looked up by validated canonical origin.
+   ignored. OpenAI-compatible keys are looked up by validated canonical origin;
+   disposal is checked again after the asynchronous secret lookup and before
+   constructing replacement runtime or VS Code resources.
 3. **Session start** is explicit. `adaptivePair.startSession`,
    `adaptivePair.toggle`, and `@pair /start` all route through the same
    lifecycle gate.
-4. **Session preparation** loads repository-scoped workspace memory, using the
-   owning folder for each document in multi-root workspaces, seeds only stable
-   open documents, and discovers coexistence signals.
+4. **Session preparation** loads preferences and repository-scoped workspace
+   memory, using the owning folder for each document in multi-root workspaces,
+   seeds only stable open documents, and discovers coexistence signals. Stop,
+   replacement, disposal, and memory reset invalidate pending preparation;
+   rejection from stale preparation returns the stopped result, while a
+   current-generation failure still surfaces.
 5. **Document changes** invalidate existing inline evidence for that file,
    cancel in-flight work, and queue an edit episode through the debounced
    aggregator.
@@ -62,11 +68,14 @@ The semantic analyzer is intentionally narrow.
 - `javascript`
 - `javascriptreact`
 
+These language IDs are eligible only for `file:` and `vscode-remote:` URIs.
+Other URI schemes are rejected.
+
 ### Important exclusions
 
 The analyzer does not currently:
 
-- inspect non-file editors;
+- inspect editors outside the `file:` and `vscode-remote:` schemes;
 - review whole-repository history;
 - understand runtime behavior beyond syntax/AST evidence and editor
   diagnostics;
@@ -94,6 +103,11 @@ The analyzer does not currently:
 If the budget denies the request, the runtime falls back to a local-template
 question instead of dropping the intervention entirely.
 
+The configured style is the initial value when memory has no saved preference.
+The style command persists a preference in global Pair memory; session
+preparation reapplies that preference to both policy thresholds and the shared
+rolling budget.
+
 ## Model request shape
 
 Remote-capable providers receive a sanitized `ModelRequest` shape:
@@ -118,7 +132,8 @@ automatic evidence is kept local rather than sent after redaction.
 
 ### Provider behavior
 
-- **Local template**: deterministic local question, zero remote tokens
+- **Local template**: deterministic, complete-question-bounded local response,
+  zero remote tokens
 - **Official VS Code Copilot**: uses the VS Code language model API and falls
   back locally when no model is available, access is denied, or proactive access
   is unavailable. The selected model counts the prepared prompt before budget
@@ -165,6 +180,13 @@ reconstructing unrelated state. The local provider has distinct `/why` and
 `/explain` summaries. Local `/trace` discloses only the resolved symbol/range
 and explicitly declines to fabricate deeper flow analysis.
 
+Every runtime claim and evidence publication advances an opaque monotonic
+shared-context revision. Chat captures that revision before asynchronous symbol
+resolution or generation and verifies it afterward. The fence does not depend
+on redacted evidence IDs and therefore rejects responses from replaced
+runtimes even when their visible generation, URI, range, and sanitized evidence
+appear identical.
+
 ## Coexistence discovery
 
 On session start, the runtime checks for:
@@ -191,10 +213,13 @@ repository files.
 
 - personal pair memory is shared through global state, while repository
   dismissals stay keyed by document-owning roots inside that global record;
+- Command Palette actions dismiss the current evidence for its owning root,
+  approve only its bounded summary, and persist the selected intervention
+  style;
 - corrupt memory is preserved while in-memory defaults keep Pair usable, until
-  the user invokes the explicit reset command; reset completion is fenced to
-  the runtime generation that initiated it, so a replaced runtime cannot be
-  overwritten;
+  the user invokes the explicit reset command; reset stops active and pending
+  session work before storage mutation, and completion remains fenced so a
+  replaced runtime cannot be overwritten;
 - OpenAI-compatible keys are stored in `SecretStorage`, separately per
   validated canonical endpoint origin;
 - remote settings are application-scoped and cannot be supplied by a folder;

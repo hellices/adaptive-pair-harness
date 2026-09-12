@@ -36,6 +36,13 @@ interface TestCommentThread {
 
 const vscodeState = vi.hoisted(() => ({
   textDocuments: [] as TestDocument[],
+  workspaceFolders: [] as Array<{
+    readonly uri: { toString(): string };
+  }>,
+  getWorkspaceFolder: vi.fn<
+    (uri: { toString(): string }) =>
+      { readonly uri: { toString(): string } } | undefined
+  >(() => undefined),
   findFiles: vi.fn<
     () => Promise<
       ReadonlyArray<{ relativePath: string; toString(): string }>
@@ -46,6 +53,17 @@ const vscodeState = vi.hoisted(() => ({
   changeListeners: [] as Array<(event: unknown) => void>,
   statusItems: [] as TestStatusItem[],
   commentThreads: [] as TestCommentThread[],
+  diagnostics: [] as Array<{
+    readonly range: {
+      readonly start: { readonly line: number; readonly character: number };
+      readonly end: { readonly line: number; readonly character: number };
+    };
+    readonly message: string;
+    readonly severity: number;
+    readonly source?: string;
+    readonly code?: string | number;
+  }>,
+  activeTextEditor: undefined as unknown,
   warningMessages: [] as string[],
 }));
 
@@ -118,10 +136,22 @@ vi.mock("vscode", () => {
   return {
     CancellationError,
     CommentMode: { Preview: 1 },
+    DiagnosticSeverity: {
+      Error: 0,
+      Warning: 1,
+      Information: 2,
+      Hint: 3,
+    },
     LanguageModelError,
     MarkdownString,
     Range,
     StatusBarAlignment: { Right: 1 },
+    Uri: {
+      parse: (value: string) => ({
+        scheme: value.slice(0, value.indexOf(":")),
+        toString: () => value,
+      }),
+    },
     comments: {
       createCommentController: () => ({
         createCommentThread: (uri: { toString(): string }) => {
@@ -145,10 +175,12 @@ vi.mock("vscode", () => {
     },
     extensions: { all: [] },
     languages: {
-      getDiagnostics: () => [],
+      getDiagnostics: () => vscodeState.diagnostics,
     },
     window: {
-      activeTextEditor: undefined,
+      get activeTextEditor() {
+        return vscodeState.activeTextEditor;
+      },
       createStatusBarItem: () => {
         const status = new TestStatusBarItem();
         vscodeState.statusItems.push(status);
@@ -161,13 +193,11 @@ vi.mock("vscode", () => {
       },
     },
     workspace: {
-      workspaceFolders: [
-        {
-          uri: {
-            toString: () => "file:///workspace",
-          },
-        },
-      ],
+      get workspaceFolders() {
+        return vscodeState.workspaceFolders;
+      },
+      getWorkspaceFolder: (uri: { toString(): string }) =>
+        vscodeState.getWorkspaceFolder(uri),
       get textDocuments() {
         return vscodeState.textDocuments;
       },
@@ -281,12 +311,18 @@ const extensionContext = {
   },
 } as unknown as vscode.ExtensionContext;
 
-const document = (uri: string, text: string, version = 1): TestDocument => ({
+const document = (
+  uri: string,
+  text: string,
+  version = 1,
+  scheme = "file",
+  languageId = "typescript",
+): TestDocument => ({
   uri: {
-    scheme: "file",
+    scheme,
     toString: () => uri,
   },
-  languageId: "typescript",
+  languageId,
   version,
   lineCount: text.split("\n").length,
   getText: () => text,
@@ -304,6 +340,19 @@ const document = (uri: string, text: string, version = 1): TestDocument => ({
 
 beforeEach(() => {
   vscodeState.textDocuments = [];
+  vscodeState.workspaceFolders = [
+    {
+      uri: {
+        toString: () => "file:///workspace",
+      },
+    },
+  ];
+  vscodeState.getWorkspaceFolder.mockReset();
+  vscodeState.getWorkspaceFolder.mockImplementation((uri) =>
+    uri.toString().startsWith("file:///workspace/")
+      ? vscodeState.workspaceFolders[0]
+      : undefined,
+  );
   vscodeState.findFiles.mockReset();
   vscodeState.findFiles.mockResolvedValue([]);
   vscodeState.openListeners.length = 0;
@@ -311,11 +360,61 @@ beforeEach(() => {
   vscodeState.changeListeners.length = 0;
   vscodeState.statusItems.length = 0;
   vscodeState.commentThreads.length = 0;
+  vscodeState.diagnostics.length = 0;
+  vscodeState.activeTextEditor = undefined;
   vscodeState.warningMessages.length = 0;
   vi.unstubAllGlobals();
 });
 
 describe("PairRuntime lifecycle ownership", () => {
+  it("seeds file and vscode-remote TypeScript documents but rejects unrelated schemes and languages", async () => {
+    const remoteUri =
+      "vscode-remote://ssh-remote+pair-host/workspace/remote.ts";
+    const fileUri = "file:///workspace/local.js";
+    const unsupportedSchemeUri = "untitled:pair.ts";
+    const unsupportedLanguageUri =
+      "vscode-remote://ssh-remote+pair-host/workspace/pair.py";
+    vscodeState.textDocuments = [
+      document(remoteUri, "export const remote = true;", 1, "vscode-remote"),
+      document(fileUri, "export const local = true;", 1, "file", "javascript"),
+      document(
+        unsupportedSchemeUri,
+        "export const scratch = true;",
+        1,
+        "untitled",
+      ),
+      document(
+        unsupportedLanguageUri,
+        "remote = True",
+        1,
+        "vscode-remote",
+        "python",
+      ),
+    ];
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+
+    await runtime.startSession();
+
+    const state = (
+      runtime as unknown as {
+        documentState: {
+          previousText(uri: string): string | undefined;
+        };
+      }
+    ).documentState;
+    expect(state.previousText(remoteUri)).toBe("export const remote = true;");
+    expect(state.previousText(fileUri)).toBe("export const local = true;");
+    expect(state.previousText(unsupportedSchemeUri)).toBeUndefined();
+    expect(state.previousText(unsupportedLanguageUri)).toBeUndefined();
+    runtime.dispose();
+  });
+
   it("persists personal memory through global state, not workspace state", async () => {
     const globalUpdate = vi.fn(async () => undefined);
     const workspaceUpdate = vi.fn(async () => undefined);
@@ -345,6 +444,292 @@ describe("PairRuntime lifecycle ownership", () => {
       }),
     );
     expect(workspaceUpdate).not.toHaveBeenCalled();
+    runtime.dispose();
+  });
+
+  it("dismisses current evidence only for its owning workspace root", async () => {
+    const firstRoot = {
+      uri: { toString: () => "file:///workspace/first" },
+    };
+    const secondRoot = {
+      uri: {
+        toString: () =>
+          "vscode-remote://ssh-remote+pair-host/workspace/second",
+      },
+    };
+    vscodeState.workspaceFolders = [firstRoot, secondRoot];
+    vscodeState.getWorkspaceFolder.mockImplementation((uri) =>
+      uri.toString().startsWith(secondRoot.uri.toString())
+        ? secondRoot
+        : uri.toString().startsWith(firstRoot.uri.toString())
+          ? firstRoot
+          : undefined,
+    );
+    let stored: unknown;
+    const memoryContext = {
+      globalState: {
+        get: () => stored,
+        update: async (_key: string, value: unknown) => {
+          stored = value;
+        },
+      },
+    } as unknown as vscode.ExtensionContext;
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext: memoryContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    shared.publishEvidence({
+      uri: `${secondRoot.uri.toString()}/src/pair.ts`,
+      evidence,
+      question: "Current evidence",
+    });
+
+    await expect(runtime.dismissCurrentEvidence()).resolves.toMatchObject({
+      kind: "dismissed",
+    });
+
+    expect(stored).toMatchObject({
+      dismissedEvidenceByRepository: {
+        [secondRoot.uri.toString()]: [evidence.id],
+      },
+    });
+    expect(
+      (
+        stored as {
+          dismissedEvidenceByRepository: Record<string, readonly string[]>;
+        }
+      ).dismissedEvidenceByRepository[firstRoot.uri.toString()],
+    ).toBeUndefined();
+    expect(shared.snapshot().latest).toBeUndefined();
+    runtime.dispose();
+  });
+
+  it("keeps dismissed diagnostic evidence out of manual review", async () => {
+    const uri = "file:///workspace/src/pair.ts";
+    const currentDocument = document(uri, "export const value = 1;", 1);
+    const diagnosticEvidence: Evidence = {
+      ...evidence,
+      id: `diagnostic:${uri}:0:0:0`,
+      kind: "diagnostic",
+      title: "Editor diagnostic",
+      detail: "Type mismatch",
+      source: "typescript",
+      references: ["TS2322"],
+      range: {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 6 },
+      },
+    };
+    vscodeState.textDocuments = [currentDocument];
+    vscodeState.activeTextEditor = {
+      document: currentDocument,
+      selection: {
+        isEmpty: false,
+        active: { line: 0, character: 0 },
+        start: diagnosticEvidence.range.start,
+        end: diagnosticEvidence.range.end,
+      },
+    };
+    vscodeState.diagnostics.push({
+      range: diagnosticEvidence.range,
+      message: diagnosticEvidence.detail,
+      severity: 1,
+      source: diagnosticEvidence.source,
+      code: diagnosticEvidence.references[0]!,
+    });
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    shared.publishEvidence({
+      uri,
+      evidence: diagnosticEvidence,
+      question: "Current diagnostic",
+    });
+    await runtime.dismissCurrentEvidence();
+
+    await runtime.reviewCurrentBlock();
+
+    expect(vscodeState.commentThreads).toHaveLength(0);
+    runtime.dispose();
+  });
+
+  it("approves only the current evidence summary", async () => {
+    let stored: unknown;
+    const memoryContext = {
+      globalState: {
+        get: () => stored,
+        update: async (_key: string, value: unknown) => {
+          stored = value;
+        },
+      },
+    } as unknown as vscode.ExtensionContext;
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext: memoryContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    shared.publishEvidence({
+      uri: "file:///workspace/src/pair.ts",
+      evidence,
+      question: "Current evidence",
+    });
+
+    await expect(runtime.approveCurrentEvidence()).resolves.toMatchObject({
+      kind: "approved",
+    });
+
+    const approved = (
+      stored as {
+        approvedEvidence: Array<Record<string, unknown>>;
+      }
+    ).approvedEvidence[0];
+    expect(approved).toEqual({
+      id: evidence.id,
+      kind: evidence.kind,
+      title: evidence.title,
+      approvedAt: expect.any(Number),
+    });
+    expect(JSON.stringify(approved)).not.toContain(evidence.detail);
+    expect(JSON.stringify(approved)).not.toContain(evidence.references[0]);
+    runtime.dispose();
+  });
+
+  it("persists a selected intervention style and reapplies its budget", async () => {
+    let stored: unknown;
+    const memoryContext = {
+      globalState: {
+        get: () => stored,
+        update: async (_key: string, value: unknown) => {
+          stored = value;
+        },
+      },
+    } as unknown as vscode.ExtensionContext;
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config({
+        interventionStyle: "eco",
+        budget: {
+          maxCalls: 2,
+          maxInputTokens: 2_000,
+          maxOutputTokens: 360,
+          maxOutputTokensPerCall: 180,
+          windowMs: 600_000,
+        },
+      }),
+      extensionContext: memoryContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+
+    await expect(runtime.setInterventionStyle("active")).resolves.toMatchObject({
+      kind: "style-updated",
+    });
+
+    expect(stored).toMatchObject({
+      preferences: { interventionStyle: "active" },
+    });
+    expect(shared.snapshot().session.remainingCalls).toBe(8);
+    runtime.dispose();
+  });
+
+  it("applies a loaded intervention preference to the next session", async () => {
+    const before = "const load = (id: string): string => id;";
+    const after =
+      "export function load(id: string): string { return id; }";
+    const uri = "file:///workspace/src/pair.ts";
+    let stored: unknown = {
+      version: 1,
+      preferences: {
+        interventionStyle: "active",
+        pauseThresholdMs: 1_000,
+      },
+      dismissedEvidenceByRepository: {},
+      approvedEvidence: [],
+    };
+    const memoryContext = {
+      globalState: {
+        get: () => stored,
+        update: async (_key: string, value: unknown) => {
+          stored = value;
+        },
+      },
+    } as unknown as vscode.ExtensionContext;
+    vscodeState.textDocuments = [document(uri, before, 1)];
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config({ interventionStyle: "eco" }),
+      extensionContext: memoryContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    vscodeState.textDocuments = [document(uri, after, 2)];
+
+    await (
+      runtime as unknown as {
+        handleEpisode(episode: {
+          uri: string;
+          languageId: string;
+          previousText: string;
+          currentText: string;
+          version: number;
+          observedAt: number;
+        }): Promise<void>;
+      }
+    ).handleEpisode({
+      uri,
+      languageId: "typescript",
+      previousText: before,
+      currentText: after,
+      version: 2,
+      observedAt: 1,
+    });
+
+    expect(shared.snapshot().session.remainingCalls).toBe(8);
+    expect(vscodeState.commentThreads).toHaveLength(1);
+    runtime.dispose();
+  });
+
+  it("uses the configured intervention style when no preference is stored", async () => {
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config({
+        interventionStyle: "eco",
+        budget: {
+          maxCalls: 2,
+          maxInputTokens: 2_000,
+          maxOutputTokens: 360,
+          maxOutputTokensPerCall: 180,
+          windowMs: 600_000,
+        },
+      }),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+
+    await runtime.startSession();
+
+    expect(shared.snapshot().session.remainingCalls).toBe(2);
     runtime.dispose();
   });
 
@@ -1069,6 +1454,61 @@ describe("PairRuntime lifecycle ownership", () => {
     expect(shared.snapshot()).toEqual(replacementSnapshot);
     expect(oldStatus.writesAfterDispose).toEqual([]);
     replacementRuntime.dispose();
+  });
+
+  it("stops pending session preparation before memory reset can publish cleared state", async () => {
+    const memoryLoad = deferred<unknown>();
+    let loadStarted = false;
+    let stored: unknown;
+    const resetContext = {
+      globalState: {
+        get: async () => {
+          loadStarted = true;
+          return memoryLoad.promise;
+        },
+        update: async (_key: string, value: unknown) => {
+          stored = value;
+        },
+      },
+    } as unknown as vscode.ExtensionContext;
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext: resetContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+
+    const pendingStart = runtime.startSession();
+    await vi.waitFor(() => {
+      expect(loadStarted).toBe(true);
+    });
+    await runtime.resetMemory();
+    memoryLoad.resolve({
+      version: 1,
+      preferences: {
+        interventionStyle: "active",
+        pauseThresholdMs: 1_000,
+      },
+      dismissedEvidenceByRepository: {
+        "file:///workspace": ["stale-evidence"],
+      },
+      approvedEvidence: [],
+    });
+
+    await expect(pendingStart).resolves.toMatchObject({
+      kind: "already-stopped",
+      active: false,
+    });
+    expect(runtime.isSessionActive()).toBe(false);
+    expect(shared.snapshot().session.active).toBe(false);
+    expect(stored).toMatchObject({
+      version: 1,
+      preferences: { interventionStyle: "balanced" },
+      dismissedEvidenceByRepository: {},
+    });
+    runtime.dispose();
   });
 
   it("does not let an old start completion reset newer-generation status details", async () => {

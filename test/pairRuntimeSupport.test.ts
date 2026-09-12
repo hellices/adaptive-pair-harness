@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Evidence, PairRange } from "../src/core/types";
 
+const deferred = <T>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+};
+
 const selection: PairRange = {
   start: { line: 4, character: 0 },
   end: { line: 8, character: 0 },
@@ -22,6 +30,26 @@ const evidence: Evidence = {
 };
 
 describe("Pair runtime support", () => {
+  it("does not create a replacement runtime after disposal during secret lookup", async () => {
+    const { createRuntimeAfterSecretLookup } = await import(
+      "../src/vscode/pairRuntimeSupport"
+    );
+    const secret = deferred<string | undefined>();
+    let disposed = false;
+    const createRuntime = vi.fn((apiKey: string | undefined) => ({ apiKey }));
+
+    const pending = createRuntimeAfterSecretLookup(
+      () => secret.promise,
+      () => disposed,
+      createRuntime,
+    );
+    disposed = true;
+    secret.resolve("stored-secret");
+
+    await expect(pending).resolves.toBeUndefined();
+    expect(createRuntime).not.toHaveBeenCalled();
+  });
+
   it.each(["automatic", "manual", "chat"] as const)(
     "does not invoke providers for disabled %s work",
     async (source) => {

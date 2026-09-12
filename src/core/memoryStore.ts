@@ -22,6 +22,7 @@ export interface PairMemory {
 export interface PairMemoryRecovery {
   readonly memory: PairMemory;
   readonly warning: string | undefined;
+  readonly source: "stored" | "default" | "corrupt";
 }
 
 export interface KeyValueStore {
@@ -260,6 +261,10 @@ export class PairMemoryStore {
 
   public async load(): Promise<PairMemory> {
     const stored = await this.loadStoredMemory();
+    return this.forRepository(stored);
+  }
+
+  private forRepository(stored: StoredPairMemory): PairMemory {
     const dismissedEvidence = stored.dismissedEvidenceByRepository[this.options.repositoryId];
 
     return freezeMemory({
@@ -276,10 +281,19 @@ export class PairMemoryStore {
   }
 
   public async loadOrDefault(): Promise<PairMemoryRecovery> {
+    const stored = await this.options.store.get<unknown>(this.memoryKey);
+    if (stored === undefined) {
+      return {
+        memory: this.forRepository(EMPTY_MEMORY),
+        warning: undefined,
+        source: "default",
+      };
+    }
     try {
       return {
-        memory: await this.load(),
+        memory: this.forRepository(validateStoredMemory(stored)),
         warning: undefined,
+        source: "stored",
       };
     } catch (error: unknown) {
       if (!(error instanceof InvalidPairMemoryError)) {
@@ -289,6 +303,7 @@ export class PairMemoryStore {
         memory: freezeMemory(EMPTY_MEMORY),
         warning:
           "Stored Adaptive Pair memory is corrupt. Safe in-memory defaults are active; the stored record was preserved. Run Adaptive Pair: Reset Local Memory to replace it.",
+        source: "corrupt",
       };
     }
   }

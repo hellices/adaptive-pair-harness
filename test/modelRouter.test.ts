@@ -5,6 +5,7 @@ import {
   ModelRouter,
   OpenAICompatibleProvider,
   buildOpenAICompatibleRequestBody,
+  createLocalInterventionQuestion,
   estimateOpenAICompatibleInputTokens,
 } from "../src/core/modelRouter";
 import { TokenBudget } from "../src/core/tokenBudget";
@@ -96,6 +97,18 @@ describe("model routing", () => {
       inputTokens: 0,
       outputTokens: 0,
     });
+  });
+
+  it("bounds the complete local intervention question after composing evidence", () => {
+    const question = createLocalInterventionQuestion({
+      ...evidence,
+      title: `Long title ${"title ".repeat(120)}`,
+      detail: `Long detail ${"detail ".repeat(220)}`,
+    });
+
+    expect(question.length).toBeLessThanOrEqual(1_000);
+    expect(question).not.toMatch(/[\r\n]/u);
+    expect(question).toContain("Long title");
   });
 
   it("provides distinct, honest local Chat responses by command", async () => {

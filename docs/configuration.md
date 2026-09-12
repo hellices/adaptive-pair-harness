@@ -10,7 +10,7 @@ pairing remains off until the user starts a session.
 | --- | --- | --- | --- |
 | `adaptivePair.enabled` | boolean | `true` | Global enable/disable flag. When `false`, sessions cannot start and no model provider is invoked. |
 | `adaptivePair.debounceMs` | number | `500` | Delay before edit episodes are analyzed after typing stops. Values are clamped to `300`-`800`. |
-| `adaptivePair.interventionStyle` | `eco` \| `balanced` \| `active` | `balanced` | Sets the threshold and 10-minute token budget used for remote interventions. |
+| `adaptivePair.interventionStyle` | `eco` \| `balanced` \| `active` | `balanced` | Initial threshold and 10-minute token budget when local Pair memory has no saved style. **Adaptive Pair: Set Intervention Style** persists the active preference. |
 | `adaptivePair.model.provider` | `local-template` \| `vscode-copilot` \| `openai-compatible` | `local-template` | Application-scoped provider selection. |
 | `adaptivePair.model.baseUrl` | string | `http://localhost:11434/v1` | Application-scoped OpenAI-compatible root. HTTPS is required except for exact loopback hosts. Raw URL credentials, query/fragment delimiters, and ASCII whitespace/control characters are rejected. |
 | `adaptivePair.model.name` | string | `qwen2.5-coder:7b` | Application-scoped model identifier used for OpenAI-compatible requests and token estimation. |
@@ -34,6 +34,28 @@ Adaptive Pair does not write secrets to workspace files.
 - Personal Pair memory lives in VS Code global state, not in tracked project
   files. Repository dismissals remain keyed by repository within that global
   record.
+
+## Memory actions
+
+The Command Palette exposes the implemented memory controls:
+
+- **Adaptive Pair: Dismiss Current Evidence** stores the evidence ID under the
+  workspace root that owns its document, removes the current inline/shared
+  evidence, and suppresses it from automatic and manual review in that root.
+- **Adaptive Pair: Approve Current Evidence** stores only the evidence ID,
+  kind, title, and approval time. It does not store detail text, references, or
+  source buffers.
+- **Adaptive Pair: Set Intervention Style** opens a Quick Pick for `eco`,
+  `balanced`, or `active`, persists the selection in global Pair memory, and
+  applies its threshold and budget immediately and on later session starts.
+- **Adaptive Pair: Reset Local Memory** first stops an active or pending
+  session, then replaces Pair memory with safe defaults. Start a new session
+  afterward.
+
+When no style has been saved, `adaptivePair.interventionStyle` supplies the
+initial style. A valid saved preference takes precedence for subsequent
+sessions. Repository dismissals remain isolated per document-owning workspace
+root, including multi-root and `vscode-remote:` workspaces.
 
 ## Provider setup
 
@@ -227,4 +249,5 @@ Repository dismissals use the workspace folder that owns each document, rather
 than always using the first folder. If the persisted memory record is corrupt,
 Pair starts with in-memory defaults, preserves the stored corruption, and shows
 a warning. **Adaptive Pair: Reset Local Memory** is the only operation that
-replaces that record with defaults.
+replaces that record with defaults, and it invalidates any pending session
+preparation before writing or publishing reset state.

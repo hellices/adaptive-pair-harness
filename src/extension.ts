@@ -13,7 +13,10 @@ import {
 } from "./vscode/pairChatParticipant";
 import type { PairSymbolContextProvider } from "./vscode/pairChatParticipant";
 import { PairRuntime } from "./vscode/pairRuntime";
-import { createPairSessionCommandHandlers } from "./vscode/pairRuntimeSupport";
+import {
+  createPairSessionCommandHandlers,
+  createRuntimeAfterSecretLookup,
+} from "./vscode/pairRuntimeSupport";
 import type {
   CopilotModelReference,
   VsCodeLanguageModelApi,
@@ -53,20 +56,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     } else {
       sharedBudget.reconfigure(config.budget);
     }
-    const apiKey =
-      config.provider === "openai-compatible" && config.baseUrl !== undefined
-        ? await context.secrets.get(
-            apiKeySecretNameForEndpoint(config.baseUrl),
-          )
-        : undefined;
-    const next = new PairRuntime({
-      config,
-      extensionContext: context,
-      sharedContext,
-      languageModelApi,
-      apiKey,
-      budget: sharedBudget,
-    });
+    const budget = sharedBudget;
+    const next = await createRuntimeAfterSecretLookup<PairRuntime>(
+      () =>
+        config.provider === "openai-compatible" &&
+        config.baseUrl !== undefined
+          ? context.secrets.get(apiKeySecretNameForEndpoint(config.baseUrl))
+          : Promise.resolve(undefined),
+      () => extensionDisposed,
+      (apiKey) =>
+        new PairRuntime({
+          config,
+          extensionContext: context,
+          sharedContext,
+          languageModelApi,
+          apiKey,
+          budget,
+          budgetFollowsInterventionStyle: true,
+        }),
+    );
+    if (next === undefined) {
+      return;
+    }
     runtime = next;
     if (extensionDisposed || runtime !== next) {
       next.dispose();
@@ -238,6 +249,74 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await activeRuntime.resetMemory();
     },
   );
+  const dismissCurrentEvidence = vscode.commands.registerCommand(
+    "adaptivePair.dismissCurrentEvidence",
+    async () => {
+      const activeRuntime = runtime;
+      if (activeRuntime === undefined) {
+        await vscode.window.showWarningMessage(
+          "Adaptive Pair runtime is rebuilding. Try again in a moment.",
+        );
+        return;
+      }
+      const result = await activeRuntime.dismissCurrentEvidence();
+      await vscode.window.showInformationMessage(result.message);
+    },
+  );
+  const approveCurrentEvidence = vscode.commands.registerCommand(
+    "adaptivePair.approveCurrentEvidence",
+    async () => {
+      const activeRuntime = runtime;
+      if (activeRuntime === undefined) {
+        await vscode.window.showWarningMessage(
+          "Adaptive Pair runtime is rebuilding. Try again in a moment.",
+        );
+        return;
+      }
+      const result = await activeRuntime.approveCurrentEvidence();
+      await vscode.window.showInformationMessage(result.message);
+    },
+  );
+  const setInterventionStyle = vscode.commands.registerCommand(
+    "adaptivePair.setInterventionStyle",
+    async () => {
+      const selected = await vscode.window.showQuickPick(
+        [
+          {
+            label: "Eco",
+            description: "Only the highest-confidence evidence",
+            value: "eco" as const,
+          },
+          {
+            label: "Balanced",
+            description: "Moderate evidence threshold and budget",
+            value: "balanced" as const,
+          },
+          {
+            label: "Active",
+            description: "More frequent evidence-backed interventions",
+            value: "active" as const,
+          },
+        ],
+        {
+          title: "Adaptive Pair intervention style",
+          placeHolder: "Choose a style to persist in local Pair memory",
+        },
+      );
+      if (selected === undefined) {
+        return;
+      }
+      const activeRuntime = runtime;
+      if (activeRuntime === undefined) {
+        await vscode.window.showWarningMessage(
+          "Adaptive Pair runtime is rebuilding. Try again in a moment.",
+        );
+        return;
+      }
+      const result = await activeRuntime.setInterventionStyle(selected.value);
+      await vscode.window.showInformationMessage(result.message);
+    },
+  );
   const configurationListener = vscode.workspace.onDidChangeConfiguration(
     (event) => {
       if (event.affectsConfiguration("adaptivePair")) {
@@ -254,6 +333,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     reviewCurrentBlock,
     setApiKey,
     resetMemory,
+    dismissCurrentEvidence,
+    approveCurrentEvidence,
+    setInterventionStyle,
     configurationListener,
     {
       dispose: () => {

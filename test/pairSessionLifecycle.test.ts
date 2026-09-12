@@ -161,6 +161,40 @@ describe("explicit pair session lifecycle", () => {
     expect(ports.clearTransientState).toHaveBeenCalledOnce();
   });
 
+  it("returns the stopped result when rejected preparation belongs to a replaced generation", async () => {
+    const firstPreparation = deferred<void>();
+    const secondPreparation = deferred<void>();
+    const ports = {
+      prepare: vi
+        .fn<() => Promise<void>>()
+        .mockImplementationOnce(() => firstPreparation.promise)
+        .mockImplementationOnce(() => secondPreparation.promise),
+      registerDocumentListeners: vi.fn(() => ({ dispose: vi.fn() })),
+      cancelPendingWork: vi.fn(),
+      clearTransientState: vi.fn(),
+    };
+    const lifecycle = new PairSessionLifecycle(() => true, ports);
+
+    const staleStart = lifecycle.start();
+    lifecycle.stop();
+    const currentStart = lifecycle.start();
+    secondPreparation.resolve();
+    await expect(currentStart).resolves.toMatchObject({
+      kind: "started",
+      active: true,
+    });
+
+    firstPreparation.reject(new Error("cancelled stale preparation"));
+
+    await expect(staleStart).resolves.toMatchObject({
+      kind: "already-stopped",
+      active: false,
+    });
+    expect(lifecycle.active).toBe(true);
+    expect(ports.cancelPendingWork).toHaveBeenCalledOnce();
+    expect(ports.clearTransientState).toHaveBeenCalledOnce();
+  });
+
   it("keeps startup state cleared when deferred preparation resolves after stop", async () => {
     const preparation = deferred<void>();
     const previousTexts = new Map<string, string>();
@@ -317,6 +351,9 @@ describe("explicit pair session lifecycle", () => {
       expect.arrayContaining([
         "onCommand:adaptivePair.startSession",
         "onCommand:adaptivePair.stopSession",
+        "onCommand:adaptivePair.dismissCurrentEvidence",
+        "onCommand:adaptivePair.approveCurrentEvidence",
+        "onCommand:adaptivePair.setInterventionStyle",
       ]),
     );
     expect(commands).toEqual(
@@ -325,6 +362,9 @@ describe("explicit pair session lifecycle", () => {
         "adaptivePair.stopSession",
         "adaptivePair.toggle",
         "adaptivePair.resetMemory",
+        "adaptivePair.dismissCurrentEvidence",
+        "adaptivePair.approveCurrentEvidence",
+        "adaptivePair.setInterventionStyle",
       ]),
     );
     expect(chatCommands).toEqual(expect.arrayContaining(["start", "stop"]));

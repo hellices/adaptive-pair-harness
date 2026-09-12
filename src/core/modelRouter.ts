@@ -280,7 +280,10 @@ export class OpenAICompatibleProvider implements ModelProvider {
 }
 
 export const createLocalInterventionQuestion = (evidence: Evidence): string =>
-  `${evidence.title}: ${evidence.detail} Did you intend this change?`;
+  boundSingleLine(
+    `${evidence.title}: ${evidence.detail} Did you intend this change?`,
+    1_000,
+  );
 
 const createLocalResponse = (request: ModelRequest): string => {
   switch (request.purpose ?? "intervention") {

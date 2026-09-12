@@ -66,6 +66,10 @@ const STYLE_BUDGETS = {
 const DEFAULT_BASE_URL = "http://localhost:11434/v1";
 const DEFAULT_MODEL_NAME = "qwen2.5-coder:7b";
 
+export const budgetForInterventionStyle = (
+  style: PairConfig["interventionStyle"],
+): TokenBudgetConfig => STYLE_BUDGETS[style];
+
 export function readPairConfig(workspace: vscode.WorkspaceConfiguration): PairConfig;
 export function readPairConfig(workspace: ConfigurationReader): PairConfig;
 export function readPairConfig(workspace: ConfigurationReader): PairConfig {
@@ -132,7 +136,7 @@ export function readPairConfig(workspace: ConfigurationReader): PairConfig {
     provider,
     baseUrl,
     modelName,
-    budget: STYLE_BUDGETS[interventionStyle],
+    budget: budgetForInterventionStyle(interventionStyle),
     statusWarning:
       warnings.length === 0 ? undefined : [...new Set(warnings)].join(" "),
   };
