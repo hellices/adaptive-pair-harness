@@ -1,11 +1,9 @@
 import type * as vscode from "vscode";
 import type { PairProvider } from "../config/pairConfig";
-import {
-  createRemoteSafeModelRequest,
-  sanitizeModelRequestContext,
-  type ModelRequestContext,
-  type ModelResponse,
-  type ModelSymbolContext,
+import type {
+  ModelRequestContext,
+  ModelResponse,
+  ModelSymbolContext,
 } from "../core/modelRouter";
 import type { Evidence, PairRange } from "../core/types";
 import type {
@@ -228,26 +226,19 @@ export const buildPairChatPlan = (
     };
   }
 
-  const safeRequest = createRemoteSafeModelRequest({
-    goal: goalForCommand(command),
-    evidence: latest.evidence,
-    interactionStyle: "ask-first",
-    context:
-      sanitizeModelRequestContext({
-        ...(requestContext.prompt.trim().length === 0
-          ? {}
-          : { userPrompt: requestContext.prompt }),
-        ...(requestContext.symbol === undefined
-          ? {}
-          : { symbol: requestContext.symbol }),
-      }) ?? {},
-  });
   return {
     kind: "generate",
     uri: latest.uri,
-    evidence: safeRequest.evidence,
-    goal: safeRequest.goal,
-    context: safeRequest.context ?? {},
+    evidence: latest.evidence,
+    goal: goalForCommand(command),
+    context: {
+      ...(requestContext.prompt.trim().length === 0
+        ? {}
+        : { userPrompt: requestContext.prompt }),
+      ...(requestContext.symbol === undefined
+        ? {}
+        : { symbol: requestContext.symbol }),
+    },
     purpose: purposeForCommand(command),
   };
 };

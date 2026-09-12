@@ -820,3 +820,74 @@
 - Live VS Code document-symbol providers and GitHub Copilot model APIs were not
   available in this non-interactive environment. Their range, cancellation,
   token-count, and disposal boundaries are covered by focused contract tests.
+
+---
+
+## Whitelist projection and cancellation follow-up (2026-09-13)
+
+### Corrections implemented
+
+- Replaced cleaned raw automatic evidence with an exhaustive
+  `Evidence.kind` whitelist. Every kind now emits fixed extension-owned
+  title/detail/source strings, a hashed identity, numeric severity/confidence/
+  range metadata, and no references. Analyzer/editor titles, details, sources,
+  specifiers, diagnostic messages/codes, URIs, and paths cannot enter either
+  remote provider payload.
+- Kept local shared evidence unprojected until the model boundary so inline and
+  local-template rendering retain useful detail. Explicit Chat prompts and
+  symbol fields are inspected before remote bounding.
+- Replaced path substring projection with simple detection. Exact `file://` and
+  `vscode-remote://` URIs (including directory URIs), recognized or
+  multi-segment POSIX paths, Windows drive paths, and UNC paths mark the whole
+  field sensitive. Custom schemes, closing markup, package names, and ordinary
+  prose remain benign.
+- Any detected credential or local resource now keeps the complete Chat request
+  local. The unsafe field becomes the fixed
+  `[REDACTED] Sensitive content kept local.` notice; no partially redacted field
+  is sent remotely.
+- Copilot rejected-await handling now checks the request signal before error
+  classification. Concurrent cancellation during model selection, preflight or
+  streamed token counting, and request send surfaces the signal's official
+  `AbortError` path without classifying or propagating the provider error.
+- Updated README, configuration, architecture, design, and implementation-plan
+  privacy descriptions to document fixed kind-level remote summaries.
+
+### TDD evidence
+
+- RED: **18 expected failures** covered all five evidence kinds; exact
+  `file:///Users/alice/`, `vscode-remote://host/home/alice/`,
+  `/Users/alice/my project`, extensionless spaced Windows/UNC paths;
+  `custom-file:///docs` and `</section>` false positives; sensitive Chat local
+  routing; and rejected selection/send/count cancellation races.
+- GREEN: focused privacy/provider/runtime/chat/model verification passed with
+  **5 files, 220 tests**.
+- Existing tests were updated where their old expectations encoded partial
+  redaction, diagnostic-code forwarding, early Chat projection, or provider
+  errors winning over concurrent cancellation.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **17 files, 343 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 87.92%, branches 78.76%, functions 91.84%, lines 88.07%
+- `npm run package`: **PASS — 156 files, 4.35 MB**
+- `npm audit`: **PASS — 0 vulnerabilities**
+- VSIX inspection: required compiled privacy/provider modules and public privacy
+  docs are present; source, tests, coverage, private review material, source
+  maps, workspace/CI files are absent; runtime dependency root is only
+  `typescript`.
+- `git diff --check`: **PASS**
+- Production and packaged credential-value scans: **PASS**
+- Production URL and packaged repository/bugs/homepage fake-URL scans: **PASS**
+- Changed-file self-review found no remaining high-confidence privacy,
+  cancellation, lifecycle, packaging, or documentation concern.
+
+### Residual concerns
+
+- Live GitHub Copilot cancellation behavior and a third-party
+  OpenAI-compatible endpoint were not available in this non-interactive
+  environment. Injected provider tests cover selection, send, token-count,
+  stream, and cancellation ordering at each changed boundary.

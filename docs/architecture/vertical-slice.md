@@ -134,10 +134,18 @@ Remote-capable providers receive a sanitized `ModelRequest` shape:
   - bounded `userPrompt`
   - bounded symbol identity and symbol range
 
-One central redaction policy covers all of these string fields. It replaces
-local `file:`/`vscode-remote:` URIs and absolute POSIX, Windows, and import paths
-with deterministic hashed labels. Credential- or local-path-bearing automatic
-evidence is kept local rather than sent after projection.
+Automatic evidence crosses the remote boundary only through a whitelist keyed
+by `Evidence.kind`. Each kind has fixed extension-owned title, detail, and
+source strings; the identity is hashed, the numeric range is retained, and raw
+analyzer/editor titles, details, sources, references, specifiers, diagnostics,
+URIs, and paths are omitted.
+
+Explicit Chat fields are inspected before bounding. Known credential material
+or an exact `file://`/`vscode-remote://` URI, recognized or multi-segment POSIX
+path, Windows drive path, or UNC path keeps the complete request local. The
+unsafe field is replaced with a fixed local-only notice rather than partially
+redacted for remote use. Custom schemes, closing markup, package names, and
+ordinary prose are not classified as local resources.
 
 ### Provider behavior
 
@@ -201,7 +209,7 @@ containing the evidence position is selected.
 Every runtime claim and evidence publication advances an opaque monotonic
 shared-context revision. Chat captures that revision before asynchronous symbol
 resolution or generation and verifies it afterward. The fence does not depend
-on redacted evidence IDs and therefore rejects responses from replaced
+on projected evidence IDs and therefore rejects responses from replaced
 runtimes even when their visible generation, URI, range, and sanitized evidence
 appear identical.
 
@@ -248,8 +256,8 @@ repository files.
 - OpenAI-compatible keys are stored in `SecretStorage`, separately per
   validated canonical endpoint origin;
 - remote settings are application-scoped and cannot be supplied by a folder;
-- remote requests avoid full source text and centrally redact every structured
-  evidence/Chat field.
+- remote requests avoid full source text, whitelist automatic evidence by kind,
+  and keep detected credential/local-resource Chat fields local.
 
 ## Differences from the full design
 

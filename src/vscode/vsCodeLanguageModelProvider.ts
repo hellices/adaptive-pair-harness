@@ -373,6 +373,7 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
     try {
       result = await operation();
     } catch (error: unknown) {
+      signal.throwIfAborted();
       switch (this.api.classifyError(error)) {
         case "no-permissions":
           throw new CopilotModelUnavailableError(

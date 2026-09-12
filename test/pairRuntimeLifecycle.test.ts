@@ -1255,7 +1255,13 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
-  it("keeps credential-bearing automatic evidence local", async () => {
+  it.each([
+    [
+      "credential",
+      "Explain password='correct horse battery staple' without sharing it.",
+    ],
+    ["local resource", "Explain file:///Users/alice/private/notes/"],
+  ])("keeps an explicit Chat prompt containing a %s local", async (_label, userPrompt) => {
     const fetchImplementation = vi.fn(async () =>
       new Response(
         JSON.stringify({
@@ -1264,6 +1270,55 @@ describe("PairRuntime lifecycle ownership", () => {
         }),
         { status: 200 },
       ),
+    );
+    vi.stubGlobal("fetch", fetchImplementation);
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "openai-compatible",
+        baseUrl: new URL("https://models.example/v1"),
+      }),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+
+    await expect(
+      runtime.generate(
+        "file:///workspace/pair.ts",
+        "Explain the current evidence.",
+        evidence,
+        new AbortController().signal,
+        { userPrompt },
+        "explain",
+      ),
+    ).resolves.toMatchObject({
+      text: expect.stringContaining("Local explanation"),
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+
+    expect(fetchImplementation).not.toHaveBeenCalled();
+    expect(vscodeState.statusItems[0]?.text).toContain(
+      "sensitive Chat content kept local",
+    );
+    runtime.dispose();
+  });
+
+  it("sends only a fixed whitelist projection for credential-bearing automatic evidence", async () => {
+    let requestBody = "";
+    const fetchImplementation = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = String(init?.body ?? "");
+        return new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "remote" } }],
+            usage: { prompt_tokens: 10, completion_tokens: 1 },
+          }),
+          { status: 200 },
+        );
+      },
     );
     vi.stubGlobal("fetch", fetchImplementation);
     const uri = "file:///workspace/pair.ts";
@@ -1304,11 +1359,11 @@ describe("PairRuntime lifecycle ownership", () => {
       observedAt: 1,
     });
 
-    expect(fetchImplementation).not.toHaveBeenCalled();
+    expect(fetchImplementation).toHaveBeenCalledOnce();
+    expect(requestBody).not.toContain("workspace-secret");
+    expect(requestBody).not.toContain("packages.example");
+    expect(requestBody).toContain("Dependency change detected");
     expect(vscodeState.commentThreads).toHaveLength(1);
-    expect(vscodeState.statusItems[0]?.text).toContain(
-      "sensitive evidence suppressed",
-    );
     runtime.dispose();
   });
 
@@ -1907,7 +1962,7 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
-  it("refunds an exact pre-dispatch Copilot reservation after stop", async () => {
+  it("surfaces cancellation and preserves the budget after rejected selection following stop", async () => {
     const selection = deferred<readonly CopilotModelReference[]>();
     const selectionFailure = new Error("selection denied");
     let selectionStarted = false;
@@ -1945,10 +2000,7 @@ describe("PairRuntime lifecycle ownership", () => {
     });
     runtime.stopSession();
     selection.reject(selectionFailure);
-    await expect(pending).rejects.toMatchObject({
-      name: "CopilotModelUnavailableError",
-      requestMayHaveBeenSent: false,
-    });
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
 
     expect(budget.snapshot(Date.now()).remainingCalls).toBe(1);
     runtime.dispose();

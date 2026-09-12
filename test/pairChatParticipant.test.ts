@@ -162,7 +162,7 @@ describe("pair chat planning", () => {
     expect(markdown.join("\n")).toContain("disabled");
   });
 
-  it("includes a bounded explicit prompt and current symbol identity for trace", () => {
+  it("preserves explicit prompt and symbol detail until the remote boundary", () => {
     const context = new PairSharedContext({
       enabled: true,
       active: true,
@@ -210,7 +210,7 @@ describe("pair chat planning", () => {
     if (plan.kind !== "generate") {
       throw new Error("Expected generation plan.");
     }
-    expect(plan.context.userPrompt?.length).toBeLessThanOrEqual(500);
+    expect(plan.context.userPrompt).toBe(longPrompt);
   });
 
   it("does not call a model for trace when no public symbol context is available", () => {
@@ -600,7 +600,7 @@ describe("pair chat planning", () => {
     expect(registered.size).toBe(0);
   });
 
-  it("accepts a current response when remote sanitization changes the evidence id", async () => {
+  it("preserves local evidence identity and accepts a current response", async () => {
     const context = new PairSharedContext({
       enabled: true,
       active: true,
@@ -627,7 +627,7 @@ describe("pair chat planning", () => {
     if (plan.kind !== "generate") {
       throw new Error("Expected generation plan.");
     }
-    expect(plan.evidence.id).not.toBe(sensitiveIdEvidence.id);
+    expect(plan.evidence.id).toBe(sensitiveIdEvidence.id);
 
     let handler: vscode.ChatRequestHandler | undefined;
     const markdown = vi.fn();

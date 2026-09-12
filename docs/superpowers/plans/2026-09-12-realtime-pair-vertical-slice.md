@@ -1166,8 +1166,9 @@ navigator-only boundary:
   ignores workspace/folder overrides;
 - endpoints are canonicalized and validated, credentials are origin-bound, and
   non-loopback HTTP plus URL credentials/query/fragment forms are rejected;
-- one remote redaction policy covers semantic, diagnostic, symbol, and Chat
-  strings, while credential-bearing automatic evidence remains local;
+- automatic remote evidence uses fixed kind-level summaries with hashed
+  identity and no raw analyzer/editor strings, while credential- or
+  local-resource-bearing explicit Chat requests remain local;
 - semantic analysis returns explicit stability, retains the last stable
   baseline, expands ESM/CommonJS export surfaces, and hashes module identity in
   evidence IDs;

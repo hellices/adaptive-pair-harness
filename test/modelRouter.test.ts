@@ -232,10 +232,13 @@ describe("model routing", () => {
     expect(parsedBody.messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          content: expect.stringContaining(evidence.title),
+          content: expect.stringContaining("Dependency change detected"),
         }),
       ]),
     );
+    expect(receivedBody).not.toContain(evidence.title);
+    expect(receivedBody).not.toContain(evidence.detail);
+    expect(receivedBody).not.toContain(evidence.references[0]);
     expect(receivedBody).not.toContain("previousText");
     expect(receivedBody).not.toContain("currentText");
   });

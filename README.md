@@ -210,14 +210,18 @@ See the repository documentation for the full configuration reference:
 
 - Adaptive Pair performs **no project-file writes**.
 - `local-template` keeps all generation local to the extension process.
-- Remote requests send **structured evidence**, not full source buffers.
-- One centralized policy redacts or suppresses credentials in semantic,
-  diagnostic, symbol, and Chat fields, including HTTP/DSN userinfo, sensitive
-  query values, quoted JSON/assignment values, long base64/base64url values,
-  and complete Basic/Bearer authorization payloads. Credential-bearing
-  automatic evidence stays local.
-- Local `file:`/`vscode-remote:` URIs and absolute POSIX, Windows, and import
-  paths become deterministic hashed labels in every remote text field.
+- Remote requests send **fixed kind-level evidence summaries**, not cleaned
+  analyzer/editor text or full source buffers. Evidence IDs are hashed; raw
+  titles, details, sources, references, specifiers, diagnostics, URIs, and
+  paths are omitted.
+- Explicit Chat prompts and symbol fields are bounded only after credential
+  and local-resource detection. If any field contains known credential
+  material or a local resource, the entire request stays local and that field
+  becomes a fixed local-only notice rather than a partial redaction.
+- Local-resource detection covers exact `file://` and `vscode-remote://`
+  schemes (including directory URIs), recognized or multi-segment POSIX
+  paths, Windows drive paths, and UNC paths. It does not treat custom schemes,
+  closing markup, package names, or ordinary prose as local paths.
 - The latest local inline question is **not** forwarded back to remote chat
   providers.
 - Token budgets are enforced per 10-minute window and survive configuration or

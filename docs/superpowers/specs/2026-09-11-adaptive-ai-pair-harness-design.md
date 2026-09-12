@@ -628,8 +628,10 @@ Remote routing is user/application controlled, never repository controlled.
 Provider endpoints are canonicalized, require HTTPS except for explicit
 loopback hosts, reject embedded credentials and ambiguous URL components, and
 bind stored credentials to the validated canonical origin. Structured evidence
-and Chat context pass through one redaction policy; automatic evidence that may
-contain a credential remains local.
+crosses a remote boundary only as fixed, kind-level summaries with hashed
+identity and no analyzer/editor text or references. Explicit Chat fields are
+checked for credentials and local resources before bounding; a detected field
+keeps the request local rather than sending a partial redaction.
 
 ## 12. Model Router and Token Control
 

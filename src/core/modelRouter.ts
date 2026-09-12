@@ -347,10 +347,7 @@ export const prepareRemoteModelRequest = (
   request: ModelRequest,
 ): PreparedRemoteModelRequest => {
   const goal = sanitizeRemoteText(request.goal, 600);
-  const evidence =
-    request.evidence.kind === "diagnostic"
-      ? sanitizeDiagnosticEvidence(request.evidence)
-      : sanitizeGeneralEvidence(request.evidence);
+  const evidence = projectAutomaticEvidence(request.evidence);
   const context = sanitizeModelRequestContextWithResult(request.context);
 
   return {
@@ -499,64 +496,76 @@ const buildHeaders = (apiKey: string | undefined): HeadersInit => {
 const estimateSerializedTokens = (serializedPayload: string): number =>
   Math.max(1, new TextEncoder().encode(serializedPayload).byteLength);
 
-const sanitizeDiagnosticEvidence = (
-  evidence: Evidence,
-): SanitizedValue<Evidence> => {
-  const id = sanitizeRemoteText(evidence.id, 160);
-  const originalTitle = sanitizeRemoteText(evidence.title, 160);
-  const originalDetail = sanitizeRemoteText(evidence.detail, 500);
-  const source = sanitizeRemoteText(evidence.source, 80);
-  const sanitizedReferences = evidence.references.map((reference) =>
-    sanitizeRemoteText(reference, 40),
-  );
-  const codes = evidence.references
-    .map((reference, index) => sanitizedReferences[index]?.value ?? "")
-    .filter((reference) => /^[A-Za-z0-9_.-]+$/u.test(reference))
-    .slice(0, 3);
-  return {
-    value: {
-      ...evidence,
-      id: id.value,
-      title: "Editor diagnostic",
-      detail: "See VS Code Problems for the complete diagnostic message.",
-      source: source.value,
-      references: codes,
-    },
-    sensitiveDataDetected:
-      id.sensitiveDataDetected ||
-      originalTitle.sensitiveDataDetected ||
-      originalDetail.sensitiveDataDetected ||
-      source.sensitiveDataDetected ||
-      sanitizedReferences.some((reference) => reference.sensitiveDataDetected),
-  };
+interface RemoteEvidenceSummary {
+  readonly title: string;
+  readonly detail: string;
+  readonly source: string;
+}
+
+const REMOTE_EVIDENCE_SUMMARIES: Readonly<
+  Record<Evidence["kind"], RemoteEvidenceSummary>
+> = {
+  "new-dependency": {
+    title: "Dependency change detected",
+    detail: "A new module dependency was detected at the evidence range.",
+    source: "adaptive-pair-semantic-analysis",
+  },
+  "public-api-change": {
+    title: "Public API change detected",
+    detail: "A public API signature change was detected at the evidence range.",
+    source: "adaptive-pair-semantic-analysis",
+  },
+  "complexity-growth": {
+    title: "Complexity growth detected",
+    detail: "Control-flow complexity growth was detected at the evidence range.",
+    source: "adaptive-pair-semantic-analysis",
+  },
+  diagnostic: {
+    title: "Editor diagnostic detected",
+    detail: "VS Code reported a diagnostic at the evidence range.",
+    source: "vscode-diagnostics",
+  },
+  "external-harness": {
+    title: "External harness signal detected",
+    detail: "An external harness reported evidence at the evidence range.",
+    source: "adaptive-pair-external-harness",
+  },
 };
 
-const sanitizeGeneralEvidence = (
+const projectAutomaticEvidence = (
   evidence: Evidence,
 ): SanitizedValue<Evidence> => {
-  const id = sanitizeRemoteText(evidence.id, 160);
-  const title = sanitizeRemoteText(evidence.title, 160);
-  const detail = sanitizeRemoteText(evidence.detail, 500);
-  const source = sanitizeRemoteText(evidence.source, 80);
-  const references = evidence.references
-    .map((reference) => sanitizeRemoteText(reference, 120))
-    .slice(0, 8);
+  const summary = REMOTE_EVIDENCE_SUMMARIES[evidence.kind];
+  const alreadyProjectedId = new RegExp(
+    `^evidence:${evidence.kind}:[a-f0-9]{16}$`,
+    "u",
+  );
+  const id = alreadyProjectedId.test(evidence.id)
+    ? evidence.id
+    : `evidence:${evidence.kind}:${createHash("sha256")
+        .update(
+          JSON.stringify({
+            id: evidence.id,
+            range: evidence.range,
+          }),
+          "utf8",
+        )
+        .digest("hex")
+        .slice(0, 16)}`;
 
   return {
     value: {
-      ...evidence,
-      id: id.value,
-      title: title.value,
-      detail: detail.value,
-      source: source.value,
-      references: references.map((reference) => reference.value),
+      id,
+      kind: evidence.kind,
+      severity: evidence.severity,
+      title: summary.title,
+      detail: summary.detail,
+      source: summary.source,
+      confidence: evidence.confidence,
+      range: evidence.range,
+      references: [],
     },
-    sensitiveDataDetected:
-      id.sensitiveDataDetected ||
-      title.sensitiveDataDetected ||
-      detail.sensitiveDataDetected ||
-      source.sensitiveDataDetected ||
-      references.some((reference) => reference.sensitiveDataDetected),
+    sensitiveDataDetected: false,
   };
 };
 
@@ -608,15 +617,33 @@ const JWT_PATTERN =
   /\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu;
 const LONG_OPAQUE_PATTERN =
   /(?<![A-Za-z0-9_+/-])[A-Za-z0-9_+/-]{38,}={0,2}(?![A-Za-z0-9_+/=-])/gu;
+const LOCAL_URI_PATTERN =
+  /(?:^|[^A-Za-z0-9+.-])(?:file|vscode-remote):\/\/[^\s<>"'`]*/iu;
+const WINDOWS_PATH_PATTERN =
+  /(?:^|[^A-Za-z0-9_./:+-])[A-Za-z]:[\\/]/u;
+const UNC_PATH_PATTERN =
+  /(?:^|[^A-Za-z0-9_\\])\\\\[^\\/\s<>"'`]+[\\/][^\\/\s<>"'`]+/u;
+const POSIX_LOCAL_ROOT_PATTERN =
+  /(?:^|[^A-Za-z0-9_./:<+?-])\/(?:Applications|Library|Users|Volumes|etc|home|mnt|opt|private|srv|tmp|usr|var|workspace|workspaces)(?:\/|$|(?=[\s<>"'`(){};,]))/u;
+const POSIX_MULTI_SEGMENT_PATTERN =
+  /(?:^|[^A-Za-z0-9_./:<+?-])\/[^/\s<>"'`(){};,]+\/[^/\s<>"'`(){};,]+/u;
+
+export const LOCAL_ONLY_MODEL_CONTENT_NOTICE =
+  "[REDACTED] Sensitive content kept local.";
 
 const sanitizeRemoteText = (
   value: string,
   maxLength: number,
 ): SanitizedValue<string> => {
-  const localResourceProjection = projectLocalResources(value);
-  let sensitiveDataDetected =
-    localResourceProjection.sensitiveDataDetected;
-  let sanitized = localResourceProjection.value.replace(
+  if (containsKnownLocalResource(value)) {
+    return {
+      value: LOCAL_ONLY_MODEL_CONTENT_NOTICE,
+      sensitiveDataDetected: true,
+    };
+  }
+
+  let sensitiveDataDetected = false;
+  let sanitized = value.replace(
     URI_PATTERN,
     (candidate) => {
     try {
@@ -750,302 +777,19 @@ const sanitizeRemoteText = (
   });
 
   return {
-    value: boundSingleLine(sanitized, maxLength),
+    value: sensitiveDataDetected
+      ? LOCAL_ONLY_MODEL_CONTENT_NOTICE
+      : boundSingleLine(sanitized, maxLength),
     sensitiveDataDetected,
   };
 };
 
-type LocalResourceKind = "uri" | "windows" | "unc" | "posix";
-
-const projectLocalResources = (value: string): SanitizedValue<string> => {
-  let sensitiveDataDetected = false;
-  let cursor = 0;
-  let projected = "";
-
-  for (let index = 0; index < value.length;) {
-    const kind = localResourceKindAt(value, index);
-    if (kind === undefined) {
-      index += 1;
-      continue;
-    }
-    const end = localResourceEnd(value, index);
-    if (end <= index || !isCompleteLocalResource(value.slice(index, end), kind)) {
-      index += 1;
-      continue;
-    }
-
-    projected += value.slice(cursor, index);
-    projected += localResourceLabel(value.slice(index, end));
-    sensitiveDataDetected = true;
-    cursor = end;
-    index = end;
-  }
-
-  projected += value.slice(cursor);
-  return { value: projected, sensitiveDataDetected };
-};
-
-const localResourceKindAt = (
-  value: string,
-  index: number,
-): LocalResourceKind | undefined => {
-  if (!isLocalResourceBoundary(value, index)) {
-    return undefined;
-  }
-
-  const remainder = value.slice(index).toLowerCase();
-  if (
-    (remainder.startsWith("file:") &&
-      isPathSeparator(value[index + "file:".length])) ||
-    (remainder.startsWith("vscode-remote:") &&
-      isPathSeparator(value[index + "vscode-remote:".length]))
-  ) {
-    return "uri";
-  }
-
-  const first = value[index];
-  const second = value[index + 1];
-  const third = value[index + 2];
-  if (
-    first !== undefined &&
-    isAsciiLetter(first) &&
-    second === ":" &&
-    isPathSeparator(third)
-  ) {
-    return "windows";
-  }
-  if (first === "\\" && second === "\\") {
-    return "unc";
-  }
-  if (first === "/" && second !== "/" && !isPathWhitespace(second)) {
-    return "posix";
-  }
-  return undefined;
-};
-
-const isLocalResourceBoundary = (value: string, index: number): boolean => {
-  const previous = value[index - 1];
-  return (
-    previous === undefined ||
-    !(
-      isAsciiLetter(previous) ||
-      isAsciiDigit(previous) ||
-      previous === "_" ||
-      previous === "." ||
-      isPathSeparator(previous)
-    )
-  );
-};
-
-const localResourceEnd = (
-  value: string,
-  start: number,
-): number => {
-  const preceding = value[start - 1];
-  const quote =
-    preceding === '"' || preceding === "'" || preceding === "`"
-      ? preceding
-      : undefined;
-  let end = start;
-
-  while (end < value.length) {
-    const character = value[end];
-    if (character === undefined || character === "\r" || character === "\n") {
-      break;
-    }
-    if (quote !== undefined) {
-      if (character === quote) {
-        break;
-      }
-      end += 1;
-      continue;
-    }
-    if (isUnquotedPathTerminator(character)) {
-      break;
-    }
-    if (isPathWhitespace(character)) {
-      const next = skipPathWhitespace(value, end);
-      if (!shouldContinueSpacedPath(value, start, end, next)) {
-        break;
-      }
-      end = next;
-      continue;
-    }
-    end += 1;
-  }
-
-  while (end > start && isTrailingPathPunctuation(value[end - 1])) {
-    end -= 1;
-  }
-  return end;
-};
-
-const shouldContinueSpacedPath = (
-  value: string,
-  start: number,
-  space: number,
-  next: number,
-): boolean => {
-  if (next >= value.length) {
-    return false;
-  }
-  const tokenEnd = pathTokenEnd(value, next);
-  if (tokenEnd === next) {
-    return false;
-  }
-
-  const currentSegment = lastPathSegment(value.slice(start, space));
-  if (looksLikeFileName(currentSegment)) {
-    return false;
-  }
-  const nextToken = value.slice(next, tokenEnd);
-  if (
-    nextToken.includes("/") ||
-    nextToken.includes("\\") ||
-    looksLikeFileName(nextToken)
-  ) {
-    return true;
-  }
-
-  return (
-    (startsWithUppercaseLetter(currentSegment) &&
-      startsWithUppercaseLetter(nextToken)) ||
-    hasUpcomingPathMarker(value, tokenEnd)
-  );
-};
-
-const hasUpcomingPathMarker = (value: string, start: number): boolean => {
-  let cursor = start;
-  for (let remainingWords = 3; remainingWords > 0; remainingWords -= 1) {
-    if (!isPathWhitespace(value[cursor])) {
-      return false;
-    }
-    cursor = skipPathWhitespace(value, cursor);
-    const end = pathTokenEnd(value, cursor);
-    if (end === cursor) {
-      return false;
-    }
-    const token = value.slice(cursor, end);
-    if (
-      token.includes("/") ||
-      token.includes("\\") ||
-      looksLikeFileName(token)
-    ) {
-      return true;
-    }
-    cursor = end;
-  }
-  return false;
-};
-
-const pathTokenEnd = (value: string, start: number): number => {
-  let end = start;
-  while (end < value.length) {
-    const character = value[end];
-    if (
-      character === undefined ||
-      character === "\r" ||
-      character === "\n" ||
-      isPathWhitespace(character) ||
-      isUnquotedPathTerminator(character)
-    ) {
-      break;
-    }
-    end += 1;
-  }
-  return end;
-};
-
-const skipPathWhitespace = (value: string, start: number): number => {
-  let index = start;
-  while (isPathWhitespace(value[index])) {
-    index += 1;
-  }
-  return index;
-};
-
-const lastPathSegment = (value: string): string => {
-  const separator = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"));
-  return value.slice(separator + 1);
-};
-
-const looksLikeFileName = (value: string): boolean => {
-  const segment = lastPathSegment(value);
-  const extensionIndex = segment.lastIndexOf(".");
-  if (
-    extensionIndex <= 0 ||
-    extensionIndex === segment.length - 1 ||
-    segment.length - extensionIndex > 17
-  ) {
-    return false;
-  }
-  return Array.from(segment.slice(extensionIndex + 1)).every(
-    (character) => isAsciiLetter(character) || isAsciiDigit(character),
-  );
-};
-
-const isCompleteLocalResource = (
-  value: string,
-  kind: LocalResourceKind,
-): boolean => {
-  if (kind === "posix") {
-    return value.length > 1;
-  }
-  if (kind === "windows") {
-    return value.length > 3;
-  }
-  if (kind === "unc") {
-    return value.length > 2;
-  }
-  const separator = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"));
-  return separator >= 0 && separator < value.length - 1;
-};
-
-const isUnquotedPathTerminator = (character: string): boolean =>
-  character === '"' ||
-  character === "'" ||
-  character === "`" ||
-  character === "<" ||
-  character === ">" ||
-  character === "(" ||
-  character === ")" ||
-  character === "[" ||
-  character === "]" ||
-  character === "{" ||
-  character === "}" ||
-  character === "," ||
-  character === ";";
-
-const isTrailingPathPunctuation = (character: string | undefined): boolean =>
-  character === "." ||
-  character === ":" ||
-  character === "!" ||
-  character === "?";
-
-const isPathSeparator = (
-  character: string | undefined,
-): character is "/" | "\\" => character === "/" || character === "\\";
-
-const isPathWhitespace = (character: string | undefined): boolean =>
-  character === " " || character === "\t";
-
-const isAsciiLetter = (character: string): boolean =>
-  (character >= "A" && character <= "Z") ||
-  (character >= "a" && character <= "z");
-
-const isAsciiDigit = (character: string): boolean =>
-  character >= "0" && character <= "9";
-
-const startsWithUppercaseLetter = (value: string): boolean => {
-  const first = value[0];
-  return first !== undefined && first >= "A" && first <= "Z";
-};
-
-const localResourceLabel = (value: string): string =>
-  `[local-resource:${createHash("sha256")
-    .update(value.replaceAll("\\", "/"), "utf8")
-    .digest("hex")
-    .slice(0, 16)}]`;
+const containsKnownLocalResource = (value: string): boolean =>
+  LOCAL_URI_PATTERN.test(value) ||
+  WINDOWS_PATH_PATTERN.test(value) ||
+  UNC_PATH_PATTERN.test(value) ||
+  POSIX_LOCAL_ROOT_PATTERN.test(value) ||
+  POSIX_MULTI_SEGMENT_PATTERN.test(value);
 
 export const sanitizePersistentText = (
   value: string,

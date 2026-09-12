@@ -77,6 +77,10 @@ class RecordingLanguageModelApi implements VsCodeLanguageModelApi {
   public streamError: Error | undefined;
   public onSelect: (() => void) | undefined;
   public onSend: ((model: CopilotModelReference) => void) | undefined;
+  public onCount:
+    | ((model: CopilotModelReference, text: string) => void)
+    | undefined;
+  public readonly classifiedErrors: unknown[] = [];
   public errorKinds = new Map<
     Error,
     "no-permissions" | "not-found" | "blocked" | "cancelled" | "unknown"
@@ -106,6 +110,7 @@ class RecordingLanguageModelApi implements VsCodeLanguageModelApi {
   public classifyError(
     error: unknown,
   ): "no-permissions" | "not-found" | "blocked" | "cancelled" | "unknown" {
+    this.classifiedErrors.push(error);
     return error instanceof Error
       ? (this.errorKinds.get(error) ?? "unknown")
       : "unknown";
@@ -119,6 +124,7 @@ class RecordingLanguageModelApi implements VsCodeLanguageModelApi {
     void cancellation;
     this.countedModelIds.push(model.id);
     this.countedTexts.push(text);
+    this.onCount?.(model, text);
     const error = this.countErrorsByModel.get(model.id);
     if (error !== undefined) {
       throw error;
@@ -264,6 +270,81 @@ describe("VsCodeLanguageModelProvider", () => {
     });
     expect(api.sendCalls).toBe(0);
     expect(api.cancellation.cancelled).toBe(true);
+  });
+
+  it("surfaces cancellation before classifying a rejected model selection", async () => {
+    const api = new RecordingLanguageModelApi();
+    const failure = new Error("selection failed concurrently");
+    const abortController = new AbortController();
+    api.selectError = failure;
+    api.errorKinds.set(failure, "no-permissions");
+    api.onSelect = () => {
+      abortController.abort();
+    };
+    const provider = new VsCodeLanguageModelProvider(api);
+
+    const rejection = await provider
+      .generate(request, abortController.signal)
+      .catch((error: unknown) => error);
+    expect(rejection).toBe(abortController.signal.reason);
+    expect(api.classifiedErrors).toEqual([]);
+  });
+
+  it("surfaces cancellation before classifying a rejected preflight token count", async () => {
+    const api = new RecordingLanguageModelApi();
+    const failure = new Error("token count failed concurrently");
+    const abortController = new AbortController();
+    api.countErrorsByModel.set("copilot-model", failure);
+    api.errorKinds.set(failure, "not-found");
+    api.onCount = () => {
+      abortController.abort();
+    };
+    const provider = new VsCodeLanguageModelProvider(api);
+
+    const rejection = await provider
+      .generate(request, abortController.signal)
+      .catch((error: unknown) => error);
+    expect(rejection).toBe(abortController.signal.reason);
+    expect(api.classifiedErrors).toEqual([]);
+  });
+
+  it("surfaces cancellation before classifying a rejected model send", async () => {
+    const api = new RecordingLanguageModelApi();
+    const failure = new Error("send failed concurrently");
+    const abortController = new AbortController();
+    api.sendError = failure;
+    api.errorKinds.set(failure, "unknown");
+    api.onSend = () => {
+      abortController.abort();
+    };
+    const provider = new VsCodeLanguageModelProvider(api);
+
+    const rejection = await provider
+      .generate(request, abortController.signal)
+      .catch((error: unknown) => error);
+    expect(rejection).toBe(abortController.signal.reason);
+    expect(api.classifiedErrors).toEqual([]);
+  });
+
+  it("surfaces cancellation before classifying a rejected streamed token count", async () => {
+    const api = new RecordingLanguageModelApi();
+    const failure = new Error("stream token count failed concurrently");
+    const abortController = new AbortController();
+    api.fragments = ["Complete response"];
+    api.errorKinds.set(failure, "unknown");
+    api.onCount = (_model, text) => {
+      if (text === "Complete response") {
+        abortController.abort();
+        throw failure;
+      }
+    };
+    const provider = new VsCodeLanguageModelProvider(api);
+
+    const rejection = await provider
+      .generate(request, abortController.signal)
+      .catch((error: unknown) => error);
+    expect(rejection).toBe(abortController.signal.reason);
+    expect(api.classifiedErrors).toEqual([]);
   });
 
   it("returns no response when cancellation arrives during the final token count", async () => {

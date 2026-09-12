@@ -56,8 +56,175 @@ const sensitiveKeyVariants = [
   "signingSecret",
 ] as const;
 
+const localOnlyNotice = "[REDACTED] Sensitive content kept local.";
+
+const automaticEvidenceSummaries = [
+  [
+    "new-dependency",
+    "Dependency change detected",
+    "A new module dependency was detected at the evidence range.",
+    "adaptive-pair-semantic-analysis",
+  ],
+  [
+    "public-api-change",
+    "Public API change detected",
+    "A public API signature change was detected at the evidence range.",
+    "adaptive-pair-semantic-analysis",
+  ],
+  [
+    "complexity-growth",
+    "Complexity growth detected",
+    "Control-flow complexity growth was detected at the evidence range.",
+    "adaptive-pair-semantic-analysis",
+  ],
+  [
+    "diagnostic",
+    "Editor diagnostic detected",
+    "VS Code reported a diagnostic at the evidence range.",
+    "vscode-diagnostics",
+  ],
+  [
+    "external-harness",
+    "External harness signal detected",
+    "An external harness reported evidence at the evidence range.",
+    "adaptive-pair-external-harness",
+  ],
+] as const;
+
 describe("remote model request privacy", () => {
-  it("removes unbounded third-party diagnostic text and preserves safe metadata", () => {
+  it.each(automaticEvidenceSummaries)(
+    "projects %s evidence from a fixed whitelist and drops all analyzer text",
+    (kind, title, detail, source) => {
+      const malicious = {
+        id: `raw-id-${kind}-file:///Users/alice/private.ts`,
+        title: `arbitrary-title-${kind}-do-not-forward`,
+        detail: `arbitrary-detail-${kind}-do-not-forward`,
+        source: `arbitrary-source-${kind}-do-not-forward`,
+        references: [
+          `arbitrary-reference-${kind}-do-not-forward`,
+          `arbitrary-second-reference-${kind}-do-not-forward`,
+        ],
+      };
+      const request: ModelRequest = {
+        goal: "Ask about the detected evidence.",
+        interactionStyle: "ask-first",
+        evidence: {
+          ...malicious,
+          kind,
+          severity: "warning",
+          confidence: 0.73,
+          range: {
+            start: { line: 4, character: 2 },
+            end: { line: 7, character: 9 },
+          },
+        },
+      };
+
+      const prepared = prepareRemoteModelRequest(request);
+      expect(prepared.sensitiveDataDetected).toBe(false);
+      expect(prepared.request.evidence).toMatchObject({
+        id: expect.stringMatching(
+          new RegExp(`^evidence:${kind}:[a-f0-9]{16}$`, "u"),
+        ),
+        kind,
+        title,
+        detail,
+        source,
+        references: [],
+        range: request.evidence.range,
+      });
+
+      for (const payload of [
+        JSON.stringify(buildOpenAICompatiblePromptPayload(request)),
+        buildCopilotPrompt(request),
+      ]) {
+        for (const rawValue of [
+          malicious.id,
+          malicious.title,
+          malicious.detail,
+          malicious.source,
+          ...malicious.references,
+        ]) {
+          expect(payload).not.toContain(rawValue);
+        }
+      }
+    },
+  );
+
+  it.each([
+    ["file directory URI", "file:///Users/alice/"],
+    [
+      "VS Code remote directory URI",
+      "vscode-remote://host/home/alice/",
+    ],
+    ["POSIX path with spaces", "/Users/alice/my project"],
+    [
+      "extensionless Windows path with spaces",
+      "C:\\Users\\Alice Smith\\My Project",
+    ],
+    [
+      "extensionless UNC path with spaces",
+      "\\\\server\\share\\Alice Smith\\My Project",
+    ],
+  ])("keeps a Chat prompt containing %s local as one field", (_label, prompt) => {
+    const prepared = prepareRemoteModelRequest({
+      goal: "Explain the current evidence.",
+      interactionStyle: "ask-first",
+      evidence: {
+        id: "dependency:safe",
+        kind: "new-dependency",
+        severity: "warning",
+        title: "New dependency introduced",
+        detail: "A dependency changed.",
+        source: "typescript-semantic-analyzer",
+        confidence: 0.9,
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 1 },
+        },
+        references: [],
+      },
+      context: { userPrompt: prompt },
+    });
+
+    expect(prepared.sensitiveDataDetected).toBe(true);
+    expect(prepared.request.context?.userPrompt).toBe(localOnlyNotice);
+  });
+
+  it.each([
+    ["custom scheme", "custom-file:///docs"],
+    ["closing markup", "</section>"],
+    ["ordinary package names", "Use @scope/package and lodash/fp."],
+    [
+      "normal prose",
+      "Please compare the two normal options before proceeding.",
+    ],
+  ])("does not classify %s as a local resource", (_label, prompt) => {
+    const prepared = prepareRemoteModelRequest({
+      goal: "Explain the current evidence.",
+      interactionStyle: "ask-first",
+      evidence: {
+        id: "dependency:safe",
+        kind: "new-dependency",
+        severity: "warning",
+        title: "New dependency introduced",
+        detail: "A dependency changed.",
+        source: "typescript-semantic-analyzer",
+        confidence: 0.9,
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 1 },
+        },
+        references: [],
+      },
+      context: { userPrompt: prompt },
+    });
+
+    expect(prepared.sensitiveDataDetected).toBe(false);
+    expect(prepared.request.context?.userPrompt).toBe(prompt);
+  });
+
+  it("removes unbounded third-party diagnostic text and preserves fixed safe metadata", () => {
     const secret = "sk-do-not-forward-this-secret";
     const sourceSnippet = "const privateToken = process.env.PRODUCTION_TOKEN;";
     const unboundedCode = `TS${"9".repeat(500)}`;
@@ -88,11 +255,13 @@ describe("remote model request privacy", () => {
       expect(payload).not.toContain(sourceSnippet);
       expect(payload).not.toContain(unboundedCode);
       expect(payload.length).toBeLessThan(2_000);
-      expect(payload).toContain("typescript");
-      expect(payload).toContain("Diagnostic code: TS2322");
+      expect(payload).toContain("vscode-diagnostics");
+      expect(payload).toContain("Diagnostic code: none");
       expect(payload).toContain("error");
       expect(payload).toContain("10:2-10:22");
-      expect(payload).toContain("Problems");
+      expect(payload).toContain(
+        "VS Code reported a diagnostic at the evidence range.",
+      );
     }
   });
 
@@ -176,12 +345,23 @@ describe("remote model request privacy", () => {
     const plan = buildPairChatPlan("why", context.snapshot(), {
       prompt: "Please explain this diagnostic.",
     });
-    expect(plan.kind).toBe("generate");
-    const serialized = JSON.stringify(plan);
+    if (plan.kind !== "generate") {
+      throw new Error("Expected generation plan.");
+    }
+    expect(plan.evidence.detail).toContain(sourceCode);
+    const serialized = JSON.stringify(
+      prepareRemoteModelRequest({
+        goal: plan.goal,
+        evidence: plan.evidence,
+        interactionStyle: "ask-first",
+        context: plan.context,
+        purpose: plan.purpose,
+      }).request,
+    );
     expect(serialized).not.toContain(secret);
     expect(serialized).not.toContain(sourceCode);
     expect(serialized).toContain(
-      "See VS Code Problems for the complete diagnostic message.",
+      "VS Code reported a diagnostic at the evidence range.",
     );
     expect(serialized).toContain("Please explain this diagnostic.");
   });
@@ -242,7 +422,7 @@ describe("remote model request privacy", () => {
     expect(serialized).toContain("[REDACTED]");
   });
 
-  it("projects local URIs and absolute paths in every remote text field to hashed labels", () => {
+  it("marks every unsafe request field local-only while evidence uses its fixed projection", () => {
     const repeatedPath = "/Users/alice/private/workspace/src/shared.ts";
     const prepared = prepareRemoteModelRequest({
       goal: `Review ${repeatedPath}`,
@@ -281,13 +461,21 @@ describe("remote model request privacy", () => {
       },
     });
     const serialized = JSON.stringify(prepared.request);
-    const projectedLabels =
-      serialized.match(/\[local-resource:[a-f0-9]{16}\]/gu) ?? [];
 
     expect(prepared.sensitiveDataDetected).toBe(true);
-    expect(projectedLabels.length).toBeGreaterThanOrEqual(10);
-    expect(prepared.request.goal.match(/\[local-resource:[a-f0-9]{16}\]/u)?.[0])
-      .toBe(prepared.request.evidence.references[0]);
+    expect(prepared.request.goal).toBe(localOnlyNotice);
+    expect(prepared.request.context).toMatchObject({
+      userPrompt: localOnlyNotice,
+      symbol: {
+        name: localOnlyNotice,
+        kind: localOnlyNotice,
+      },
+    });
+    expect(prepared.request.evidence).toMatchObject({
+      title: "Dependency change detected",
+      source: "adaptive-pair-semantic-analysis",
+      references: [],
+    });
     for (const localFragment of [
       "file://",
       "vscode-remote://",
@@ -342,13 +530,11 @@ describe("remote model request privacy", () => {
       "foo,vscode-remote://ssh-remote+host/home/alice/My Project/private.ts",
       /^foo,\[local-resource:[a-f0-9]{16}\]$/u,
     ],
-  ])("projects %s as one complete sensitive value", (_label, text, expected) => {
+  ])("marks the whole field containing %s as local-only", (_label, text) => {
     const prepared = prepareRemoteModelRequest(requestContaining(text));
 
     expect(prepared.sensitiveDataDetected).toBe(true);
-    expect(prepared.request.goal).toMatch(expected);
-    expect(prepared.request.goal).not.toContain("Project/private.ts");
-    expect(prepared.request.goal).not.toContain("Project\\private.ts");
+    expect(prepared.request.goal).toBe(localOnlyNotice);
   });
 
   it("preserves ordinary prose, URLs, and package specifiers", () => {
@@ -360,7 +546,7 @@ describe("remote model request privacy", () => {
     expect(prepared.request.goal).toBe(benign);
   });
 
-  it("marks sensitive automatic evidence for local-only handling", () => {
+  it("projects credential-bearing automatic evidence without inspecting raw text", () => {
     const prepared = prepareRemoteModelRequest({
       goal: "Ask about this edit.",
       interactionStyle: "ask-first",
@@ -383,8 +569,14 @@ describe("remote model request privacy", () => {
       },
     });
 
-    expect(prepared.sensitiveDataDetected).toBe(true);
-    expect(prepared.request.evidence.detail).not.toContain("workspace-secret");
+    expect(prepared.sensitiveDataDetected).toBe(false);
+    expect(prepared.request.evidence).toMatchObject({
+      title: "Dependency change detected",
+      detail: "A new module dependency was detected at the evidence range.",
+      source: "adaptive-pair-semantic-analysis",
+      references: [],
+    });
+    expect(JSON.stringify(prepared.request)).not.toContain("workspace-secret");
   });
 
   it("redacts quoted credential assignments that contain spaces", () => {
@@ -469,33 +661,17 @@ describe("remote model request privacy", () => {
   });
 
   it.each([
-    [
-      "matching quotes",
-      `"api.key": "matching quoted value"`,
-      `"api.key": "[REDACTED]"`,
-    ],
-    [
-      "opposite quotes",
-      `"api.key": 'mixed quoted value'`,
-      `"api.key": '[REDACTED]'`,
-    ],
-    [
-      "opposite single-key quotes",
-      `'api.key': "other mixed quoted value"`,
-      `'api.key': "[REDACTED]"`,
-    ],
-    [
-      "no value quotes",
-      `"api.key": unquoted-sensitive-value`,
-      `"api.key": [REDACTED]`,
-    ],
+    ["matching quotes", `"api.key": "matching quoted value"`],
+    ["opposite quotes", `"api.key": 'mixed quoted value'`],
+    ["opposite single-key quotes", `'api.key': "other mixed quoted value"`],
+    ["no value quotes", `"api.key": unquoted-sensitive-value`],
   ])(
-    "redacts a quoted sensitive key independently from %s around its value",
-    (_label, input, expected) => {
+    "replaces the field containing a quoted sensitive key with a local-only notice for %s",
+    (_label, input) => {
       const prepared = prepareRemoteModelRequest(requestContaining(input));
 
       expect(prepared.sensitiveDataDetected).toBe(true);
-      expect(prepared.request.goal).toBe(expected);
+      expect(prepared.request.goal).toBe(localOnlyNotice);
     },
   );
 
@@ -507,9 +683,7 @@ describe("remote model request privacy", () => {
     );
 
     expect(prepared.sensitiveDataDetected).toBe(true);
-    expect(prepared.request.goal).toBe(
-      "Authorization: [REDACTED] X-Request-Id: benign-id",
-    );
+    expect(prepared.request.goal).toBe(localOnlyNotice);
   });
 
   it("finds a sensitive header after a benign colon before redacting to end-of-line", () => {
@@ -520,9 +694,7 @@ describe("remote model request privacy", () => {
     );
 
     expect(prepared.sensitiveDataDetected).toBe(true);
-    expect(prepared.request.goal).toBe(
-      "Changed header: Authorization: [REDACTED]",
-    );
+    expect(prepared.request.goal).toBe(localOnlyNotice);
   });
 
   it.each([
@@ -576,7 +748,7 @@ describe("remote model request privacy", () => {
     expect(prepared.sensitiveDataDetected).toBe(true);
     expect(serialized).not.toContain("queue-user");
     expect(serialized).not.toContain("queue-password");
-    expect(serialized).toContain("amqps://broker.example.test/private-vhost");
+    expect(prepared.request.goal).toBe(localOnlyNotice);
   });
 
   it.each([
@@ -601,7 +773,7 @@ describe("remote model request privacy", () => {
     expect(prepared.sensitiveDataDetected).toBe(true);
     expect(serialized).not.toContain(credential);
     expect(serialized).toContain("[REDACTED]");
-    expect(prepared.request.goal).toBe("opaque=[REDACTED]");
+    expect(prepared.request.goal).toBe(localOnlyNotice);
   });
 
   it("preserves obvious short benign base64 values", () => {
@@ -642,7 +814,7 @@ describe("remote model request privacy", () => {
     expect(serialized).toContain("[REDACTED]");
   });
 
-  it("redacts the complete Basic authorization payload", () => {
+  it("drops a Basic authorization payload supplied only by automatic evidence", () => {
     const basicPayload = Buffer.from(
       "example-user:example-password",
       "utf8",
@@ -667,8 +839,11 @@ describe("remote model request privacy", () => {
     });
     const serialized = JSON.stringify(prepared.request);
 
-    expect(prepared.sensitiveDataDetected).toBe(true);
+    expect(prepared.sensitiveDataDetected).toBe(false);
     expect(serialized).not.toContain(basicPayload);
     expect(serialized).not.toContain(`Basic ${basicPayload}`);
+    expect(prepared.request.evidence.title).toBe(
+      "Dependency change detected",
+    );
   });
 });

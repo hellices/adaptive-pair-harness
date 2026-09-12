@@ -132,37 +132,37 @@ Every remote request is reduced to a bounded structured prompt containing:
 
 - `goal`
 - `interactionStyle`
-- evidence metadata:
+- fixed kind-level evidence metadata:
   - `kind`
   - `severity`
-  - `title`
-  - `detail`
-  - `source`
+  - a hashed remote identity
+  - extension-owned `title`, `detail`, and `source` strings selected only by
+    `kind`
   - `confidence`
   - `range`
-  - `references`
 - optional user-initiated context:
   - bounded `userPrompt`
   - current symbol `name`, `kind`, and `range`
 
-All string fields pass through the same suppression/redaction policy. It
-handles HTTP and non-HTTP DSN userinfo, sensitive query parameters, bearer/JWT
-and common token formats, complete Basic authorization payloads, quoted JSON
-keys and quoted or unquoted credential assignments, control characters, and
-long base64/base64url or opaque secret-like values. Local `file:` and
-`vscode-remote:` URIs plus absolute POSIX, Windows, and import paths become
-deterministic hashed labels in every remote text field. If an automatic
-intervention contains possible credential or local-path material, no remote
-provider is called; the local template is used instead.
+Automatic evidence is whitelist-projected: no analyzer/editor title, detail,
+source, reference, module specifier, diagnostic text, URI, or path is copied
+into a remote request. Explicit Chat text is checked before bounding for HTTP
+and non-HTTP DSN userinfo, sensitive query parameters, bearer/JWT and common
+token formats, complete Basic authorization payloads, credential assignments,
+and long secret-like values. It is also checked for exact `file://` and
+`vscode-remote://` schemes, recognized or multi-segment POSIX paths, Windows
+drive paths, and UNC paths. If any checked field is unsafe, the complete request
+stays local and the unsafe field is replaced with a fixed local-only notice;
+partially redacted content is never sent.
 
-### Diagnostic sanitization
+### Diagnostic projection
 
-Diagnostics are narrowed before remote use:
+Diagnostics use fixed extension-owned metadata before remote use:
 
-- title becomes `Editor diagnostic`;
-- detail becomes `See VS Code Problems for the complete diagnostic message.`;
-- source is bounded to a short single line;
-- diagnostic references are reduced to short code-like values such as `TS2322`.
+- title becomes `Editor diagnostic detected`;
+- detail becomes `VS Code reported a diagnostic at the evidence range.`;
+- source becomes `vscode-diagnostics`;
+- raw diagnostic messages, sources, codes, and references are omitted.
 
 ### Data intentionally not sent
 
@@ -248,7 +248,7 @@ An active session stays local when any of the following is true:
 - an OpenAI-compatible base URL is invalid;
 - a Copilot model is unavailable or inaccessible;
 - the remote token budget is exhausted;
-- automatic evidence may contain credential material;
+- an explicit Chat field contains known credential or local-resource material;
 
 In this active local-template mode, the extension still analyzes supported
 evidence and can render inline navigator questions without network traffic.

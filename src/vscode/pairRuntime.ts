@@ -757,12 +757,22 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     }
 
     const prepared = prepareRemoteModelRequest(request);
-    if (source === "automatic" && prepared.sensitiveDataDetected) {
+    if (prepared.sensitiveDataDetected) {
       this.effectiveProvider = "local-template";
-      this.statusDetail = "sensitive evidence suppressed; local-template fallback";
+      this.statusDetail =
+        source === "chat"
+          ? "sensitive Chat content kept local; local-template fallback"
+          : "sensitive request content kept local; local-template fallback";
       this.publishSession();
       this.renderStatus();
-      return this.router.generate("local-template", request, signal);
+      return this.router.generate(
+        "local-template",
+        {
+          ...prepared.request,
+          evidence: request.evidence,
+        },
+        signal,
+      );
     }
 
     const now = Date.now();
