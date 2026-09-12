@@ -414,6 +414,7 @@ function validateDismissals(
     readonly string[]
   >();
   let compacted =
+    repositoryOrderValue === undefined ||
     repositoryCount !== dismissedRepositoryOrder.length ||
     (Array.isArray(repositoryOrderValue) &&
       (repositoryOrderValue.length !== dismissedRepositoryOrder.length ||

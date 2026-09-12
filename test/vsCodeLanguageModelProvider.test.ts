@@ -200,6 +200,60 @@ describe("VsCodeLanguageModelProvider", () => {
     expect(api.cancellation.cancelled).toBe(true);
   });
 
+  it("combines an emoji split across fragments before counting or returning it", async () => {
+    const api = new RecordingLanguageModelApi();
+    api.fragments = ["Did you mean \uD83D", "\uDE00 here?"];
+    const provider = new VsCodeLanguageModelProvider(api);
+
+    const response = await provider.generate(
+      request,
+      new AbortController().signal,
+    );
+
+    expect(response.text).toBe("Did you mean 😀 here?");
+    expect(api.countedTexts).not.toContain("Did you mean \uD83D");
+    expect(api.countedTexts).not.toContainEqual(
+      expect.stringMatching(/[\uD800-\uDBFF]$/u),
+    );
+  });
+
+  it("keeps a split emoji whole when the output cap is reached", async () => {
+    const api = new RecordingLanguageModelApi();
+    api.fragments = ["\uD83D", "\uDE00 trailing"];
+    const prompt = buildCopilotPrompt(request);
+    api.countTokensImplementation = (text) =>
+      text === prompt ? 37 : Array.from(text).length;
+    const provider = new VsCodeLanguageModelProvider(api);
+
+    const response = await provider.generate(
+      {
+        ...request,
+        maxOutputTokens: 1,
+      },
+      new AbortController().signal,
+    );
+
+    expect(response.text).toBe("😀");
+    expect(response.text).not.toMatch(/[\uD800-\uDBFF]$/u);
+    expect(api.countedTexts).not.toContain("\uD83D");
+    expect(api.cancellation.cancelled).toBe(true);
+  });
+
+  it("drops a trailing high surrogate when the stream ends", async () => {
+    const api = new RecordingLanguageModelApi();
+    api.fragments = ["Complete response\uD83D"];
+    const provider = new VsCodeLanguageModelProvider(api);
+
+    const response = await provider.generate(
+      request,
+      new AbortController().signal,
+    );
+
+    expect(response.text).toBe("Complete response");
+    expect(response.text).not.toMatch(/[\uD800-\uDBFF]$/u);
+    expect(api.countedTexts).not.toContain("Complete response\uD83D");
+  });
+
   it.each([
     ["CJK", "你好世界", 3],
     ["code-dense", "()=>{x();}", 5],

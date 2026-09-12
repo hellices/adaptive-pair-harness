@@ -252,6 +252,44 @@ describe("PairMemoryStore", () => {
     });
   });
 
+  it("writes deterministic repository order metadata for in-bounds legacy records", async () => {
+    const store = new InMemoryKeyValueStore();
+    const legacyRepositoryOrder = [repositoryB, repositoryA];
+    const dismissals = Object.fromEntries(
+      legacyRepositoryOrder.map((repositoryId, index) => [
+        repositoryId,
+        [hashEvidenceIdentity(`legacy-dismissal-${index}`)],
+      ]),
+    );
+    await store.update("adaptive-pair.memory", {
+      version: 1,
+      preferences: {
+        interventionStyle: "balanced",
+        interventionStyleExplicit: false,
+        pauseThresholdMs: 1_000,
+      },
+      dismissedEvidenceByRepository: dismissals,
+      approvedEvidence: [],
+    });
+    const memoryStore = new PairMemoryStore({
+      store,
+      repositoryId: repositoryA,
+    });
+
+    await memoryStore.load();
+
+    const persisted = store.snapshot(
+      "adaptive-pair.memory",
+    ) as PersistedMemory;
+    expect(persisted.dismissedRepositoryOrder).toEqual(
+      legacyRepositoryOrder,
+    );
+    expect(
+      Object.keys(persisted.dismissedEvidenceByRepository ?? {}),
+    ).toEqual(legacyRepositoryOrder);
+    expect(persisted.dismissedEvidenceByRepository).toEqual(dismissals);
+  });
+
   it("compacts legacy dismissal overflow on load to the most recent unique evidence and repositories", async () => {
     const repositoryIds = Array.from(
       {

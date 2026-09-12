@@ -1141,3 +1141,63 @@
   available in this non-interactive environment. Deterministic VS Code adapter
   failures and injected official-token-count behavior cover the changed
   boundaries.
+
+---
+
+## Final memory migration and Unicode stream fixes (2026-09-13)
+
+### Corrections implemented
+
+- Legacy version-1 memory records without `dismissedRepositoryOrder` now
+  trigger fenced compaction write-back even when every retained collection is
+  already within its limit. Repository order is derived deterministically from
+  the validated legacy dismissal-map order, persisted explicitly, and used to
+  rebuild the dismissal map in the same order. Existing malformed-record
+  rejection and preservation behavior remains unchanged.
+- Copilot stream consumption now buffers a fragment-ending high surrogate.
+  A following low surrogate is combined before official token counting,
+  truncation, or response publication. A buffered surrogate is discarded when
+  it is not completed, when the cap is reached, or when the stream ends.
+  Existing binary code-point-safe truncation, logarithmic token-count calls,
+  cancellation checks, and conservative observed-token settlement remain
+  intact.
+
+### TDD evidence
+
+- Memory RED: the in-bounds legacy record loaded successfully but retained no
+  `dismissedRepositoryOrder`; GREEN: the focused memory suite passed with
+  **21 tests**, including deterministic order and write-back assertions.
+- Unicode RED: split-emoji regressions exposed a dangling high surrogate at a
+  one-token cap, token counting of an incomplete surrogate below the cap, and
+  a dangling surrogate at end of stream. GREEN: the focused Copilot suite
+  passed with **34 tests**, including cap, below-cap, end-of-stream,
+  logarithmic counting, cancellation, and settlement coverage.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **17 files, 380 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 89.18%, branches 81.21%, functions 92.08%, lines 89.31%
+- `npm run package`: **PASS — 156 files, 4.35 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- VSIX content and compiled-marker scans: **PASS**
+  - changed memory and Copilot stream logic is present in compiled output;
+  - source, tests, coverage, private review material, source maps, workspace,
+    and CI files are absent.
+- Runtime dependency root scan: **PASS — `typescript` only**
+- Production and packaged secret-pattern scans: **PASS**
+- Production URL and packaged repository/bugs/homepage metadata scans:
+  **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review found no remaining high-confidence migration,
+  corruption-preservation, Unicode-boundary, token-accounting, cancellation,
+  or packaging concern.
+- Live GitHub Copilot streaming was unavailable in this non-interactive
+  environment. Injected fragment streams and official-token-count fakes cover
+  the changed cap, no-cap, and end-of-stream boundaries.

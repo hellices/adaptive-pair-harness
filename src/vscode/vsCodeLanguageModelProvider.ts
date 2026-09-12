@@ -105,6 +105,12 @@ const previousCodePointBoundary = (
 const nextCodePointBoundary = (text: string, index: number): number =>
   isCodePointBoundary(text, index) ? index : index + 1;
 
+const isHighSurrogate = (codeUnit: number): boolean =>
+  codeUnit >= 0xd800 && codeUnit <= 0xdbff;
+
+const isLowSurrogate = (codeUnit: number): boolean =>
+  codeUnit >= 0xdc00 && codeUnit <= 0xdfff;
+
 export class VsCodeLanguageModelProvider implements ModelProvider {
   public readonly id = "vscode-copilot";
 
@@ -321,8 +327,23 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
         signal.throwIfAborted();
         let streamedText = "";
         let observedOutputTokens = 0;
-        for await (const fragment of stream) {
+        let bufferedHighSurrogate: string | undefined;
+        for await (const streamedFragment of stream) {
           signal.throwIfAborted();
+          if (streamedFragment.length === 0) {
+            continue;
+          }
+          let fragment = streamedFragment;
+          if (bufferedHighSurrogate !== undefined) {
+            if (isLowSurrogate(fragment.charCodeAt(0))) {
+              fragment = bufferedHighSurrogate + fragment;
+            }
+            bufferedHighSurrogate = undefined;
+          }
+          if (isHighSurrogate(fragment.charCodeAt(fragment.length - 1))) {
+            bufferedHighSurrogate = fragment.slice(-1);
+            fragment = fragment.slice(0, -1);
+          }
           if (fragment.length === 0) {
             continue;
           }
