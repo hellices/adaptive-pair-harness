@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Require Node.js 20 or newer and VS Code 1.95 or newer.
+- Require Node.js 22.12 or newer, recommend Node.js 24 LTS, and require VS Code 1.95 or newer.
 - Compile with TypeScript `strict: true`; do not use `any` or unchecked casts.
 - Namespace commands, settings, storage, and output as `adaptivePair` or `adaptive-pair`.
 - Treat all edits not applied by this extension as `user-supplied`; this slice applies no edits.
@@ -87,7 +87,7 @@ Create `package.json` with:
   "license": "Apache-2.0",
   "engines": {
     "vscode": "^1.95.0",
-    "node": ">=20"
+    "node": ">=22.12.0"
   },
   "categories": ["AI", "Programming Languages", "Other"],
   "activationEvents": [
