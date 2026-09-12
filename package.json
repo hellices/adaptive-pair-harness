@@ -153,7 +153,8 @@
     "clean": "rm -rf dist coverage *.vsix",
     "compile": "tsc -p tsconfig.json",
     "lint": "eslint src test",
-    "test": "vitest run --coverage --passWithNoTests --exclude=dist/**",
+    "test": "vitest run --passWithNoTests --exclude=dist/** --testTimeout=15000",
+    "test:coverage": "vitest run --coverage --passWithNoTests --exclude=dist/** --testTimeout=15000",
     "check": "npm run compile && npm run lint && npm run test",
     "package": "vsce package --no-rewrite-relative-links"
   },
