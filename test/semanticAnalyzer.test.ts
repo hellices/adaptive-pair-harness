@@ -146,6 +146,119 @@ describe("TypeScriptSemanticAnalyzer", () => {
     );
   });
 
+  it("reports when an exported function is removed", () => {
+    const evidence = analyzer.analyze(
+      episode("export function load(id: string): string { return id; }", "const value = 1;"),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["load"],
+          detail: expect.stringContaining("load"),
+        }),
+      ]),
+    );
+
+    const removalEvidence = evidence.find(
+      (item) => item.kind === "public-api-change" && item.references.includes("load"),
+    );
+
+    expect(removalEvidence).toBeDefined();
+    expect(removalEvidence?.range.start).toEqual(removalEvidence?.range.end);
+  });
+
+  it("reports when a public method is removed from an exported class", () => {
+    const evidence = analyzer.analyze(
+      episode(
+        [
+          "export class Example {",
+          "  run(value: string): string {",
+          "    return value;",
+          "  }",
+          "}",
+        ].join("\n"),
+        "export class Example {}",
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["Example#run"],
+          detail: expect.stringContaining("Example#run"),
+        }),
+      ]),
+    );
+
+    const removalEvidence = evidence.find(
+      (item) => item.kind === "public-api-change" && item.references.includes("Example#run"),
+    );
+
+    expect(removalEvidence).toBeDefined();
+    expect(removalEvidence?.range.start).toEqual(removalEvidence?.range.end);
+  });
+
+  it("does not report removal of non-exported functions or private methods", () => {
+    const removedFunctionEvidence = analyzer.analyze(
+      episode("function load(id: string): string { return id; }", "const value = 1;"),
+    );
+    const removedPrivateMethodEvidence = analyzer.analyze(
+      episode(
+        [
+          "export class Example {",
+          "  private run(value: string): string {",
+          "    return value;",
+          "  }",
+          "}",
+        ].join("\n"),
+        "export class Example {}",
+      ),
+    );
+
+    expect(removedFunctionEvidence).toEqual([]);
+    expect(removedPrivateMethodEvidence).toEqual([]);
+  });
+
+  it("does not report formatting-only or comment-only exported signature changes", () => {
+    const evidence = analyzer.analyze(
+      episode(
+        "export function load(value: string | number): string | number { return value; }",
+        [
+          "export function load(",
+          "  value:string",
+          "    /* formatting only */",
+          "    |number,",
+          "):string|number {",
+          "  return value;",
+          "}",
+        ].join("\n"),
+      ),
+    );
+
+    expect(evidence.filter((item) => item.kind === "public-api-change")).toEqual([]);
+  });
+
+  it("still reports real exported signature literal changes", () => {
+    const evidence = analyzer.analyze(
+      episode(
+        'export function load(value: { status: "ok"; note: "a b" }): "done now" { return "done now"; }',
+        'export function load(value: { status: "ok"; note: "ab" }): "done now" { return "done now"; }',
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["load"],
+        }),
+      ]),
+    );
+  });
+
   it("does not intervene while the current source has parse errors", () => {
     const evidence = analyzer.analyze(
       episode("export function load() {}", "export function load("),

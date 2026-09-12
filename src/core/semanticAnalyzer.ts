@@ -157,6 +157,24 @@ const collectPublicApiChangeEvidence = (
     });
   }
 
+  for (const [key, previousSignature] of previousSignatures.entries()) {
+    if (currentSignatures.has(key)) {
+      continue;
+    }
+
+    evidence.push({
+      id: buildEvidenceId("public-api-change", key),
+      kind: "public-api-change",
+      severity: "warning",
+      title: "Exported API removed",
+      detail: `Removed the exported signature for ${previousSignature.displayName}.`,
+      source: ANALYZER_SOURCE,
+      confidence: 0.94,
+      range: zeroWidthRangeAtSourceStart(currentSource),
+      references: [previousSignature.displayName],
+    });
+  }
+
   return evidence;
 };
 
@@ -480,12 +498,13 @@ const serializeFunctionLikeSignature = (
     .filter((value) => value.length > 0)
     .join(" ");
   const typeParameters = declaration.typeParameters
-    ?.map((parameter) => parameter.getText(sourceFile))
+    ?.map((parameter) => canonicalizeNodeText(parameter, sourceFile))
     .join(", ");
   const parameters = declaration.parameters
     .map((parameter) => serializeParameter(parameter, sourceFile))
     .join(", ");
-  const returnType = declaration.type?.getText(sourceFile) ?? "void";
+  const returnType =
+    declaration.type === undefined ? "void" : canonicalizeNodeText(declaration.type, sourceFile);
 
   return [
     modifierText,
@@ -499,14 +518,38 @@ const serializeParameter = (
   parameter: ts.ParameterDeclaration,
   sourceFile: ts.SourceFile,
 ): string => {
-  const decorators = parameter.modifiers?.map((modifier) => modifier.getText(sourceFile)) ?? [];
+  const decorators =
+    parameter.modifiers?.map((modifier) => canonicalizeNodeText(modifier, sourceFile)) ?? [];
   const prefix = parameter.dotDotDotToken === undefined ? "" : "...";
   const optional = parameter.questionToken === undefined && parameter.initializer === undefined ? "" : "?";
-  const type = parameter.type?.getText(sourceFile) ?? "unknown";
+  const type = parameter.type === undefined ? "unknown" : canonicalizeNodeText(parameter.type, sourceFile);
 
-  return `${decorators.join(" ")}${decorators.length > 0 ? " " : ""}${prefix}${parameter.name.getText(
+  return `${decorators.join(" ")}${decorators.length > 0 ? " " : ""}${prefix}${canonicalizeNodeText(
+    parameter.name,
     sourceFile,
   )}${optional}: ${type}`;
+};
+
+const canonicalizeNodeText = (node: ts.Node, sourceFile: ts.SourceFile): string => {
+  const text = sourceFile.text.slice(node.getStart(sourceFile), node.getEnd());
+  const scanner = ts.createScanner(
+    sourceFile.languageVersion,
+    true,
+    sourceFile.languageVariant,
+    text,
+  );
+  const tokens: string[] = [];
+
+  while (true) {
+    const token = scanner.scan();
+    if (token === ts.SyntaxKind.EndOfFileToken) {
+      break;
+    }
+
+    tokens.push(scanner.getTokenText());
+  }
+
+  return tokens.join(" ");
 };
 
 const countBranches = (root: ts.Node): number => {
@@ -591,6 +634,15 @@ const rangeForNameNode = (
   name: ts.Node | undefined,
   fallbackNode: ts.Node,
 ): PairRange => rangeForNode(sourceFile, name ?? fallbackNode);
+
+const zeroWidthRangeAtSourceStart = (sourceFile: ts.SourceFile): PairRange => {
+  const position = lineAndCharacter(sourceFile, 0);
+
+  return {
+    start: position,
+    end: position,
+  };
+};
 
 const rangeForNode = (sourceFile: ts.SourceFile, node: ts.Node): PairRange => ({
   start: lineAndCharacter(sourceFile, node.getStart(sourceFile)),
