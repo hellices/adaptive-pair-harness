@@ -1,4 +1,6 @@
 .github/**
+.devcontainer/**
+.vscode/**
 .superpowers/**
 coverage/**
 docs/**

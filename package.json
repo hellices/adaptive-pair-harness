@@ -139,7 +139,7 @@
     "lint": "eslint src test",
     "test": "vitest run --coverage --passWithNoTests",
     "check": "npm run compile && npm run lint && npm run test",
-    "package": "vsce package"
+    "package": "vsce package --allow-missing-repository"
   },
   "dependencies": {
     "typescript": "^5.9.3"
