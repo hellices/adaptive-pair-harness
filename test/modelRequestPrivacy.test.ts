@@ -242,6 +242,70 @@ describe("remote model request privacy", () => {
     expect(serialized).toContain("[REDACTED]");
   });
 
+  it("projects local URIs and absolute paths in every remote text field to hashed labels", () => {
+    const repeatedPath = "/Users/alice/private/workspace/src/shared.ts";
+    const prepared = prepareRemoteModelRequest({
+      goal: `Review ${repeatedPath}`,
+      interactionStyle: "ask-first",
+      evidence: {
+        id: "file:///Users/alice/private/workspace/src/evidence.ts",
+        kind: "new-dependency",
+        severity: "warning",
+        title:
+          "vscode-remote://ssh-remote+production/home/alice/private/title.ts",
+        detail:
+          'import database from "/opt/company/Private Data/database.ts";',
+        source: "C:\\Users\\Alice\\private\\source.ts",
+        confidence: 0.94,
+        range: {
+          start: { line: 1, character: 2 },
+          end: { line: 1, character: 8 },
+        },
+        references: [
+          repeatedPath,
+          "D:/Projects/private/reference.ts",
+          "C:\\Users\\Alice Smith\\private\\reference.ts",
+        ],
+      },
+      context: {
+        userPrompt:
+          "Inspect file:///home/alice/private/prompt.ts without exposing it.",
+        symbol: {
+          name: "/srv/private/symbol.ts",
+          kind: "C:\\private\\SymbolKind",
+          range: {
+            start: { line: 1, character: 0 },
+            end: { line: 3, character: 1 },
+          },
+        },
+      },
+    });
+    const serialized = JSON.stringify(prepared.request);
+    const projectedLabels =
+      serialized.match(/\[local-resource:[a-f0-9]{16}\]/gu) ?? [];
+
+    expect(prepared.sensitiveDataDetected).toBe(true);
+    expect(projectedLabels.length).toBeGreaterThanOrEqual(10);
+    expect(prepared.request.goal.match(/\[local-resource:[a-f0-9]{16}\]/u)?.[0])
+      .toBe(prepared.request.evidence.references[0]);
+    for (const localFragment of [
+      "file://",
+      "vscode-remote://",
+      "/Users/alice",
+      "/home/alice",
+      "/opt/company",
+      " Data/database.ts",
+      "/srv/private",
+      "C:\\\\Users",
+      "C:\\\\private",
+      "D:/Projects",
+      " Smith\\\\private",
+      "ssh-remote+production",
+    ]) {
+      expect(serialized).not.toContain(localFragment);
+    }
+  });
+
   it("marks sensitive automatic evidence for local-only handling", () => {
     const prepared = prepareRemoteModelRequest({
       goal: "Ask about this edit.",

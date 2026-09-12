@@ -153,6 +153,9 @@ How it works today:
 
 - Inline guidance is rendered as a **preview Comment Thread** in the editor.
 - The thread is navigator-only and does **not** include a reply box.
+- Questions and evidence metadata are appended through
+  `MarkdownString.appendText`; only extension-owned labels and the
+  navigator-only notice are interpreted as Markdown.
 - `@pair` reads the same shared session/evidence state as the inline question;
   it does not create a separate hidden chat-specific session.
 - Use `@pair /why` to expand the latest inline question.
@@ -179,8 +182,12 @@ rule-based question from the selected evidence.
 
 Uses the **official VS Code Language Model API** (`vendor: copilot`).
 Automatic inline requests require Copilot model access to already be available.
-If Copilot is unavailable, access is denied, or access still requires a
-user-initiated action, Adaptive Pair falls back to the local template.
+Candidate models are tried in order when one is unavailable or lacks
+permission. Each candidate is token-counted and admitted against its own budget
+reservation before dispatch; blocked or unknown failures surface immediately.
+If every candidate is unavailable, access is denied, access still requires a
+user-initiated action, or a later candidate is over budget, Adaptive Pair falls
+back to the local template.
 
 ### `openai-compatible`
 
@@ -209,6 +216,8 @@ See the repository documentation for the full configuration reference:
   query values, quoted JSON/assignment values, long base64/base64url values,
   and complete Basic/Bearer authorization payloads. Credential-bearing
   automatic evidence stays local.
+- Local `file:`/`vscode-remote:` URIs and absolute POSIX, Windows, and import
+  paths become deterministic hashed labels in every remote text field.
 - The latest local inline question is **not** forwarded back to remote chat
   providers.
 - Token budgets are enforced per 10-minute window and survive configuration or
@@ -230,6 +239,8 @@ See the repository documentation for the full configuration reference:
   cancellation at the display boundary is best effort, while the budget
   retains conservative accounting.
 - OpenAI-compatible requests also use a deadline and a bounded response body.
+  Rejected status and size-limit paths cancel the body before returning the
+  primary provider error; a cancellation failure is retained as its cause.
 - If a remote request would exceed the budget, Adaptive Pair falls back to the
   local template for that intervention.
 

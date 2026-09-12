@@ -73,6 +73,13 @@ export class CopilotModelResponseError extends Error {
   }
 }
 
+export interface PreparedCopilotCandidates {
+  next(
+    previousUnavailable?: CopilotModelUnavailableError,
+  ): Promise<PreparedModelDispatch>;
+  dispose(): void;
+}
+
 export const buildCopilotPrompt = (request: ModelRequest): string =>
   [
     "You are an ask-first programming pair. Ask one concise question grounded only in the structured evidence.",
@@ -115,15 +122,28 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
     signal: AbortSignal,
     userInitiated: boolean,
   ): Promise<ModelResponse> {
-    const dispatch = await this.prepareInternal(
+    const candidates = await this.prepareCandidates(
       request,
       signal,
-      userInitiated,
+      { userInitiated },
     );
     try {
-      return await dispatch.send();
+      let previousUnavailable: CopilotModelUnavailableError | undefined;
+      for (;;) {
+        const dispatch = await candidates.next(previousUnavailable);
+        previousUnavailable = undefined;
+        try {
+          return await dispatch.send();
+        } catch (error: unknown) {
+          if (!(error instanceof CopilotModelUnavailableError)) {
+            throw error;
+          }
+          signal.throwIfAborted();
+          previousUnavailable = error;
+        }
+      }
     } finally {
-      dispatch.dispose();
+      candidates.dispose();
     }
   }
 
@@ -132,6 +152,29 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
     signal: AbortSignal,
     userInitiated: boolean,
   ): Promise<PreparedModelDispatch> {
+    const candidates = await this.prepareCandidates(
+      request,
+      signal,
+      { userInitiated },
+    );
+    try {
+      const dispatch = await candidates.next();
+      return {
+        inputTokens: dispatch.inputTokens,
+        send: dispatch.send,
+        dispose: candidates.dispose,
+      };
+    } catch (error: unknown) {
+      candidates.dispose();
+      throw error;
+    }
+  }
+
+  public async prepareCandidates(
+    request: ModelRequest,
+    signal: AbortSignal,
+    options: ModelPreparationOptions = {},
+  ): Promise<PreparedCopilotCandidates> {
     const cancellation = this.api.createCancellationTokenSource();
     const cancelRequest = (): void => {
       cancellation.cancel();
@@ -158,40 +201,70 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
         false,
       );
       signal.throwIfAborted();
-      const model = models[0];
-      if (model === undefined) {
-        throw new CopilotModelUnavailableError("no-model");
-      }
-
-      const access = this.api.canSendRequest(model);
-      if (!userInitiated && access !== true) {
-        throw new CopilotModelUnavailableError(
-          access === false ? "access-denied" : "consent-required",
-        );
-      }
-
       const prompt = buildCopilotPrompt(request);
       const maxOutputTokens = normalizeTokenCount(
         request.maxOutputTokens ?? 180,
       );
-      const inputTokens = normalizeTokenCount(
-        await this.callAndMapUnavailable(
-          () => this.api.countTokens(model, prompt, cancellation),
-          false,
-        ),
-      );
-      signal.throwIfAborted();
+      let candidateIndex = 0;
+      let lastUnavailable: CopilotModelUnavailableError | undefined;
       return {
-        inputTokens,
-        send: () =>
-          this.sendPrepared(
-            model,
-            prompt,
-            maxOutputTokens,
-            inputTokens,
-            signal,
-            cancellation,
-          ),
+        next: async (previousUnavailable) => {
+          if (previousUnavailable !== undefined) {
+            lastUnavailable = previousUnavailable;
+          }
+          while (candidateIndex < models.length) {
+            signal.throwIfAborted();
+            const model = models[candidateIndex];
+            candidateIndex += 1;
+            if (model === undefined) {
+              continue;
+            }
+
+            const access = this.api.canSendRequest(model);
+            if (
+              access === false ||
+              (options.userInitiated !== true && access !== true)
+            ) {
+              lastUnavailable = new CopilotModelUnavailableError(
+                access === false ? "access-denied" : "consent-required",
+              );
+              continue;
+            }
+
+            let inputTokens: number;
+            try {
+              inputTokens = normalizeTokenCount(
+                await this.callAndMapUnavailable(
+                  () => this.api.countTokens(model, prompt, cancellation),
+                  false,
+                ),
+              );
+            } catch (error: unknown) {
+              if (!(error instanceof CopilotModelUnavailableError)) {
+                throw error;
+              }
+              lastUnavailable = error;
+              continue;
+            }
+            signal.throwIfAborted();
+            return {
+              inputTokens,
+              send: () =>
+                this.sendPrepared(
+                  model,
+                  prompt,
+                  maxOutputTokens,
+                  inputTokens,
+                  signal,
+                  cancellation,
+                ),
+              dispose: () => undefined,
+            };
+          }
+          throw (
+            lastUnavailable ?? new CopilotModelUnavailableError("no-model")
+          );
+        },
         dispose,
       };
     } catch (error: unknown) {

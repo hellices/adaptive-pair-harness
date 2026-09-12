@@ -43,7 +43,9 @@ project changes.
    aggregator.
 6. **Episode analysis** returns an explicit stable/unstable result. Unstable
    edits produce no intervention and do not replace the last-stable baseline;
-   the next stable edit is compared with that baseline.
+   the next stable edit is compared with that baseline. If no stable snapshot
+   has ever been retained, the first stable edit uses the episode's actual
+   `previousText` rather than comparing the document with itself.
 7. **Policy evaluation** picks the highest-priority eligible evidence and
    respects confidence thresholds and rendered-intervention cooldown.
    Runtime-owned rolling budget admission occurs immediately before dispatch.
@@ -93,6 +95,9 @@ The analyzer does not currently:
    - `active`: 0.55
 2. **Cooldown**: the same privacy-safe, module-qualified evidence ID is not
    resurfaced for 30 seconds after a successful render. Stop clears cooldown.
+   Diagnostic identities use a URI hash, complete range, source/code hash, and
+   bounded message hash, so list reordering does not bypass cooldown or a
+   persisted dismissal.
 3. **Budget**: remote-capable styles reserve input and output capacity inside a
    rolling 10-minute window. Budget state is hoisted across runtime rebuilds,
    Copilot counts the exact prepared prompt with the selected model before
@@ -129,8 +134,10 @@ Remote-capable providers receive a sanitized `ModelRequest` shape:
   - bounded `userPrompt`
   - bounded symbol identity and symbol range
 
-One central redaction policy covers all of these string fields. Credential-like
-automatic evidence is kept local rather than sent after redaction.
+One central redaction policy covers all of these string fields. It replaces
+local `file:`/`vscode-remote:` URIs and absolute POSIX, Windows, and import paths
+with deterministic hashed labels. Credential- or local-path-bearing automatic
+evidence is kept local rather than sent after projection.
 
 ### Provider behavior
 
@@ -138,17 +145,22 @@ automatic evidence is kept local rather than sent after redaction.
   zero remote tokens
 - **Official VS Code Copilot**: uses the VS Code language model API and falls
   back locally when no model is available, access is denied, or proactive access
-  is unavailable. The selected model counts the prepared prompt before budget
-  reservation and dispatch. The request passes the supported `max_tokens`
-  model option; streamed display is bounded with the same model's official
-  `countTokens` API and cancellation. VS Code does not guarantee a
-  provider-side generation or billing hard limit, so observed over-boundary
-  fragments are conservatively accounted.
+  is unavailable. Candidates advance only after unavailable/no-permission
+  failures; blocked, cancelled, and unknown failures surface. Every candidate
+  counts the exact prepared prompt and receives its own runtime-owned
+  reservation before dispatch, and iteration stops on lifecycle cancellation
+  or budget denial. The request passes the supported `max_tokens` model option;
+  streamed display is bounded with that candidate's official `countTokens` API
+  and cancellation. VS Code does not guarantee a provider-side generation or
+  billing hard limit, so observed over-boundary fragments are conservatively
+  accounted.
 - **OpenAI-compatible**: posts JSON to `/chat/completions` at the configured
   safe base URL, optionally with an origin-bound bearer token from
   `SecretStorage`; requests have a deadline, 64 KiB response cap, and a
   completion-token cap. Input admission uses a conservative UTF-8 byte estimate
-  of the serialized body. Blank output is rejected, and output accounting uses
+  of the serialized body. Non-success and pre-read/streamed size rejection
+  cancel the response body first; cancellation failure is attached to the
+  primary provider error. Blank output is rejected, and output accounting uses
   the greater of reported completion usage and a conservative UTF-8 byte bound.
 
 ## Inline rendering lifecycle
@@ -161,6 +173,8 @@ Adaptive Pair owns one preview comment thread per file URI.
 - stopping the session clears all transient inline state;
 - cooldown begins only after thread creation succeeds;
 - threads are preview-only (`canReply = false`) and direct follow-up to `@pair`.
+- dynamic question, title, detail, source, and reference values use
+  `MarkdownString.appendText`; only fixed extension copy is Markdown.
 
 The inline message always reminds the user that Adaptive Pair has **not changed
 code**.
@@ -180,7 +194,9 @@ Instead, it reads the shared Pair snapshot containing:
 That is why `@pair /why` expands the latest inline question rather than
 reconstructing unrelated state. The local provider has distinct `/why` and
 `/explain` summaries. Local `/trace` discloses only the resolved symbol/range
-and explicitly declines to fabricate deeper flow analysis.
+and explicitly declines to fabricate deeper flow analysis. When symbol
+providers return nested or flat results in arbitrary order, the smallest range
+containing the evidence position is selected.
 
 Every runtime claim and evidence publication advances an opaque monotonic
 shared-context revision. Chat captures that revision before asynchronous symbol

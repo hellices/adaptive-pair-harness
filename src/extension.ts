@@ -4,7 +4,6 @@ import {
   canonicalEndpointOrigin,
   readPairConfig,
 } from "./config/pairConfig";
-import type { ModelSymbolContext } from "./core/modelRouter";
 import { PairMemoryStore } from "./core/memoryStore";
 import type { KeyValueStore } from "./core/memoryStore";
 import type { PairRange } from "./core/types";
@@ -24,6 +23,7 @@ import type {
   VsCodeLanguageModelApi,
   VsCodeRequestCancellation,
 } from "./vscode/vsCodeLanguageModelProvider";
+import { findCurrentSymbol } from "./vscode/symbolContext";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const sharedContext = new PairSharedContext({
@@ -505,66 +505,6 @@ const evidencePosition = (
   );
   return new vscode.Position(line, character);
 };
-
-const findCurrentSymbol = (
-  symbols: readonly (vscode.DocumentSymbol | vscode.SymbolInformation)[],
-  documentUri: vscode.Uri,
-  position: vscode.Position,
-): ModelSymbolContext | undefined => {
-  const candidates: Array<{
-    readonly name: string;
-    readonly kind: vscode.SymbolKind;
-    readonly range: vscode.Range;
-  }> = [];
-
-  const collectDocumentSymbol = (symbol: vscode.DocumentSymbol): void => {
-    if (!symbol.range.contains(position)) {
-      return;
-    }
-    candidates.push(symbol);
-    for (const child of symbol.children) {
-      collectDocumentSymbol(child);
-    }
-  };
-
-  for (const symbol of symbols) {
-    if (isDocumentSymbol(symbol)) {
-      collectDocumentSymbol(symbol);
-    } else if (
-      symbol.location.uri.toString() === documentUri.toString() &&
-      symbol.location.range.contains(position)
-    ) {
-      candidates.push({
-        name: symbol.name,
-        kind: symbol.kind,
-        range: symbol.location.range,
-      });
-    }
-  }
-
-  const current = candidates.at(-1);
-  if (current === undefined) {
-    return undefined;
-  }
-  return {
-    name: current.name,
-    kind: vscode.SymbolKind[current.kind] ?? String(current.kind),
-    range: {
-      start: {
-        line: current.range.start.line,
-        character: current.range.start.character,
-      },
-      end: {
-        line: current.range.end.line,
-        character: current.range.end.character,
-      },
-    },
-  };
-};
-
-const isDocumentSymbol = (
-  symbol: vscode.DocumentSymbol | vscode.SymbolInformation,
-): symbol is vscode.DocumentSymbol => "selectionRange" in symbol;
 
 const isOfficialVsCodeCancellationError = (error: unknown): boolean =>
   error instanceof vscode.CancellationError ||

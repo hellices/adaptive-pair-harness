@@ -920,12 +920,11 @@ const collectComplexityRecords = (
         });
       }
     } else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
-      const initializer = node.initializer;
+      const initializer = unwrapFunctionExpression(node.initializer);
       const identity = variableFunctionIdentity(node);
       if (
         initializer !== undefined &&
-        identity !== undefined &&
-        isFunctionExpressionLike(initializer)
+        identity !== undefined
       ) {
         records.set(`function:${identity.key}`, {
           key: `function:${identity.key}`,
@@ -1048,8 +1047,8 @@ const enclosingScopeIdentity = (node: ts.Node | undefined): SubjectIdentity | un
     }
 
     if (ts.isVariableDeclaration(current)) {
-      const initializer = current.initializer;
-      if (initializer !== undefined && isFunctionExpressionLike(initializer)) {
+      const initializer = unwrapFunctionExpression(current.initializer);
+      if (initializer !== undefined) {
         return variableFunctionIdentity(current);
       }
     }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   InlinePairController,
   buildInlineCommentMarkdown,
@@ -21,20 +21,110 @@ const evidence: Evidence = {
   references: ["./repository", "dependency policy"],
 };
 
+const createTestMarkdown = (value: string): vscode.MarkdownString => {
+  const markdown = {
+    value,
+    appendText(text: string) {
+      this.value += text;
+      return this;
+    },
+    appendMarkdown(text: string) {
+      this.value += text;
+      return this;
+    },
+  };
+  return markdown as unknown as vscode.MarkdownString;
+};
+
 describe("inline pair comment", () => {
   it("renders evidence provenance, Markdown references, and navigator-only notice", () => {
-    const markdown = buildInlineCommentMarkdown(
+    const rendered = buildInlineCommentMarkdown(
+      createTestMarkdown,
       "Did you intend this dependency?",
       evidence,
     );
 
-    expect(markdown).toContain("Did you intend this dependency?");
-    expect(markdown).toContain(
+    expect(rendered.value).toContain("Did you intend this dependency?");
+    expect(rendered.value).toContain("**Finding:** New dependency introduced");
+    expect(rendered.value).toContain(
+      "Imported a new module dependency: ./repository.",
+    );
+    expect(rendered.value).toContain(
       "**Evidence:** typescript-semantic-analyzer · confidence 94%",
     );
-    expect(markdown).toContain("- `./repository`");
-    expect(markdown).toContain("- `dependency policy`");
-    expect(markdown).toContain("Adaptive Pair has not changed code.");
+    expect(rendered.value).toContain("- ./repository");
+    expect(rendered.value).toContain("- dependency policy");
+    expect(rendered.value).toContain("Adaptive Pair has not changed code.");
+  });
+
+  it("appends every dynamic field as escaped text instead of raw Markdown", () => {
+    const appendedText: string[] = [];
+    const appendedMarkdown: string[] = [];
+    const initialValues: string[] = [];
+    const markdown = {
+      appendText: vi.fn((value: string) => {
+        appendedText.push(value);
+        return markdown;
+      }),
+      appendMarkdown: vi.fn((value: string) => {
+        appendedMarkdown.push(value);
+        return markdown;
+      }),
+    } as unknown as vscode.MarkdownString;
+    const controller = {
+      createCommentThread: (
+        _uri: vscode.Uri,
+        _range: vscode.Range,
+        comments: readonly vscode.Comment[],
+      ) => ({
+        canReply: false,
+        label: undefined,
+        comments,
+        dispose: () => undefined,
+      }),
+      dispose: () => undefined,
+    } as unknown as vscode.CommentController;
+    const inline = new InlinePairController({
+      controller,
+      createMarkdown: (value) => {
+        initialValues.push(value);
+        return markdown;
+      },
+      previewMode: 0 as vscode.CommentMode,
+    });
+    const maliciousEvidence: Evidence = {
+      ...evidence,
+      title: "[Spoofed finding](command:workbench.action.closeWindow)",
+      detail: "<img src=x onerror=alert(1)>",
+      source: "**trusted**",
+      references: [
+        "[Open command](command:workbench.action.openSettings)",
+        "`break-out` **bold**",
+      ],
+    };
+
+    inline.render(
+      { toString: () => "file:///safe.ts" } as vscode.Uri,
+      {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 1 },
+      } as vscode.Range,
+      "[Question](command:workbench.action.reloadWindow)",
+      maliciousEvidence,
+    );
+
+    expect(initialValues).toEqual([""]);
+    expect(appendedText).toEqual([
+      "[Question](command:workbench.action.reloadWindow)",
+      maliciousEvidence.title,
+      maliciousEvidence.detail,
+      maliciousEvidence.source,
+      ...maliciousEvidence.references,
+    ]);
+    expect(appendedMarkdown.join("")).not.toContain(
+      "command:workbench.action",
+    );
+    expect(appendedMarkdown.join("")).not.toContain("<img");
   });
 
   it("disposes only the closed URI's active Comment Thread", () => {
@@ -52,7 +142,7 @@ describe("inline pair comment", () => {
     } as unknown as vscode.CommentController;
     const inline = new InlinePairController({
       controller,
-      createMarkdown: (value) => value as unknown as vscode.MarkdownString,
+      createMarkdown: createTestMarkdown,
       previewMode: 0 as vscode.CommentMode,
     });
     const range = {
@@ -90,7 +180,7 @@ describe("inline pair comment", () => {
     } as unknown as vscode.CommentController;
     const inline = new InlinePairController({
       controller,
-      createMarkdown: (value) => value as unknown as vscode.MarkdownString,
+      createMarkdown: createTestMarkdown,
       previewMode: 0 as vscode.CommentMode,
     });
     const range = {

@@ -663,3 +663,96 @@
   third-party OpenAI-compatible service were not exercised in this
   non-interactive environment. Existing mocked adapter and lifecycle tests
   cover the changed boundaries.
+
+---
+
+## GitHub Copilot Re-review Findings Follow-up
+
+- Date: 2026-09-13
+- Binding input: `.superpowers/sdd/copilot-rereview-findings.md`
+- Status: **COMPLETE — all published and suppressed findings addressed**
+
+### Corrections implemented
+
+- Inline comments now construct a VS Code `MarkdownString` incrementally.
+  Dynamic question, title, detail, source, and reference values pass only
+  through `appendText`; Markdown formatting is limited to fixed extension copy.
+- Diagnostic evidence IDs no longer include list indexes or raw URIs. They use
+  a URI hash, complete range, source/code hash, and bounded message digest, so
+  reordering unrelated diagnostics preserves dismissal and cooldown identity.
+- Central remote projection replaces local `file:`/`vscode-remote:` URIs and
+  absolute POSIX, Windows, UNC, and quoted import paths—including paths with
+  spaces—with deterministic hashed labels in every request text field.
+- OpenAI-compatible non-success, oversized `Content-Length`, and streamed
+  overflow paths cancel the response body before rejection. If cancellation
+  fails, the original status/size error remains primary and carries the cleanup
+  failure as its `cause`.
+- Complexity identity recognizes wrapped arrow initializers and starts parent
+  scope discovery above the current variable declaration, keeping same-named
+  nested arrows distinct.
+- Symbol resolution now selects the smallest containing range across nested
+  `DocumentSymbol` and flat `SymbolInformation` results without relying on
+  provider ordering.
+- When a document has no retained stable snapshot, the first stable episode is
+  compared with `episode.previousText`.
+- Copilot candidate iteration covers access checks, exact candidate token
+  counts, requests, and stream consumption. Only unavailable/no-permission
+  failures advance; blocked, cancelled, and unknown failures surface. Each
+  dispatched candidate has a separate runtime-owned reservation, and lifecycle
+  cancellation or budget denial prevents later dispatch.
+- README, configuration guidance, and architecture documentation now describe
+  the rendering, privacy, cleanup, selection, and budget behavior.
+
+### TDD evidence
+
+- Malicious Markdown: 1 expected failure showed the raw interpolated payload;
+  the test passed after `appendText` rendering.
+- Diagnostic ordering: 1 expected failure exposed both the raw URI and
+  index-coupled identity; the reordered diagnostic remained dismissed after
+  the fix.
+- Local resource projection: 1 expected failure covered every remote field.
+  Self-review added another expected failure for quoted/standalone paths with
+  spaces before extending the projector.
+- Response cleanup: 3 expected failures covered non-2xx cancellation,
+  pre-read size rejection, and cleanup-error causality; streamed overflow was
+  retained as a passing cancellation regression.
+- Nested arrows: the direct-arrow probe confirmed existing behavior; a wrapped
+  nested-arrow regression then failed and passed after shared unwrapping was
+  applied to scope identity.
+- Symbol specificity: 2 expected failures covered unsorted nested and flat
+  symbol results.
+- First stable edit: 1 expected failure reproduced invalid-to-stable baseline
+  loss.
+- Copilot candidates: 4 provider regressions failed for unavailable
+  access/count/request and cancellation behavior; 1 runtime regression failed
+  before per-candidate budget ownership. The over-budget no-dispatch regression
+  also passed with the final loop.
+- Focused final run: **7 files, 206 tests passed**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **17 files, 310 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 87.94%, branches 78.84%, functions 91.57%, lines 88.09%
+- `npm run package`: **PASS**
+- `npm audit`: **PASS — 0 vulnerabilities**
+- VSIX inspection: **156 files**
+  - compiled `symbolContext` and runtime output are present;
+  - source, tests, coverage, private review material, source maps, and
+    workspace/CI files are excluded.
+- `git diff --check`: **PASS**
+- Production and packaged secret-value scans: **PASS**
+- Packaged repository/bugs/homepage fake-URL scan: **PASS**
+- Changed-file self-review found and fixed the spaced-path projection gap; no
+  remaining high-confidence correctness, privacy, lifecycle, or budget issue
+  was found.
+
+### Residual concerns
+
+- Official Copilot consent/UI behavior, Command Palette interaction, and a live
+  third-party OpenAI-compatible service were not exercised in this
+  non-interactive environment. Provider, lifecycle, cleanup, and budget
+  boundaries are covered by focused contract tests.

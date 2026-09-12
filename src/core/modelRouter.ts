@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Evidence, PairRange } from "./types";
 import { requireSafeRemoteEndpoint } from "./remoteEndpoint";
 
@@ -229,8 +230,12 @@ export class OpenAICompatibleProvider implements ModelProvider {
       });
 
       if (!response.ok) {
-        throw new Error(
+        const responseError = new Error(
           `OpenAI-compatible provider returned ${response.status} ${response.statusText}`.trim(),
+        );
+        await throwAfterResponseCleanup(
+          responseError,
+          async () => response.body?.cancel(),
         );
       }
 
@@ -586,6 +591,15 @@ const isSensitiveKey = (key: string): boolean => {
   );
 };
 const URI_PATTERN = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s<>"'`]+/gu;
+const QUOTED_WINDOWS_ABSOLUTE_PATH_PATTERN =
+  /(["'])([A-Za-z]:[\\/][^"'`\r\n]+)\1/gu;
+const QUOTED_POSIX_ABSOLUTE_PATH_PATTERN = /(["'])(\/[^"'`\r\n]+)\1/gu;
+const WINDOWS_ABSOLUTE_PATH_PATTERN =
+  /(^|[\s("'`=\x5b{}]|:(?!\/\/))([A-Za-z]:[\\/][^\s"'`<>()[\]{}]+)/gu;
+const WINDOWS_UNC_PATH_PATTERN =
+  /(^|[\s("'`=\x5b{}]|:(?!\/\/))(\\\\[^\s"'`<>()[\]{}]+)/gu;
+const POSIX_ABSOLUTE_PATH_PATTERN =
+  /(^|[\s("'`=\x5b{}]|:(?!\/\/))(\/[^\s"'`<>()[\]{}]+)/gu;
 const HEADER_LINE_PATTERN = /[^\r\n]+/gu;
 const HEADER_KEY_PATTERN =
   /\b([A-Za-z][A-Za-z0-9_.-]*)([ \t]*:[ \t]*)/gu;
@@ -612,6 +626,10 @@ const sanitizeRemoteText = (
   let sanitized = value.replace(URI_PATTERN, (candidate) => {
     try {
       const parsed = new URL(candidate);
+      if (parsed.protocol === "file:" || parsed.protocol === "vscode-remote:") {
+        sensitiveDataDetected = true;
+        return localResourceLabel(candidate);
+      }
       let changed = false;
       if (parsed.username.length > 0 || parsed.password.length > 0) {
         parsed.username = "";
@@ -635,6 +653,9 @@ const sanitizeRemoteText = (
       return candidate;
     }
   });
+  const pathProjection = projectAbsolutePaths(sanitized);
+  sanitized = pathProjection.value;
+  sensitiveDataDetected ||= pathProjection.sensitiveDataDetected;
 
   const redact = (pattern: RegExp, replacement: string): void => {
     pattern.lastIndex = 0;
@@ -745,6 +766,60 @@ const sanitizeRemoteText = (
   };
 };
 
+const projectAbsolutePaths = (value: string): SanitizedValue<string> => {
+  let sensitiveDataDetected = false;
+  const trimmed = value.trim();
+  if (
+    /^[A-Za-z]:[\\/]/u.test(trimmed) ||
+    /^\\\\/u.test(trimmed) ||
+    (/^\//u.test(trimmed) && !/^\/\//u.test(trimmed))
+  ) {
+    return {
+      value: value.replace(trimmed, localResourceLabel(trimmed)),
+      sensitiveDataDetected: true,
+    };
+  }
+
+  const replacePath = (
+    _candidate: string,
+    prefix: string,
+    path: string,
+  ): string => {
+    sensitiveDataDetected = true;
+    const match = /^(.*?)([.,;:!?]+)?$/u.exec(path);
+    const resource = match?.[1] ?? path;
+    const punctuation = match?.[2] ?? "";
+    return `${prefix}${localResourceLabel(resource)}${punctuation}`;
+  };
+  const replaceQuotedPath = (
+    _candidate: string,
+    quote: string,
+    path: string,
+  ): string => {
+    sensitiveDataDetected = true;
+    return `${quote}${localResourceLabel(path)}${quote}`;
+  };
+
+  let projected = value.replace(
+    QUOTED_WINDOWS_ABSOLUTE_PATH_PATTERN,
+    replaceQuotedPath,
+  );
+  projected = projected.replace(
+    QUOTED_POSIX_ABSOLUTE_PATH_PATTERN,
+    replaceQuotedPath,
+  );
+  projected = projected.replace(WINDOWS_ABSOLUTE_PATH_PATTERN, replacePath);
+  projected = projected.replace(WINDOWS_UNC_PATH_PATTERN, replacePath);
+  projected = projected.replace(POSIX_ABSOLUTE_PATH_PATTERN, replacePath);
+  return { value: projected, sensitiveDataDetected };
+};
+
+const localResourceLabel = (value: string): string =>
+  `[local-resource:${createHash("sha256")
+    .update(value.replaceAll("\\", "/"), "utf8")
+    .digest("hex")
+    .slice(0, 16)}]`;
+
 export const sanitizePersistentText = (
   value: string,
   maxLength: number,
@@ -829,8 +904,11 @@ const readBoundedResponseText = async (
     Number.isFinite(Number(contentLength)) &&
     Number(contentLength) > maxResponseBytes
   ) {
-    throw new Error(
-      "OpenAI-compatible provider exceeded the response size limit.",
+    await throwAfterResponseCleanup(
+      new Error(
+        "OpenAI-compatible provider exceeded the response size limit.",
+      ),
+      async () => response.body?.cancel(),
     );
   }
   if (response.body === null) {
@@ -845,15 +923,42 @@ const readBoundedResponseText = async (
   while (!chunk.done) {
     byteCount += chunk.value.byteLength;
     if (byteCount > maxResponseBytes) {
-      await reader.cancel();
-      throw new Error(
-        "OpenAI-compatible provider exceeded the response size limit.",
+      await throwAfterResponseCleanup(
+        new Error(
+          "OpenAI-compatible provider exceeded the response size limit.",
+        ),
+        async () => {
+          try {
+            await reader.cancel();
+          } finally {
+            reader.releaseLock();
+          }
+        },
       );
     }
     text += decoder.decode(chunk.value, { stream: true });
     chunk = await reader.read();
   }
   return text + decoder.decode();
+};
+
+const throwAfterResponseCleanup = async (
+  primaryError: Error,
+  cleanup: () => PromiseLike<unknown> | undefined,
+): Promise<never> => {
+  try {
+    await cleanup();
+  } catch (cleanupFailure: unknown) {
+    try {
+      Object.defineProperty(primaryError, "cause", {
+        configurable: true,
+        value: cleanupFailure,
+      });
+    } catch {
+      throw new Error(primaryError.message, { cause: cleanupFailure });
+    }
+  }
+  throw primaryError;
 };
 
 const isOpenAICompatibleSuccessPayload = (

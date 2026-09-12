@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Evidence, PairRange } from "../core/types";
 import type { SemanticAnalysisResult } from "../core/semanticAnalyzer";
 
@@ -466,6 +467,30 @@ export const diagnosticCodeReference = (
   }
   return [String(typeof code === "object" ? code.value : code)];
 };
+
+export const stableDiagnosticEvidenceId = (
+  uri: string,
+  range: PairRange,
+  source: string,
+  codeReferences: readonly string[],
+  message: string,
+): string => {
+  const uriHash = boundedSha256(uri);
+  const sourceAndCodeHash = boundedSha256(
+    `${source}\u0000${codeReferences.join("\u0000")}`,
+  );
+  const messageHash = boundedSha256(message);
+  return [
+    "diagnostic",
+    uriHash,
+    `${range.start.line}:${range.start.character}-${range.end.line}:${range.end.character}`,
+    sourceAndCodeHash,
+    messageHash,
+  ].join(":");
+};
+
+const boundedSha256 = (value: string): string =>
+  createHash("sha256").update(value, "utf8").digest("hex").slice(0, 16);
 
 interface RepositoryUri {
   toString(): string;

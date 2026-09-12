@@ -91,8 +91,12 @@ Implementation notes for this slice:
 - User-initiated actions such as `@pair /why` or **Adaptive Pair: Review Current
   Block** are allowed to attempt the official request path even when proactive
   access is not yet available.
-- If no model is available, access is denied, or the request cannot proceed,
-  Adaptive Pair falls back to `local-template` and surfaces that in status.
+- Candidate models advance only for unavailable or no-permission failures.
+  Blocked and unknown failures surface; cancellation stops iteration. Each
+  candidate is counted and admitted separately before it can dispatch.
+- If no candidate is available, access is denied, or candidate admission
+  exhausts the budget, Adaptive Pair falls back to `local-template` and
+  surfaces that in status.
 
 ### `openai-compatible`
 
@@ -116,7 +120,8 @@ userinfo, a raw `?` or `#` delimiter (even with no value), ASCII whitespace or
 control characters, or a non-HTTP(S) scheme are rejected before URL
 normalization. A valid path prefix such as `/v1` is retained when
 `chat/completions` is joined. Requests time out after 15 seconds and response
-bodies are capped at 64 KiB.
+bodies are capped at 64 KiB. Non-success and oversized responses are cancelled
+before rejection; cleanup failures are attached to the primary provider error.
 
 ## Exact data sent for a remote request
 
@@ -144,9 +149,11 @@ All string fields pass through the same suppression/redaction policy. It
 handles HTTP and non-HTTP DSN userinfo, sensitive query parameters, bearer/JWT
 and common token formats, complete Basic authorization payloads, quoted JSON
 keys and quoted or unquoted credential assignments, control characters, and
-long base64/base64url or opaque secret-like values. If an automatic
-intervention contains possible credential material, no remote provider is
-called; the local template is used instead.
+long base64/base64url or opaque secret-like values. Local `file:` and
+`vscode-remote:` URIs plus absolute POSIX, Windows, and import paths become
+deterministic hashed labels in every remote text field. If an automatic
+intervention contains possible credential or local-path material, no remote
+provider is called; the local template is used instead.
 
 ### Diagnostic sanitization
 
@@ -181,9 +188,9 @@ Budgets are enforced over a rolling 10-minute window.
 
 Behavior:
 
-- before reservation, Copilot input is counted with the selected model's
-  official `countTokens` API, while OpenAI-compatible input uses a conservative
-  UTF-8 byte estimate of the exact serialized request body;
+- before reservation, each eligible Copilot candidate is counted with that
+  model's official `countTokens` API, while OpenAI-compatible input uses a
+  conservative UTF-8 byte estimate of the exact serialized request body;
 - each request atomically reserves up to its 180-token output allowance before
   dispatch, so concurrent calls cannot reuse pending capacity;
 - OpenAI-compatible requests send `max_tokens`, reject blank output, reject
@@ -198,8 +205,9 @@ Behavior:
   cancellation are best effort, and conservative accounting can exceed the
   reserved allowance when an already-received fragment crosses it;
 - reservations and usage survive configuration and API-key runtime rebuilds;
-- Copilot selection, consent, and input-count failures occur before reservation;
-  an owned reservation is released only when the provider proves that no
+- Copilot selection, consent, and input-count failures occur before reservation.
+  Unavailable/no-permission candidates may advance; every dispatched candidate
+  owns a separate reservation, released only when the provider proves no
   request was sent;
 - if a remote request would exceed call or token limits, the current
   intervention falls back to `local-template`;

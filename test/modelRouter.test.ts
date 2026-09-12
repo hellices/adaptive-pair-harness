@@ -258,6 +258,77 @@ describe("model routing", () => {
     );
   });
 
+  it.each([
+    ["non-2xx status", 503, undefined, 100],
+    ["oversized content-length", 200, "200", 100],
+    ["oversized streamed body", 200, undefined, 5],
+  ])(
+    "cancels the response stream before rejecting a %s response",
+    async (_scenario, status, contentLength, maxResponseBytes) => {
+      let cancellationCount = 0;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("response body"));
+        },
+        cancel() {
+          cancellationCount += 1;
+        },
+      });
+      const fetchImplementation: typeof fetch = async () =>
+        new Response(body, {
+          status,
+          ...(contentLength === undefined
+            ? {}
+            : { headers: { "content-length": contentLength } }),
+        });
+      const provider = new OpenAICompatibleProvider({
+        baseUrl: new URL("http://localhost:11434/v1"),
+        model: "qwen2.5-coder:7b",
+        fetch: fetchImplementation,
+        maxResponseBytes,
+      });
+
+      await expect(
+        provider.generate(request, new AbortController().signal),
+      ).rejects.toThrow(
+        status === 503 ? "returned 503" : "response size limit",
+      );
+      expect(cancellationCount).toBe(1);
+    },
+  );
+
+  it("retains the provider error and attaches response cancellation failure as its cause", async () => {
+    const cleanupFailure = new Error("stream cancellation failed");
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("service unavailable"));
+      },
+      cancel() {
+        throw cleanupFailure;
+      },
+    });
+    const fetchImplementation: typeof fetch = async () =>
+      new Response(body, {
+        status: 503,
+        statusText: "Service Unavailable",
+      });
+    const provider = new OpenAICompatibleProvider({
+      baseUrl: new URL("http://localhost:11434/v1"),
+      model: "qwen2.5-coder:7b",
+      fetch: fetchImplementation,
+    });
+
+    const error: unknown = await provider
+      .generate(request, new AbortController().signal)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toMatchObject({
+      message: "OpenAI-compatible provider returned 503 Service Unavailable",
+      cause: cleanupFailure,
+    });
+  });
+
   it("rejects unsafe endpoints at the provider boundary", () => {
     const fetchImplementation = vi.fn<typeof fetch>();
 

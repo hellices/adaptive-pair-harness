@@ -2,29 +2,38 @@ import type * as vscode from "vscode";
 import type { Evidence } from "../core/types";
 
 export const buildInlineCommentMarkdown = (
+  createMarkdown: (value: string) => vscode.MarkdownString,
   question: string,
   evidence: Evidence,
-): string => {
+): vscode.MarkdownString => {
   const confidence = Math.round(
     Math.min(1, Math.max(0, evidence.confidence)) * 100,
   );
-  const references =
-    evidence.references.length === 0
-      ? "- None"
-      : evidence.references
-          .map((reference) => `- \`${reference.replaceAll("`", "\\`")}\``)
-          .join("\n");
-
-  return [
-    question,
-    "",
-    `**Evidence:** ${evidence.source} · confidence ${confidence}%`,
-    "",
-    "**References:**",
-    references,
-    "",
-    "_Adaptive Pair has not changed code. Use **Adaptive Pair: Review Current Block** or `@pair` for deeper discussion._",
-  ].join("\n");
+  const markdown = createMarkdown("");
+  markdown.appendText(question);
+  markdown.appendMarkdown("\n\n**Finding:** ");
+  markdown.appendText(evidence.title);
+  markdown.appendMarkdown("\n\n");
+  markdown.appendText(evidence.detail);
+  markdown.appendMarkdown("\n\n**Evidence:** ");
+  markdown.appendText(evidence.source);
+  markdown.appendMarkdown(` · confidence ${confidence}%`);
+  markdown.appendMarkdown("\n\n**References:**\n");
+  if (evidence.references.length === 0) {
+    markdown.appendMarkdown("- None");
+  } else {
+    for (const [index, reference] of evidence.references.entries()) {
+      if (index > 0) {
+        markdown.appendMarkdown("\n");
+      }
+      markdown.appendMarkdown("- ");
+      markdown.appendText(reference);
+    }
+  }
+  markdown.appendMarkdown(
+    "\n\n_Adaptive Pair has not changed code. Use **Adaptive Pair: Review Current Block** or `@pair` for deeper discussion._",
+  );
+  return markdown;
 };
 
 export interface InlinePairControllerOptions {
@@ -49,8 +58,10 @@ export class InlinePairController implements vscode.Disposable {
 
     const comment: vscode.Comment = {
       author: { name: "Adaptive Pair" },
-      body: this.options.createMarkdown(
-        buildInlineCommentMarkdown(question, evidence),
+      body: buildInlineCommentMarkdown(
+        this.options.createMarkdown,
+        question,
+        evidence,
       ),
       mode: this.options.previewMode,
     };

@@ -878,6 +878,50 @@ describe("TypeScriptSemanticAnalyzer", () => {
     expect(new Set(complexityEvidence.map((item) => item.id)).size).toBe(2);
   });
 
+  it("assigns distinct complexity identities to same-named arrows nested in outer arrows", () => {
+    const previousOuter = (outerName: string) => [
+      `const ${outerName} = (() => {`,
+      "  const helper = (input: number): number => {",
+      "    if (input > 0) return input;",
+      "    if (input < 0) return -input;",
+      "    return 0;",
+      "  };",
+      "  return helper(1);",
+      "}) as () => number;",
+    ].join("\n");
+    const currentOuter = (outerName: string) => [
+      `const ${outerName} = (() => {`,
+      "  const helper = (input: number): number => {",
+      "    if (input > 10) return 10;",
+      "    if (input > 0 && input < 10) return input;",
+      "    for (const item of [input]) {",
+      "      if (item === 0) return 0;",
+      "    }",
+      "    return input < 0 ? -input : input;",
+      "  };",
+      "  return helper(1);",
+      "}) as () => number;",
+    ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(
+        [previousOuter("outerOne"), previousOuter("outerTwo")].join("\n"),
+        [currentOuter("outerOne"), currentOuter("outerTwo")].join("\n"),
+      ),
+    );
+    const nestedHelpers = evidence.filter(
+      (item) =>
+        item.kind === "complexity-growth" &&
+        item.references[0]?.endsWith(".helper") === true,
+    );
+
+    expect(nestedHelpers).toHaveLength(2);
+    expect(new Set(nestedHelpers.map((item) => item.id)).size).toBe(2);
+    expect(nestedHelpers.map((item) => item.references[0]).sort()).toEqual([
+      "outerOne.helper",
+      "outerTwo.helper",
+    ]);
+  });
+
   it("compares the next stable edit with the last stable source", () => {
     const lastStable =
       "export function load(id: string): string { return id; }";

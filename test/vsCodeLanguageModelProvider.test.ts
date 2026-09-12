@@ -51,6 +51,8 @@ class RecordingLanguageModelApi implements VsCodeLanguageModelApi {
   public readonly selectors: Array<{ readonly vendor: "copilot" }> = [];
   public readonly prompts: string[] = [];
   public readonly countedTexts: string[] = [];
+  public readonly countedModelIds: string[] = [];
+  public readonly requestedModelIds: string[] = [];
   public readonly requestedOutputCaps: Array<number | undefined> = [];
   public readonly cancellation = new TestCancellation();
   public sendCalls = 0;
@@ -67,10 +69,14 @@ class RecordingLanguageModelApi implements VsCodeLanguageModelApi {
     },
   ];
   public access: boolean | undefined = true;
+  public readonly accessByModel = new Map<string, boolean | undefined>();
   public selectError: Error | undefined;
   public sendError: Error | undefined;
+  public readonly countErrorsByModel = new Map<string, Error>();
+  public readonly sendErrorsByModel = new Map<string, Error>();
   public streamError: Error | undefined;
   public onSelect: (() => void) | undefined;
+  public onSend: ((model: CopilotModelReference) => void) | undefined;
   public errorKinds = new Map<
     Error,
     "no-permissions" | "not-found" | "blocked" | "cancelled" | "unknown"
@@ -88,8 +94,9 @@ class RecordingLanguageModelApi implements VsCodeLanguageModelApi {
   }
 
   public canSendRequest(model: CopilotModelReference): boolean | undefined {
-    void model;
-    return this.access;
+    return this.accessByModel.has(model.id)
+      ? this.accessByModel.get(model.id)
+      : this.access;
   }
 
   public createCancellationTokenSource(): VsCodeRequestCancellation {
@@ -109,9 +116,13 @@ class RecordingLanguageModelApi implements VsCodeLanguageModelApi {
     text: string,
     cancellation: VsCodeRequestCancellation,
   ): Promise<number> {
-    void model;
     void cancellation;
+    this.countedModelIds.push(model.id);
     this.countedTexts.push(text);
+    const error = this.countErrorsByModel.get(model.id);
+    if (error !== undefined) {
+      throw error;
+    }
     return this.countTokensImplementation(text);
   }
 
@@ -121,13 +132,15 @@ class RecordingLanguageModelApi implements VsCodeLanguageModelApi {
     cancellation: VsCodeRequestCancellation,
     maxOutputTokens?: number,
   ): Promise<AsyncIterable<string>> {
-    void model;
     void cancellation;
     this.sendCalls += 1;
+    this.requestedModelIds.push(model.id);
     this.prompts.push(prompt);
     this.requestedOutputCaps.push(maxOutputTokens);
-    if (this.sendError !== undefined) {
-      throw this.sendError;
+    this.onSend?.(model);
+    const error = this.sendErrorsByModel.get(model.id) ?? this.sendError;
+    if (error !== undefined) {
+      throw error;
     }
     const streamError = this.streamError;
     const fragments = this.fragments;
@@ -268,6 +281,116 @@ describe("VsCodeLanguageModelProvider", () => {
     ).resolves.toMatchObject({
       text: "Did you intend this dependency?",
     });
+  });
+
+  it("uses the next Copilot model when the first candidate lacks access", async () => {
+    const api = new RecordingLanguageModelApi();
+    api.models = [
+      { id: "unavailable", name: "Unavailable model" },
+      { id: "available", name: "Available model" },
+    ];
+    api.accessByModel.set("unavailable", false);
+    api.accessByModel.set("available", true);
+    const provider = new VsCodeLanguageModelProvider(api);
+
+    await expect(
+      provider.generate(request, new AbortController().signal),
+    ).resolves.toMatchObject({
+      text: "Did you intend this dependency?",
+    });
+    expect(new Set(api.countedModelIds)).toEqual(new Set(["available"]));
+    expect(api.requestedModelIds).toEqual(["available"]);
+  });
+
+  it("uses the next Copilot model after an unavailable token-count candidate", async () => {
+    const api = new RecordingLanguageModelApi();
+    api.models = [
+      { id: "missing", name: "Missing model" },
+      { id: "available", name: "Available model" },
+    ];
+    const unavailable = new Error("model disappeared");
+    api.countErrorsByModel.set("missing", unavailable);
+    api.errorKinds.set(unavailable, "not-found");
+    const provider = new VsCodeLanguageModelProvider(api);
+
+    await expect(
+      provider.generate(request, new AbortController().signal),
+    ).resolves.toMatchObject({
+      text: "Did you intend this dependency?",
+    });
+    expect(api.countedModelIds.slice(0, 2)).toEqual([
+      "missing",
+      "available",
+    ]);
+    expect(api.countedModelIds.slice(2)).toEqual(
+      expect.arrayContaining(["available"]),
+    );
+    expect(api.requestedModelIds).toEqual(["available"]);
+  });
+
+  it("uses the next Copilot model after an unavailable request candidate", async () => {
+    const api = new RecordingLanguageModelApi();
+    api.models = [
+      { id: "missing", name: "Missing model" },
+      { id: "available", name: "Available model" },
+    ];
+    const unavailable = new Error("model disappeared");
+    api.sendErrorsByModel.set("missing", unavailable);
+    api.errorKinds.set(unavailable, "not-found");
+    const provider = new VsCodeLanguageModelProvider(api);
+
+    await expect(
+      provider.generate(request, new AbortController().signal),
+    ).resolves.toMatchObject({
+      text: "Did you intend this dependency?",
+    });
+    expect(api.requestedModelIds).toEqual(["missing", "available"]);
+  });
+
+  it.each(["blocked", "unknown"] as const)(
+    "does not advance to another candidate after a %s request failure",
+    async (kind) => {
+      const api = new RecordingLanguageModelApi();
+      api.models = [
+        { id: "blocked", name: "Blocked model" },
+        { id: "available", name: "Available model" },
+      ];
+      const failure = new Error(kind);
+      api.sendErrorsByModel.set("blocked", failure);
+      api.errorKinds.set(failure, kind);
+      const provider = new VsCodeLanguageModelProvider(api);
+
+      await expect(
+        provider.generateFromUserAction(
+          request,
+          new AbortController().signal,
+        ),
+      ).rejects.toBe(failure);
+      expect(api.requestedModelIds).toEqual(["blocked"]);
+    },
+  );
+
+  it("does not dispatch another candidate after lifecycle cancellation", async () => {
+    const api = new RecordingLanguageModelApi();
+    api.models = [
+      { id: "missing", name: "Missing model" },
+      { id: "available", name: "Available model" },
+    ];
+    const unavailable = new Error("model disappeared");
+    api.sendErrorsByModel.set("missing", unavailable);
+    api.errorKinds.set(unavailable, "not-found");
+    const abortController = new AbortController();
+    api.onSend = (model) => {
+      if (model.id === "missing") {
+        abortController.abort();
+      }
+    };
+    const provider = new VsCodeLanguageModelProvider(api);
+
+    await expect(
+      provider.generate(request, abortController.signal),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(api.requestedModelIds).toEqual(["missing"]);
   });
 
   it.each([

@@ -101,7 +101,17 @@ vi.mock("vscode", () => {
   }
 
   class MarkdownString {
-    public constructor(public readonly value: string) {}
+    public constructor(public value: string) {}
+
+    public appendText(value: string): this {
+      this.value += value;
+      return this;
+    }
+
+    public appendMarkdown(value: string): this {
+      this.value += value;
+      return this;
+    }
   }
 
   class Range {
@@ -227,6 +237,7 @@ import type {
   VsCodeLanguageModelApi,
   VsCodeRequestCancellation,
 } from "../src/vscode/vsCodeLanguageModelProvider";
+import { stableDiagnosticEvidenceId } from "../src/vscode/pairRuntimeSupport";
 
 const deferred = <T>() => {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -583,7 +594,16 @@ describe("PairRuntime lifecycle ownership", () => {
     const currentDocument = document(uri, "export const value = 1;", 1);
     const diagnosticEvidence: Evidence = {
       ...evidence,
-      id: `diagnostic:${uri}:0:0:0`,
+      id: stableDiagnosticEvidenceId(
+        uri,
+        {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 6 },
+        },
+        "typescript",
+        ["TS2322"],
+        "Type mismatch",
+      ),
       kind: "diagnostic",
       title: "Editor diagnostic",
       detail: "Type mismatch",
@@ -633,12 +653,79 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
+  it("keeps a dismissed diagnostic suppressed when unrelated diagnostics reorder", async () => {
+    const uri = "file:///Users/private/workspace/src/pair.ts";
+    const currentDocument = document(uri, "export const value = 1;", 1);
+    const target = {
+      range: {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 6 },
+      },
+      message: "Type mismatch",
+      severity: 1,
+      source: "typescript",
+      code: "TS2322",
+    };
+    const unrelated = {
+      range: {
+        start: { line: 0, character: 15 },
+        end: { line: 0, character: 20 },
+      },
+      message: "Unused value",
+      severity: 1,
+      source: "typescript",
+      code: "TS6133",
+    };
+    vscodeState.textDocuments = [currentDocument];
+    vscodeState.activeTextEditor = {
+      document: currentDocument,
+      selection: {
+        isEmpty: false,
+        active: { line: 0, character: 0 },
+        start: target.range.start,
+        end: target.range.end,
+      },
+    };
+    vscodeState.diagnostics.push(target, unrelated);
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+
+    await runtime.reviewCurrentBlock();
+    const firstId = shared.snapshot().latest?.evidence.id;
+    expect(firstId).toBeDefined();
+    expect(firstId).not.toContain(uri);
+    await runtime.dismissCurrentEvidence();
+
+    vscodeState.diagnostics.splice(0, 2, unrelated, target);
+    await runtime.reviewCurrentBlock();
+
+    expect(vscodeState.commentThreads).toHaveLength(1);
+    expect(shared.snapshot().latest).toBeUndefined();
+    runtime.dispose();
+  });
+
   it("matches current diagnostic identities to hashed dismissals after a runtime rebuild", async () => {
     const uri = "file:///workspace/src/private.ts";
     const currentDocument = document(uri, "export const value = 1;", 1);
     const diagnosticEvidence: Evidence = {
       ...evidence,
-      id: `diagnostic:${uri}:0:0:0`,
+      id: stableDiagnosticEvidenceId(
+        uri,
+        {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 6 },
+        },
+        "typescript",
+        ["TS2322"],
+        "Type mismatch",
+      ),
       kind: "diagnostic",
       title: "Editor diagnostic",
       detail: "Type mismatch",
@@ -1583,6 +1670,139 @@ describe("PairRuntime lifecycle ownership", () => {
     },
   );
 
+  it("admits and owns a separate budget reservation for each dispatched Copilot candidate", async () => {
+    const firstUnavailable = new Error("first model disappeared");
+    const sentModelIds: string[] = [];
+    const models = [
+      { id: "first", name: "First model" },
+      { id: "second", name: "Second model" },
+    ];
+    const budgetConfig = {
+      maxCalls: 2,
+      maxInputTokens: 120,
+      maxOutputTokens: 360,
+      maxOutputTokensPerCall: 180,
+      windowMs: 600_000,
+    };
+    const budget = new TokenBudget(budgetConfig);
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "vscode-copilot",
+        budget: budgetConfig,
+      }),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: {
+        ...languageModelApi(models),
+        classifyError: (error) =>
+          error === firstUnavailable ? "not-found" : "unknown",
+        countTokens: async (model, text) =>
+          text === "remote response"
+            ? 3
+            : model.id === "first"
+              ? 40
+              : 80,
+        sendRequest: async (model) => {
+          sentModelIds.push(model.id);
+          if (model.id === "first") {
+            throw firstUnavailable;
+          }
+          return (async function* (): AsyncIterable<string> {
+            yield "remote response";
+          })();
+        },
+      },
+      apiKey: undefined,
+      budget,
+    });
+    await runtime.startSession();
+
+    await expect(
+      runtime.generate(
+        "file:///workspace/pair.ts",
+        "Ask.",
+        evidence,
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      text: "remote response",
+      inputTokens: 80,
+      outputTokens: 3,
+    });
+
+    expect(sentModelIds).toEqual(["first", "second"]);
+    expect(budget.snapshot(Date.now())).toEqual({
+      remainingCalls: 0,
+      remainingInputTokens: 0,
+      remainingOutputTokens: 177,
+    });
+    runtime.dispose();
+  });
+
+  it("does not dispatch another Copilot candidate after its exact reservation is denied", async () => {
+    const firstUnavailable = new Error("first model disappeared");
+    const sentModelIds: string[] = [];
+    const models = [
+      { id: "first", name: "First model" },
+      { id: "second", name: "Second model" },
+    ];
+    const budgetConfig = {
+      maxCalls: 1,
+      maxInputTokens: 120,
+      maxOutputTokens: 180,
+      maxOutputTokensPerCall: 180,
+      windowMs: 600_000,
+    };
+    const budget = new TokenBudget(budgetConfig);
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "vscode-copilot",
+        budget: budgetConfig,
+      }),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: {
+        ...languageModelApi(models),
+        classifyError: (error) =>
+          error === firstUnavailable ? "not-found" : "unknown",
+        countTokens: async (model, text) =>
+          text === "remote response"
+            ? 3
+            : model.id === "first"
+              ? 40
+              : 80,
+        sendRequest: async (model) => {
+          sentModelIds.push(model.id);
+          if (model.id === "first") {
+            throw firstUnavailable;
+          }
+          return (async function* (): AsyncIterable<string> {
+            yield "remote response";
+          })();
+        },
+      },
+      apiKey: undefined,
+      budget,
+    });
+    await runtime.startSession();
+
+    await expect(
+      runtime.generate(
+        "file:///workspace/pair.ts",
+        "Ask.",
+        evidence,
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+
+    expect(sentModelIds).toEqual(["first"]);
+    expect(budget.snapshot(Date.now()).remainingCalls).toBe(0);
+    runtime.dispose();
+  });
+
   it("does not reserve or dispatch when a session stops during Copilot input counting", async () => {
     const budgetConfig = {
       maxCalls: 1,
@@ -1995,6 +2215,58 @@ describe("PairRuntime lifecycle ownership", () => {
 
     expect(status.text).toBe(fallbackStatus);
     expect(shared.snapshot().session).toEqual(fallbackSession);
+    runtime.dispose();
+  });
+
+  it("compares the first stable edit with the episode previous text when no stable snapshot exists", async () => {
+    const uri = "file:///workspace/first-stable.ts";
+    const invalid = "import {";
+    const stable =
+      'import { save } from "./repository";\nexport const value = save;';
+    vscodeState.textDocuments = [document(uri, invalid, 1)];
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    vscodeState.textDocuments = [document(uri, stable, 2)];
+
+    await (
+      runtime as unknown as {
+        handleEpisode(episode: {
+          uri: string;
+          languageId: string;
+          previousText: string;
+          currentText: string;
+          version: number;
+          observedAt: number;
+        }): Promise<void>;
+      }
+    ).handleEpisode({
+      uri,
+      languageId: "typescript",
+      previousText: invalid,
+      currentText: stable,
+      version: 2,
+      observedAt: 1,
+    });
+    const state = (
+      runtime as unknown as {
+        documentState: {
+          latestEvidence(uri: string): readonly Evidence[];
+        };
+      }
+    ).documentState;
+
+    expect(state.latestEvidence(uri)).toEqual([
+      expect.objectContaining({
+        kind: "new-dependency",
+        references: ["./repository"],
+      }),
+    ]);
     runtime.dispose();
   });
 

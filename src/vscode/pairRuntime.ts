@@ -56,6 +56,7 @@ import {
   diagnosticCodeReference,
   selectManualEvidence,
   repositoryIdentityForDocument,
+  stableDiagnosticEvidenceId,
   shouldSuppressCancellation,
 } from "./pairRuntimeSupport";
 import type {
@@ -608,7 +609,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     const previousStableText = this.documentState.lastStableText(episode.uri);
     const analysis = this.analyzer.analyze({
       ...episode,
-      previousText: previousStableText ?? episode.currentText,
+      previousText: previousStableText ?? episode.previousText,
     });
     if (analysis.stability === "unstable") {
       this.documentState.recordAnalysis(
@@ -787,16 +788,22 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       ...prepared.request,
       maxOutputTokens,
     };
+    if (provider === "vscode-copilot") {
+      return this.generateWithCopilotCandidates(
+        remoteRequest,
+        signal,
+        source,
+        lifecycleFence,
+        maxOutputTokens,
+      );
+    }
+
     let dispatch;
     try {
       dispatch = await this.router.prepare(
         provider,
         remoteRequest,
         signal,
-        {
-          userInitiated:
-            provider === "vscode-copilot" && source !== "automatic",
-        },
       );
     } catch (error: unknown) {
       if (!lifecycleFence.isCurrent() || signal.aborted) {
@@ -871,6 +878,125 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       );
     } finally {
       dispatch.dispose();
+    }
+  }
+
+  private async generateWithCopilotCandidates(
+    request: ModelRequest,
+    signal: AbortSignal,
+    source: PairInvocationSource,
+    lifecycleFence: PairLifecycleFence,
+    maxOutputTokens: number,
+  ): Promise<ModelResponse> {
+    let candidates;
+    try {
+      candidates = await this.copilotProvider.prepareCandidates(
+        request,
+        signal,
+        { userInitiated: source !== "automatic" },
+      );
+    } catch (error: unknown) {
+      if (!lifecycleFence.isCurrent() || signal.aborted) {
+        throw error;
+      }
+      return this.fallbackForUnavailableCopilot(
+        error,
+        request,
+        signal,
+        lifecycleFence,
+      );
+    }
+
+    let previousUnavailable: CopilotModelUnavailableError | undefined;
+    try {
+      for (;;) {
+        let dispatch;
+        try {
+          dispatch = await candidates.next(previousUnavailable);
+          previousUnavailable = undefined;
+        } catch (error: unknown) {
+          if (!lifecycleFence.isCurrent() || signal.aborted) {
+            throw error;
+          }
+          return this.fallbackForUnavailableCopilot(
+            error,
+            request,
+            signal,
+            lifecycleFence,
+          );
+        }
+
+        if (!lifecycleFence.isCurrent() || signal.aborted) {
+          dispatch.dispose();
+          signal.throwIfAborted();
+          throw new Error("Adaptive Pair request lifecycle is no longer current.");
+        }
+
+        const admission = this.budget.tryReserve(
+          dispatch.inputTokens,
+          maxOutputTokens,
+          Date.now(),
+        );
+        if (!admission.allowed) {
+          dispatch.dispose();
+          return this.fallbackForBudget(admission.reason, request, signal);
+        }
+        this.publishSession();
+
+        if (!lifecycleFence.isCurrent() || signal.aborted) {
+          this.budget.release(admission.reservationId);
+          dispatch.dispose();
+          signal.throwIfAborted();
+          throw new Error("Adaptive Pair request lifecycle is no longer current.");
+        }
+
+        try {
+          const response = await dispatch.send();
+          this.budget.settle(
+            admission.reservationId,
+            response.inputTokens,
+            response.outputTokens,
+          );
+          if (lifecycleFence.isCurrent() && !signal.aborted) {
+            this.effectiveProvider = "vscode-copilot";
+            this.statusDetail = this.configurationWarning();
+            this.publishSession();
+            this.renderStatus();
+          }
+          return response;
+        } catch (error: unknown) {
+          if (error instanceof ModelOutputLimitError) {
+            if (error.requestDispatched) {
+              this.budget.settle(
+                admission.reservationId,
+                error.inputTokens,
+                error.outputTokens,
+              );
+            } else {
+              this.budget.release(admission.reservationId);
+            }
+            if (lifecycleFence.isCurrent() && !signal.aborted) {
+              this.publishSession();
+            }
+          }
+          releaseUnusedCopilotReservation(
+            this.budget,
+            admission.reservationId,
+            error,
+          );
+          if (!lifecycleFence.isCurrent() || signal.aborted) {
+            throw error;
+          }
+          if (!(error instanceof CopilotModelUnavailableError)) {
+            throw error;
+          }
+          previousUnavailable = error;
+        } finally {
+          dispatch.dispose();
+        }
+      }
+    } finally {
+      candidates.dispose();
     }
   }
 
@@ -1188,17 +1314,31 @@ const diagnosticEvidenceForDocument = (
   vscode.languages
     .getDiagnostics(document.uri)
     .slice(0, 20)
-    .map((diagnostic, index) => ({
-      id: `diagnostic:${document.uri.toString()}:${diagnostic.range.start.line}:${diagnostic.range.start.character}:${index}`,
-      kind: "diagnostic",
-      severity: diagnosticSeverity(diagnostic.severity),
-      title: "Editor diagnostic",
-      detail: diagnostic.message,
-      source: diagnostic.source ?? "vscode-diagnostics",
-      confidence: diagnostic.severity === vscode.DiagnosticSeverity.Error ? 0.97 : 0.82,
-      range: toPairRange(diagnostic.range),
-      references: diagnosticCodeReference(diagnostic.code),
-    }));
+    .map((diagnostic) => {
+      const range = toPairRange(diagnostic.range);
+      const source = diagnostic.source ?? "vscode-diagnostics";
+      const references = diagnosticCodeReference(diagnostic.code);
+      return {
+        id: stableDiagnosticEvidenceId(
+          document.uri.toString(),
+          range,
+          source,
+          references,
+          diagnostic.message,
+        ),
+        kind: "diagnostic",
+        severity: diagnosticSeverity(diagnostic.severity),
+        title: "Editor diagnostic",
+        detail: diagnostic.message,
+        source,
+        confidence:
+          diagnostic.severity === vscode.DiagnosticSeverity.Error
+            ? 0.97
+            : 0.82,
+        range,
+        references,
+      };
+    });
 
 const diagnosticSeverity = (
   severity: vscode.DiagnosticSeverity,
