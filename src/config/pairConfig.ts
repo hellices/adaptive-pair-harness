@@ -54,9 +54,12 @@ export function readPairConfig(workspace: ConfigurationReader): PairConfig {
     ? configuredProvider
     : "local-template";
   const configuredBaseUrl = workspace.get("model.baseUrl");
-  const baseUrl = parseUrl(
-    typeof configuredBaseUrl === "string" ? configuredBaseUrl : DEFAULT_BASE_URL,
-  );
+  const baseUrl =
+    configuredBaseUrl === undefined
+      ? parseUrl(DEFAULT_BASE_URL)
+      : typeof configuredBaseUrl === "string"
+        ? parseUrl(configuredBaseUrl)
+        : undefined;
   let statusWarning: string | undefined;
   if (configuredProvider !== undefined && !validProvider) {
     statusWarning = `Unknown model provider "${String(configuredProvider)}"; using local-template.`;

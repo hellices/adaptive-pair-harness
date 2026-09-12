@@ -22,6 +22,12 @@ interface TestStatusItem {
   dispose(): void;
 }
 
+interface TestCommentThread {
+  readonly uri: string;
+  disposed: boolean;
+  dispose(): void;
+}
+
 const vscodeState = vi.hoisted(() => ({
   textDocuments: [] as TestDocument[],
   findFiles: vi.fn<
@@ -33,6 +39,7 @@ const vscodeState = vi.hoisted(() => ({
   closeListeners: [] as Array<(document: TestDocument) => void>,
   changeListeners: [] as Array<(event: unknown) => void>,
   statusItems: [] as TestStatusItem[],
+  commentThreads: [] as TestCommentThread[],
 }));
 
 vi.mock("vscode", () => {
@@ -94,11 +101,22 @@ vi.mock("vscode", () => {
     StatusBarAlignment: { Right: 1 },
     comments: {
       createCommentController: () => ({
-        createCommentThread: () => ({
-          dispose: () => undefined,
-          canReply: false,
-          label: "",
-        }),
+        createCommentThread: (uri: { toString(): string }) => {
+          const thread: TestCommentThread & {
+            canReply: boolean;
+            label: string;
+          } = {
+            uri: uri.toString(),
+            disposed: false,
+            canReply: false,
+            label: "",
+            dispose() {
+              this.disposed = true;
+            },
+          };
+          vscodeState.commentThreads.push(thread);
+          return thread;
+        },
         dispose: () => undefined,
       }),
     },
@@ -139,7 +157,10 @@ vi.mock("vscode", () => {
   };
 });
 
-import { PairSharedContext } from "../src/vscode/pairChatParticipant";
+import {
+  PairSharedContext,
+  registerPairChatParticipant,
+} from "../src/vscode/pairChatParticipant";
 import { PairRuntime } from "../src/vscode/pairRuntime";
 import type {
   CopilotModelReference,
@@ -224,13 +245,13 @@ const extensionContext = {
   },
 } as unknown as vscode.ExtensionContext;
 
-const document = (uri: string, text: string): TestDocument => ({
+const document = (uri: string, text: string, version = 1): TestDocument => ({
   uri: {
     scheme: "file",
     toString: () => uri,
   },
   languageId: "typescript",
-  version: 1,
+  version,
   getText: () => text,
 });
 
@@ -242,6 +263,7 @@ beforeEach(() => {
   vscodeState.closeListeners.length = 0;
   vscodeState.changeListeners.length = 0;
   vscodeState.statusItems.length = 0;
+  vscodeState.commentThreads.length = 0;
   vi.unstubAllGlobals();
 });
 
@@ -364,6 +386,179 @@ describe("PairRuntime lifecycle ownership", () => {
     });
 
     expect(status.text).toBe(newGenerationStatus);
+    runtime.dispose();
+  });
+
+  it("keeps fallback status and provider state on redundant start", async () => {
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "vscode-copilot",
+      }),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    await runtime.generate(
+      "file:///workspace/pair.ts",
+      "Ask a question.",
+      evidence,
+      new AbortController().signal,
+    );
+    const status = vscodeState.statusItems[0]!;
+    const fallbackStatus = status.text;
+    const fallbackSession = shared.snapshot().session;
+    expect(fallbackStatus).toContain(
+      "Copilot unavailable (no-model); local-template fallback",
+    );
+    expect(fallbackSession.provider).toBe("local-template");
+
+    await expect(runtime.startSession()).resolves.toMatchObject({
+      kind: "already-active",
+    });
+
+    expect(status.text).toBe(fallbackStatus);
+    expect(shared.snapshot().session).toEqual(fallbackSession);
+    runtime.dispose();
+  });
+
+  it("invalidates URI evidence and deferred Chat output at the edit boundary", async () => {
+    const modelCompletion = deferred<Response>();
+    let providerSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        providerSignal = init?.signal ?? undefined;
+        return modelCompletion.promise;
+      }),
+    );
+    const uri = "file:///workspace/pair.ts";
+    const initialDocument = document(uri, "const value = before;", 1);
+    vscodeState.textDocuments = [initialDocument];
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "openai-compatible",
+        baseUrl: new URL("https://model.example/v1"),
+        budget: {
+          maxCalls: 1,
+          maxInputTokens: 6_000,
+          windowMs: 600_000,
+        },
+      }),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    const inline = (
+      runtime as unknown as {
+        inlineController: {
+          render(
+            uri: vscode.Uri,
+            range: vscode.Range,
+            question: string,
+            evidence: Evidence,
+          ): void;
+        };
+      }
+    ).inlineController;
+    inline.render(
+      initialDocument.uri as vscode.Uri,
+      {} as vscode.Range,
+      "Stale question",
+      evidence,
+    );
+    const documentState = (
+      runtime as unknown as {
+        documentState: {
+          recordAnalysis(
+            uri: string,
+            text: string,
+            evidence: readonly Evidence[],
+          ): void;
+          latestEvidence(uri: string): readonly Evidence[];
+        };
+      }
+    ).documentState;
+    documentState.recordAnalysis(uri, initialDocument.getText(), [evidence]);
+    shared.publishEvidence({
+      uri,
+      evidence,
+      question: "Stale question",
+    });
+    let handler: vscode.ChatRequestHandler | undefined;
+    const markdown = vi.fn();
+    registerPairChatParticipant(
+      (_id, registeredHandler) => {
+        handler = registeredHandler;
+        return { dispose: () => undefined } as vscode.ChatParticipant;
+      },
+      shared,
+      runtime,
+      {
+        requestLifecycle: {
+          register: (requestUri, request) =>
+            runtime.registerChatRequest(requestUri, request),
+        },
+      },
+    );
+
+    const pendingResponse = handler!(
+      { command: "why", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      { markdown } as unknown as vscode.ChatResponseStream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      } as vscode.CancellationToken,
+    );
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalledOnce();
+    });
+    await runtime.generate(
+      "file:///workspace/other.ts",
+      "Use the exhausted budget fallback.",
+      evidence,
+      new AbortController().signal,
+    );
+    const status = vscodeState.statusItems[0]!;
+    expect(status.text).toContain("remote call-limit; local-template fallback");
+
+    const editedDocument = document(uri, "const value = after;", 2);
+    vscodeState.textDocuments = [editedDocument];
+    vscodeState.changeListeners[0]!({
+      document: editedDocument,
+      contentChanges: [{ text: "after" }],
+    });
+    const stateAfterEdit = shared.snapshot();
+    const statusAfterEdit = status.text;
+
+    expect(providerSignal?.aborted).toBe(true);
+    expect(stateAfterEdit.latest).toBeUndefined();
+    expect(documentState.latestEvidence(uri)).toEqual([]);
+    expect(vscodeState.commentThreads[0]?.disposed).toBe(true);
+
+    modelCompletion.resolve(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "stale provider response" } }],
+          usage: { prompt_tokens: 10, completion_tokens: 3 },
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+    await pendingResponse;
+
+    expect(markdown).not.toHaveBeenCalled();
+    expect(shared.snapshot()).toEqual(stateAfterEdit);
+    expect(status.text).toBe(statusAfterEdit);
     runtime.dispose();
   });
 

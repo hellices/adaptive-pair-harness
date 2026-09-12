@@ -328,6 +328,10 @@ export class PairDocumentState {
     return this.latestEvidenceByUri.get(uri) ?? [];
   }
 
+  public invalidateEvidence(uri: string): void {
+    this.latestEvidenceByUri.delete(uri);
+  }
+
   public close(uri: string): void {
     this.previousTextByUri.delete(uri);
     this.lastAnalyzedTextByUri.delete(uri);

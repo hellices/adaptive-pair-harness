@@ -91,6 +91,19 @@ describe("readPairConfig", () => {
     expect(config.statusWarning).toContain("OpenAI-compatible");
   });
 
+  it("disables OpenAI-compatible configuration when baseUrl is not a string", () => {
+    const config = readPairConfig(
+      new TestConfiguration({
+        "model.provider": "openai-compatible",
+        "model.baseUrl": { endpoint: "https://model.example/v1" },
+      }),
+    );
+
+    expect(config.provider).toBe("local-template");
+    expect(config.baseUrl).toBeUndefined();
+    expect(config.statusWarning).toContain("adaptivePair.model.baseUrl");
+  });
+
   it("surfaces an explicit warning for an invalid provider value", () => {
     const config = readPairConfig(
       new TestConfiguration({
