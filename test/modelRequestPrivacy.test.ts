@@ -227,6 +227,36 @@ describe("remote model request privacy", () => {
   });
 
   it.each([
+    ["a multiline double-quoted assignment", `password = "first\nsecond"`],
+    ["a multiline single-quoted assignment", `password = 'first\nsecond'`],
+    [
+      "escaped double quotes followed by a newline",
+      `password = "first\\"\nsecond"`,
+    ],
+    [
+      "escaped single quotes followed by a newline",
+      `password = 'first\\'\nsecond'`,
+    ],
+  ])("keeps %s entirely local", (_label, userPrompt) => {
+    const request: ModelRequest = {
+      ...requestContaining("Explain the current evidence."),
+      context: { userPrompt },
+    };
+    const prepared = prepareRemoteModelRequest(request);
+
+    expect(prepared.sensitiveDataDetected).toBe(true);
+    expect(prepared.request.context?.userPrompt).toBe(localOnlyNotice);
+    for (const payload of [
+      JSON.stringify(prepared.request),
+      JSON.stringify(buildOpenAICompatiblePromptPayload(request)),
+      buildCopilotPrompt(request),
+    ]) {
+      expect(payload).not.toContain("password");
+      expect(payload).not.toContain("second");
+    }
+  });
+
+  it.each([
     ["custom scheme", "custom-file:///docs"],
     ["closing markup", "</section>"],
     ["ordinary package names", "Use @scope/package and lodash/fp."],

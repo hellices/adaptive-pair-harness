@@ -1437,3 +1437,61 @@
 - Live VS Code disposal failures cannot be induced in this environment; the
   stateful CommentThread/CommentController adapters cover the exact throw-after-
   state-change behavior and runtime propagation path.
+
+---
+
+## Latest secondary-review privacy and lexical-identity findings (2026-09-13)
+
+### Corrections implemented
+
+- Explicit prompt sanitation now detects a normalized sensitive key as soon as
+  its assignment/header separator is present. Detection no longer depends on
+  parsing a complete quoted value, so actual CR/LF, multiline single quotes,
+  and escaped quote/newline combinations keep the complete field local-only.
+- Function-valued variables now include deterministic lexical block ordinals
+  in their internal enclosing-scope keys while retaining user-facing names.
+  Ordinals are structural rather than absolute source offsets, and traversal
+  does not descend into an earlier sibling block, preserving later sibling
+  identities when only that earlier block's contents grow.
+- Lifecycle cleanup code was not changed.
+
+### TDD evidence
+
+- Privacy RED: the focused suite reported **4 failures and 110 passes** for
+  multiline double quotes, multiline single quotes, and escaped quote/newline
+  combinations.
+- Privacy GREEN: **114 tests passed**.
+- Semantic RED: the focused suite reported **1 failure and 50 passes** because
+  same-named sibling-block arrows collided.
+- Semantic GREEN: **51 tests passed**; only the first arrow reports complexity
+  growth while the unchanged second arrow retains its identity despite the
+  earlier block's added lines.
+- Self-review corrected the privacy regression to exercise
+  `context.userPrompt` directly. The final combined focused run passed
+  **2 files, 165 tests**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **17 files, 408 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 89.49%, branches 81.74%, functions 92.33%, lines 89.61%
+- `npm run package`: **PASS — 156 files, 4.35 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript` only**
+- VSIX exclusion and compiled behavior-marker scans: **PASS**
+- Production credential-pattern and packaged metadata scans: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review found and corrected one test-boundary issue: the exact
+  multiline cases now enter through the explicit Chat prompt rather than the
+  generic goal field.
+- No remaining high-confidence correctness, privacy, identity-stability,
+  lifecycle, or packaging issue was found.
+- A lexical block inserted before a sibling at the same nesting level will
+  necessarily renumber later anonymous block identities; edits confined within
+  an existing earlier block do not.

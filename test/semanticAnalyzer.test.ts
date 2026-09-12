@@ -1296,6 +1296,58 @@ describe("TypeScriptSemanticAnalyzer", () => {
     ]);
   });
 
+  it("keeps same-named arrows distinct and stable across sibling lexical blocks", () => {
+    const simpleBlock = [
+      "  {",
+      "    const helper = (input: number): number => {",
+      "      if (input > 0) return input;",
+      "      if (input < 0) return -input;",
+      "      return 0;",
+      "    };",
+      "    helper(value);",
+      "  }",
+    ];
+    const complexBlock = [
+      "  {",
+      "    const helper = (input: number): number => {",
+      "      if (input > 10) return 10;",
+      "      if (input > 0 && input < 10) return input;",
+      "      for (const item of [input]) {",
+      "        if (item === 0) return 0;",
+      "      }",
+      "      return input < 0 ? -input : input;",
+      "    };",
+      "    helper(value);",
+      "  }",
+    ];
+    const source = (
+      firstBlock: readonly string[],
+      secondBlock: readonly string[],
+    ): string =>
+      [
+        "function outer(value: number): void {",
+        ...firstBlock,
+        ...secondBlock,
+        "}",
+      ].join("\n");
+
+    const evidence = analyzeEvidence(
+      episode(
+        source(simpleBlock, complexBlock),
+        source(complexBlock, complexBlock),
+      ),
+    ).filter((item) => item.kind === "complexity-growth");
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]).toMatchObject({
+      detail: "outer.helper now has 6 branches, up from 2.",
+      references: ["outer.helper"],
+      range: {
+        start: { line: 2, character: 10 },
+      },
+    });
+  });
+
   it("compares the next stable edit with the last stable source", () => {
     const lastStable =
       "export function load(id: string): string { return id; }";

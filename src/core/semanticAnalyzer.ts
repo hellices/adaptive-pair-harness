@@ -1189,37 +1189,109 @@ const variableFunctionIdentity = (node: ts.VariableDeclaration): SubjectIdentity
 
 const enclosingScopeIdentity = (node: ts.Node | undefined): SubjectIdentity | undefined => {
   let current = node;
+  const lexicalBlockPath: number[] = [];
 
   while (current !== undefined) {
+    if (isIdentityBearingLexicalBlock(current)) {
+      lexicalBlockPath.unshift(lexicalBlockOrdinal(current));
+    }
+
     if (ts.isMethodDeclaration(current)) {
-      return methodIdentity(current);
+      return withLexicalBlockPath(methodIdentity(current), lexicalBlockPath);
     }
 
     if (ts.isFunctionDeclaration(current)) {
-      return functionIdentity(current);
+      return withLexicalBlockPath(functionIdentity(current), lexicalBlockPath);
     }
 
     if (ts.isClassDeclaration(current)) {
-      return classIdentity(current);
+      return withLexicalBlockPath(classIdentity(current), lexicalBlockPath);
     }
 
     if (ts.isModuleDeclaration(current)) {
-      return qualifyIdentity(
-        enclosingScopeIdentity(current.parent),
-        `module:${current.name.text}`,
-        current.name.text,
+      return withLexicalBlockPath(
+        qualifyIdentity(
+          enclosingScopeIdentity(current.parent),
+          `module:${current.name.text}`,
+          current.name.text,
+        ),
+        lexicalBlockPath,
       );
     }
 
     if (ts.isVariableDeclaration(current)) {
       const initializer = unwrapFunctionExpression(current.initializer);
       if (initializer !== undefined) {
-        return variableFunctionIdentity(current);
+        return withLexicalBlockPath(
+          variableFunctionIdentity(current),
+          lexicalBlockPath,
+        );
       }
     }
 
     current = current.parent;
   }
+};
+
+const isIdentityBearingLexicalBlock = (node: ts.Node): node is ts.Block =>
+  ts.isBlock(node) &&
+  !(
+    isFunctionLikeContainer(node.parent) &&
+    node.parent.body === node
+  );
+
+const lexicalBlockOrdinal = (block: ts.Block): number => {
+  let container = block.parent;
+  while (
+    !ts.isBlock(container) &&
+    !ts.isModuleBlock(container) &&
+    !ts.isSourceFile(container)
+  ) {
+    container = container.parent;
+  }
+
+  let ordinal = 0;
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) {
+      return;
+    }
+    if (
+      node !== container &&
+      (isFunctionLikeContainer(node) ||
+        ts.isClassDeclaration(node) ||
+        ts.isClassExpression(node) ||
+        ts.isModuleDeclaration(node))
+    ) {
+      return;
+    }
+    if (node !== container && ts.isBlock(node)) {
+      if (node === block) {
+        found = true;
+      } else {
+        ordinal += 1;
+      }
+      return;
+    }
+    node.forEachChild(visit);
+  };
+
+  visit(container);
+  return ordinal;
+};
+
+const withLexicalBlockPath = (
+  identity: SubjectIdentity | undefined,
+  path: readonly number[],
+): SubjectIdentity | undefined => {
+  if (identity === undefined || path.length === 0) {
+    return identity;
+  }
+
+  return {
+    key: `${identity.key}/${path.map((ordinal) => `block:${ordinal}`).join("/")}`,
+    displayName: identity.displayName,
+  };
 };
 
 const qualifyIdentity = (

@@ -586,6 +586,8 @@ const URI_PATTERN = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s<>"'`]+/gu;
 const HEADER_LINE_PATTERN = /[^\r\n]+/gu;
 const HEADER_KEY_PATTERN =
   /\b([A-Za-z][A-Za-z0-9_.-]*)([ \t]*:[ \t]*)/gu;
+const SENSITIVE_KEY_SEPARATOR_PATTERN =
+  /\b([A-Za-z][A-Za-z0-9_.-]*)\s*[:=]/gu;
 const ASSIGNED_SECRET_PATTERN =
   /\b([A-Za-z][A-Za-z0-9_.-]*)(\s*[:=]\s*)([^\s,;"']+)/gu;
 const QUOTED_ASSIGNED_SECRET_PATTERN =
@@ -626,6 +628,17 @@ const sanitizeRemoteText = (
   }
 
   let sensitiveDataDetected = false;
+  SENSITIVE_KEY_SEPARATOR_PATTERN.lastIndex = 0;
+  let sensitiveKeyMatch = SENSITIVE_KEY_SEPARATOR_PATTERN.exec(value);
+  while (sensitiveKeyMatch !== null) {
+    const key = sensitiveKeyMatch[1];
+    if (key !== undefined && isSensitiveKey(key)) {
+      sensitiveDataDetected = true;
+      break;
+    }
+    sensitiveKeyMatch = SENSITIVE_KEY_SEPARATOR_PATTERN.exec(value);
+  }
+
   let sanitized = value.replace(
     URI_PATTERN,
     (candidate) => {
