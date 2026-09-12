@@ -192,6 +192,41 @@ describe("remote model request privacy", () => {
   });
 
   it.each([
+    [
+      "a single quote inside a double-quoted value",
+      `password="alpha's \\"quoted\\" secret"`,
+    ],
+    [
+      "a double quote inside a single-quoted value",
+      `password='alpha"s \\'quoted\\' secret'`,
+    ],
+  ])("keeps an explicit Chat prompt with %s local", (_label, userPrompt) => {
+    const prepared = prepareRemoteModelRequest({
+      goal: "Explain the current evidence.",
+      interactionStyle: "ask-first",
+      evidence: {
+        id: "dependency:safe",
+        kind: "new-dependency",
+        severity: "warning",
+        title: "New dependency introduced",
+        detail: "A dependency changed.",
+        source: "typescript-semantic-analyzer",
+        confidence: 0.9,
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 1 },
+        },
+        references: [],
+      },
+      context: { userPrompt },
+    });
+
+    expect(prepared.sensitiveDataDetected).toBe(true);
+    expect(prepared.request.context?.userPrompt).toBe(localOnlyNotice);
+    expect(JSON.stringify(prepared.request)).not.toContain("alpha");
+  });
+
+  it.each([
     ["custom scheme", "custom-file:///docs"],
     ["closing markup", "</section>"],
     ["ordinary package names", "Use @scope/package and lodash/fp."],

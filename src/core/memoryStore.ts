@@ -68,7 +68,7 @@ const DEFAULT_PREFERENCES: PairPreferences = Object.freeze({
 const EMPTY_MEMORY: StoredPairMemory = Object.freeze({
   version: 1,
   preferences: DEFAULT_PREFERENCES,
-  dismissedEvidenceByRepository: Object.freeze({}),
+  dismissedEvidenceByRepository: freezeDismissals({}),
   approvedEvidence: Object.freeze([]),
 });
 
@@ -126,12 +126,25 @@ function freezeApprovedEvidence(
 function freezeDismissals(
   dismissals: Readonly<Record<string, readonly string[]>>,
 ): Readonly<Record<string, readonly string[]>> {
-  const frozenDismissals: Record<string, readonly string[]> = {};
+  const frozenDismissals = createDismissalRecord();
   for (const [repositoryId, evidenceIds] of Object.entries(dismissals)) {
     frozenDismissals[repositoryId] = Object.freeze([...evidenceIds]);
   }
 
   return Object.freeze(frozenDismissals);
+}
+
+function createDismissalRecord(): Record<string, readonly string[]> {
+  return Object.create(null) as Record<string, readonly string[]>;
+}
+
+function ownDismissalsFor(
+  dismissals: Readonly<Record<string, readonly string[]>>,
+  repositoryId: string,
+): readonly string[] | undefined {
+  return Object.prototype.hasOwnProperty.call(dismissals, repositoryId)
+    ? dismissals[repositoryId]
+    : undefined;
 }
 
 function freezeMemory(memory: StoredPairMemory): StoredPairMemory {
@@ -148,7 +161,7 @@ function freezeMemory(memory: StoredPairMemory): StoredPairMemory {
 function cloneDismissals(
   dismissals: Readonly<Record<string, readonly string[]>>,
 ): Record<string, readonly string[]> {
-  const clonedDismissals: Record<string, readonly string[]> = {};
+  const clonedDismissals = createDismissalRecord();
   for (const [repositoryId, evidenceIds] of Object.entries(dismissals)) {
     clonedDismissals[repositoryId] = [...evidenceIds];
   }
@@ -255,7 +268,7 @@ function validateDismissals(
     );
   }
 
-  const dismissals: Record<string, readonly string[]> = {};
+  const dismissals = createDismissalRecord();
   for (const [repositoryId, evidenceIds] of Object.entries(value)) {
     if (!Array.isArray(evidenceIds) || evidenceIds.some((evidenceId) => typeof evidenceId !== "string")) {
       throw invalidMemory(
@@ -354,7 +367,10 @@ export class PairMemoryStore {
   }
 
   private scopeToRepository(stored: StoredPairMemory): PairMemory {
-    const dismissedEvidence = stored.dismissedEvidenceByRepository[this.options.repositoryId];
+    const dismissedEvidence = ownDismissalsFor(
+      stored.dismissedEvidenceByRepository,
+      this.options.repositoryId,
+    );
 
     return freezeMemory({
       version: 1,
@@ -442,7 +458,10 @@ export class PairMemoryStore {
         stored.dismissedEvidenceByRepository,
       );
       const currentDismissed =
-        dismissedEvidenceByRepository[this.options.repositoryId] ?? [];
+        ownDismissalsFor(
+          dismissedEvidenceByRepository,
+          this.options.repositoryId,
+        ) ?? [];
 
       if (!currentDismissed.includes(persistedEvidenceId)) {
         dismissedEvidenceByRepository[this.options.repositoryId] = [

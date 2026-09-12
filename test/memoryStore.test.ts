@@ -114,6 +114,57 @@ describe("PairMemoryStore", () => {
     });
   });
 
+  it.each(["constructor", "__proto__"])(
+    "loads dismissals for the own repository key %s",
+    async (repositoryId) => {
+      const store = new InMemoryKeyValueStore();
+      const dismissals = Object.assign(Object.create(null), {
+        [repositoryId]: [evidence.id],
+      }) as Record<string, readonly string[]>;
+      await store.update("adaptive-pair.memory", {
+        version: 1,
+        preferences: {
+          interventionStyle: "balanced",
+          pauseThresholdMs: 1_000,
+        },
+        dismissedEvidenceByRepository: dismissals,
+        approvedEvidence: [],
+      });
+      const memoryStore = new PairMemoryStore({
+        store,
+        repositoryId,
+      });
+
+      const memory = await memoryStore.load();
+
+      expect(Object.getPrototypeOf(memory.dismissedEvidenceByRepository)).toBeNull();
+      expect(memory.dismissedEvidenceByRepository).toHaveProperty(
+        repositoryId,
+        [evidenceHash],
+      );
+    },
+  );
+
+  it.each(["constructor", "__proto__"])(
+    "dismisses evidence for the own repository key %s",
+    async (repositoryId) => {
+      const store = new InMemoryKeyValueStore();
+      const memoryStore = new PairMemoryStore({
+        store,
+        repositoryId,
+      });
+
+      await memoryStore.dismissEvidence(evidence.id);
+      const memory = await memoryStore.load();
+
+      expect(Object.getPrototypeOf(memory.dismissedEvidenceByRepository)).toBeNull();
+      expect(memory.dismissedEvidenceByRepository).toHaveProperty(
+        repositoryId,
+        [evidenceHash],
+      );
+    },
+  );
+
   it("treats legacy balanced version-1 preferences as defaults while preserving legacy non-default selections", async () => {
     const store = new InMemoryKeyValueStore();
     const memoryStore = new PairMemoryStore({

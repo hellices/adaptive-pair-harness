@@ -370,11 +370,13 @@ export const registerPairChatParticipant = (
           return;
         }
       }
-      const symbol =
+      const traceLookupStarted =
         request.command === "trace" &&
         snapshot.session.enabled &&
         snapshot.session.active &&
-        snapshot.latest !== undefined
+        snapshot.latest !== undefined;
+      const symbol =
+        traceLookupStarted
           ? await (async (): Promise<ModelSymbolContext | undefined> => {
               const traceRevision = snapshot.revision;
               const traceUri = snapshot.latest!.uri;
@@ -402,7 +404,7 @@ export const registerPairChatParticipant = (
       if (abortController.signal.aborted) {
         return;
       }
-      if (request.command === "trace" && symbol === undefined) {
+      if (traceLookupStarted && symbol === undefined) {
         const current = context.snapshot();
         if (
           !current.session.enabled ||

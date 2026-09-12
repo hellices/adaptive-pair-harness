@@ -295,6 +295,30 @@ describe("TypeScriptSemanticAnalyzer", () => {
     );
   });
 
+  it("resolves a parenthesized identifier used as the default export", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        [
+          "function f(value: string): string { return value; }",
+          "export default (f);",
+        ].join("\n"),
+        [
+          "function f(value: number): string { return String(value); }",
+          "export default (f);",
+        ].join("\n"),
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["default export"],
+        }),
+      ]),
+    );
+  });
+
   it("reports inferred signature changes for exported function-valued variables", () => {
     const evidence = analyzeEvidence(
       episode(
@@ -392,6 +416,40 @@ describe("TypeScriptSemanticAnalyzer", () => {
         expect.objectContaining({
           kind: "public-api-change",
           references: ["fetchItem"],
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    [
+      "statement value to type-only",
+      'export { Foo } from "./foo";',
+      'export type { Foo } from "./foo";',
+    ],
+    [
+      "statement type-only to value",
+      'export type { Foo } from "./foo";',
+      'export { Foo } from "./foo";',
+    ],
+    [
+      "element value to type-only",
+      'export { Foo } from "./foo";',
+      'export { type Foo } from "./foo";',
+    ],
+    [
+      "element type-only to value",
+      'export { type Foo } from "./foo";',
+      'export { Foo } from "./foo";',
+    ],
+  ])("reports a re-export %s transition", (_label, previous, current) => {
+    const evidence = analyzeEvidence(episode(previous, current));
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["Foo"],
         }),
       ]),
     );
@@ -508,6 +566,86 @@ describe("TypeScriptSemanticAnalyzer", () => {
         }),
       ]),
     );
+  });
+
+  it("ignores a changed CommonJS assignment overwritten by the same final replacement", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        [
+          "module.exports = (id) => 1;",
+          'module.exports = (id) => "final";',
+        ].join("\n"),
+        [
+          "module.exports = (id) => true;",
+          'module.exports = (id) => "final";',
+        ].join("\n"),
+        "javascript",
+        "file:///pair.js",
+      ),
+    );
+
+    expect(
+      evidence.filter((item) => item.kind === "public-api-change"),
+    ).toEqual([]);
+  });
+
+  it("reports a CommonJS property removed by a later whole replacement", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        [
+          "module.exports = {};",
+          "module.exports.removed = (id) => id;",
+          "module.exports.keep = (id) => id;",
+        ].join("\n"),
+        [
+          "module.exports.removed = (id) => id;",
+          "module.exports = {};",
+          "module.exports.keep = (id) => id;",
+        ].join("\n"),
+        "javascript",
+        "file:///pair.js",
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API removed",
+          references: ["removed"],
+        }),
+      ]),
+    );
+  });
+
+  it("keeps CommonJS property assignments made after a whole replacement", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        "module.exports = (id) => id;",
+        [
+          "module.exports = (id) => id;",
+          "module.exports.extra = (name) => name;",
+        ].join("\n"),
+        "javascript",
+        "file:///pair.js",
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["extra"],
+        }),
+      ]),
+    );
+    expect(
+      evidence.some(
+        (item) =>
+          item.kind === "public-api-change" &&
+          item.references[0] === "default export",
+      ),
+    ).toBe(false);
   });
 
   it("includes optional, async, and generator changes in exported signatures", () => {
@@ -876,6 +1014,50 @@ describe("TypeScriptSemanticAnalyzer", () => {
 
     expect(complexityEvidence).toHaveLength(2);
     expect(new Set(complexityEvidence.map((item) => item.id)).size).toBe(2);
+  });
+
+  it("assigns distinct complexity identities to same-named functions in nested namespaces", () => {
+    const namespaceSource = (namespaceName: string, complex: boolean) => [
+      `namespace ${namespaceName}.Handlers {`,
+      "  export function decide(input: number): number {",
+      ...(complex
+        ? [
+            "    if (input > 10) return 10;",
+            "    if (input > 0 && input < 10) return input;",
+            "    for (const item of [input]) {",
+            "      if (item === 0) return 0;",
+            "    }",
+            "    return input < 0 ? -input : input;",
+          ]
+        : [
+            "    if (input > 0) return input;",
+            "    if (input < 0) return -input;",
+            "    return 0;",
+          ]),
+      "  }",
+      "}",
+    ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(
+        [
+          namespaceSource("Alpha", false),
+          namespaceSource("Beta", false),
+        ].join("\n"),
+        [
+          namespaceSource("Alpha", true),
+          namespaceSource("Beta", true),
+        ].join("\n"),
+      ),
+    );
+    const complexityEvidence = evidence.filter(
+      (item) => item.kind === "complexity-growth",
+    );
+
+    expect(complexityEvidence).toHaveLength(2);
+    expect(new Set(complexityEvidence.map((item) => item.id)).size).toBe(2);
+    expect(
+      complexityEvidence.map((item) => item.references[0]).sort(),
+    ).toEqual(["Alpha.Handlers.decide", "Beta.Handlers.decide"]);
   });
 
   it("assigns distinct complexity identities to same-named arrows nested in outer arrows", () => {

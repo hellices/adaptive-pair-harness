@@ -162,6 +162,68 @@ describe("pair chat planning", () => {
     expect(markdown.join("\n")).toContain("disabled");
   });
 
+  it.each([
+    ["disabled", false, false, "disabled"],
+    ["inactive", true, false, "off"],
+  ])(
+    "shows %s guidance for /trace without starting symbol resolution",
+    async (_label, enabled, active, guidance) => {
+      const context = new PairSharedContext({
+        enabled,
+        active,
+        goal: "Navigate with evidence-backed questions.",
+        role: "navigator",
+        provider: "vscode-copilot",
+        remainingCalls: 4,
+        remainingInputTokens: 6_000,
+        controlNotice: undefined,
+        configurationWarning: undefined,
+      });
+      context.publishEvidence({
+        uri: "file:///workspace/pair.ts",
+        evidence,
+        question: "Did you intend this dependency?",
+      });
+      const forEvidence = vi.fn(async () => undefined);
+      const generate = vi.fn(async () => ({
+        text: "remote",
+        inputTokens: 1,
+        outputTokens: 1,
+      }));
+      const markdown: string[] = [];
+      let handler: vscode.ChatRequestHandler | undefined;
+      registerPairChatParticipant(
+        (_id, registeredHandler) => {
+          handler = registeredHandler;
+          return { dispose: () => undefined } as vscode.ChatParticipant;
+        },
+        context,
+        { generate },
+        {
+          symbolContextProvider: { forEvidence },
+        },
+      );
+
+      await handler!(
+        { command: "trace", prompt: "" } as vscode.ChatRequest,
+        {} as vscode.ChatContext,
+        {
+          markdown: (value: string) => {
+            markdown.push(value);
+          },
+        } as unknown as vscode.ChatResponseStream,
+        {
+          isCancellationRequested: false,
+          onCancellationRequested: () => ({ dispose: () => undefined }),
+        } as vscode.CancellationToken,
+      );
+
+      expect(markdown.join("\n")).toContain(guidance);
+      expect(forEvidence).not.toHaveBeenCalled();
+      expect(generate).not.toHaveBeenCalled();
+    },
+  );
+
   it("preserves explicit prompt and symbol detail until the remote boundary", () => {
     const context = new PairSharedContext({
       enabled: true,

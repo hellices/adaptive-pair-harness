@@ -587,9 +587,9 @@ const HEADER_LINE_PATTERN = /[^\r\n]+/gu;
 const HEADER_KEY_PATTERN =
   /\b([A-Za-z][A-Za-z0-9_.-]*)([ \t]*:[ \t]*)/gu;
 const ASSIGNED_SECRET_PATTERN =
-  /\b([A-Za-z][A-Za-z0-9_.-]*)(\s*[:=]\s*)(["']?)([^\s,;"']+)\3/gu;
+  /\b([A-Za-z][A-Za-z0-9_.-]*)(\s*[:=]\s*)([^\s,;"']+)/gu;
 const QUOTED_ASSIGNED_SECRET_PATTERN =
-  /\b([A-Za-z][A-Za-z0-9_.-]*)(\s*[:=]\s*)(["'])([^"'\\\r\n]*)\3/gu;
+  /\b([A-Za-z][A-Za-z0-9_.-]*)(\s*[:=]\s*)(?:"((?:\\.|[^"\\\r\n])*)"|'((?:\\.|[^'\\\r\n])*)')/gu;
 const QUOTED_KEY_ASSIGNED_SECRET_PATTERN =
   /(["'])([A-Za-z][A-Za-z0-9_.-]*)\1(\s*:\s*)(?:"((?:\\.|[^"\\\r\n])*)"|'((?:\\.|[^'\\\r\n])*)'|([^\s,;}\]"']+))/gu;
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/giu;
@@ -726,8 +726,13 @@ const sanitizeRemoteText = (
       candidate,
       key: string,
       separator: string,
-      quote: string,
+      doubleQuotedValue: string | undefined,
+      singleQuotedValue: string | undefined,
     ) => {
+      const quote =
+        doubleQuotedValue === undefined && singleQuotedValue !== undefined
+          ? "'"
+          : '"';
       return redactSensitiveKeyValue(
         candidate,
         key,
@@ -741,12 +746,11 @@ const sanitizeRemoteText = (
       candidate,
       key: string,
       separator: string,
-      quote: string,
     ) => {
       return redactSensitiveKeyValue(
         candidate,
         key,
-        `${key}${separator}${quote}[REDACTED]${quote}`,
+        `${key}${separator}[REDACTED]`,
       );
     },
   );

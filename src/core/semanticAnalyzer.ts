@@ -436,6 +436,7 @@ const collectExportedSignatures = (
 ): ReadonlyMap<string, SignatureRecord> => {
   const { checker, sourceFile } = source;
   const signatures = new Map<string, SignatureRecord>();
+  let signatureTarget = signatures;
   const functionsByName = new Map<
     string,
     readonly ts.FunctionLikeDeclaration[]
@@ -480,7 +481,7 @@ const collectExportedSignatures = (
       externalName === "default" ? DEFAULT_EXPORT_DISPLAY : externalName;
     for (const declaration of declarations) {
       appendSignatureRecord(
-        signatures,
+        signatureTarget,
         `function:${externalName}`,
         displayName,
         serializeFunctionLikeSignature(declaration, sourceFile, checker),
@@ -521,7 +522,7 @@ const collectExportedSignatures = (
         ? "#"
         : staticPrefix;
       appendSignatureRecord(
-        signatures,
+        signatureTarget,
         `method:${externalName}${separator}${memberName}`,
         `${displayName}${separator}${memberName}`,
         serializeFunctionLikeSignature(member, sourceFile, checker),
@@ -545,7 +546,7 @@ const collectExportedSignatures = (
           externalName === "default" ? DEFAULT_EXPORT_DISPLAY : externalName;
         for (const signature of callSignatures) {
           appendSignatureRecord(
-            signatures,
+            signatureTarget,
             `function:${externalName}`,
             displayName,
             checker.signatureToString(
@@ -580,7 +581,7 @@ const collectExportedSignatures = (
       .getTypeAtLocation(identifier)
       .getCallSignatures()) {
       appendSignatureRecord(
-        signatures,
+        signatureTarget,
         `function:${externalName}`,
         displayName,
         checker.signatureToString(
@@ -645,7 +646,11 @@ const collectExportedSignatures = (
             externalName === "default"
               ? DEFAULT_EXPORT_DISPLAY
               : externalName,
-            `re-export:${statement.moduleSpecifier.text}:${localName}`,
+            `re-export:${
+              statement.isTypeOnly || element.isTypeOnly
+                ? "type-only"
+                : "value"
+            }:${statement.moduleSpecifier.text}:${localName}`,
             rangeForNode(sourceFile, element.name),
           );
         }
@@ -664,13 +669,42 @@ const collectExportedSignatures = (
       );
       continue;
     }
+  }
 
-    if (ts.isExpressionStatement(statement)) {
-      collectCommonJsExport(
-        statement.expression,
-        appendFunction,
-        appendClass,
-        appendLocalExport,
+  const commonJsSignatures = new Map<string, SignatureRecord>();
+  signatureTarget = commonJsSignatures;
+  for (const statement of sourceFile.statements) {
+    if (!ts.isExpressionStatement(statement)) {
+      continue;
+    }
+    const assignment = commonJsExportAssignment(statement.expression);
+    if (assignment === undefined) {
+      continue;
+    }
+    if (assignment.replacesAll) {
+      commonJsSignatures.clear();
+    } else {
+      removeCommonJsExportSignatures(
+        commonJsSignatures,
+        assignment.externalName,
+      );
+    }
+    collectCommonJsExport(
+      statement.expression,
+      appendFunction,
+      appendClass,
+      appendLocalExport,
+    );
+  }
+  signatureTarget = signatures;
+  for (const record of commonJsSignatures.values()) {
+    for (const signature of record.signatures) {
+      appendSignatureRecord(
+        signatures,
+        record.key,
+        record.displayName,
+        signature,
+        record.range,
       );
     }
   }
@@ -696,6 +730,12 @@ type AppendLocalExport = (
   rangeNode?: ts.Node,
 ) => void;
 
+interface CommonJsExportAssignment {
+  readonly expression: ts.BinaryExpression;
+  readonly externalName: string;
+  readonly replacesAll: boolean;
+}
+
 const externalDeclarationName = (
   declaration: ts.FunctionDeclaration | ts.ClassDeclaration,
 ): string | undefined => {
@@ -705,9 +745,9 @@ const externalDeclarationName = (
   return declaration.name?.text;
 };
 
-const unwrapFunctionExpression = (
+const unwrapExpression = (
   expression: ts.Expression | undefined,
-): ts.FunctionExpression | ts.ArrowFunction | undefined => {
+): ts.Expression | undefined => {
   let current = expression;
   while (
     current !== undefined &&
@@ -719,8 +759,15 @@ const unwrapFunctionExpression = (
   ) {
     current = current.expression;
   }
-  return current !== undefined && isFunctionExpressionLike(current)
-    ? current
+  return current;
+};
+
+const unwrapFunctionExpression = (
+  expression: ts.Expression | undefined,
+): ts.FunctionExpression | ts.ArrowFunction | undefined => {
+  const unwrapped = unwrapExpression(expression);
+  return unwrapped !== undefined && isFunctionExpressionLike(unwrapped)
+    ? unwrapped
     : undefined;
 };
 
@@ -732,17 +779,20 @@ const appendExpressionExport = (
   appendClass: AppendClassExport,
   appendLocalExport: AppendLocalExport,
 ): void => {
-  const functionExpression = unwrapFunctionExpression(expression);
-  if (functionExpression !== undefined) {
-    appendFunction(externalName, [functionExpression], rangeNode);
+  const unwrapped = unwrapExpression(expression);
+  if (unwrapped === undefined) {
     return;
   }
-  if (ts.isClassExpression(expression)) {
-    appendClass(externalName, expression, rangeNode);
+  if (isFunctionExpressionLike(unwrapped)) {
+    appendFunction(externalName, [unwrapped], rangeNode);
     return;
   }
-  if (ts.isIdentifier(expression)) {
-    appendLocalExport(expression.text, externalName, rangeNode);
+  if (ts.isClassExpression(unwrapped)) {
+    appendClass(externalName, unwrapped, rangeNode);
+    return;
+  }
+  if (ts.isIdentifier(unwrapped)) {
+    appendLocalExport(unwrapped.text, externalName, rangeNode);
   }
 };
 
@@ -752,22 +802,17 @@ const collectCommonJsExport = (
   appendClass: AppendClassExport,
   appendLocalExport: AppendLocalExport,
 ): void => {
-  if (
-    !ts.isBinaryExpression(expression) ||
-    expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken
-  ) {
+  const assignment = commonJsExportAssignment(expression);
+  if (assignment === undefined) {
     return;
   }
-  const externalName = commonJsExportName(expression.left);
-  if (externalName === undefined) {
-    return;
-  }
+  const { externalName } = assignment;
 
   if (
-    externalName === "default" &&
-    ts.isObjectLiteralExpression(expression.right)
+    assignment.replacesAll &&
+    ts.isObjectLiteralExpression(assignment.expression.right)
   ) {
-    for (const property of expression.right.properties) {
+    for (const property of assignment.expression.right.properties) {
       if (ts.isShorthandPropertyAssignment(property)) {
         appendLocalExport(property.name.text, property.name.text, property.name);
       } else if (ts.isPropertyAssignment(property)) {
@@ -793,13 +838,50 @@ const collectCommonJsExport = (
   }
 
   appendExpressionExport(
-    expression.right,
+    assignment.expression.right,
     externalName,
-    expression.left,
+    assignment.expression.left,
     appendFunction,
     appendClass,
     appendLocalExport,
   );
+};
+
+const commonJsExportAssignment = (
+  expression: ts.Expression,
+): CommonJsExportAssignment | undefined => {
+  if (
+    !ts.isBinaryExpression(expression) ||
+    expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken
+  ) {
+    return undefined;
+  }
+  const externalName = commonJsExportName(expression.left);
+  return externalName === undefined
+    ? undefined
+    : {
+        expression,
+        externalName,
+        replacesAll: isModuleExports(expression.left),
+      };
+};
+
+const removeCommonJsExportSignatures = (
+  signatures: Map<string, SignatureRecord>,
+  externalName: string,
+): void => {
+  const functionKey = `function:${externalName}`;
+  const instanceMethodPrefix = `method:${externalName}#`;
+  const staticMethodPrefix = `method:${externalName}.`;
+  for (const key of signatures.keys()) {
+    if (
+      key === functionKey ||
+      key.startsWith(instanceMethodPrefix) ||
+      key.startsWith(staticMethodPrefix)
+    ) {
+      signatures.delete(key);
+    }
+  }
 };
 
 const commonJsExportName = (expression: ts.Expression): string | undefined => {
@@ -1044,6 +1126,14 @@ const enclosingScopeIdentity = (node: ts.Node | undefined): SubjectIdentity | un
 
     if (ts.isClassDeclaration(current)) {
       return classIdentity(current);
+    }
+
+    if (ts.isModuleDeclaration(current)) {
+      return qualifyIdentity(
+        enclosingScopeIdentity(current.parent),
+        `module:${current.name.text}`,
+        current.name.text,
+      );
     }
 
     if (ts.isVariableDeclaration(current)) {

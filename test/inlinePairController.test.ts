@@ -167,16 +167,29 @@ describe("inline pair comment", () => {
 
   it("clears all session threads and remains reusable", () => {
     const disposed: string[] = [];
+    let controllerDisposed = false;
+    const disposeController = vi.fn();
     const controller = {
-      createCommentThread: (uri: vscode.Uri) => ({
-        canReply: false,
-        label: undefined,
-        comments: [],
-        dispose: () => {
-          disposed.push(uri.toString());
-        },
-      }),
-      dispose: () => undefined,
+      createCommentThread: (uri: vscode.Uri) => {
+        if (controllerDisposed) {
+          throw new Error("Cannot create a thread after controller disposal.");
+        }
+        return {
+          canReply: false,
+          label: undefined,
+          comments: [],
+          dispose: () => {
+            disposed.push(uri.toString());
+          },
+        };
+      },
+      dispose: () => {
+        if (controllerDisposed) {
+          throw new Error("Comment controller disposed more than once.");
+        }
+        controllerDisposed = true;
+        disposeController();
+      },
     } as unknown as vscode.CommentController;
     const inline = new InlinePairController({
       controller,
@@ -193,10 +206,14 @@ describe("inline pair comment", () => {
     inline.render(uriA, range, "Question A?", evidence);
     inline.render(uriB, range, "Question B?", evidence);
     inline.clear();
+    expect(controllerDisposed).toBe(false);
+    expect(disposeController).not.toHaveBeenCalled();
     inline.render(uriA, range, "Question A again?", evidence);
 
     expect(disposed).toEqual(["file:///a.ts", "file:///b.ts"]);
     inline.dispose();
+    expect(controllerDisposed).toBe(true);
+    expect(disposeController).toHaveBeenCalledOnce();
     expect(disposed).toEqual([
       "file:///a.ts",
       "file:///b.ts",

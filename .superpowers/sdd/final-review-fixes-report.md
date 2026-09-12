@@ -949,3 +949,69 @@
 - Live GitHub Copilot and third-party OpenAI-compatible services were not
   available in this non-interactive environment. Injected provider tests cover
   the changed projection and fallback boundaries.
+
+---
+
+## Other-reviewer valid findings follow-up (2026-09-13)
+
+### Corrections implemented
+
+- Made dismissal maps null-prototype records throughout defaults, validation,
+  cloning, freezing, and repository scoping. Repository lookups now require an
+  own property, so `constructor` and `__proto__` are safe repository IDs.
+- Added effective statement-or-element type-only state to external ESM
+  re-export signatures.
+- Included nested TypeScript module/namespace ancestry in complexity keys and
+  display names.
+- Made quoted sensitive assignments delimiter-specific and escape-aware, so
+  the opposite quote character remains part of the secret value. Sensitive
+  explicit Chat prompts still fall back as one complete local-only field.
+- Unwrapped parentheses, assertions, `satisfies`, and non-null wrappers before
+  class/function/identifier export dispatch.
+- Evaluated CommonJS export assignments in source order. Whole
+  `module.exports` assignments replace prior CommonJS state; later property
+  assignments overwrite or extend the current state.
+- Limited stale `/trace` checks to symbol lookups that actually started, so
+  disabled and inactive requests render their intended guidance.
+- Strengthened the inline-comment controller fake to reject post-disposal
+  rendering, prove `clear()` remains reusable, and count final controller
+  disposal.
+
+### TDD evidence
+
+- RED: **16 expected regression failures** covered special repository IDs,
+  both forms and directions of type-only re-exports, nested namespaces,
+  opposite quote delimiters, parenthesized default identifiers, CommonJS
+  replacement order, disabled/inactive `/trace`, and stateful controller
+  disposal.
+- GREEN: focused verification passed with **5 files, 194 tests**.
+- The CommonJS post-replacement extension case passed as a preservation
+  characterization while the overwrite/removal cases failed before the fix.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **17 files, 363 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 88.34%, branches 79.52%, functions 91.95%, lines 88.49%
+- `npm run package`: **PASS — 156 files, 4.35 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- VSIX content scan: required compiled modules and public docs are present;
+  source, tests, coverage, private review material, source maps, workspace,
+  and CI files are absent.
+- Runtime dependency root scan: **PASS — `typescript` only**
+- `git diff --check`: **PASS**
+- Production and packaged credential-value scans: **PASS**
+- Production and packaged fake-URL scans, including package repository,
+  bugs, and homepage metadata assertions: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review found no remaining high-confidence correctness, privacy,
+  lifecycle, packaging, or documentation issue. No public documentation change
+  was needed because the fixes preserve the documented APIs and behavior.
+- Live VS Code document-symbol providers were unavailable in this
+  non-interactive environment; handler-level tests cover the changed `/trace`
+  guidance and stale-lookup boundaries.
