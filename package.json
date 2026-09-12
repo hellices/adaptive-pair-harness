@@ -20,7 +20,8 @@
     "onLanguage:javascript",
     "onLanguage:javascriptreact",
     "onCommand:adaptivePair.toggle",
-    "onCommand:adaptivePair.reviewCurrentBlock"
+    "onCommand:adaptivePair.reviewCurrentBlock",
+    "onCommand:adaptivePair.setApiKey"
   ],
   "main": "./dist/src/extension.js",
   "contributes": {
@@ -91,13 +92,13 @@
     "typescript": "^5.9.3"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
+    "@eslint/js": "8.57.1",
     "@types/node": "^26.4.1",
     "@types/vscode": "^1.136.0",
-    "@vitest/coverage-v8": "^5.0.0",
+    "@vitest/coverage-v8": "4.0.15",
     "@vscode/vsce": "^3.9.2",
-    "eslint": "^10.10.0",
-    "typescript-eslint": "^8.69.1-alpha.0",
-    "vitest": "^5.0.0"
+    "eslint": "8.57.1",
+    "typescript-eslint": "8.69.1-alpha.0",
+    "vitest": "4.0.15"
   }
 }
