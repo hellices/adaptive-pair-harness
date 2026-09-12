@@ -7,6 +7,7 @@ import { PairMemoryStore } from "../core/memoryStore";
 import type { KeyValueStore } from "../core/memoryStore";
 import {
   LocalTemplateProvider,
+  ModelOutputLimitError,
   ModelRouter,
   OpenAICompatibleProvider,
   prepareRemoteModelRequest,
@@ -759,6 +760,20 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       }
       return response;
     } catch (error: unknown) {
+      if (error instanceof ModelOutputLimitError) {
+        if (error.requestDispatched) {
+          this.budget.settle(
+            admission.reservationId,
+            error.inputTokens,
+            error.outputTokens,
+          );
+        } else {
+          this.budget.release(admission.reservationId);
+        }
+        if (lifecycleFence.isCurrent() && !signal.aborted) {
+          this.publishSession();
+        }
+      }
       releaseUnusedCopilotReservation(
         this.budget,
         admission.reservationId,

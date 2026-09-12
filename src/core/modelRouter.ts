@@ -32,6 +32,17 @@ export interface ModelResponse {
   readonly outputTokens: number;
 }
 
+export class ModelOutputLimitError extends Error {
+  public constructor(
+    public readonly inputTokens: number,
+    public readonly outputTokens: number,
+    public readonly requestDispatched: boolean,
+  ) {
+    super("Model provider exceeded the output token limit.");
+    this.name = "ModelOutputLimitError";
+  }
+}
+
 export interface ModelPreparationOptions {
   readonly userInitiated?: boolean;
 }
@@ -238,19 +249,22 @@ export class OpenAICompatibleProvider implements ModelProvider {
         payload.usage?.completion_tokens ?? 0,
         conservativeTextTokenCount(firstChoice.message.content),
       );
+      const inputTokens =
+        payload.usage?.prompt_tokens ??
+        estimateOpenAICompatibleInputTokens(requestBody);
       if (
         outputTokens > requestBody.max_tokens
       ) {
-        throw new Error(
-          "OpenAI-compatible provider exceeded the output token limit.",
+        throw new ModelOutputLimitError(
+          inputTokens,
+          outputTokens,
+          true,
         );
       }
 
       return {
         text: firstChoice.message.content,
-        inputTokens:
-          payload.usage?.prompt_tokens ??
-          estimateOpenAICompatibleInputTokens(requestBody),
+        inputTokens,
         outputTokens,
       };
     } catch (error: unknown) {
@@ -551,6 +565,7 @@ const SENSITIVE_KEY_ROOTS = [
   "signature",
   "clientsecret",
   "apikey",
+  "accesskeyid",
   "accesskey",
   "token",
   "password",
@@ -568,14 +583,15 @@ const isSensitiveKey = (key: string): boolean => {
   );
 };
 const URI_PATTERN = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s<>"'`]+/gu;
+const HEADER_LINE_PATTERN = /[^\r\n]+/gu;
+const HEADER_KEY_PATTERN =
+  /\b([A-Za-z][A-Za-z0-9_.-]*)([ \t]*:[ \t]*)/gu;
 const ASSIGNED_SECRET_PATTERN =
   /\b([A-Za-z][A-Za-z0-9_.-]*)(\s*[:=]\s*)(["']?)([^\s,;"']+)\3/gu;
 const QUOTED_ASSIGNED_SECRET_PATTERN =
   /\b([A-Za-z][A-Za-z0-9_.-]*)(\s*[:=]\s*)(["'])([^"'\\\r\n]*)\3/gu;
-const DOUBLE_QUOTED_KEY_ASSIGNED_SECRET_PATTERN =
-  /"([A-Za-z][A-Za-z0-9_.-]*)"(\s*:\s*)"((?:\\.|[^"\\\r\n])*)"/gu;
-const SINGLE_QUOTED_KEY_ASSIGNED_SECRET_PATTERN =
-  /'([A-Za-z][A-Za-z0-9_.-]*)'(\s*:\s*)'((?:\\.|[^'\\\r\n])*)'/gu;
+const QUOTED_KEY_ASSIGNED_SECRET_PATTERN =
+  /(["'])([A-Za-z][A-Za-z0-9_.-]*)\1(\s*:\s*)(?:"((?:\\.|[^"\\\r\n])*)"|'((?:\\.|[^'\\\r\n])*)'|([^\s,;}\]"']+))/gu;
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/giu;
 const BASIC_PATTERN = /\bBasic\s+[A-Za-z0-9._~+/-]+=*/giu;
 const KNOWN_TOKEN_PATTERN =
@@ -640,23 +656,44 @@ const sanitizeRemoteText = (
     sensitiveDataDetected = true;
     return replacement;
   };
+  sanitized = sanitized.replace(HEADER_LINE_PATTERN, (line) => {
+    HEADER_KEY_PATTERN.lastIndex = 0;
+    let match = HEADER_KEY_PATTERN.exec(line);
+    while (match !== null) {
+      const key = match[1];
+      const separator = match[2];
+      if (
+        key !== undefined &&
+        separator !== undefined &&
+        isSensitiveKey(key)
+      ) {
+        sensitiveDataDetected = true;
+        return `${line.slice(0, match.index)}${key}${separator}[REDACTED]`;
+      }
+      match = HEADER_KEY_PATTERN.exec(line);
+    }
+    return line;
+  });
   sanitized = sanitized.replace(
-    DOUBLE_QUOTED_KEY_ASSIGNED_SECRET_PATTERN,
-    (candidate, key: string, separator: string) => {
+    QUOTED_KEY_ASSIGNED_SECRET_PATTERN,
+    (
+      candidate,
+      keyQuote: string,
+      key: string,
+      separator: string,
+      doubleQuotedValue: string | undefined,
+      singleQuotedValue: string | undefined,
+    ) => {
+      const valueQuote =
+        doubleQuotedValue === undefined
+          ? singleQuotedValue === undefined
+            ? ""
+            : "'"
+          : '"';
       return redactSensitiveKeyValue(
         candidate,
         key,
-        `"${key}"${separator}"[REDACTED]"`,
-      );
-    },
-  );
-  sanitized = sanitized.replace(
-    SINGLE_QUOTED_KEY_ASSIGNED_SECRET_PATTERN,
-    (candidate, key: string, separator: string) => {
-      return redactSensitiveKeyValue(
-        candidate,
-        key,
-        `'${key}'${separator}'[REDACTED]'`,
+        `${keyQuote}${key}${keyQuote}${separator}${valueQuote}[REDACTED]${valueQuote}`,
       );
     },
   );

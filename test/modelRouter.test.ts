@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   LocalTemplateProvider,
+  ModelOutputLimitError,
   ModelRouter,
   OpenAICompatibleProvider,
   buildOpenAICompatibleRequestBody,
@@ -329,14 +330,14 @@ describe("model routing", () => {
     ).rejects.toThrow("response size limit");
   });
 
-  it("rejects completion usage above the requested output cap", async () => {
+  it("reports observed usage when completion usage exceeds the requested output cap", async () => {
     const fetchImplementation: typeof fetch = async () =>
       new Response(
         JSON.stringify({
           choices: [{ message: { content: "too much output" } }],
           usage: {
-            prompt_tokens: 10,
-            completion_tokens: 11,
+            prompt_tokens: 37,
+            completion_tokens: 500,
           },
         }),
         { status: 200 },
@@ -347,12 +348,20 @@ describe("model routing", () => {
       fetch: fetchImplementation,
     });
 
-    await expect(
-      provider.generate(
-        { ...request, maxOutputTokens: 10 },
+    const error: unknown = await provider
+      .generate(
+        { ...request, maxOutputTokens: 180 },
         new AbortController().signal,
-      ),
-    ).rejects.toThrow("output token limit");
+      )
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ModelOutputLimitError);
+    expect(error).toMatchObject({
+      name: "ModelOutputLimitError",
+      inputTokens: 37,
+      outputTokens: 500,
+      requestDispatched: true,
+    });
   });
 
   it.each([

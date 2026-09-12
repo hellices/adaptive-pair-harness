@@ -427,3 +427,79 @@
 - The OpenAI-compatible input estimate intentionally treats each UTF-8 byte as
   a token. This is conservative and may reduce remote-call throughput for
   multibyte or code-dense prompts, but prevents admission underestimation.
+
+---
+
+## Whole-Branch Important Findings — Final Follow-up
+
+- Date: 2026-09-12
+- Status: **COMPLETE — both remaining Important findings fixed**
+
+### Corrections implemented
+
+- Sensitive quoted keys are now parsed independently from value quoting.
+  Matching quotes, opposite quotes (including the exact
+  `"api.key": 'mixed quoted value'` regression), and unquoted values are all
+  fully replaced with `[REDACTED]` and mark the request as sensitive.
+- Sensitive header keys are located before consuming their values, so
+  `Authorization:` and normalized variants redact through end-of-line,
+  including embedded spaces, without being skipped by an earlier benign
+  `key:` on the same line.
+- Sensitive-key normalization now includes `accessKeyId`/AWS-prefixed forms
+  while retaining `secretAccessKey`, credential, signature, and client-secret
+  variants. Keyed lowercase hexadecimal values are redacted; unrelated commit
+  hashes and benign package names remain unflagged.
+- OpenAI-compatible over-limit responses now throw a typed
+  `ModelOutputLimitError` carrying observed input/output usage and confirmed
+  dispatch state.
+- Runtime failure handling settles the exact reservation by ID with the
+  conservative observed usage before rethrowing and republishes the resulting
+  budget. Dispatched calls are never refunded; concurrent reservations retain
+  their ownership.
+
+### TDD evidence
+
+- Privacy RED: **10 expected failures** exposed mixed/no-quote key parsing,
+  incomplete header values, and missing `accessKeyId` normalization.
+- Self-review RED: **1 expected failure** showed a benign earlier colon could
+  hide a later sensitive header on the same line.
+- Provider/runtime RED: **2 expected failures** showed the untyped limit error;
+  after adding the typed provider error, the runtime regression still failed
+  with **360 remaining instead of 40**, proving only the two 180-token
+  reservations were accounted. A separate RED then showed the published
+  session still reported 360.
+- GREEN: focused privacy/model/runtime verification completed with **5 files,
+  145 tests passed**. The 500-token over-limit response settles alongside the
+  concurrent reservation (40 remaining), then owns exactly 500 tokens after
+  the concurrent 4-token response settles (504 total observed usage).
+
+### Final verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **16 files, 267 tests passed**
+- `npm run package`: **PASS**
+- VSIX inspection: **155 files**
+  - compiled `ModelOutputLimitError`, `accesskeyid`, header scanning, and
+    runtime settlement markers are present;
+  - source, tests, coverage, private Superpowers material, source maps, and
+    workspace/CI files are excluded.
+- `git diff --check`: **PASS**
+- Production secret-value scan: **PASS**
+- Package metadata fake-URL scan: **PASS**
+- Production URL literals remain limited to the documented loopback default
+  `http://localhost:11434/v1`.
+- Changed-file self-review found and fixed the benign-colon header scanning
+  gap; no remaining high-confidence correctness, privacy, accounting, or
+  concurrency concern was identified.
+
+### Residual concerns
+
+- Official Copilot consent/UI behavior and a live third-party
+  OpenAI-compatible endpoint were not exercised in this non-interactive
+  environment; provider and runtime boundaries are covered by injected
+  contract tests.
+- Over-limit provider usage can intentionally exceed the configured rolling
+  cap in accounting. Remaining budget clamps to zero rather than hiding usage
+  that the already-dispatched request actually consumed.

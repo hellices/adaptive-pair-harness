@@ -37,6 +37,10 @@ const sensitiveKeyVariants = [
   "api_key",
   "api.key",
   "access_key",
+  "accessKeyId",
+  "aws_access_key_id",
+  "secretAccessKey",
+  "aws-secret-access-key",
   "accessToken",
   "dbCredential",
   "privateKey",
@@ -346,6 +350,83 @@ describe("remote model request privacy", () => {
     expect(serialized).toContain("[REDACTED]");
   });
 
+  it.each([
+    [
+      "matching quotes",
+      `"api.key": "matching quoted value"`,
+      `"api.key": "[REDACTED]"`,
+    ],
+    [
+      "opposite quotes",
+      `"api.key": 'mixed quoted value'`,
+      `"api.key": '[REDACTED]'`,
+    ],
+    [
+      "opposite single-key quotes",
+      `'api.key': "other mixed quoted value"`,
+      `'api.key': "[REDACTED]"`,
+    ],
+    [
+      "no value quotes",
+      `"api.key": unquoted-sensitive-value`,
+      `"api.key": [REDACTED]`,
+    ],
+  ])(
+    "redacts a quoted sensitive key independently from %s around its value",
+    (_label, input, expected) => {
+      const prepared = prepareRemoteModelRequest(requestContaining(input));
+
+      expect(prepared.sensitiveDataDetected).toBe(true);
+      expect(prepared.request.goal).toBe(expected);
+    },
+  );
+
+  it("redacts a complete sensitive header value through end-of-line", () => {
+    const prepared = prepareRemoteModelRequest(
+      requestContaining(
+        "Authorization: custom credential value with spaces\nX-Request-Id: benign-id",
+      ),
+    );
+
+    expect(prepared.sensitiveDataDetected).toBe(true);
+    expect(prepared.request.goal).toBe(
+      "Authorization: [REDACTED] X-Request-Id: benign-id",
+    );
+  });
+
+  it("finds a sensitive header after a benign colon before redacting to end-of-line", () => {
+    const prepared = prepareRemoteModelRequest(
+      requestContaining(
+        "Changed header: Authorization: custom credential value with spaces",
+      ),
+    );
+
+    expect(prepared.sensitiveDataDetected).toBe(true);
+    expect(prepared.request.goal).toBe(
+      "Changed header: Authorization: [REDACTED]",
+    );
+  });
+
+  it.each([
+    "accessKeyId",
+    "awsAccessKeyId",
+    "secretAccessKey",
+    "aws_secret_access_key",
+    "dbCredential",
+    "requestSignature",
+    "client-secret",
+  ])("redacts a lowercase hexadecimal value keyed by %s", (key) => {
+    const credential = "0123456789abcdef".repeat(4);
+    const prepared = prepareRemoteModelRequest(
+      requestContaining(`${key}=${credential}`),
+    );
+    const serialized = JSON.stringify(prepared.request);
+
+    expect(prepared.sensitiveDataDetected).toBe(true);
+    expect(serialized).not.toContain(credential);
+    expect(serialized).toContain("[REDACTED]");
+  });
+
   it("redacts a lowercase hexadecimal presigned signature by its sensitive key", () => {
     const signature = "0123456789abcdef".repeat(4);
     const prepared = prepareRemoteModelRequest(
@@ -417,7 +498,10 @@ describe("remote model request privacy", () => {
 
   it.each([
     "@microsoft/applicationinsights-web-snippet",
+    "@aws-sdk/credential-provider-node",
+    "@company/client-secret-helper",
     "packages/applicationinsights-web-snippet/dist/browser",
+    "packages/request-signature-tools/dist/index.js",
     "company/platform-observability-instrumentation",
     "Aa0_".repeat(12),
   ])("preserves the benign package, path, or low-entropy value %s", (benign) => {

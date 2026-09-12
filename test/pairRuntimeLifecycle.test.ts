@@ -627,6 +627,103 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
+  it("settles observed over-limit usage without releasing a concurrent reservation", async () => {
+    const overLimitCompletion = deferred<Response>();
+    const concurrentCompletion = deferred<Response>();
+    const fetchImplementation = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce(() => overLimitCompletion.promise)
+      .mockImplementationOnce(() => concurrentCompletion.promise);
+    vi.stubGlobal("fetch", fetchImplementation);
+    const budgetConfig = {
+      maxCalls: 2,
+      maxInputTokens: 12_000,
+      maxOutputTokens: 720,
+      maxOutputTokensPerCall: 180,
+      windowMs: 600_000,
+    };
+    const budget = new TokenBudget(budgetConfig);
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "openai-compatible",
+        baseUrl: new URL("https://models.example/v1"),
+        budget: budgetConfig,
+      }),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+      budget,
+    });
+    await runtime.startSession();
+
+    const overLimit = runtime.generate(
+      "file:///workspace/over-limit.ts",
+      "Ask.",
+      evidence,
+      new AbortController().signal,
+    );
+    await vi.waitFor(() => {
+      expect(fetchImplementation).toHaveBeenCalledOnce();
+    });
+    const concurrent = runtime.generate(
+      "file:///workspace/concurrent.ts",
+      "Ask concurrently.",
+      evidence,
+      new AbortController().signal,
+    );
+    await vi.waitFor(() => {
+      expect(fetchImplementation).toHaveBeenCalledTimes(2);
+    });
+
+    overLimitCompletion.resolve(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "far beyond the cap" } }],
+          usage: { prompt_tokens: 37, completion_tokens: 500 },
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+    await expect(overLimit).rejects.toMatchObject({
+      name: "ModelOutputLimitError",
+      inputTokens: 37,
+      outputTokens: 500,
+      requestDispatched: true,
+    });
+    expect(budget.snapshot(Date.now())).toMatchObject({
+      remainingCalls: 0,
+      remainingOutputTokens: 40,
+    });
+    expect(shared.snapshot().session.remainingOutputTokens).toBe(40);
+
+    concurrentCompletion.resolve(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "okay" } }],
+          usage: { prompt_tokens: 10, completion_tokens: 0 },
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+    await expect(concurrent).resolves.toMatchObject({
+      outputTokens: 4,
+    });
+    const settled = budget.snapshot(Date.now());
+    expect(
+      budgetConfig.maxOutputTokens - settled.remainingOutputTokens,
+    ).toBe(504);
+    expect(settled.remainingCalls).toBe(0);
+    runtime.dispose();
+  });
+
   it.each([
     ["CJK", "你好世界".repeat(40)],
     ["code-dense", "()=>{value?.map(x=>x+1)??=[];}".repeat(12)],
