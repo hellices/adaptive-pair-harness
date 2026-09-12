@@ -127,6 +127,12 @@ Stopping a session clears transient inline state and shared evidence for the
 current session. Resetting local memory also stops an active or still-preparing
 session before publishing the reset state.
 
+Adding or removing a workspace folder does not require restarting an active
+session. Pair pauses document and model work, cancels pending requests, clears
+transient evidence, reloads dismissal memory for the current set of workspace
+roots, and then resumes the same explicit session. Removed roots are discarded,
+and a newly added root's dismissals load before its documents are reviewed.
+
 The configured intervention style remains authoritative until the style picker
 records an explicit user selection in VS Code global state. Dismiss and approve
 actions do not convert the materialized `balanced` default into a selection.

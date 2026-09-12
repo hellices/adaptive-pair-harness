@@ -38,18 +38,28 @@ project changes.
    reset invalidate pending preparation; rejection from stale preparation
    returns the stopped result, while a current-generation failure still
    surfaces.
-5. **Document changes** invalidate existing inline evidence for that file,
+5. **Workspace-folder changes** keep the explicit session active but advance
+   its lifecycle generation and block new document/model work. Pending edit,
+   model, and Chat work is cancelled; transient evidence and threads are
+   cleared; and preparation reloads the current root set, repository-scoped
+   dismissals, open-document seeds, and coexistence signals. Removed roots are
+   absent from the replacement snapshot, and added-root dismissals commit
+   before processing resumes. Stop, disposal, restart, or a newer folder event
+   invalidates an older refresh so stale asynchronous work cannot commit.
+   The workspace-folder listener is owned and disposed with the other active
+   session listeners.
+6. **Document changes** invalidate existing inline evidence for that file,
    cancel in-flight work, and queue an edit episode through the debounced
    aggregator.
-6. **Episode analysis** returns an explicit stable/unstable result. Unstable
+7. **Episode analysis** returns an explicit stable/unstable result. Unstable
    edits produce no intervention and do not replace the last-stable baseline;
    the next stable edit is compared with that baseline. If no stable snapshot
    has ever been retained, the first stable edit uses the episode's actual
    `previousText` rather than comparing the document with itself.
-7. **Policy evaluation** picks the highest-priority eligible evidence and
+8. **Policy evaluation** picks the highest-priority eligible evidence and
    respects confidence thresholds and rendered-intervention cooldown.
    Runtime-owned rolling budget admission occurs immediately before dispatch.
-8. **Intervention rendering** either uses a local template question or a model
+9. **Intervention rendering** either uses a local template question or a model
    provider response, then renders the result inline and publishes it to shared
    chat state.
 

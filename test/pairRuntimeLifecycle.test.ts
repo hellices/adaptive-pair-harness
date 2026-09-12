@@ -59,6 +59,16 @@ const vscodeState = vi.hoisted(() => ({
   openListeners: [] as Array<(document: TestDocument) => void>,
   closeListeners: [] as Array<(document: TestDocument) => void>,
   changeListeners: [] as Array<(event: unknown) => void>,
+  workspaceFolderListeners: [] as Array<
+    (event: {
+      readonly added: ReadonlyArray<{
+        readonly uri: { toString(): string };
+      }>;
+      readonly removed: ReadonlyArray<{
+        readonly uri: { toString(): string };
+      }>;
+    }) => void
+  >,
   listenerRegistrationCallCount: 0,
   listenerRegistrationFailure:
     undefined as Error | undefined,
@@ -262,6 +272,16 @@ vi.mock("vscode", () => {
         registerListener(vscodeState.closeListeners, listener),
       onDidChangeTextDocument: (listener: (event: unknown) => void) =>
         registerListener(vscodeState.changeListeners, listener),
+      onDidChangeWorkspaceFolders: (
+        listener: (event: {
+          readonly added: ReadonlyArray<{
+            readonly uri: { toString(): string };
+          }>;
+          readonly removed: ReadonlyArray<{
+            readonly uri: { toString(): string };
+          }>;
+        }) => void,
+      ) => registerListener(vscodeState.workspaceFolderListeners, listener),
     },
   };
 });
@@ -413,6 +433,7 @@ beforeEach(() => {
   vscodeState.openListeners.length = 0;
   vscodeState.closeListeners.length = 0;
   vscodeState.changeListeners.length = 0;
+  vscodeState.workspaceFolderListeners.length = 0;
   vscodeState.listenerRegistrationCallCount = 0;
   vscodeState.listenerRegistrationFailure = undefined;
   vscodeState.listenerRegistrationFailureAt = undefined;
@@ -433,8 +454,10 @@ describe("PairRuntime lifecycle ownership", () => {
   it.each([
     ["first", 1],
     ["second", 2],
+    ["third", 3],
+    ["fourth", 4],
   ] as const)(
-    "rolls back prepared state when the %s document listener registration throws",
+    "rolls back prepared state when the %s session listener registration throws",
     async (_label, failureAt) => {
       const seededUri = "file:///workspace/prepared.ts";
       vscodeState.textDocuments = [
@@ -459,6 +482,7 @@ describe("PairRuntime lifecycle ownership", () => {
       expect(vscodeState.openListeners).toHaveLength(0);
       expect(vscodeState.closeListeners).toHaveLength(0);
       expect(vscodeState.changeListeners).toHaveLength(0);
+      expect(vscodeState.workspaceFolderListeners).toHaveLength(0);
       const state = (
         runtime as unknown as {
           documentState: {
@@ -472,7 +496,7 @@ describe("PairRuntime lifecycle ownership", () => {
   );
 
   it("disposes every listener and later runtime resource when one listener throws", async () => {
-    vscodeState.listenerDisposalFailureAt = 3;
+    vscodeState.listenerDisposalFailureAt = 4;
     const runtime = new PairRuntime({
       config: config(),
       extensionContext,
@@ -483,13 +507,14 @@ describe("PairRuntime lifecycle ownership", () => {
     await runtime.startSession();
 
     expect(() => runtime.dispose()).toThrow(
-      "listener disposal 3 failed",
+      "listener disposal 4 failed",
     );
 
-    expect(vscodeState.listenerDisposalOrder).toEqual([3, 2, 1]);
+    expect(vscodeState.listenerDisposalOrder).toEqual([4, 3, 2, 1]);
     expect(vscodeState.openListeners).toHaveLength(0);
     expect(vscodeState.closeListeners).toHaveLength(0);
     expect(vscodeState.changeListeners).toHaveLength(0);
+    expect(vscodeState.workspaceFolderListeners).toHaveLength(0);
     expect(vscodeState.commentControllerDisposed).toBe(true);
     expect(vscodeState.statusItems[0]?.disposed).toBe(true);
     expect(runtime.isSessionActive()).toBe(false);
@@ -2944,6 +2969,495 @@ describe("PairRuntime lifecycle ownership", () => {
     expect(markdown).not.toHaveBeenCalled();
     expect(shared.snapshot()).toEqual(stateAfterEdit);
     expect(status.text).toBe(statusAfterEdit);
+    runtime.dispose();
+  });
+
+  it("atomically replaces removed roots with added-root memory and document seeds", async () => {
+    const removedRoot = {
+      uri: { toString: () => "file:///workspace/removed" },
+    };
+    const addedRoot = {
+      uri: { toString: () => "file:///workspace/added" },
+    };
+    vscodeState.workspaceFolders = [removedRoot];
+    vscodeState.getWorkspaceFolder.mockImplementation((uri) =>
+      vscodeState.workspaceFolders.find((folder) =>
+        uri.toString().startsWith(`${folder.uri.toString()}/`),
+      ),
+    );
+    const removedDocument = document(
+      `${removedRoot.uri.toString()}/removed.ts`,
+      "export const removed = true;",
+    );
+    const addedDocument = document(
+      `${addedRoot.uri.toString()}/added.ts`,
+      "export const added = true;",
+    );
+    vscodeState.textDocuments = [removedDocument];
+    const stored = {
+      version: 1,
+      preferences: {
+        interventionStyle: "active",
+        interventionStyleExplicit: true,
+        pauseThresholdMs: 1_000,
+      },
+      dismissedEvidenceByRepository: {
+        [removedRoot.uri.toString()]: [
+          hashEvidenceIdentity("removed-evidence"),
+        ],
+        [addedRoot.uri.toString()]: [
+          hashEvidenceIdentity("added-evidence"),
+        ],
+      },
+      dismissedRepositoryOrder: [
+        removedRoot.uri.toString(),
+        addedRoot.uri.toString(),
+      ],
+      approvedEvidence: [],
+    };
+    const runtime = new PairRuntime({
+      config: config({ interventionStyle: "eco" }),
+      extensionContext: {
+        globalState: {
+          get: () => stored,
+          update: async () => undefined,
+        },
+      } as unknown as vscode.ExtensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+
+    vscodeState.workspaceFolders = [addedRoot];
+    vscodeState.textDocuments = [addedDocument];
+    vscodeState.workspaceFolderListeners[0]!({
+      added: [addedRoot],
+      removed: [removedRoot],
+    });
+
+    const state = (
+      runtime as unknown as {
+        documentState: {
+          previousText(uri: string): string | undefined;
+        };
+      }
+    ).documentState;
+    const dismissals = () =>
+      (
+        runtime as unknown as {
+          dismissedEvidenceIdsByRepository: Map<
+            string,
+            ReadonlySet<string>
+          >;
+        }
+      ).dismissedEvidenceIdsByRepository;
+    await vi.waitFor(() => {
+      expect(state.previousText(addedDocument.uri.toString())).toBe(
+        "export const added = true;",
+      );
+    });
+
+    expect(state.previousText(removedDocument.uri.toString())).toBeUndefined();
+    expect([...dismissals().keys()].sort()).toEqual(
+      ["file:///workspace/added", "no-workspace"].sort(),
+    );
+    expect(dismissals().get(addedRoot.uri.toString())).toEqual(
+      new Set([hashEvidenceIdentity("added-evidence")]),
+    );
+    expect(
+      (runtime as unknown as { interventionStyle: string }).interventionStyle,
+    ).toBe("active");
+    expect(runtime.isSessionActive()).toBe(true);
+    runtime.dispose();
+  });
+
+  it("blocks document work and cancels transient work during a deferred workspace refresh", async () => {
+    const refreshDiscovery = deferred<
+      ReadonlyArray<{ relativePath: string; toString(): string }>
+    >();
+    const uri = "file:///workspace/src/pair.ts";
+    const initialDocument = document(uri, "export const initial = true;");
+    const refreshedDocument = document(
+      uri,
+      "export const refreshed = true;",
+      2,
+    );
+    const openedDuringRefresh = document(
+      "file:///workspace/src/opened.ts",
+      "export const opened = true;",
+    );
+    vscodeState.textDocuments = [initialDocument];
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    vscodeState.findFiles.mockImplementationOnce(
+      () => refreshDiscovery.promise,
+    );
+    (
+      runtime as unknown as {
+        renderIntervention(
+          document: vscode.TextDocument,
+          evidence: Evidence,
+          question: string,
+        ): void;
+      }
+    ).renderIntervention(
+      initialDocument as unknown as vscode.TextDocument,
+      evidence,
+      "Pending question",
+    );
+    const modelRequest = new AbortController();
+    (
+      runtime as unknown as {
+        requestByUri: Map<string, AbortController>;
+      }
+    ).requestByUri.set(uri, modelRequest);
+    const chatRequest = new AbortController();
+    runtime.registerChatRequest(uri, chatRequest);
+    vscodeState.textDocuments = [refreshedDocument];
+
+    vscodeState.workspaceFolderListeners[0]!({
+      added: [],
+      removed: [],
+    });
+
+    const state = (
+      runtime as unknown as {
+        documentState: {
+          previousText(uri: string): string | undefined;
+        };
+      }
+    ).documentState;
+    expect(runtime.isSessionActive()).toBe(true);
+    expect(modelRequest.signal.aborted).toBe(true);
+    expect(chatRequest.signal.aborted).toBe(true);
+    expect(shared.snapshot().latest).toBeUndefined();
+    expect(shared.snapshot().session.active).toBe(true);
+    expect(vscodeState.commentThreads[0]?.disposed).toBe(true);
+    expect(state.previousText(uri)).toBeUndefined();
+
+    const requestDuringRefresh = new AbortController();
+    runtime.registerChatRequest(uri, requestDuringRefresh);
+    expect(requestDuringRefresh.signal.aborted).toBe(true);
+    vscodeState.openListeners[0]!(openedDuringRefresh);
+    expect(
+      state.previousText(openedDuringRefresh.uri.toString()),
+    ).toBeUndefined();
+
+    refreshDiscovery.resolve([]);
+    await vi.waitFor(() => {
+      expect(state.previousText(uri)).toBe(
+        "export const refreshed = true;",
+      );
+      expect(shared.snapshot().session.active).toBe(true);
+    });
+    expect(runtime.isSessionActive()).toBe(true);
+    runtime.dispose();
+  });
+
+  it("allows only the latest workspace-folder event to commit refreshed roots", async () => {
+    const firstRefresh = deferred<
+      ReadonlyArray<{ relativePath: string; toString(): string }>
+    >();
+    const secondRefresh = deferred<
+      ReadonlyArray<{ relativePath: string; toString(): string }>
+    >();
+    const firstRoot = {
+      uri: { toString: () => "file:///workspace/first-refresh" },
+    };
+    const secondRoot = {
+      uri: { toString: () => "file:///workspace/second-refresh" },
+    };
+    const firstDocument = document(
+      `${firstRoot.uri.toString()}/first.ts`,
+      "export const first = true;",
+    );
+    const secondDocument = document(
+      `${secondRoot.uri.toString()}/second.ts`,
+      "export const second = true;",
+    );
+    vscodeState.getWorkspaceFolder.mockImplementation((uri) =>
+      vscodeState.workspaceFolders.find((folder) =>
+        uri.toString().startsWith(`${folder.uri.toString()}/`),
+      ),
+    );
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    vscodeState.findFiles
+      .mockImplementationOnce(() => firstRefresh.promise)
+      .mockImplementationOnce(() => secondRefresh.promise);
+
+    vscodeState.workspaceFolders = [firstRoot];
+    vscodeState.textDocuments = [firstDocument];
+    vscodeState.workspaceFolderListeners[0]!({
+      added: [firstRoot],
+      removed: [],
+    });
+    await vi.waitFor(() => {
+      expect(vscodeState.findFiles).toHaveBeenCalledTimes(2);
+    });
+
+    vscodeState.workspaceFolders = [secondRoot];
+    vscodeState.textDocuments = [secondDocument];
+    vscodeState.workspaceFolderListeners[0]!({
+      added: [secondRoot],
+      removed: [firstRoot],
+    });
+    await vi.waitFor(() => {
+      expect(vscodeState.findFiles).toHaveBeenCalledTimes(3);
+    });
+
+    secondRefresh.resolve([]);
+    const state = (
+      runtime as unknown as {
+        documentState: {
+          previousText(uri: string): string | undefined;
+        };
+      }
+    ).documentState;
+    await vi.waitFor(() => {
+      expect(state.previousText(secondDocument.uri.toString())).toBe(
+        "export const second = true;",
+      );
+    });
+    firstRefresh.resolve([]);
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+
+    expect(state.previousText(firstDocument.uri.toString())).toBeUndefined();
+    expect(state.previousText(secondDocument.uri.toString())).toBe(
+      "export const second = true;",
+    );
+    expect(runtime.isSessionActive()).toBe(true);
+    runtime.dispose();
+  });
+
+  it("does not let a deferred workspace refresh overwrite a rapid stop and restart", async () => {
+    const staleRefresh = deferred<
+      ReadonlyArray<{ relativePath: string; toString(): string }>
+    >();
+    const staleDocument = document(
+      "file:///workspace/stale.ts",
+      "export const stale = true;",
+    );
+    const restartedDocument = document(
+      "file:///workspace/restarted.ts",
+      "export const restarted = true;",
+    );
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    vscodeState.findFiles.mockImplementationOnce(
+      () => staleRefresh.promise,
+    );
+    vscodeState.textDocuments = [staleDocument];
+    vscodeState.workspaceFolderListeners[0]!({
+      added: [],
+      removed: [],
+    });
+    await vi.waitFor(() => {
+      expect(vscodeState.findFiles).toHaveBeenCalledTimes(2);
+    });
+
+    runtime.stopSession();
+    vscodeState.textDocuments = [restartedDocument];
+    await runtime.startSession();
+    staleRefresh.resolve([]);
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+
+    const state = (
+      runtime as unknown as {
+        documentState: {
+          previousText(uri: string): string | undefined;
+        };
+      }
+    ).documentState;
+    expect(state.previousText(staleDocument.uri.toString())).toBeUndefined();
+    expect(state.previousText(restartedDocument.uri.toString())).toBe(
+      "export const restarted = true;",
+    );
+    expect(runtime.isSessionActive()).toBe(true);
+    expect(shared.snapshot().session.active).toBe(true);
+    runtime.dispose();
+  });
+
+  it("does not let a deferred workspace refresh commit after disposal", async () => {
+    const refreshDiscovery = deferred<
+      ReadonlyArray<{ relativePath: string; toString(): string }>
+    >();
+    const refreshedDocument = document(
+      "file:///workspace/refreshed-after-dispose.ts",
+      "export const stale = true;",
+    );
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    vscodeState.findFiles.mockImplementationOnce(
+      () => refreshDiscovery.promise,
+    );
+    vscodeState.textDocuments = [refreshedDocument];
+    vscodeState.workspaceFolderListeners[0]!({
+      added: [],
+      removed: [],
+    });
+    await vi.waitFor(() => {
+      expect(vscodeState.findFiles).toHaveBeenCalledTimes(2);
+    });
+
+    runtime.dispose();
+    const status = vscodeState.statusItems[0]!;
+    refreshDiscovery.resolve([]);
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+
+    const state = (
+      runtime as unknown as {
+        documentState: {
+          previousText(uri: string): string | undefined;
+        };
+      }
+    ).documentState;
+    expect(state.previousText(refreshedDocument.uri.toString())).toBeUndefined();
+    expect(vscodeState.workspaceFolderListeners).toHaveLength(0);
+    expect(status.writesAfterDispose).toEqual([]);
+  });
+
+  it("loads a newly added root's dismissals before reviewing its documents", async () => {
+    const existingRoot = {
+      uri: { toString: () => "file:///workspace/existing" },
+    };
+    const addedRoot = {
+      uri: { toString: () => "file:///workspace/new-root" },
+    };
+    const uri = `${addedRoot.uri.toString()}/src/private.ts`;
+    const currentDocument = document(uri, "export const value = 1;");
+    const diagnosticEvidence: Evidence = {
+      ...evidence,
+      id: stableDiagnosticEvidenceId(
+        uri,
+        {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 6 },
+        },
+        "typescript",
+        ["TS2322"],
+        "Type mismatch",
+      ),
+      kind: "diagnostic",
+      title: "Editor diagnostic",
+      detail: "Type mismatch",
+      source: "typescript",
+      references: ["TS2322"],
+      range: {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 6 },
+      },
+    };
+    const stored = {
+      version: 1,
+      preferences: {
+        interventionStyle: "balanced",
+        interventionStyleExplicit: false,
+        pauseThresholdMs: 1_000,
+      },
+      dismissedEvidenceByRepository: {
+        [addedRoot.uri.toString()]: [
+          hashEvidenceIdentity(diagnosticEvidence.id),
+        ],
+      },
+      dismissedRepositoryOrder: [addedRoot.uri.toString()],
+      approvedEvidence: [],
+    };
+    vscodeState.workspaceFolders = [existingRoot];
+    vscodeState.getWorkspaceFolder.mockImplementation((documentUri) =>
+      vscodeState.workspaceFolders.find((folder) =>
+        documentUri
+          .toString()
+          .startsWith(`${folder.uri.toString()}/`),
+      ),
+    );
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext: {
+        globalState: {
+          get: () => stored,
+          update: async () => undefined,
+        },
+      } as unknown as vscode.ExtensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+
+    vscodeState.workspaceFolders = [existingRoot, addedRoot];
+    vscodeState.textDocuments = [currentDocument];
+    vscodeState.activeTextEditor = {
+      document: currentDocument,
+      selection: {
+        isEmpty: false,
+        active: { line: 0, character: 0 },
+        start: diagnosticEvidence.range.start,
+        end: diagnosticEvidence.range.end,
+      },
+    };
+    vscodeState.diagnostics.push({
+      range: diagnosticEvidence.range,
+      message: diagnosticEvidence.detail,
+      severity: 1,
+      source: diagnosticEvidence.source,
+      code: diagnosticEvidence.references[0]!,
+    });
+    vscodeState.workspaceFolderListeners[0]!({
+      added: [addedRoot],
+      removed: [],
+    });
+    await vi.waitFor(() => {
+      const dismissals = (
+        runtime as unknown as {
+          dismissedEvidenceIdsByRepository: Map<
+            string,
+            ReadonlySet<string>
+          >;
+        }
+      ).dismissedEvidenceIdsByRepository;
+      expect(dismissals.get(addedRoot.uri.toString())).toContain(
+        hashEvidenceIdentity(diagnosticEvidence.id),
+      );
+    });
+
+    await runtime.reviewCurrentBlock();
+
+    expect(vscodeState.commentThreads).toHaveLength(0);
+    expect(runtime.isSessionActive()).toBe(true);
     runtime.dispose();
   });
 

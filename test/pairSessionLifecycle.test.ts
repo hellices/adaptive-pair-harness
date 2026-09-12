@@ -414,6 +414,149 @@ describe("explicit pair session lifecycle", () => {
     expect(lifecycle.active).toBe(true);
   });
 
+  it("refreshes an active generation without disposing its listener and blocks active fences until preparation completes", async () => {
+    const refreshPreparation = deferred<void>();
+    let preparationCount = 0;
+    const listener = { dispose: vi.fn() };
+    const ports = {
+      prepare: vi.fn(async () => {
+        preparationCount += 1;
+        if (preparationCount === 2) {
+          await refreshPreparation.promise;
+        }
+      }),
+      registerDocumentListeners: vi.fn(() => listener),
+      cancelPendingWork: vi.fn(),
+      clearTransientState: vi.fn(),
+    };
+    const lifecycle = new PairSessionLifecycle(() => true, ports);
+    await lifecycle.start();
+    const preRefreshFence = lifecycle.captureFence(true);
+
+    const pendingRefresh = lifecycle.refresh();
+
+    expect(lifecycle.active).toBe(true);
+    expect(preRefreshFence.isCurrent()).toBe(false);
+    expect(lifecycle.captureFence(true).isCurrent()).toBe(false);
+    expect(ports.cancelPendingWork).toHaveBeenCalledOnce();
+    expect(ports.clearTransientState).toHaveBeenCalledOnce();
+    expect(listener.dispose).not.toHaveBeenCalled();
+
+    refreshPreparation.resolve();
+
+    await expect(pendingRefresh).resolves.toBe(true);
+    expect(lifecycle.active).toBe(true);
+    expect(lifecycle.captureFence(true).isCurrent()).toBe(true);
+    expect(listener.dispose).not.toHaveBeenCalled();
+  });
+
+  it("allows only the latest overlapping active-session refresh to commit", async () => {
+    const firstRefresh = deferred<void>();
+    const secondRefresh = deferred<void>();
+    const committed: string[] = [];
+    let preparationCount = 0;
+    const ports = {
+      prepare: vi.fn(async (context: PreparationContext) => {
+        preparationCount += 1;
+        if (preparationCount === 1) {
+          committed.push("initial");
+          return;
+        }
+        const label = preparationCount === 2 ? "first" : "second";
+        await (label === "first"
+          ? firstRefresh.promise
+          : secondRefresh.promise);
+        if (context.isCurrent()) {
+          committed.push(label);
+        }
+      }),
+      registerDocumentListeners: vi.fn(() => ({ dispose: vi.fn() })),
+      cancelPendingWork: vi.fn(),
+      clearTransientState: vi.fn(),
+    };
+    const lifecycle = new PairSessionLifecycle(() => true, ports);
+    await lifecycle.start();
+
+    const staleRefresh = lifecycle.refresh();
+    const currentRefresh = lifecycle.refresh();
+    secondRefresh.resolve();
+
+    await expect(currentRefresh).resolves.toBe(true);
+    expect(committed).toEqual(["initial", "second"]);
+
+    firstRefresh.resolve();
+
+    await expect(staleRefresh).resolves.toBe(false);
+    expect(committed).toEqual(["initial", "second"]);
+    expect(lifecycle.active).toBe(true);
+  });
+
+  it("does not let a deferred refresh affect a rapidly stopped and restarted session", async () => {
+    const refreshPreparation = deferred<void>();
+    let refreshContext: PreparationContext | undefined;
+    let preparationCount = 0;
+    const listeners = [
+      { dispose: vi.fn() },
+      { dispose: vi.fn() },
+    ];
+    const ports = {
+      prepare: vi.fn(async (context: PreparationContext) => {
+        preparationCount += 1;
+        if (preparationCount === 2) {
+          refreshContext = context;
+          await refreshPreparation.promise;
+        }
+      }),
+      registerDocumentListeners: vi.fn(() => listeners.shift()!),
+      cancelPendingWork: vi.fn(),
+      clearTransientState: vi.fn(),
+    };
+    const lifecycle = new PairSessionLifecycle(() => true, ports);
+    await lifecycle.start();
+
+    const staleRefresh = lifecycle.refresh();
+    lifecycle.stop();
+    await expect(lifecycle.start()).resolves.toMatchObject({
+      kind: "started",
+      active: true,
+    });
+
+    expect(refreshContext?.signal.aborted).toBe(true);
+    refreshPreparation.resolve();
+    await expect(staleRefresh).resolves.toBe(false);
+    expect(lifecycle.active).toBe(true);
+    expect(ports.registerDocumentListeners).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops safely when the extension becomes disabled during refresh", async () => {
+    const refreshPreparation = deferred<void>();
+    let enabled = true;
+    let preparationCount = 0;
+    const listener = { dispose: vi.fn() };
+    const ports = {
+      prepare: vi.fn(async () => {
+        preparationCount += 1;
+        if (preparationCount === 2) {
+          await refreshPreparation.promise;
+        }
+      }),
+      registerDocumentListeners: vi.fn(() => listener),
+      cancelPendingWork: vi.fn(),
+      clearTransientState: vi.fn(),
+    };
+    const lifecycle = new PairSessionLifecycle(() => enabled, ports);
+    await lifecycle.start();
+
+    const pendingRefresh = lifecycle.refresh();
+    enabled = false;
+    refreshPreparation.resolve();
+
+    await expect(pendingRefresh).resolves.toBe(false);
+    expect(lifecycle.active).toBe(false);
+    expect(lifecycle.ready).toBe(false);
+    expect(listener.dispose).toHaveBeenCalledOnce();
+  });
+
   it("wires public start, stop, and toggle handlers to the active runtime", async () => {
     let active = false;
     const messages: string[] = [];

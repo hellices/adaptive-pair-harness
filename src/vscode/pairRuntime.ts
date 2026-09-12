@@ -286,7 +286,11 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     uri: string,
     request: AbortController,
   ): vscode.Disposable {
-    if (this.disposed || !this.sessionLifecycle.active) {
+    if (
+      this.disposed ||
+      !this.invocationGate.sessionActive ||
+      !this.sessionLifecycle.ready
+    ) {
       request.abort();
       return { dispose: () => undefined };
     }
@@ -440,7 +444,11 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     try {
       listeners.push(
         vscode.workspace.onDidOpenTextDocument((document) => {
-          if (isSupportedDocument(document)) {
+          if (
+            this.invocationGate.sessionActive &&
+            this.sessionLifecycle.ready &&
+            isSupportedDocument(document)
+          ) {
             const key = document.uri.toString();
             const text = document.getText();
             this.documentState.seed(
@@ -459,6 +467,11 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       listeners.push(
         vscode.workspace.onDidChangeTextDocument((event) => {
           this.onDocumentChanged(event);
+        }),
+      );
+      listeners.push(
+        vscode.workspace.onDidChangeWorkspaceFolders(() => {
+          this.onWorkspaceFoldersChanged();
         }),
       );
     } catch (error: unknown) {
@@ -482,6 +495,12 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     if (!this.sessionLifecycle.active) {
       await vscode.window.showInformationMessage(
         "Adaptive Pair is off. Start a pairing session before reviewing the current block.",
+      );
+      return;
+    }
+    if (!this.sessionLifecycle.ready) {
+      await vscode.window.showInformationMessage(
+        "Adaptive Pair is refreshing workspace memory. Try again in a moment.",
       );
       return;
     }
@@ -592,6 +611,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     if (
       !this.invocationGate.enabled ||
       !this.invocationGate.sessionActive ||
+      !this.sessionLifecycle.ready ||
       !isSupportedDocument(document) ||
       event.contentChanges.length === 0
     ) {
@@ -620,11 +640,54 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     });
   }
 
+  private onWorkspaceFoldersChanged(): void {
+    if (this.disposed || !this.sessionLifecycle.active) {
+      return;
+    }
+
+    this.statusDetail = "refreshing workspace memory";
+    this.publishSession();
+    this.renderStatus();
+    const refresh = this.sessionLifecycle.refresh();
+    const refreshFence = this.sessionLifecycle.captureFence();
+    void refresh.then(
+      (refreshed) => {
+        if (
+          !refreshed ||
+          !refreshFence.isCurrent() ||
+          !this.sessionLifecycle.active
+        ) {
+          return;
+        }
+        this.statusDetail = this.configurationWarning();
+        this.publishSession();
+        this.renderStatus();
+      },
+      (error: unknown) => {
+        if (!refreshFence.isCurrent()) {
+          return;
+        }
+        this.invocationGate.setActive(false);
+        this.effectiveProvider = this.options.config.provider;
+        this.controlNotice = undefined;
+        this.statusDetail = this.inactiveStatusDetail();
+        this.publishSession();
+        this.renderStatus();
+        const message =
+          error instanceof Error ? error.message : String(error);
+        void vscode.window.showErrorMessage(
+          `Adaptive Pair workspace refresh failed: ${message}`,
+        );
+      },
+    );
+  }
+
   private async handleEpisode(episode: EditEpisode): Promise<void> {
     if (
       this.disposed ||
       !this.invocationGate.enabled ||
-      !this.invocationGate.sessionActive
+      !this.invocationGate.sessionActive ||
+      !this.sessionLifecycle.ready
     ) {
       return;
     }
@@ -758,6 +821,9 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     source: PairInvocationSource,
   ): Promise<ModelResponse> {
     const lifecycleFence = this.sessionLifecycle.captureFence(true);
+    if (!lifecycleFence.isCurrent()) {
+      throw new PairInactiveError(source);
+    }
     const result = await this.invocationGate.run(source, async () =>
       this.generateWhileEnabled(
         request,

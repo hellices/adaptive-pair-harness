@@ -76,8 +76,15 @@ export class PairSessionLifecycle {
         readonly abortController: AbortController;
       }
     | undefined;
+  private pendingRefresh:
+    | {
+        readonly generation: number;
+        readonly abortController: AbortController;
+      }
+    | undefined;
   private isDisposed = false;
   private isActive = false;
+  private isRefreshing = false;
 
   public constructor(
     private readonly isEnabled: () => boolean,
@@ -86,6 +93,10 @@ export class PairSessionLifecycle {
 
   public get active(): boolean {
     return this.isActive;
+  }
+
+  public get ready(): boolean {
+    return this.isActive && !this.isRefreshing;
   }
 
   public get sessionGeneration(): number {
@@ -99,7 +110,7 @@ export class PairSessionLifecycle {
       isCurrent: () =>
         !this.isDisposed &&
         generation === this.generation &&
-        (!requireActive || this.isActive),
+        (!requireActive || (this.isActive && !this.isRefreshing)),
     };
   }
 
@@ -145,12 +156,21 @@ export class PairSessionLifecycle {
   }
 
   public stop(): PairSessionActionResult {
-    const wasActive = this.isActive || this.pendingStart !== undefined;
+    const wasActive =
+      this.isActive ||
+      this.pendingStart !== undefined ||
+      this.pendingRefresh !== undefined;
     const pendingStart = this.pendingStart;
+    const pendingRefresh = this.pendingRefresh;
     this.generation += 1;
     this.pendingStart = undefined;
+    this.pendingRefresh = undefined;
+    this.isRefreshing = false;
     this.cleanupStoppedState(
-      pendingStart?.abortController,
+      [
+        pendingStart?.abortController,
+        pendingRefresh?.abortController,
+      ],
       [],
       "Failed to stop the Adaptive Pair session cleanly.",
     );
@@ -163,12 +183,89 @@ export class PairSessionLifecycle {
     };
   }
 
+  public async refresh(): Promise<boolean> {
+    if (this.isDisposed || !this.isActive) {
+      return false;
+    }
+
+    const previousRefresh = this.pendingRefresh;
+    const generation = ++this.generation;
+    const abortController = new AbortController();
+    const refresh = { generation, abortController };
+    this.pendingRefresh = refresh;
+    this.isRefreshing = true;
+
+    let refreshed: boolean;
+    try {
+      runCleanupSteps(
+        [
+          () => previousRefresh?.abortController.abort(),
+          () => this.ports.cancelPendingWork(),
+          () => this.ports.clearTransientState(),
+        ],
+        "Failed to prepare the Adaptive Pair session refresh.",
+      );
+      refreshed = await this.refreshOnce(
+        generation,
+        abortController,
+      );
+    } catch (error: unknown) {
+      if (this.pendingRefresh !== refresh) {
+        return false;
+      }
+      this.pendingRefresh = undefined;
+      this.isRefreshing = false;
+      this.cleanupStoppedState(
+        [abortController],
+        [error],
+        "Adaptive Pair refresh and rollback both failed.",
+      );
+      throw error;
+    }
+    if (this.pendingRefresh !== refresh) {
+      return false;
+    }
+    this.pendingRefresh = undefined;
+    this.isRefreshing = false;
+    if (!refreshed) {
+      this.cleanupStoppedState(
+        [abortController],
+        [],
+        "Failed to stop the disabled Adaptive Pair session after refresh.",
+      );
+    }
+    return refreshed;
+  }
+
   public dispose(): void {
     if (this.isDisposed) {
       return;
     }
     this.isDisposed = true;
     this.stop();
+  }
+
+  private async refreshOnce(
+    generation: number,
+    abortController: AbortController,
+  ): Promise<boolean> {
+    const lifecycleFence = this.captureFence();
+    const preparationContext: PairSessionPreparationContext = {
+      signal: abortController.signal,
+      isCurrent: () =>
+        !abortController.signal.aborted &&
+        lifecycleFence.generation === generation &&
+        lifecycleFence.isCurrent(),
+    };
+    try {
+      await this.ports.prepare(preparationContext);
+    } catch (error: unknown) {
+      if (!preparationContext.isCurrent()) {
+        return false;
+      }
+      throw error;
+    }
+    return preparationContext.isCurrent() && this.isEnabled();
   }
 
   private async startOnce(
@@ -204,7 +301,7 @@ export class PairSessionLifecycle {
     }
     if (!this.isEnabled()) {
       this.cleanupStoppedState(
-        abortController,
+        [abortController],
         [],
         "Failed to roll back disabled Adaptive Pair startup.",
       );
@@ -250,7 +347,7 @@ export class PairSessionLifecycle {
     abortController: AbortController,
   ): never {
     this.cleanupStoppedState(
-      abortController,
+      [abortController],
       [error],
       "Adaptive Pair startup and rollback both failed.",
     );
@@ -258,16 +355,19 @@ export class PairSessionLifecycle {
   }
 
   private cleanupStoppedState(
-    abortController: AbortController | undefined,
+    abortControllers: readonly (AbortController | undefined)[],
     initialErrors: readonly unknown[],
     message: string,
   ): void {
     const listener = this.listener;
     this.listener = undefined;
     this.isActive = false;
+    this.isRefreshing = false;
     runCleanupSteps(
       [
-        () => abortController?.abort(),
+        ...abortControllers.map(
+          (abortController) => () => abortController?.abort(),
+        ),
         () => listener?.dispose(),
         () => this.ports.cancelPendingWork(),
         () => this.ports.clearTransientState(),

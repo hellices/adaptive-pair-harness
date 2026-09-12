@@ -1621,3 +1621,71 @@
   fresh timeout for each stage.
 - A dispatched timeout intentionally retains conservative call/input/output
   reservation values because final provider usage may be unknowable.
+
+---
+
+## Active workspace-folder memory refresh (2026-09-13)
+
+### Corrections implemented
+
+- Registered the public VS Code `onDidChangeWorkspaceFolders` event inside the
+  active session's listener bundle, so it is rolled back and disposed
+  atomically with open, close, and text-change listeners.
+- Added a lifecycle-owned refresh generation. A folder event keeps the
+  explicitly started session active while blocking new processing, invalidates
+  prior active-work fences, cancels pending edit/model/Chat work, and clears
+  document evidence, cooldown state, shared evidence, and inline threads.
+- Session preparation now runs again against a snapshot of the current
+  workspace roots. Its atomic commit replaces the repository dismissal map and
+  reseeds the then-current open documents before processing becomes ready.
+  Removed roots therefore leave memory, and added-root dismissals are present
+  before manual or automatic analysis can run.
+- Stop, restart, disposal, and later folder events abort and fence older
+  refreshes. Only the latest refresh belonging to the still-active session can
+  restore processing readiness or update status.
+- Preserved global preferences and rolling budget state. A normal folder
+  change does not require another explicit start.
+- Updated the README plus architecture and configuration references with the
+  active-session refresh contract.
+
+### TDD evidence
+
+- Lifecycle RED: **3 expected failures** (`refresh is not a function`) covered
+  blocking fences, overlapping refreshes, and rapid stop/restart.
+- Runtime RED: **8 expected failures** covered fourth-listener registration and
+  atomic disposal, root replacement, deferred cancellation/blocking,
+  overlapping events, stop/restart, disposal, and new-root dismissal
+  suppression.
+- Explicit-activity RED: **1 expected failure** showed that an in-progress
+  refresh was incorrectly published as a stopped session; processing readiness
+  is now separate from explicit session activity.
+- Disabled-refresh RED: **1 expected failure** covered safe teardown if the
+  enable gate changes during preparation.
+- Focused GREEN: `pairSessionLifecycle` and `pairRuntimeLifecycle` passed
+  **74 tests**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 436 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 89.32%, branches 81.94%, functions 92.69%, lines 89.45%
+- `npm run package`: **PASS — 157 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript` only**
+- VSIX exclusion, public-document inclusion, and compiled workspace-refresh
+  marker scans: **PASS**
+- Production credential-pattern, placeholder-URL, packaged metadata, and
+  `git diff --check` scans: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review covered refresh generation transitions, reentrant folder
+  events, stop/restart/disposal fencing, readiness gates, listener rollback,
+  memory replacement, and failure cleanup. No high-confidence correctness,
+  security, lifecycle, or packaging issue remains.
+- The deterministic tests exercise the public event contract through a VS Code
+  test double. A live VS Code multi-root UI session was not available in this
+  non-interactive environment.

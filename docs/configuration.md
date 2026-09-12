@@ -295,8 +295,14 @@ activity in another document cannot leave a completed dismissal visible, while
 newer evidence for the same URI is preserved. One extension-scoped memory
 adapter serializes mutations across configuration-driven runtime rebuilds, and
 session preparation reloads when a concurrent memory action changes its
-revision. If the persisted memory record is corrupt, Pair starts with in-memory
-defaults, preserves the stored corruption, and shows a warning. **Adaptive
-Pair: Reset Local Memory** is the only operation that replaces that record with
-defaults, and it invalidates any pending session preparation before writing or
-publishing reset state.
+revision. While a session is active, a public VS Code workspace-folder change
+event pauses processing, cancels pending edit/model/Chat work, clears transient
+evidence, and replaces the repository-memory snapshot from the current roots.
+Removed roots are dropped, and newly added roots load their dismissal sets
+before document processing resumes. Overlapping folder events and
+stop/restart/disposal invalidate stale refresh generations without turning a
+normal folder change into an explicit stop. If the persisted memory record is
+corrupt, Pair starts with in-memory defaults, preserves the stored corruption,
+and shows a warning. **Adaptive Pair: Reset Local Memory** is the only operation
+that replaces that record with defaults, and it invalidates any pending session
+preparation before writing or publishing reset state.
