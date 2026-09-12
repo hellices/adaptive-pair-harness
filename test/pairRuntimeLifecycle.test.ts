@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as vscode from "vscode";
 import type { PairConfig } from "../src/config/pairConfig";
+import {
+  hashEvidenceIdentity,
+  PairMemoryStore,
+} from "../src/core/memoryStore";
 import { TokenBudget } from "../src/core/tokenBudget";
 import type { Evidence } from "../src/core/types";
 
@@ -248,6 +252,7 @@ const evidence: Evidence = {
   },
   references: ["./repository"],
 };
+const evidenceHash = hashEvidenceIdentity(evidence.id);
 
 const config = (
   overrides: Partial<PairConfig> = {},
@@ -495,7 +500,7 @@ describe("PairRuntime lifecycle ownership", () => {
 
     expect(stored).toMatchObject({
       dismissedEvidenceByRepository: {
-        [secondRoot.uri.toString()]: [evidence.id],
+        [secondRoot.uri.toString()]: [evidenceHash],
       },
     });
     expect(
@@ -506,6 +511,70 @@ describe("PairRuntime lifecycle ownership", () => {
       ).dismissedEvidenceByRepository[firstRoot.uri.toString()],
     ).toBeUndefined();
     expect(shared.snapshot().latest).toBeUndefined();
+    runtime.dispose();
+  });
+
+  it("cleans up a dismissed URI when unrelated URI evidence arrives during persistence", async () => {
+    const persistence = deferred<void>();
+    let persistenceStarted = false;
+    let stored: unknown;
+    const memoryContext = {
+      globalState: {
+        get: () => stored,
+        update: async (_key: string, value: unknown) => {
+          persistenceStarted = true;
+          await persistence.promise;
+          stored = value;
+        },
+      },
+    } as unknown as vscode.ExtensionContext;
+    const targetUri = "file:///workspace/src/target.ts";
+    const unrelatedUri = "file:///workspace/src/unrelated.ts";
+    const targetDocument = document(targetUri, "export const target = 1;");
+    const unrelatedDocument = document(
+      unrelatedUri,
+      "export const unrelated = 1;",
+    );
+    vscodeState.textDocuments = [targetDocument, unrelatedDocument];
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext: memoryContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    const renderIntervention = (
+      runtime as unknown as {
+        renderIntervention(
+          document: vscode.TextDocument,
+          evidence: Evidence,
+          question: string,
+        ): void;
+      }
+    ).renderIntervention.bind(runtime);
+    renderIntervention(
+      targetDocument as unknown as vscode.TextDocument,
+      evidence,
+      "Target question",
+    );
+
+    const pendingDismiss = runtime.dismissCurrentEvidence();
+    await vi.waitFor(() => {
+      expect(persistenceStarted).toBe(true);
+    });
+    renderIntervention(
+      unrelatedDocument as unknown as vscode.TextDocument,
+      { ...evidence, id: "dependency:unrelated" },
+      "Unrelated question",
+    );
+    persistence.resolve();
+    await pendingDismiss;
+
+    expect(vscodeState.commentThreads[0]?.disposed).toBe(true);
+    expect(vscodeState.commentThreads[1]?.disposed).toBe(false);
+    expect(shared.snapshot().latest?.uri).toBe(unrelatedUri);
     runtime.dispose();
   });
 
@@ -564,6 +633,81 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
+  it("matches current diagnostic identities to hashed dismissals after a runtime rebuild", async () => {
+    const uri = "file:///workspace/src/private.ts";
+    const currentDocument = document(uri, "export const value = 1;", 1);
+    const diagnosticEvidence: Evidence = {
+      ...evidence,
+      id: `diagnostic:${uri}:0:0:0`,
+      kind: "diagnostic",
+      title: "Editor diagnostic",
+      detail: "Type mismatch",
+      source: "typescript",
+      references: ["TS2322"],
+      range: {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 6 },
+      },
+    };
+    vscodeState.textDocuments = [currentDocument];
+    vscodeState.activeTextEditor = {
+      document: currentDocument,
+      selection: {
+        isEmpty: false,
+        active: { line: 0, character: 0 },
+        start: diagnosticEvidence.range.start,
+        end: diagnosticEvidence.range.end,
+      },
+    };
+    vscodeState.diagnostics.push({
+      range: diagnosticEvidence.range,
+      message: diagnosticEvidence.detail,
+      severity: 1,
+      source: diagnosticEvidence.source,
+      code: diagnosticEvidence.references[0]!,
+    });
+    let stored: unknown;
+    const memoryContext = {
+      globalState: {
+        get: () => stored,
+        update: async (_key: string, value: unknown) => {
+          stored = value;
+        },
+      },
+    } as unknown as vscode.ExtensionContext;
+    const firstShared = sharedContext();
+    const firstRuntime = new PairRuntime({
+      config: config(),
+      extensionContext: memoryContext,
+      sharedContext: firstShared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await firstRuntime.startSession();
+    firstShared.publishEvidence({
+      uri,
+      evidence: diagnosticEvidence,
+      question: "Current diagnostic",
+    });
+    await firstRuntime.dismissCurrentEvidence();
+    firstRuntime.dispose();
+
+    expect(JSON.stringify(stored)).not.toContain(uri);
+
+    const secondRuntime = new PairRuntime({
+      config: config(),
+      extensionContext: memoryContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await secondRuntime.startSession();
+    await secondRuntime.reviewCurrentBlock();
+
+    expect(vscodeState.commentThreads).toHaveLength(0);
+    secondRuntime.dispose();
+  });
+
   it("approves only the current evidence summary", async () => {
     let stored: unknown;
     const memoryContext = {
@@ -599,7 +743,7 @@ describe("PairRuntime lifecycle ownership", () => {
       }
     ).approvedEvidence[0];
     expect(approved).toEqual({
-      id: evidence.id,
+      id: evidenceHash,
       kind: evidence.kind,
       title: evidence.title,
       approvedAt: expect.any(Number),
@@ -646,6 +790,49 @@ describe("PairRuntime lifecycle ownership", () => {
       preferences: { interventionStyle: "active" },
     });
     expect(shared.snapshot().session.remainingCalls).toBe(8);
+    runtime.dispose();
+  });
+
+  it("returns to the configured style after resetting an explicit preference", async () => {
+    let stored: unknown;
+    const memoryContext = {
+      globalState: {
+        get: () => stored,
+        update: async (_key: string, value: unknown) => {
+          stored = value;
+        },
+      },
+    } as unknown as vscode.ExtensionContext;
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config({
+        interventionStyle: "eco",
+        budget: {
+          maxCalls: 2,
+          maxInputTokens: 2_000,
+          maxOutputTokens: 360,
+          maxOutputTokensPerCall: 180,
+          windowMs: 600_000,
+        },
+      }),
+      extensionContext: memoryContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    await runtime.setInterventionStyle("active");
+    expect(shared.snapshot().session.remainingCalls).toBe(8);
+
+    await runtime.resetMemory();
+
+    expect(shared.snapshot().session.remainingCalls).toBe(2);
+    expect(stored).toMatchObject({
+      preferences: {
+        interventionStyle: "balanced",
+        interventionStyleExplicit: false,
+      },
+    });
     runtime.dispose();
   });
 
@@ -731,6 +918,219 @@ describe("PairRuntime lifecycle ownership", () => {
 
     expect(shared.snapshot().session.remainingCalls).toBe(2);
     runtime.dispose();
+  });
+
+  it.each(["dismiss", "approve"] as const)(
+    "does not let an unrelated %s write override the configured intervention style",
+    async (action) => {
+      let stored: unknown;
+      const memoryContext = {
+        globalState: {
+          get: () => stored,
+          update: async (_key: string, value: unknown) => {
+            stored = value;
+          },
+        },
+      } as unknown as vscode.ExtensionContext;
+      const ecoConfig = config({
+        interventionStyle: "eco",
+        budget: {
+          maxCalls: 2,
+          maxInputTokens: 2_000,
+          maxOutputTokens: 360,
+          maxOutputTokensPerCall: 180,
+          windowMs: 600_000,
+        },
+      });
+      const firstShared = sharedContext();
+      const firstRuntime = new PairRuntime({
+        config: ecoConfig,
+        extensionContext: memoryContext,
+        sharedContext: firstShared,
+        languageModelApi: languageModelApi(),
+        apiKey: undefined,
+      });
+      await firstRuntime.startSession();
+      firstShared.publishEvidence({
+        uri: "file:///workspace/src/pair.ts",
+        evidence,
+        question: "Current evidence",
+      });
+      if (action === "dismiss") {
+        await firstRuntime.dismissCurrentEvidence();
+      } else {
+        await firstRuntime.approveCurrentEvidence();
+      }
+      firstRuntime.dispose();
+
+      const secondShared = sharedContext();
+      const secondRuntime = new PairRuntime({
+        config: ecoConfig,
+        extensionContext: memoryContext,
+        sharedContext: secondShared,
+        languageModelApi: languageModelApi(),
+        apiKey: undefined,
+      });
+      await secondRuntime.startSession();
+
+      expect(secondShared.snapshot().session.remainingCalls).toBe(2);
+      secondRuntime.dispose();
+    },
+  );
+
+  it("keeps a style update made during deferred session preparation", async () => {
+    const discovery = deferred<
+      ReadonlyArray<{ relativePath: string; toString(): string }>
+    >();
+    vscodeState.findFiles.mockImplementationOnce(() => discovery.promise);
+    const uri = "file:///workspace/src/pair.ts";
+    const source = "export const value = 1;";
+    vscodeState.textDocuments = [document(uri, source)];
+    vscodeState.diagnostics.push({
+      range: {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 6 },
+      },
+      message: "Moderate-confidence warning",
+      severity: 1,
+      source: "typescript",
+      code: "TS1000",
+    });
+    let stored: unknown;
+    const memoryContext = {
+      globalState: {
+        get: () => stored,
+        update: async (_key: string, value: unknown) => {
+          stored = value;
+        },
+      },
+    } as unknown as vscode.ExtensionContext;
+    const runtime = new PairRuntime({
+      config: config({ interventionStyle: "eco" }),
+      extensionContext: memoryContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+
+    const pendingStart = runtime.startSession();
+    await vi.waitFor(() => {
+      expect(vscodeState.findFiles).toHaveBeenCalledOnce();
+    });
+    await runtime.setInterventionStyle("active");
+    discovery.resolve([]);
+    await pendingStart;
+    expect(
+      (runtime as unknown as { interventionStyle: string }).interventionStyle,
+    ).toBe("active");
+
+    await (
+      runtime as unknown as {
+        handleEpisode(episode: {
+          uri: string;
+          languageId: string;
+          previousText: string;
+          currentText: string;
+          version: number;
+          observedAt: number;
+        }): Promise<void>;
+      }
+    ).handleEpisode({
+      uri,
+      languageId: "typescript",
+      previousText: source,
+      currentText: source,
+      version: 1,
+      observedAt: 1,
+    });
+
+    expect(vscodeState.commentThreads).toHaveLength(1);
+    runtime.dispose();
+  });
+
+  it("serializes memory mutations across a runtime rebuild", async () => {
+    let stored: unknown;
+    let getCallCount = 0;
+    const pendingWrites: Array<{
+      readonly value: unknown;
+      resolve(): void;
+    }> = [];
+    const memoryBackend = {
+      get: async <T,>(key: string): Promise<T | undefined> => {
+        expect(key).toBe("adaptive-pair.memory");
+        getCallCount += 1;
+        return stored as T | undefined;
+      },
+      update: async <T,>(key: string, value: T): Promise<void> => {
+        expect(key).toBe("adaptive-pair.memory");
+        await new Promise<void>((resolve) => {
+          pendingWrites.push({
+            value,
+            resolve: () => {
+              stored = value;
+              resolve();
+            },
+          });
+        });
+      },
+    };
+    const memoryStore = new PairMemoryStore({
+      repositoryId: "file:///workspace",
+      store: memoryBackend,
+    });
+    const memoryContext = {
+      globalState: memoryBackend,
+    } as unknown as vscode.ExtensionContext;
+    const firstRuntimeOptions = {
+      config: config(),
+      extensionContext: memoryContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+      memoryStore,
+    };
+    const firstRuntime = new PairRuntime(firstRuntimeOptions);
+    const updateStyle = firstRuntime.setInterventionStyle("active");
+    await vi.waitFor(() => {
+      expect(pendingWrites).toHaveLength(1);
+    });
+    firstRuntime.dispose();
+
+    const secondShared = sharedContext();
+    const secondRuntimeOptions = {
+      ...firstRuntimeOptions,
+      sharedContext: secondShared,
+    };
+    const secondRuntime = new PairRuntime(secondRuntimeOptions);
+    secondShared.publishEvidence({
+      uri: "file:///workspace/src/pair.ts",
+      evidence,
+      question: "Current evidence",
+    });
+    const dismissEvidence = secondRuntime.dismissCurrentEvidence();
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+    const readsBeforeFirstWriteCompletes = getCallCount;
+
+    pendingWrites[0]!.resolve();
+    await vi.waitFor(() => {
+      expect(pendingWrites).toHaveLength(2);
+    });
+    pendingWrites[1]!.resolve();
+    await Promise.all([updateStyle, dismissEvidence]);
+
+    expect(readsBeforeFirstWriteCompletes).toBe(1);
+    await expect(memoryStore.load()).resolves.toMatchObject({
+      preferences: {
+        interventionStyle: "active",
+        interventionStyleExplicit: true,
+      },
+      dismissedEvidenceByRepository: {
+        "file:///workspace": [evidenceHash],
+      },
+    });
+    secondRuntime.dispose();
   });
 
   it("starts with visible in-memory defaults when stored memory is corrupt", async () => {

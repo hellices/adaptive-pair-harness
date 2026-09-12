@@ -48,6 +48,8 @@ export class PairSharedContext {
   private latest: PairPublishedEvidence | undefined;
   private session: PairSessionSnapshot;
   private revision = 0;
+  private evidenceRevision = 0;
+  private readonly evidenceRevisionByUri = new Map<string, number>();
   private currentRuntimeRevision = 0;
 
   public constructor(
@@ -64,6 +66,9 @@ export class PairSharedContext {
   public beginRuntime(): PairRuntimeRevision {
     this.currentRuntimeRevision += 1;
     this.revision += 1;
+    if (this.latest !== undefined) {
+      this.bumpEvidenceRevision(this.latest.uri);
+    }
     this.latest = undefined;
     return this.currentRuntimeRevision as PairRuntimeRevision;
   }
@@ -99,6 +104,7 @@ export class PairSharedContext {
       return;
     }
     this.revision += 1;
+    this.bumpEvidenceRevision(latest.uri);
     this.latest = latest;
   }
 
@@ -112,12 +118,22 @@ export class PairSharedContext {
     ) {
       return;
     }
+    if (uri !== undefined) {
+      this.bumpEvidenceRevision(uri);
+    }
     if (uri === undefined || this.latest?.uri === uri) {
       if (this.latest !== undefined) {
+        if (uri === undefined) {
+          this.bumpEvidenceRevision(this.latest.uri);
+        }
         this.revision += 1;
       }
       this.latest = undefined;
     }
+  }
+
+  public evidenceRevisionForUri(uri: string): number {
+    return this.evidenceRevisionByUri.get(uri) ?? 0;
   }
 
   public snapshot(): PairContextSnapshot {
@@ -126,6 +142,11 @@ export class PairSharedContext {
       session: this.session,
       latest: this.latest,
     };
+  }
+
+  private bumpEvidenceRevision(uri: string): void {
+    this.evidenceRevision += 1;
+    this.evidenceRevisionByUri.set(uri, this.evidenceRevision);
   }
 }
 

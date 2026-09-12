@@ -127,11 +127,14 @@ Stopping a session clears transient inline state and shared evidence for the
 current session. Resetting local memory also stops an active or still-preparing
 session before publishing the reset state.
 
-The configured intervention style is used when no preference has been saved.
-The style picker stores its selection in VS Code global state, and the saved
-style is applied to thresholds and budgets when later sessions start.
-Dismissals are stored only under the workspace root that owns the evidence;
-approvals store the bounded evidence summary, not source buffers.
+The configured intervention style remains authoritative until the style picker
+records an explicit user selection in VS Code global state. Dismiss and approve
+actions do not convert the materialized `balanced` default into a selection.
+Reset clears the selection and immediately returns to the configured style.
+Dismissals are stored only under the workspace root that owns the evidence.
+Persisted evidence identities are SHA-256 hashes; approvals retain only the
+kind, approval time, and a sanitized title bounded to 120 characters, never a
+raw evidence URI, source buffer, reference, or secret.
 
 ## Using `@pair` Chat and inline comments
 
@@ -280,6 +283,13 @@ harness.
 
 Personal Pair memory is stored in VS Code global state. Repository dismissals
 remain isolated under repository-specific keys in that global record.
+The extension reuses one serialized memory store across runtime rebuilds, so a
+configuration rebuild cannot race an in-flight memory action. Existing
+version-1 records remain readable: a legacy `balanced` value without an
+explicit-selection marker is treated as a default, while legacy non-default
+styles retain their prior selected behavior. Legacy raw evidence identities
+are normalized to hashes when read and are written back only in hashed form on
+the next memory mutation.
 Pair starts with safe in-memory defaults, preserves the corrupt stored record,
 and shows a warning. Use **Adaptive Pair: Reset Local Memory** only when you
 intend to replace that record with clean defaults; reset stops any active or

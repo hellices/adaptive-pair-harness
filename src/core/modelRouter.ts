@@ -745,6 +745,11 @@ const sanitizeRemoteText = (
   };
 };
 
+export const sanitizePersistentText = (
+  value: string,
+  maxLength: number,
+): string => sanitizeRemoteText(value, maxLength).value;
+
 const looksLikeLongSecret = (value: string): boolean => {
   if (
     value.length < 40 ||

@@ -1,7 +1,10 @@
+import { createHash } from "node:crypto";
+import { sanitizePersistentText } from "./modelRouter";
 import type { Evidence } from "./types";
 
 export interface PairPreferences {
   readonly interventionStyle: "eco" | "balanced" | "active";
+  readonly interventionStyleExplicit: boolean;
   readonly pauseThresholdMs: number;
 }
 
@@ -52,8 +55,14 @@ const EVIDENCE_KINDS = [
   "diagnostic",
   "external-harness",
 ] as const;
+const PERSISTED_EVIDENCE_ID_PATTERN = /^sha256:[a-f0-9]{64}$/u;
+const TITLE_URI_PATTERN = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s<>"'`]+/gu;
+const TITLE_PATH_PATTERN =
+  /(?:[A-Za-z]:[\\/]|(?:\.{1,2})?[\\/]|(?:[\p{L}\p{N}_.@-]+[\\/])+)[^\s<>"'`]+/gu;
+const MAX_PERSISTED_TITLE_LENGTH = 120;
 const DEFAULT_PREFERENCES: PairPreferences = Object.freeze({
   interventionStyle: "balanced",
+  interventionStyleExplicit: false,
   pauseThresholdMs: 1_000,
 });
 const EMPTY_MEMORY: StoredPairMemory = Object.freeze({
@@ -63,7 +72,26 @@ const EMPTY_MEMORY: StoredPairMemory = Object.freeze({
   approvedEvidence: Object.freeze([]),
 });
 
-const mutationQueues = new WeakMap<KeyValueStore, Promise<void>>();
+interface MemoryCoordinator {
+  revision: number;
+  queue: Promise<void>;
+}
+
+const memoryCoordinators = new WeakMap<KeyValueStore, MemoryCoordinator>();
+
+const coordinatorFor = (store: KeyValueStore): MemoryCoordinator => {
+  const existing = memoryCoordinators.get(store);
+  if (existing !== undefined) {
+    return existing;
+  }
+
+  const coordinator = {
+    revision: 0,
+    queue: Promise.resolve(),
+  };
+  memoryCoordinators.set(store, coordinator);
+  return coordinator;
+};
 
 export class InvalidPairMemoryError extends Error {
   public constructor(message: string) {
@@ -75,6 +103,7 @@ export class InvalidPairMemoryError extends Error {
 function freezePreferences(preferences: PairPreferences): PairPreferences {
   return Object.freeze({
     interventionStyle: preferences.interventionStyle,
+    interventionStyleExplicit: preferences.interventionStyleExplicit,
     pauseThresholdMs: preferences.pauseThresholdMs,
   });
 }
@@ -164,16 +193,52 @@ function validateString(value: unknown, path: string): string {
   return value;
 }
 
+export const hashEvidenceIdentity = (evidenceId: string): string =>
+  PERSISTED_EVIDENCE_ID_PATTERN.test(evidenceId)
+    ? evidenceId
+    : `sha256:${createHash("sha256").update(evidenceId, "utf8").digest("hex")}`;
+
+const sanitizePersistedTitle = (
+  title: string,
+  kind: Evidence["kind"],
+): string => {
+  if (kind === "diagnostic") {
+    return "Editor diagnostic";
+  }
+
+  const withoutLocations = title
+    .replace(TITLE_URI_PATTERN, "[location]")
+    .replace(TITLE_PATH_PATTERN, "[path]");
+  const sanitized = sanitizePersistentText(
+    withoutLocations,
+    MAX_PERSISTED_TITLE_LENGTH,
+  );
+
+  return sanitized.length > 0 ? sanitized : "Evidence summary";
+};
+
 function validatePreferences(value: unknown): PairPreferences {
   if (!isRecord(value)) {
     throw invalidMemory(`preferences must be an object; received ${JSON.stringify(value)}`);
   }
 
+  const interventionStyle = validateInterventionStyle(
+    value.interventionStyle,
+    "preferences.interventionStyle",
+  );
+  if (
+    value.interventionStyleExplicit !== undefined &&
+    typeof value.interventionStyleExplicit !== "boolean"
+  ) {
+    throw invalidMemory(
+      `preferences.interventionStyleExplicit must be a boolean; received ${JSON.stringify(value.interventionStyleExplicit)}`,
+    );
+  }
+
   return freezePreferences({
-    interventionStyle: validateInterventionStyle(
-      value.interventionStyle,
-      "preferences.interventionStyle",
-    ),
+    interventionStyle,
+    interventionStyleExplicit:
+      value.interventionStyleExplicit ?? interventionStyle !== "balanced",
     pauseThresholdMs: validateFiniteNumber(
       value.pauseThresholdMs,
       "preferences.pauseThresholdMs",
@@ -198,7 +263,7 @@ function validateDismissals(
       );
     }
 
-    dismissals[repositoryId] = [...evidenceIds];
+    dismissals[repositoryId] = evidenceIds.map(hashEvidenceIdentity);
   }
 
   return freezeDismissals(dismissals);
@@ -226,10 +291,19 @@ function validateApprovedEvidence(value: unknown): readonly ApprovedEvidence[] {
       );
     }
 
+    const kind = validateApprovedEvidenceKind(
+      entry.kind,
+      `approvedEvidence[${index}].kind`,
+    );
     return Object.freeze({
-      id: validateString(entry.id, `approvedEvidence[${index}].id`),
-      kind: validateApprovedEvidenceKind(entry.kind, `approvedEvidence[${index}].kind`),
-      title: validateString(entry.title, `approvedEvidence[${index}].title`),
+      id: hashEvidenceIdentity(
+        validateString(entry.id, `approvedEvidence[${index}].id`),
+      ),
+      kind,
+      title: sanitizePersistedTitle(
+        validateString(entry.title, `approvedEvidence[${index}].title`),
+        kind,
+      ),
       approvedAt: validateFiniteNumber(entry.approvedAt, `approvedEvidence[${index}].approvedAt`),
     });
   });
@@ -259,12 +333,27 @@ export class PairMemoryStore {
 
   public constructor(private readonly options: PairMemoryStoreOptions) {}
 
-  public async load(): Promise<PairMemory> {
-    const stored = await this.loadStoredMemory();
-    return this.forRepository(stored);
+  public forRepository(repositoryId: string): PairMemoryStore {
+    if (repositoryId === this.options.repositoryId) {
+      return this;
+    }
+    return new PairMemoryStore({
+      ...this.options,
+      repositoryId,
+    });
   }
 
-  private forRepository(stored: StoredPairMemory): PairMemory {
+  public get revision(): number {
+    return coordinatorFor(this.options.store).revision;
+  }
+
+  public async load(): Promise<PairMemory> {
+    await this.waitForPendingMutations();
+    const stored = await this.loadStoredMemory();
+    return this.scopeToRepository(stored);
+  }
+
+  private scopeToRepository(stored: StoredPairMemory): PairMemory {
     const dismissedEvidence = stored.dismissedEvidenceByRepository[this.options.repositoryId];
 
     return freezeMemory({
@@ -281,17 +370,18 @@ export class PairMemoryStore {
   }
 
   public async loadOrDefault(): Promise<PairMemoryRecovery> {
+    await this.waitForPendingMutations();
     const stored = await this.options.store.get<unknown>(this.memoryKey);
     if (stored === undefined) {
       return {
-        memory: this.forRepository(EMPTY_MEMORY),
+        memory: this.scopeToRepository(EMPTY_MEMORY),
         warning: undefined,
         source: "default",
       };
     }
     try {
       return {
-        memory: this.forRepository(validateStoredMemory(stored)),
+        memory: this.scopeToRepository(validateStoredMemory(stored)),
         warning: undefined,
         source: "stored",
       };
@@ -309,31 +399,34 @@ export class PairMemoryStore {
   }
 
   public async reset(): Promise<void> {
-    const previousMutation =
-      mutationQueues.get(this.options.store) ?? Promise.resolve();
-    const mutation = previousMutation
+    const coordinator = coordinatorFor(this.options.store);
+    coordinator.revision += 1;
+    const mutation = coordinator.queue
       .catch(() => undefined)
       .then(async () => {
         await this.saveStoredMemory(EMPTY_MEMORY);
       });
-    mutationQueues.set(
-      this.options.store,
-      mutation.then(
-        () => undefined,
-        () => undefined,
-      ),
+    coordinator.queue = mutation.then(
+      () => undefined,
+      () => undefined,
     );
     return mutation;
   }
 
   public async updatePreferences(
-    preferences: Partial<PairPreferences>,
+    preferences: Partial<
+      Pick<PairPreferences, "interventionStyle" | "pauseThresholdMs">
+    >,
   ): Promise<void> {
     await this.enqueueMutation((stored) => ({
       version: 1,
       preferences: freezePreferences({
         interventionStyle:
           preferences.interventionStyle ?? stored.preferences.interventionStyle,
+        interventionStyleExplicit:
+          preferences.interventionStyle === undefined
+            ? stored.preferences.interventionStyleExplicit
+            : true,
         pauseThresholdMs:
           preferences.pauseThresholdMs ?? stored.preferences.pauseThresholdMs,
       }),
@@ -343,6 +436,7 @@ export class PairMemoryStore {
   }
 
   public async dismissEvidence(evidenceId: string): Promise<void> {
+    const persistedEvidenceId = hashEvidenceIdentity(evidenceId);
     await this.enqueueMutation((stored) => {
       const dismissedEvidenceByRepository = cloneDismissals(
         stored.dismissedEvidenceByRepository,
@@ -350,10 +444,10 @@ export class PairMemoryStore {
       const currentDismissed =
         dismissedEvidenceByRepository[this.options.repositoryId] ?? [];
 
-      if (!currentDismissed.includes(evidenceId)) {
+      if (!currentDismissed.includes(persistedEvidenceId)) {
         dismissedEvidenceByRepository[this.options.repositoryId] = [
           ...currentDismissed,
-          evidenceId,
+          persistedEvidenceId,
         ];
       }
 
@@ -370,15 +464,16 @@ export class PairMemoryStore {
     evidence: Evidence,
     approvedAt: number = this.now(),
   ): Promise<void> {
+    const persistedEvidenceId = hashEvidenceIdentity(evidence.id);
     await this.enqueueMutation((stored) => {
       const updatedApprovedEvidence = stored.approvedEvidence.filter(
-        (approved) => approved.id !== evidence.id,
+        (approved) => approved.id !== persistedEvidenceId,
       );
       updatedApprovedEvidence.push(
         Object.freeze({
-          id: evidence.id,
+          id: persistedEvidenceId,
           kind: evidence.kind,
-          title: evidence.title,
+          title: sanitizePersistedTitle(evidence.title, evidence.kind),
           approvedAt,
         }),
       );
@@ -399,22 +494,30 @@ export class PairMemoryStore {
   private async enqueueMutation(
     mutate: (stored: StoredPairMemory) => StoredPairMemory | Promise<StoredPairMemory>,
   ): Promise<void> {
-    const previousMutation = mutationQueues.get(this.options.store) ?? Promise.resolve();
-    const mutation = previousMutation.catch(() => undefined).then(async () => {
+    const coordinator = coordinatorFor(this.options.store);
+    coordinator.revision += 1;
+    const mutation = coordinator.queue.catch(() => undefined).then(async () => {
       const stored = await this.loadStoredMemory();
       const next = await mutate(stored);
       await this.saveStoredMemory(next);
     });
 
-    mutationQueues.set(
-      this.options.store,
-      mutation.then(
-        () => undefined,
-        () => undefined,
-      ),
+    coordinator.queue = mutation.then(
+      () => undefined,
+      () => undefined,
     );
 
     return mutation;
+  }
+
+  private async waitForPendingMutations(): Promise<void> {
+    const coordinator = coordinatorFor(this.options.store);
+    let pending = coordinator.queue;
+    await pending;
+    while (pending !== coordinator.queue) {
+      pending = coordinator.queue;
+      await pending;
+    }
   }
 
   private async loadStoredMemory(): Promise<StoredPairMemory> {

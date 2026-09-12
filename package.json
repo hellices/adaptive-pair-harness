@@ -140,7 +140,7 @@
             "active"
           ],
           "default": "balanced",
-          "description": "Initial intervention style when local Pair memory has no saved preference. Use Adaptive Pair: Set Intervention Style to persist a selection."
+          "description": "Intervention style used until local Pair memory contains an explicit selection. Use Adaptive Pair: Set Intervention Style to persist one."
         },
         "adaptivePair.model.provider": {
           "scope": "application",

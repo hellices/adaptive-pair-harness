@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Evidence } from "../src/core/types";
-import { PairMemoryStore } from "../src/core/memoryStore";
+import {
+  hashEvidenceIdentity,
+  PairMemoryStore,
+} from "../src/core/memoryStore";
 
 const repositoryA = "/workspace/repo-a";
 const repositoryB = "/workspace/repo-b";
@@ -19,6 +22,7 @@ const evidence: Evidence = {
   },
   references: ["./src/core/semanticAnalyzer.ts"],
 };
+const evidenceHash = hashEvidenceIdentity(evidence.id);
 
 interface StoredValue {
   readonly [key: string]: unknown;
@@ -102,10 +106,93 @@ describe("PairMemoryStore", () => {
       version: 1,
       preferences: {
         interventionStyle: "balanced",
+        interventionStyleExplicit: false,
         pauseThresholdMs: 1_000,
       },
       dismissedEvidenceByRepository: {},
       approvedEvidence: [],
+    });
+  });
+
+  it("treats legacy balanced version-1 preferences as defaults while preserving legacy non-default selections", async () => {
+    const store = new InMemoryKeyValueStore();
+    const memoryStore = new PairMemoryStore({
+      store,
+      repositoryId: repositoryA,
+    });
+    await store.update("adaptive-pair.memory", {
+      version: 1,
+      preferences: {
+        interventionStyle: "balanced",
+        pauseThresholdMs: 1_000,
+      },
+      dismissedEvidenceByRepository: {},
+      approvedEvidence: [],
+    });
+
+    await expect(memoryStore.load()).resolves.toMatchObject({
+      preferences: {
+        interventionStyle: "balanced",
+        interventionStyleExplicit: false,
+      },
+    });
+
+    await store.update("adaptive-pair.memory", {
+      version: 1,
+      preferences: {
+        interventionStyle: "active",
+        pauseThresholdMs: 1_000,
+      },
+      dismissedEvidenceByRepository: {},
+      approvedEvidence: [],
+    });
+
+    await expect(memoryStore.load()).resolves.toMatchObject({
+      preferences: {
+        interventionStyle: "active",
+        interventionStyleExplicit: true,
+      },
+    });
+  });
+
+  it("normalizes legacy version-1 raw evidence identities on read", async () => {
+    const store = new InMemoryKeyValueStore();
+    await store.update("adaptive-pair.memory", {
+      version: 1,
+      preferences: {
+        interventionStyle: "balanced",
+        pauseThresholdMs: 1_000,
+      },
+      dismissedEvidenceByRepository: {
+        [repositoryA]: [evidence.id],
+      },
+      approvedEvidence: [
+        {
+          id: evidence.id,
+          kind: evidence.kind,
+          title: evidence.title,
+          approvedAt: 1_717_171_717,
+        },
+      ],
+    });
+    const memoryStore = new PairMemoryStore({
+      store,
+      repositoryId: repositoryA,
+    });
+
+    await expect(memoryStore.load()).resolves.toMatchObject({
+      preferences: {
+        interventionStyleExplicit: false,
+      },
+      dismissedEvidenceByRepository: {
+        [repositoryA]: [evidenceHash],
+      },
+      approvedEvidence: [
+        {
+          id: evidenceHash,
+          title: evidence.title,
+        },
+      ],
     });
   });
 
@@ -132,7 +219,7 @@ describe("PairMemoryStore", () => {
         pauseThresholdMs: 2_500,
       },
       dismissedEvidenceByRepository: {
-        [repositoryA]: [evidence.id],
+        [repositoryA]: [evidenceHash],
       },
     });
     await expect(memoryStoreB.load()).resolves.toMatchObject({
@@ -179,11 +266,11 @@ describe("PairMemoryStore", () => {
         interventionStyle: "active",
       },
       dismissedEvidenceByRepository: {
-        [repositoryA]: [evidence.id],
+        [repositoryA]: [evidenceHash],
       },
       approvedEvidence: [
         {
-          id: evidence.id,
+          id: evidenceHash,
           kind: evidence.kind,
           title: evidence.title,
           approvedAt: 1_717_171_717,
@@ -230,7 +317,7 @@ describe("PairMemoryStore", () => {
         interventionStyle: "active",
       },
       dismissedEvidenceByRepository: {
-        [repositoryB]: [evidence.id],
+        [repositoryB]: [evidenceHash],
       },
     });
   });
@@ -252,7 +339,7 @@ describe("PairMemoryStore", () => {
         interventionStyle: "balanced",
       },
       dismissedEvidenceByRepository: {
-        [repositoryA]: [evidence.id],
+        [repositoryA]: [evidenceHash],
       },
     });
   });
@@ -307,6 +394,7 @@ describe("PairMemoryStore", () => {
       version: 1,
       preferences: {
         interventionStyle: "balanced",
+        interventionStyleExplicit: false,
         pauseThresholdMs: 1_000,
       },
       dismissedEvidenceByRepository: {},
@@ -350,7 +438,7 @@ describe("PairMemoryStore", () => {
     const memory = await memoryStore.load();
     expect(memory.approvedEvidence).toEqual([
       {
-        id: evidence.id,
+        id: evidenceHash,
         kind: evidence.kind,
         title: evidence.title,
         approvedAt,
@@ -360,7 +448,7 @@ describe("PairMemoryStore", () => {
     const persisted = store.snapshot("adaptive-pair.memory") as PersistedMemory | undefined;
     expect(persisted?.approvedEvidence).toEqual([
       {
-        id: evidence.id,
+        id: evidenceHash,
         kind: evidence.kind,
         title: evidence.title,
         approvedAt,
@@ -372,5 +460,51 @@ describe("PairMemoryStore", () => {
     expect(approvedEntry).not.toHaveProperty("source");
     expect(approvedEntry).not.toHaveProperty("references");
     expect(approvedEntry).not.toHaveProperty("range");
+  });
+
+  it("hashes evidence identities and sanitizes bounded titles before persistence", async () => {
+    const store = new InMemoryKeyValueStore();
+    const memoryStore = new PairMemoryStore({
+      store,
+      repositoryId: repositoryA,
+    });
+    const privateUri =
+      "file:///Users/example/private-workspace/src/credential.ts";
+    const privateRelativePath = "src/private/credential.ts";
+    const secret = "sk-privateCredential123456789";
+    const sensitiveEvidence: Evidence = {
+      ...evidence,
+      id: `diagnostic:${privateUri}:4:2:0`,
+      title: `Review ${privateRelativePath} and ${privateUri} authorization: Bearer ${secret} ${"x".repeat(200)}`,
+      source: privateUri,
+      detail: `The source contained ${secret}.`,
+      references: [privateUri],
+    };
+
+    await memoryStore.dismissEvidence(sensitiveEvidence.id);
+    await memoryStore.approveEvidence(sensitiveEvidence, 1_717_171_717);
+
+    const persisted = store.snapshot("adaptive-pair.memory");
+    const serialized = JSON.stringify(persisted);
+    expect(serialized).not.toContain(privateUri);
+    expect(serialized).not.toContain(secret);
+    expect(persisted).toMatchObject({
+      dismissedEvidenceByRepository: {
+        [repositoryA]: [expect.stringMatching(/^sha256:[a-f0-9]{64}$/u)],
+      },
+      approvedEvidence: [
+        {
+          id: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+          title: expect.any(String),
+        },
+      ],
+    });
+    const approvedTitle = (
+      persisted as {
+        approvedEvidence: Array<{ title: string }>;
+      }
+    ).approvedEvidence[0]!.title;
+    expect(approvedTitle).not.toContain("src");
+    expect(approvedTitle.length).toBeLessThanOrEqual(120);
   });
 });

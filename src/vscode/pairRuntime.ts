@@ -6,8 +6,10 @@ import {
 import { discoverHarnessSignals } from "../core/coexistence";
 import { EditEpisodeAggregator } from "../core/editEpisodeAggregator";
 import { InterventionPolicy } from "../core/interventionPolicy";
-import { PairMemoryStore } from "../core/memoryStore";
-import type { KeyValueStore } from "../core/memoryStore";
+import {
+  hashEvidenceIdentity,
+  PairMemoryStore,
+} from "../core/memoryStore";
 import {
   LocalTemplateProvider,
   ModelOutputLimitError,
@@ -79,6 +81,7 @@ export interface PairRuntimeOptions {
   readonly apiKey: string | undefined;
   readonly budget?: TokenBudget;
   readonly budgetFollowsInterventionStyle?: boolean;
+  readonly memoryStore?: PairMemoryStore;
 }
 
 export interface PairMemoryActionResult {
@@ -136,7 +139,6 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   private readonly copilotProvider: VsCodeLanguageModelProvider;
   private readonly router: ModelRouter;
   private readonly memoryStore: PairMemoryStore;
-  private readonly memoryBackend: KeyValueStore;
   private readonly inlineController: InlinePairController;
   private readonly status: vscode.StatusBarItem;
   private readonly invocationGate: PairInvocationGate;
@@ -189,16 +191,17 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
 
     const repositoryId =
       vscode.workspace.workspaceFolders?.[0]?.uri.toString() ?? "no-workspace";
-    this.memoryBackend = {
-      get: async <T>(key: string): Promise<T | undefined> =>
-        options.extensionContext.globalState.get<T>(key),
-      update: async <T>(key: string, value: T): Promise<void> =>
-        options.extensionContext.globalState.update(key, value),
-    };
-    this.memoryStore = new PairMemoryStore({
-      repositoryId,
-      store: this.memoryBackend,
-    });
+    this.memoryStore =
+      options.memoryStore ??
+      new PairMemoryStore({
+        repositoryId,
+        store: {
+          get: async <T>(key: string): Promise<T | undefined> =>
+            options.extensionContext.globalState.get<T>(key),
+          update: async <T>(key: string, value: T): Promise<void> =>
+            options.extensionContext.globalState.update(key, value),
+        },
+      });
 
     const commentController = vscode.comments.createCommentController(
       "adaptivePair",
@@ -312,20 +315,50 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
         folder.uri.toString(),
       ) ?? []),
     ]);
-    const recoveredByRepository = await Promise.all(
-      [...repositoryIds].map(async (repositoryId) => ({
-        repositoryId,
-        recovered: await new PairMemoryStore({
-          repositoryId,
-          store: this.memoryBackend,
-        }).loadOrDefault(),
-      })),
-    );
-    const recoveredMemory = recoveredByRepository[0]?.recovered ?? {
-      memory: (await this.memoryStore.loadOrDefault()).memory,
-      warning: undefined,
-      source: "default" as const,
+    const loadMemorySnapshot = async (): Promise<
+      | {
+          readonly revision: number;
+          readonly recoveredByRepository: ReadonlyArray<{
+            readonly repositoryId: string;
+            readonly recovered: Awaited<
+              ReturnType<PairMemoryStore["loadOrDefault"]>
+            >;
+          }>;
+        }
+      | undefined
+    > => {
+      while (context.isCurrent()) {
+        const revision = this.memoryStore.revision;
+        const recoveredByRepository = await Promise.all(
+          [...repositoryIds].map(async (repositoryId) => ({
+            repositoryId,
+            recovered: await this.memoryStore
+              .forRepository(repositoryId)
+              .loadOrDefault(),
+          })),
+        );
+        if (revision === this.memoryStore.revision) {
+          return { revision, recoveredByRepository };
+        }
+      }
+      return undefined;
     };
+    let memorySnapshot = await loadMemorySnapshot();
+    if (memorySnapshot === undefined) {
+      return;
+    }
+    const controlNotice = await this.discoverCoexistence();
+    if (memorySnapshot.revision !== this.memoryStore.revision) {
+      memorySnapshot = await loadMemorySnapshot();
+      if (memorySnapshot === undefined) {
+        return;
+      }
+    }
+    const { recoveredByRepository } = memorySnapshot;
+    const recoveredMemory = recoveredByRepository[0]?.recovered;
+    if (recoveredMemory === undefined) {
+      return;
+    }
     const dismissedEvidenceIdsByRepository = new Map(
       recoveredByRepository.map(({ repositoryId, recovered }) => [
         repositoryId,
@@ -334,19 +367,22 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
         ),
       ]),
     );
-    const controlNotice = await this.discoverCoexistence();
 
     if (!context.isCurrent()) {
       return;
     }
     this.memoryWarning = recoveredMemory.warning;
     this.interventionStyle =
-      recoveredMemory.source === "stored"
+      recoveredMemory.source === "stored" &&
+      recoveredMemory.memory.preferences.interventionStyleExplicit
         ? recoveredMemory.memory.preferences.interventionStyle
         : recoveredMemory.source === "corrupt"
           ? "balanced"
           : this.options.config.interventionStyle;
-    if (recoveredMemory.source !== "default") {
+    if (
+      recoveredMemory.source === "corrupt" ||
+      recoveredMemory.memory.preferences.interventionStyleExplicit
+    ) {
       this.applyInterventionStyleBudget();
     }
     if (recoveredMemory.warning !== undefined) {
@@ -458,7 +494,8 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     );
     const excludeDismissed = (candidates: readonly Evidence[]) =>
       candidates.filter(
-        (candidate) => !dismissedEvidenceIds.has(candidate.id),
+        (candidate) =>
+          !dismissedEvidenceIds.has(hashEvidenceIdentity(candidate.id)),
       );
     const evidence = selectManualEvidence({
       selection,
@@ -587,7 +624,9 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       ...diagnosticEvidenceForDocument(document),
     ].filter(
       (candidate) =>
-        !this.dismissedEvidenceIdsForUri(document.uri).has(candidate.id),
+        !this.dismissedEvidenceIdsForUri(document.uri).has(
+          hashEvidenceIdentity(candidate.id),
+        ),
     );
     this.documentState.recordAnalysis(
       episode.uri,
@@ -930,7 +969,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       return;
     }
     this.memoryWarning = undefined;
-    this.interventionStyle = "balanced";
+    this.interventionStyle = this.options.config.interventionStyle;
     this.applyInterventionStyleBudget();
     this.dismissedEvidenceIdsByRepository.clear();
     this.statusDetail = this.sessionLifecycle.active
@@ -954,6 +993,8 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     }
 
     const uri = vscode.Uri.parse(latest.uri);
+    const evidenceRevision =
+      this.options.sharedContext.evidenceRevisionForUri(latest.uri);
     const repositoryId = this.repositoryIdForUri(uri);
     await this.memoryStoreForRepository(repositoryId).dismissEvidence(
       latest.evidence.id,
@@ -962,10 +1003,11 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       const dismissed = new Set(
         this.dismissedEvidenceIdsByRepository.get(repositoryId) ?? [],
       );
-      dismissed.add(latest.evidence.id);
+      dismissed.add(hashEvidenceIdentity(latest.evidence.id));
       this.dismissedEvidenceIdsByRepository.set(repositoryId, dismissed);
       if (
-        this.options.sharedContext.snapshot().revision === snapshot.revision
+        this.options.sharedContext.evidenceRevisionForUri(latest.uri) ===
+        evidenceRevision
       ) {
         this.documentState.invalidateEvidence(latest.uri);
         this.options.sharedContext.clearEvidence(
@@ -1033,10 +1075,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   }
 
   private memoryStoreForRepository(repositoryId: string): PairMemoryStore {
-    return new PairMemoryStore({
-      repositoryId,
-      store: this.memoryBackend,
-    });
+    return this.memoryStore.forRepository(repositoryId);
   }
 
   private applyInterventionStyleBudget(): void {

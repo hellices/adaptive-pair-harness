@@ -32,10 +32,12 @@ project changes.
    lifecycle gate.
 4. **Session preparation** loads preferences and repository-scoped workspace
    memory, using the owning folder for each document in multi-root workspaces,
-   seeds only stable open documents, and discovers coexistence signals. Stop,
-   replacement, disposal, and memory reset invalidate pending preparation;
-   rejection from stale preparation returns the stopped result, while a
-   current-generation failure still surfaces.
+   seeds only stable open documents, and discovers coexistence signals. A
+   memory revision fence reloads preparation state after a concurrent
+   style/dismiss/approve/reset action. Stop, replacement, disposal, and memory
+   reset invalidate pending preparation; rejection from stale preparation
+   returns the stopped result, while a current-generation failure still
+   surfaces.
 5. **Document changes** invalidate existing inline evidence for that file,
    cancel in-flight work, and queue an edit episode through the debounced
    aggregator.
@@ -103,10 +105,10 @@ The analyzer does not currently:
 If the budget denies the request, the runtime falls back to a local-template
 question instead of dropping the intervention entirely.
 
-The configured style is the initial value when memory has no saved preference.
-The style command persists a preference in global Pair memory; session
-preparation reapplies that preference to both policy thresholds and the shared
-rolling budget.
+The configured style remains authoritative until the style command records an
+explicit selection in global Pair memory. Session preparation reapplies only
+an explicit selection to policy thresholds and the shared rolling budget;
+unrelated memory writes preserve configuration authority.
 
 ## Model request shape
 
@@ -213,9 +215,16 @@ repository files.
 
 - personal pair memory is shared through global state, while repository
   dismissals stay keyed by document-owning roots inside that global record;
+- one extension-scoped memory store and adapter serialize mutations across
+  configuration-driven runtime rebuilds;
 - Command Palette actions dismiss the current evidence for its owning root,
-  approve only its bounded summary, and persist the selected intervention
-  style;
+  approve only its bounded summary, and persist an explicitly selected
+  intervention style without converting default values into user intent;
+- persisted evidence identities are SHA-256 hashes, and approved titles are
+  stripped of paths and secrets and bounded to 120 characters;
+- dismissal completion compares a per-URI evidence revision, so unrelated
+  document activity does not block cleanup and newer same-URI evidence is not
+  removed;
 - corrupt memory is preserved while in-memory defaults keep Pair usable, until
   the user invokes the explicit reset command; reset stops active and pending
   session work before storage mutation, and completion remains fenced so a

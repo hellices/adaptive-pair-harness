@@ -5,6 +5,8 @@ import {
   readPairConfig,
 } from "./config/pairConfig";
 import type { ModelSymbolContext } from "./core/modelRouter";
+import { PairMemoryStore } from "./core/memoryStore";
+import type { KeyValueStore } from "./core/memoryStore";
 import type { PairRange } from "./core/types";
 import { TokenBudget } from "./core/tokenBudget";
 import {
@@ -38,6 +40,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     configurationWarning: undefined,
   });
   const languageModelApi = createLanguageModelApi(context);
+  const memoryBackend: KeyValueStore = {
+    get: async <T>(key: string): Promise<T | undefined> =>
+      context.globalState.get<T>(key),
+    update: async <T>(key: string, value: T): Promise<void> =>
+      context.globalState.update(key, value),
+  };
+  const memoryStore = new PairMemoryStore({
+    repositoryId:
+      vscode.workspace.workspaceFolders?.[0]?.uri.toString() ?? "no-workspace",
+    store: memoryBackend,
+  });
   let runtime: PairRuntime | undefined;
   let sharedBudget: TokenBudget | undefined;
   let extensionDisposed = false;
@@ -73,6 +86,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           apiKey,
           budget,
           budgetFollowsInterventionStyle: true,
+          memoryStore,
         }),
     );
     if (next === undefined) {

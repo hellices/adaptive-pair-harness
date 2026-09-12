@@ -583,3 +583,83 @@
   third-party OpenAI-compatible service were not exercised in this
   non-interactive environment. Their boundaries are covered by unit and
   contract tests.
+
+---
+
+## Copilot Feedback Fix Review
+
+- Date: 2026-09-13
+- Binding input: `.superpowers/sdd/copilot-fix-review-findings.md`
+- Status: **COMPLETE — all binding findings addressed**
+
+### Corrections implemented
+
+- Version-1 Pair memory now records whether intervention style is an explicit
+  user selection. Dismiss/approve writes preserve default intent, configuration
+  remains authoritative without a selection, and reset returns immediately to
+  the configured style. Unmarked legacy `balanced` records remain defaults;
+  unmarked legacy `eco`/`active` records retain selected behavior.
+- Memory mutations use an adapter-scoped revision and serialization queue.
+  Session preparation reloads a memory snapshot when a concurrent action
+  changes that revision.
+- Activation owns one Pair memory adapter/store and passes it through every
+  runtime rebuild, so mutations before and after replacement share one queue.
+- Shared evidence tracks per-URI revisions. A dismissal can clean its target
+  after unrelated URI activity without removing newer evidence for that same
+  URI.
+- Persisted evidence identities are stable SHA-256 hashes. Legacy raw version-1
+  identities normalize on read and are rewritten as hashes on the next
+  mutation. Approved titles use the existing credential sanitizer, remove URI
+  and path tokens, and are bounded to 120 characters; diagnostic titles are
+  fixed metadata.
+- README, configuration reference, manifest setting description, and
+  architecture documentation describe explicit preference intent,
+  serialization/fencing, URI-local cleanup, and persistence privacy.
+
+### TDD evidence
+
+- Explicit preference intent: four regressions failed first for missing intent
+  metadata and dismiss/approve overriding configured `eco`, then passed.
+- Deferred preparation: the moderate-confidence diagnostic stayed quiet after
+  an `active` update made during deferred discovery; it rendered after revision
+  fencing reloaded memory.
+- Runtime rebuild serialization: two adapters read stale state concurrently
+  before the extension-scoped store was wired; the regression then observed
+  one pre-write read and preserved both mutations.
+- URI-local dismissal: unrelated evidence advanced the global revision and
+  left the target thread visible before per-URI revisions; target-only cleanup
+  then passed.
+- Persistence privacy: raw URI identity, credential-bearing title, and
+  unbounded title assertions failed before hashing/sanitization. A second RED
+  exposed runtime raw-ID matching, and self-review added a failing relative-path
+  title case before the final sanitizer correction.
+- Reset/config authority: reset produced the materialized `balanced` budget
+  before returning to the configured style.
+- Focused final run: **5 files, 170 tests passed**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **16 files, 291 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 88.48%, branches 79.28%, functions 91.68%, lines 88.64%
+- `npm run package`: **PASS**
+- `npm audit`: **PASS — 0 vulnerabilities**
+- VSIX inspection: **155 files**
+  - packaged runtime contains hashed identity, explicit-intent, and per-URI
+    revision logic;
+  - source, tests, coverage, private review material, source maps, and
+    workspace/CI files are excluded;
+  - production dependency root remains `typescript@5.9.3`.
+- `git diff --check`: **PASS**
+- Production secret-value scan: **PASS**
+- Packaged metadata fake-URL scan: **PASS**
+
+### Residual concerns
+
+- Official Copilot consent/UI behavior, Command Palette interaction, and a live
+  third-party OpenAI-compatible service were not exercised in this
+  non-interactive environment. Existing mocked adapter and lifecycle tests
+  cover the changed boundaries.
