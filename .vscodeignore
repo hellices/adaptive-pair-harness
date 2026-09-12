@@ -4,6 +4,11 @@
 .superpowers/**
 coverage/**
 docs/**
+!docs/
+!docs/configuration.md
+!docs/architecture/
+!docs/architecture/vertical-slice.md
+docs/superpowers/**
 src/**
 test/**
 dist/test/**

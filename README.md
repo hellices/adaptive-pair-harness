@@ -156,7 +156,10 @@ Sends a structured request to `adaptivePair.model.baseUrl` using the configured
 **Adaptive Pair: Set OpenAI-Compatible API Key** if your endpoint requires one.
 An invalid base URL disables this provider and falls back to `local-template`.
 
-See the repository documentation for the full configuration reference.
+See the repository documentation for the full configuration reference:
+
+- [Configuration reference](docs/configuration.md)
+- [Vertical-slice architecture](docs/architecture/vertical-slice.md)
 
 ## Privacy and token behavior
 
@@ -214,7 +217,9 @@ harness.
 - `adaptivePair.enabled = false` disables all session starts and model use.
 - A disabled extension and an off session are different states:
   - **disabled**: configuration blocks all Pair activity;
-  - **off**: the extension is available, but you have not started the session.
+  - **off**: the extension is available, but you have not started the session;
+    Pair stays dormant and does not analyze evidence, render interventions, or
+    call a model until you start it.
 
 ## Current limitations
 
@@ -232,8 +237,10 @@ This release is intentionally narrow:
 
 ## Repository documentation
 
-For repository readers, this branch also includes dedicated configuration and
-vertical-slice architecture documents alongside the packaged README.
+For repository readers, this branch also includes dedicated documentation:
+
+- [Configuration reference](docs/configuration.md)
+- [Vertical-slice architecture](docs/architecture/vertical-slice.md)
 
 - [Contributing](#contributing)
 - [License](#license)
@@ -242,6 +249,11 @@ vertical-slice architecture documents alongside the packaged README.
 
 Issues and pull requests are welcome. Keep changes open-source, preserve the
 explicit start/stop flow, and avoid introducing automatic repository writes.
+
+For implementation details and configuration, see:
+
+- [Configuration reference](docs/configuration.md)
+- [Vertical-slice architecture](docs/architecture/vertical-slice.md)
 
 ## License
 

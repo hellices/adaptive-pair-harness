@@ -133,11 +133,12 @@ Behavior:
   intervention falls back to `local-template`;
 - the shared `@pair /session` view reports remaining budget.
 
-## Disabling, cooldown, and local-only behavior
+## Disabling, cooldown, and local-template sessions
 
 ### Disabling
 
-- `adaptivePair.enabled = false` blocks session starts.
+- `adaptivePair.enabled = false` blocks session starts, analysis, interventions,
+  and model calls.
 - Disabled state also prevents manual review and chat-backed model generation.
 - The status bar reports the disabled reason.
 
@@ -147,7 +148,8 @@ Enabled does not mean active.
 
 - the extension can be enabled while the Pair session is still off;
 - the user must start a session with a command, `@pair /start`, or the toggle
-  shortcut before inline analysis will run.
+  shortcut before inline analysis will run. While the session is off, Adaptive
+  Pair does not analyze evidence, render interventions, or call a model.
 
 ### Cooldown
 
@@ -155,15 +157,17 @@ The current vertical slice applies a fixed per-evidence cooldown of **30 seconds
 If the same evidence ID was just surfaced, the policy suppresses repeat
 interventions until the cooldown expires.
 
-### Local-only behavior
+### Active local-template sessions
 
-Adaptive Pair stays local when any of the following is true:
+This document reserves “local-only” for an active Pair session using the
+`local-template` provider.
+
+An active session stays local when any of the following is true:
 
 - provider is `local-template`;
 - an OpenAI-compatible base URL is invalid;
 - a Copilot model is unavailable or inaccessible;
 - the remote token budget is exhausted;
-- the session is off or disabled.
 
-In local-only mode, the extension still analyzes supported evidence and can
-render inline navigator questions without network traffic.
+In this active local-template mode, the extension still analyzes supported
+evidence and can render inline navigator questions without network traffic.

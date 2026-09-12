@@ -4,6 +4,10 @@
   "description": "A realtime, evidence-backed AI pair for VS Code.",
   "version": "0.1.0",
   "publisher": "adaptive-pair",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/adaptive-pair/adaptive-pair-harness"
+  },
   "license": "Apache-2.0",
   "engines": {
     "vscode": "^1.136.0",
