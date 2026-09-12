@@ -983,16 +983,84 @@ git commit -m "feat: render realtime inline pair guidance"
 
 **Files:**
 - Modify: `README.md`
+- Create: `.devcontainer/devcontainer.json`
+- Create: `.vscode/launch.json`
+- Create: `.vscode/tasks.json`
+- Create: `.github/workflows/ci.yml`
 - Create: `docs/configuration.md`
 - Create: `docs/architecture/vertical-slice.md`
 
 **Interfaces:**
 - Documents every setting, privacy boundary, supported evidence type, model adapter, and coexistence limitation.
+- Produces a GitHub Codespaces environment that installs with Node.js 24 LTS
+  and can build, test, package, and run the extension.
+- Produces PR CI that verifies the extension and uploads the packaged VSIX.
 - Produces an installable `.vsix`.
 
-- [ ] **Step 1: Document installation and first run**
+- [ ] **Step 1: Add Codespaces and extension-development configuration**
 
-Add exact commands to `README.md`:
+Create `.devcontainer/devcontainer.json` using the Node.js 24 Bookworm
+devcontainer image. Configure `npm ci` as `postCreateCommand` and install these
+Codespaces extensions:
+
+- `dbaeumer.vscode-eslint`;
+- `github.copilot`;
+- `github.copilot-chat`.
+
+Create `.vscode/tasks.json` with `npm: compile`, `npm: check`, and
+`npm: package` tasks. Create `.vscode/launch.json` with a `Run Adaptive Pair
+Extension` configuration that launches an Extension Development Host using the
+current workspace.
+
+- [ ] **Step 2: Add pull-request CI**
+
+Create `.github/workflows/ci.yml` that runs on pushes to `main` and pull
+requests:
+
+1. checkout;
+2. setup Node.js 24 with npm cache;
+3. `npm ci`;
+4. `npm run check`;
+5. `npm run package`;
+6. upload `adaptive-pair-harness-0.1.0.vsix` as an artifact.
+
+- [ ] **Step 3: Rewrite README for users**
+
+The root README is user documentation, not an implementation diary. Include:
+
+- what Adaptive Pair is and is not;
+- current supported language and evidence types;
+- prerequisites and GitHub Copilot requirements;
+- **Test in GitHub Codespaces** as the first setup path;
+- local installation from the generated VSIX;
+- explicit session start/stop commands, toggle shortcut, and `@pair /start`
+  / `@pair /stop`;
+- `@pair` Chat commands and inline Comment Thread behavior;
+- provider selection: local template, official VS Code Copilot, and
+  OpenAI-compatible;
+- privacy and token-budget behavior;
+- coexistence with Copilot, Superpowers, Cline, and other harnesses;
+- troubleshooting for no inline comment, Copilot unavailable, invalid provider,
+  and disabled/off session;
+- current navigator-only limitations;
+- contribution and license links.
+
+Codespaces instructions must provide this complete test sequence:
+
+```bash
+npm ci
+npm run check
+npm run package
+code --install-extension adaptive-pair-harness-0.1.0.vsix
+```
+
+Then instruct the user to reload VS Code, authenticate GitHub Copilot, open a
+TypeScript file, explicitly start the Pair, introduce a new import or public
+signature change, and test `@pair /why`.
+
+- [ ] **Step 4: Document local installation and first run**
+
+Include these exact local commands:
 
 ```bash
 npm install
@@ -1004,7 +1072,7 @@ code --install-extension adaptive-pair-harness-0.1.0.vsix
 Document the new-import, exported-signature, and complexity-growth evidence
 types and state that the extension performs no project-file writes.
 
-- [ ] **Step 2: Document configuration and privacy**
+- [ ] **Step 5: Document configuration and privacy**
 
 Create `docs/configuration.md` with:
 
@@ -1015,7 +1083,7 @@ Create `docs/configuration.md` with:
 - token budgets by interaction style;
 - disabling, cooldown, and local-only behavior.
 
-- [ ] **Step 3: Document the implemented architecture**
+- [ ] **Step 6: Document the implemented architecture**
 
 Create `docs/architecture/vertical-slice.md` covering:
 
@@ -1027,7 +1095,7 @@ Create `docs/architecture/vertical-slice.md` covering:
 - coexistence discovery and why detection does not imply driver ownership;
 - explicit differences between this slice and the full design.
 
-- [ ] **Step 4: Run all verification**
+- [ ] **Step 7: Run all verification**
 
 Run:
 
@@ -1046,7 +1114,7 @@ Expected:
 - `adaptive-pair-harness-0.1.0.vsix` is created;
 - `git diff --check` prints nothing.
 
-- [ ] **Step 5: Inspect the package**
+- [ ] **Step 8: Inspect the package**
 
 Run:
 
@@ -1056,11 +1124,24 @@ unzip -l adaptive-pair-harness-0.1.0.vsix
 
 Expected: package includes `extension/package.json`, `extension/dist/src/**`,
 `extension/README.md`, and `extension/LICENSE`, and excludes source, tests,
-coverage, and design documents.
+coverage, design documents, `.devcontainer`, `.vscode`, and workflow files.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add README.md docs/configuration.md docs/architecture/vertical-slice.md
-git commit -m "docs: explain realtime pair vertical slice"
+git add README.md .devcontainer .vscode .github/workflows/ci.yml docs/configuration.md docs/architecture/vertical-slice.md
+git commit -m "docs: add Codespaces user workflow"
 ```
+
+- [ ] **Step 10: Prepare GitHub review without merging**
+
+After the broad branch review is clean:
+
+1. push `main` and the feature branch to a public GitHub repository;
+2. open a pull request targeting `main`;
+3. wait for CI and inspect every failed or skipped check;
+4. request GitHub Copilot code review;
+5. wait for the review, inspect every comment, and push fixes with covering
+   tests;
+6. repeat CI and review checks until the PR is merge-ready;
+7. leave the PR open and unmerged for the user to test in Codespaces.
