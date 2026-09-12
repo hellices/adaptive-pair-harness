@@ -1,5 +1,6 @@
 import type * as vscode from "vscode";
 import type { Evidence } from "../core/types";
+import { runCleanupSteps } from "./pairRuntimeSupport";
 
 export const buildInlineCommentMarkdown = (
   createMarkdown: (value: string) => vscode.MarkdownString,
@@ -44,8 +45,18 @@ export interface InlinePairControllerOptions {
 
 export class InlinePairController implements vscode.Disposable {
   private readonly threadsByUri = new Map<string, vscode.CommentThread>();
+  private controller: vscode.CommentController | undefined;
+  private readonly createMarkdown: (
+    value: string,
+  ) => vscode.MarkdownString;
+  private readonly previewMode: vscode.CommentMode;
+  private disposed = false;
 
-  public constructor(private readonly options: InlinePairControllerOptions) {}
+  public constructor(options: InlinePairControllerOptions) {
+    this.controller = options.controller;
+    this.createMarkdown = options.createMarkdown;
+    this.previewMode = options.previewMode;
+  }
 
   public render(
     uri: vscode.Uri,
@@ -53,19 +64,23 @@ export class InlinePairController implements vscode.Disposable {
     question: string,
     evidence: Evidence,
   ): void {
+    const controller = this.controller;
+    if (this.disposed || controller === undefined) {
+      throw new Error("Inline pair controller is disposed.");
+    }
     const key = uri.toString();
-    this.threadsByUri.get(key)?.dispose();
+    this.disposeUri(uri);
 
     const comment: vscode.Comment = {
       author: { name: "Adaptive Pair" },
       body: buildInlineCommentMarkdown(
-        this.options.createMarkdown,
+        this.createMarkdown,
         question,
         evidence,
       ),
-      mode: this.options.previewMode,
+      mode: this.previewMode,
     };
-    const thread = this.options.controller.createCommentThread(uri, range, [
+    const thread = controller.createCommentThread(uri, range, [
       comment,
     ]);
     thread.canReply = false;
@@ -75,19 +90,42 @@ export class InlinePairController implements vscode.Disposable {
 
   public disposeUri(uri: vscode.Uri): void {
     const key = uri.toString();
-    this.threadsByUri.get(key)?.dispose();
+    const thread = this.threadsByUri.get(key);
     this.threadsByUri.delete(key);
+    thread?.dispose();
   }
 
-  public clear(): void {
-    for (const thread of this.threadsByUri.values()) {
-      thread.dispose();
+  public clear(): void;
+  public clear(uri: vscode.Uri): void;
+  public clear(uri?: vscode.Uri): void {
+    if (uri !== undefined) {
+      this.disposeUri(uri);
+      return;
     }
+
+    const threads = [...this.threadsByUri.values()];
     this.threadsByUri.clear();
+    runCleanupSteps(
+      threads.map((thread) => () => thread.dispose()),
+      "Failed to clear all Adaptive Pair comment threads.",
+    );
   }
 
   public dispose(): void {
-    this.clear();
-    this.options.controller.dispose();
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    const threads = [...this.threadsByUri.values()];
+    this.threadsByUri.clear();
+    const controller = this.controller;
+    this.controller = undefined;
+    runCleanupSteps(
+      [
+        ...threads.map((thread) => () => thread.dispose()),
+        () => controller?.dispose(),
+      ],
+      "Failed to dispose the Adaptive Pair inline controller cleanly.",
+    );
   }
 }

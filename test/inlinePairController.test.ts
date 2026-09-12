@@ -220,4 +220,113 @@ describe("inline pair comment", () => {
       "file:///a.ts",
     ]);
   });
+
+  it("forgets a targeted thread before its disposal failure", () => {
+    const disposed: string[] = [];
+    const controller = {
+      createCommentThread: (uri: vscode.Uri) => ({
+        canReply: false,
+        label: undefined,
+        comments: [],
+        dispose: () => {
+          disposed.push(uri.toString());
+          if (uri.toString() === "file:///a.ts") {
+            throw new Error("thread A disposal failed");
+          }
+        },
+      }),
+      dispose: () => undefined,
+    } as unknown as vscode.CommentController;
+    const inline = new InlinePairController({
+      controller,
+      createMarkdown: createTestMarkdown,
+      previewMode: 0 as vscode.CommentMode,
+    });
+    const range = {
+      start: { line: 0, character: 0 },
+      end: { line: 0, character: 1 },
+    } as vscode.Range;
+    const uriA = { toString: () => "file:///a.ts" } as vscode.Uri;
+    const uriB = { toString: () => "file:///b.ts" } as vscode.Uri;
+    inline.render(uriA, range, "Question A?", evidence);
+    inline.render(uriB, range, "Question B?", evidence);
+
+    expect(() => inline.clear(uriA)).toThrow(
+      "thread A disposal failed",
+    );
+    expect(() => inline.clear(uriA)).not.toThrow();
+    inline.render(uriB, range, "Question B again?", evidence);
+
+    expect(disposed).toEqual(["file:///a.ts", "file:///b.ts"]);
+  });
+
+  it("finalizes state and attempts every resource before aggregating disposal failures", () => {
+    const attempts: string[] = [];
+    let controllerDisposed = false;
+    const controller = {
+      createCommentThread: (uri: vscode.Uri) => {
+        if (controllerDisposed) {
+          throw new Error("controller already disposed");
+        }
+        return {
+          canReply: false,
+          label: undefined,
+          comments: [],
+          dispose: () => {
+            attempts.push(uri.toString());
+            throw new Error(`${uri.toString()} disposal failed`);
+          },
+        };
+      },
+      dispose: () => {
+        controllerDisposed = true;
+        attempts.push("controller");
+        throw new Error("controller disposal failed");
+      },
+    } as unknown as vscode.CommentController;
+    const inline = new InlinePairController({
+      controller,
+      createMarkdown: createTestMarkdown,
+      previewMode: 0 as vscode.CommentMode,
+    });
+    const range = {
+      start: { line: 0, character: 0 },
+      end: { line: 0, character: 1 },
+    } as vscode.Range;
+    inline.render(
+      { toString: () => "file:///a.ts" } as vscode.Uri,
+      range,
+      "Question A?",
+      evidence,
+    );
+    inline.render(
+      { toString: () => "file:///b.ts" } as vscode.Uri,
+      range,
+      "Question B?",
+      evidence,
+    );
+
+    let failure: unknown;
+    try {
+      inline.dispose();
+    } catch (error: unknown) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).toHaveLength(3);
+    expect(attempts).toEqual([
+      "file:///a.ts",
+      "file:///b.ts",
+      "controller",
+    ]);
+    expect(() => inline.dispose()).not.toThrow();
+    expect(() =>
+      inline.render(
+        { toString: () => "file:///c.ts" } as vscode.Uri,
+        range,
+        "Question C?",
+        evidence,
+      ),
+    ).toThrow("disposed");
+  });
 });

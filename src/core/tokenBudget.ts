@@ -155,7 +155,7 @@ export class TokenBudget {
     }
 
     const relevantRetryTimes = [
-      callLimitExceeded ? this.retryAfterForNextExpiry(now) : 0,
+      callLimitExceeded ? this.retryAfterForCallCapacity(now) : 0,
       inputLimitExceeded
         ? this.retryAfterForTokenCapacity(
             now,
@@ -271,6 +271,21 @@ export class TokenBudget {
     }
 
     return Math.max(0, oldest.timestamp + this.config.windowMs - now);
+  }
+
+  private retryAfterForCallCapacity(now: number): number {
+    const requiredExpirations =
+      this.reservations.length - this.config.maxCalls + 1;
+    const lastRequiredReservation =
+      this.reservations[requiredExpirations - 1];
+    if (lastRequiredReservation === undefined) {
+      return this.retryAfterForNextExpiry(now);
+    }
+
+    return Math.max(
+      0,
+      lastRequiredReservation.timestamp + this.config.windowMs - now,
+    );
   }
 
   private retryAfterForTokenCapacity(

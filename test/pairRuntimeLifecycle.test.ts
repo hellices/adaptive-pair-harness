@@ -64,6 +64,8 @@ const vscodeState = vi.hoisted(() => ({
     undefined as number | undefined,
   listenerDisposalOrder: [] as number[],
   commentControllerDisposed: false,
+  commentControllerDisposalFailure: undefined as Error | undefined,
+  commentThreadDisposalFailures: new Set<string>(),
   statusItems: [] as TestStatusItem[],
   commentThreads: [] as TestCommentThread[],
   diagnostics: [] as Array<{
@@ -204,6 +206,9 @@ vi.mock("vscode", () => {
             label: "",
             dispose() {
               this.disposed = true;
+              if (vscodeState.commentThreadDisposalFailures.has(this.uri)) {
+                throw new Error(`${this.uri} disposal failed`);
+              }
             },
           };
           vscodeState.commentThreads.push(thread);
@@ -211,6 +216,9 @@ vi.mock("vscode", () => {
         },
         dispose: () => {
           vscodeState.commentControllerDisposed = true;
+          if (vscodeState.commentControllerDisposalFailure !== undefined) {
+            throw vscodeState.commentControllerDisposalFailure;
+          }
         },
       }),
     },
@@ -407,6 +415,8 @@ beforeEach(() => {
   vscodeState.listenerDisposalFailureAt = undefined;
   vscodeState.listenerDisposalOrder.length = 0;
   vscodeState.commentControllerDisposed = false;
+  vscodeState.commentControllerDisposalFailure = undefined;
+  vscodeState.commentThreadDisposalFailures.clear();
   vscodeState.statusItems.length = 0;
   vscodeState.commentThreads.length = 0;
   vscodeState.diagnostics.length = 0;
@@ -479,6 +489,78 @@ describe("PairRuntime lifecycle ownership", () => {
     expect(vscodeState.commentControllerDisposed).toBe(true);
     expect(vscodeState.statusItems[0]?.disposed).toBe(true);
     expect(runtime.isSessionActive()).toBe(false);
+    expect(() => runtime.dispose()).not.toThrow();
+  });
+
+  it("propagates one aggregate after outer cleanup observes complete inline disposal", () => {
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    const inlineController = (
+      runtime as unknown as {
+        inlineController: {
+          render(
+            uri: vscode.Uri,
+            range: vscode.Range,
+            question: string,
+            evidence: Evidence,
+          ): void;
+        };
+      }
+    ).inlineController;
+    inlineController.render(
+      { toString: () => "file:///workspace/a.ts" } as vscode.Uri,
+      {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 1 },
+      } as vscode.Range,
+      "Question A?",
+      evidence,
+    );
+    inlineController.render(
+      { toString: () => "file:///workspace/b.ts" } as vscode.Uri,
+      {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 1 },
+      } as vscode.Range,
+      "Question B?",
+      evidence,
+    );
+    vscodeState.commentThreadDisposalFailures.add(
+      "file:///workspace/a.ts",
+    );
+    vscodeState.commentThreadDisposalFailures.add(
+      "file:///workspace/b.ts",
+    );
+    vscodeState.commentControllerDisposalFailure = new Error(
+      "comment controller disposal failed",
+    );
+
+    let failure: unknown;
+    try {
+      runtime.dispose();
+    } catch (error: unknown) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(vscodeState.commentThreads).toHaveLength(2);
+    expect(
+      vscodeState.commentThreads.every((thread) => thread.disposed),
+    ).toBe(true);
+    expect(vscodeState.commentControllerDisposed).toBe(true);
+    expect(vscodeState.statusItems[0]?.disposed).toBe(true);
+    const outerErrors = (failure as AggregateError).errors;
+    expect(outerErrors).toHaveLength(2);
+    expect(outerErrors[0]).toBeInstanceOf(AggregateError);
+    expect((outerErrors[0] as AggregateError).errors).toHaveLength(2);
+    expect(outerErrors[1]).toBe(
+      vscodeState.commentControllerDisposalFailure,
+    );
     expect(() => runtime.dispose()).not.toThrow();
   });
 

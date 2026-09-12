@@ -1379,3 +1379,61 @@
 - Live VS Code listener disposal and GitHub Copilot dispatch were unavailable
   in this non-interactive environment. Deterministic adapter failures and
   injected official-token counts cover the changed boundaries.
+
+---
+
+## Remaining budget and inline-disposal findings (2026-09-13)
+
+### Corrections implemented
+
+- Call-limit retry timing now selects the expiry of the
+  `active reservations - maxCalls + 1` reservation. This waits until enough
+  calls have expired to admit one new call after any downward reconfiguration,
+  including repeated changes and equal-expiry groups.
+- Existing cumulative input/output retry calculation remains authoritative
+  when token capacity needs a later expiry than call capacity.
+- `InlinePairController.clear(uri)` and `disposeUri(uri)` remove the target
+  reference before disposal, so a throwing thread cannot remain registered and
+  unrelated threads remain usable.
+- Whole-controller clear/dispose detaches every thread reference before
+  cleanup. Disposal also marks final state and drops the controller reference
+  before attempting every thread and then the controller through the shared
+  aggregate-cleanup primitive.
+- Rendering after final disposal is rejected, while repeated disposal is a
+  no-op. Runtime cleanup receives one top-level aggregate while still disposing
+  all throwing threads, the comment controller, and later runtime resources.
+
+### TDD evidence
+
+- RED: the first focused budget/controller/runtime run reported **5 failures
+  and 65 passes**. It exposed oldest-only call retry timing, retained targeted
+  references after disposal failure, early termination on the first throwing
+  thread, and leaked controller/runtime resources.
+- GREEN: the final focused run passed **3 files, 71 tests**, covering repeated
+  downward call-limit changes, equal expiries, exact expiry admission,
+  cumulative input and output release, targeted throwing cleanup, direct
+  aggregate disposal, and runtime-level aggregate propagation.
+
+### Verification
+
+- Focused budget/controller/runtime suites: **PASS — 3 files, 71 tests**
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **17 files, 403 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 89.41%, branches 81.54%, functions 92.25%, lines 89.52%
+- `npm run package`: **PASS — 156 files, 4.35 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript` only**
+- VSIX exclusion, compiled behavior-marker, metadata, production/package
+  secret-pattern, and fake-URL scans: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review found no remaining high-confidence call-retry,
+  cumulative-capacity, disposal-finality, aggregation, or packaging issue.
+- Live VS Code disposal failures cannot be induced in this environment; the
+  stateful CommentThread/CommentController adapters cover the exact throw-after-
+  state-change behavior and runtime propagation path.

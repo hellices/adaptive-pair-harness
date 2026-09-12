@@ -281,4 +281,103 @@ describe("TokenBudget", () => {
       remainingOutputTokens: 40,
     });
   });
+
+  it("waits for enough calls to expire after repeated downward reconfiguration", () => {
+    const budget = new TokenBudget({
+      windowMs: 1_000,
+      maxCalls: 4,
+      maxInputTokens: 1_000,
+      maxOutputTokens: 1_000,
+      maxOutputTokensPerCall: 100,
+    });
+    expect(budget.tryReserve(1, 1, 0).allowed).toBe(true);
+    expect(budget.tryReserve(1, 1, 100).allowed).toBe(true);
+    expect(budget.tryReserve(1, 1, 200).allowed).toBe(true);
+
+    budget.reconfigure({
+      windowMs: 1_000,
+      maxCalls: 2,
+      maxInputTokens: 1_000,
+      maxOutputTokens: 1_000,
+      maxOutputTokensPerCall: 100,
+    });
+    expect(budget.tryReserve(1, 1, 250)).toMatchObject({
+      allowed: false,
+      reason: "call-limit",
+      retryAfterMs: 850,
+    });
+
+    budget.reconfigure({
+      windowMs: 1_000,
+      maxCalls: 1,
+      maxInputTokens: 1_000,
+      maxOutputTokens: 1_000,
+      maxOutputTokensPerCall: 100,
+    });
+    expect(budget.tryReserve(1, 1, 250)).toMatchObject({
+      allowed: false,
+      reason: "call-limit",
+      retryAfterMs: 950,
+    });
+  });
+
+  it("admits a call exactly when enough equal-expiry reservations leave", () => {
+    const budget = new TokenBudget({
+      windowMs: 1_000,
+      maxCalls: 3,
+      maxInputTokens: 1_000,
+      maxOutputTokens: 1_000,
+      maxOutputTokensPerCall: 100,
+    });
+    expect(budget.tryReserve(1, 1, 100).allowed).toBe(true);
+    expect(budget.tryReserve(1, 1, 100).allowed).toBe(true);
+    expect(budget.tryReserve(1, 1, 200).allowed).toBe(true);
+    budget.reconfigure({
+      windowMs: 1_000,
+      maxCalls: 2,
+      maxInputTokens: 1_000,
+      maxOutputTokens: 1_000,
+      maxOutputTokensPerCall: 100,
+    });
+
+    expect(budget.tryReserve(1, 1, 200)).toMatchObject({
+      allowed: false,
+      reason: "call-limit",
+      retryAfterMs: 900,
+    });
+    expect(budget.tryReserve(1, 1, 1_099).allowed).toBe(false);
+    expect(budget.tryReserve(1, 1, 1_100).allowed).toBe(true);
+  });
+
+  it.each([
+    ["input", 30, 100, "input-token-limit", 850],
+    ["output", 100, 30, "output-token-limit", 950],
+  ] as const)(
+    "waits for enough cumulative %s capacity after reconfiguration",
+    (_label, maxInputTokens, maxOutputTokens, reason, retryAfterMs) => {
+      const budget = new TokenBudget({
+        windowMs: 1_000,
+        maxCalls: 10,
+        maxInputTokens: 100,
+        maxOutputTokens: 100,
+        maxOutputTokensPerCall: 50,
+      });
+      expect(budget.tryReserve(15, 5, 0).allowed).toBe(true);
+      expect(budget.tryReserve(10, 15, 100).allowed).toBe(true);
+      expect(budget.tryReserve(20, 25, 200).allowed).toBe(true);
+      budget.reconfigure({
+        windowMs: 1_000,
+        maxCalls: 10,
+        maxInputTokens,
+        maxOutputTokens,
+        maxOutputTokensPerCall: 20,
+      });
+
+      expect(budget.tryReserve(10, 10, 250)).toMatchObject({
+        allowed: false,
+        reason,
+        retryAfterMs,
+      });
+    },
+  );
 });
