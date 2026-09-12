@@ -136,9 +136,11 @@ Remote-capable providers receive a sanitized `ModelRequest` shape:
 
 Automatic evidence crosses the remote boundary only through a whitelist keyed
 by `Evidence.kind`. Each kind has fixed extension-owned title, detail, and
-source strings; the identity is hashed, the numeric range is retained, and raw
-analyzer/editor titles, details, sources, references, specifiers, diagnostics,
-URIs, and paths are omitted.
+source strings; the evidence identity is omitted from prompts, the numeric
+range is retained, and raw analyzer/editor titles, details, sources,
+references, specifiers, diagnostics, URIs, and paths are omitted. A separate
+raw structured request stays local so any availability, budget, or
+sensitive-content fallback can render the bounded original evidence.
 
 Explicit Chat fields are inspected before bounding. Known credential material
 or an exact `file://`/`vscode-remote://` URI, recognized or multi-segment POSIX

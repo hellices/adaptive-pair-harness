@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { Evidence, PairRange } from "./types";
 import { requireSafeRemoteEndpoint } from "./remoteEndpoint";
 
@@ -536,26 +535,10 @@ const projectAutomaticEvidence = (
   evidence: Evidence,
 ): SanitizedValue<Evidence> => {
   const summary = REMOTE_EVIDENCE_SUMMARIES[evidence.kind];
-  const alreadyProjectedId = new RegExp(
-    `^evidence:${evidence.kind}:[a-f0-9]{16}$`,
-    "u",
-  );
-  const id = alreadyProjectedId.test(evidence.id)
-    ? evidence.id
-    : `evidence:${evidence.kind}:${createHash("sha256")
-        .update(
-          JSON.stringify({
-            id: evidence.id,
-            range: evidence.range,
-          }),
-          "utf8",
-        )
-        .digest("hex")
-        .slice(0, 16)}`;
 
   return {
     value: {
-      id,
+      id: "remote-evidence",
       kind: evidence.kind,
       severity: evidence.severity,
       title: summary.title,

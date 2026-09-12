@@ -135,7 +135,6 @@ Every remote request is reduced to a bounded structured prompt containing:
 - fixed kind-level evidence metadata:
   - `kind`
   - `severity`
-  - a hashed remote identity
   - extension-owned `title`, `detail`, and `source` strings selected only by
     `kind`
   - `confidence`
@@ -146,7 +145,11 @@ Every remote request is reduced to a bounded structured prompt containing:
 
 Automatic evidence is whitelist-projected: no analyzer/editor title, detail,
 source, reference, module specifier, diagnostic text, URI, or path is copied
-into a remote request. Explicit Chat text is checked before bounding for HTTP
+into a remote request, and evidence IDs are omitted from remote prompts.
+The raw structured request remains local and is used for bounded
+`local-template` rendering whenever remote generation falls back because of
+availability, budget, or sensitive content. Explicit Chat text is checked
+before bounding for HTTP
 and non-HTTP DSN userinfo, sensitive query parameters, bearer/JWT and common
 token formats, complete Basic authorization payloads, credential assignments,
 and long secret-like values. It is also checked for exact `file://` and

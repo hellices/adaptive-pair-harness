@@ -1367,6 +1367,165 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
+  it("uses the raw evidence for an unavailable Copilot local fallback", async () => {
+    const originalDetail =
+      "Original dependency detail with the module boundary context. ";
+    const rawEvidence: Evidence = {
+      ...evidence,
+      id: "raw-copilot-evidence-file:///workspace/private.ts",
+      title: "Original dependency title",
+      detail: originalDetail.repeat(30),
+      source: "original-analyzer-source",
+      references: ["./private-module"],
+    };
+    const runtime = new PairRuntime({
+      config: config({ provider: "vscode-copilot" }),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+
+    await expect(
+      runtime.generate(
+        "file:///workspace/pair.ts",
+        "Ask about the evidence.",
+        rawEvidence,
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      text: expect.stringContaining(originalDetail.repeat(3)),
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+    const response = await runtime.generate(
+      "file:///workspace/pair.ts",
+      "Ask about the evidence.",
+      rawEvidence,
+      new AbortController().signal,
+    );
+    expect(response.text).toHaveLength(1_000);
+
+    runtime.dispose();
+  });
+
+  it("projects a budget-denied Copilot prompt but uses raw evidence for the local fallback", async () => {
+    const rawEvidence: Evidence = {
+      ...evidence,
+      id: "raw-budget-evidence-file:///workspace/private.ts",
+      title: "Original budget title",
+      detail: "Original budget detail with repository-specific context.",
+      source: "original-budget-analyzer",
+      references: ["./private-budget-module"],
+    };
+    let countedPrompt = "";
+    const sendRequest = vi.fn(
+      async () =>
+        (async function* (): AsyncIterable<string> {
+          yield "remote";
+        })(),
+    );
+    const api: VsCodeLanguageModelApi = {
+      ...languageModelApi([{ id: "copilot-test", name: "Copilot Test" }]),
+      countTokens: async (_model, prompt) => {
+        countedPrompt = prompt;
+        return 501;
+      },
+      sendRequest,
+    };
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "vscode-copilot",
+        budget: {
+          maxCalls: 1,
+          maxInputTokens: 500,
+          maxOutputTokens: 180,
+          maxOutputTokensPerCall: 180,
+          windowMs: 600_000,
+        },
+      }),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: api,
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+
+    await expect(
+      runtime.generate(
+        "file:///workspace/pair.ts",
+        "Ask about the evidence.",
+        rawEvidence,
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      text: expect.stringContaining(rawEvidence.detail),
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+
+    expect(countedPrompt).toContain("Dependency change detected");
+    expect(countedPrompt).not.toContain(rawEvidence.id);
+    expect(countedPrompt).not.toContain(rawEvidence.title);
+    expect(countedPrompt).not.toContain(rawEvidence.detail);
+    expect(countedPrompt).not.toContain(rawEvidence.source);
+    expect(countedPrompt).not.toContain(rawEvidence.references[0]);
+    expect(sendRequest).not.toHaveBeenCalled();
+    runtime.dispose();
+  });
+
+  it("uses the raw evidence when an OpenAI-compatible provider is unavailable", async () => {
+    const rawEvidence: Evidence = {
+      ...evidence,
+      id: "raw-openai-evidence-file:///workspace/private.ts",
+      title: "Original OpenAI title",
+      detail: "Original OpenAI detail with local debugging context.",
+      source: "original-openai-analyzer",
+      references: ["./private-openai-module"],
+    };
+    let requestBody = "";
+    const fetchImplementation = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        requestBody = String(init?.body ?? "");
+        throw new TypeError("model endpoint unavailable");
+      },
+    );
+    vi.stubGlobal("fetch", fetchImplementation);
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "openai-compatible",
+        baseUrl: new URL("https://models.example/v1"),
+      }),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+
+    await expect(
+      runtime.generate(
+        "file:///workspace/pair.ts",
+        "Ask about the evidence.",
+        rawEvidence,
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      text: expect.stringContaining(rawEvidence.detail),
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+
+    expect(requestBody).toContain("Dependency change detected");
+    expect(requestBody).not.toContain(rawEvidence.id);
+    expect(requestBody).not.toContain(rawEvidence.title);
+    expect(requestBody).not.toContain(rawEvidence.detail);
+    expect(requestBody).not.toContain(rawEvidence.source);
+    expect(requestBody).not.toContain(rawEvidence.references[0]);
+    runtime.dispose();
+  });
+
   it("retains the last stable source through an invalid edit", async () => {
     const uri = "file:///workspace/pair.ts";
     const before =

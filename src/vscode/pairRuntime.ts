@@ -765,14 +765,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
           : "sensitive request content kept local; local-template fallback";
       this.publishSession();
       this.renderStatus();
-      return this.router.generate(
-        "local-template",
-        {
-          ...prepared.request,
-          evidence: request.evidence,
-        },
-        signal,
-      );
+      return this.router.generate("local-template", request, signal);
     }
 
     const now = Date.now();
@@ -801,6 +794,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     if (provider === "vscode-copilot") {
       return this.generateWithCopilotCandidates(
         remoteRequest,
+        request,
         signal,
         source,
         lifecycleFence,
@@ -819,12 +813,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       if (!lifecycleFence.isCurrent() || signal.aborted) {
         throw error;
       }
-      return this.fallbackForUnavailableCopilot(
-        error,
-        remoteRequest,
-        signal,
-        lifecycleFence,
-      );
+      return this.fallbackForUnavailableOpenAI(request, signal);
     }
     if (signal.aborted) {
       dispatch.dispose();
@@ -880,19 +869,18 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       if (!lifecycleFence.isCurrent() || signal.aborted) {
         throw error;
       }
-      return this.fallbackForUnavailableCopilot(
-        error,
-        remoteRequest,
-        signal,
-        lifecycleFence,
-      );
+      if (error instanceof ModelOutputLimitError) {
+        throw error;
+      }
+      return this.fallbackForUnavailableOpenAI(request, signal);
     } finally {
       dispatch.dispose();
     }
   }
 
   private async generateWithCopilotCandidates(
-    request: ModelRequest,
+    remoteRequest: ModelRequest,
+    localRequest: ModelRequest,
     signal: AbortSignal,
     source: PairInvocationSource,
     lifecycleFence: PairLifecycleFence,
@@ -901,7 +889,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     let candidates;
     try {
       candidates = await this.copilotProvider.prepareCandidates(
-        request,
+        remoteRequest,
         signal,
         { userInitiated: source !== "automatic" },
       );
@@ -911,7 +899,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       }
       return this.fallbackForUnavailableCopilot(
         error,
-        request,
+        localRequest,
         signal,
         lifecycleFence,
       );
@@ -930,7 +918,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
           }
           return this.fallbackForUnavailableCopilot(
             error,
-            request,
+            localRequest,
             signal,
             lifecycleFence,
           );
@@ -949,7 +937,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
         );
         if (!admission.allowed) {
           dispatch.dispose();
-          return this.fallbackForBudget(admission.reason, request, signal);
+          return this.fallbackForBudget(admission.reason, localRequest, signal);
         }
         this.publishSession();
 
@@ -1036,6 +1024,18 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     }
     this.effectiveProvider = "local-template";
     this.statusDetail = `Copilot unavailable (${error.reason}); local-template fallback`;
+    this.publishSession();
+    this.renderStatus();
+    return this.router.generate("local-template", request, signal);
+  }
+
+  private fallbackForUnavailableOpenAI(
+    request: ModelRequest,
+    signal: AbortSignal,
+  ): Promise<ModelResponse> {
+    this.effectiveProvider = "local-template";
+    this.statusDetail =
+      "OpenAI-compatible provider unavailable; local-template fallback";
     this.publishSession();
     this.renderStatus();
     return this.router.generate("local-template", request, signal);

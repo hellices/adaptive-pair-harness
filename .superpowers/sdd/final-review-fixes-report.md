@@ -891,3 +891,61 @@
   OpenAI-compatible endpoint were not available in this non-interactive
   environment. Injected provider tests cover selection, send, token-count,
   stream, and cancellation ordering at each changed boundary.
+
+---
+
+## Raw-local and whitelist-remote projection follow-up (2026-09-13)
+
+### Corrections implemented
+
+- Preserved two request forms at the runtime boundary: the original structured
+  request is retained for `local-template`, while only the fixed kind-level
+  projection reaches Copilot or an OpenAI-compatible provider.
+- Routed sensitive-content, preflight/admission budget denial, unavailable
+  Copilot, and unavailable OpenAI-compatible fallbacks through the original
+  local request. Local questions therefore retain bounded evidence detail
+  instead of degrading to the generic remote summary.
+- Replaced the derived remote evidence hash with a constant structural
+  placeholder. Evidence IDs remain absent from both Copilot and
+  OpenAI-compatible prompt payloads.
+- Corrected README, configuration, and architecture privacy guidance to state
+  that evidence IDs are omitted from remote prompts and that fallback rendering
+  uses the bounded original evidence.
+
+### TDD evidence
+
+- RED: the five kind-projection cases failed while expecting the constant
+  non-identifying placeholder; unavailable Copilot and post-count budget denial
+  returned generic projected detail; unavailable OpenAI-compatible generation
+  rejected instead of falling back.
+- GREEN: focused model/provider/privacy/runtime verification passed with
+  **4 files, 202 tests**.
+- Runtime tests assert that Copilot token-count and OpenAI request payloads
+  contain fixed projection text and none of the raw ID, title, detail, source,
+  or references. They separately assert raw, 1,000-character-bounded local
+  evidence rendering for fallback.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **17 files, 346 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 87.90%, branches 78.76%, functions 91.86%, lines 88.05%
+- `npm run package`: **PASS — 156 files, 4.35 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- VSIX content scan: required compiled model/runtime/provider modules and
+  public privacy docs are present; source, tests, coverage, private review
+  material, source maps, workspace, and CI files are absent.
+- Runtime dependency root scan: **PASS — `typescript` only**
+- Production and packaged credential-value scans: **PASS**
+- Package repository/bugs/homepage URL scan: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review found no remaining high-confidence privacy, fallback,
+  budget-accounting, cancellation, test, or documentation issue.
+- Live GitHub Copilot and third-party OpenAI-compatible services were not
+  available in this non-interactive environment. Injected provider tests cover
+  the changed projection and fallback boundaries.

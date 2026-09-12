@@ -211,9 +211,12 @@ See the repository documentation for the full configuration reference:
 - Adaptive Pair performs **no project-file writes**.
 - `local-template` keeps all generation local to the extension process.
 - Remote requests send **fixed kind-level evidence summaries**, not cleaned
-  analyzer/editor text or full source buffers. Evidence IDs are hashed; raw
-  titles, details, sources, references, specifiers, diagnostics, URIs, and
-  paths are omitted.
+  analyzer/editor text or full source buffers. Evidence IDs and raw titles,
+  details, sources, references, specifiers, diagnostics, URIs, and paths are
+  omitted from remote prompts.
+- Remote-provider fallback renders from the bounded original local evidence,
+  not the reduced remote projection, so unavailable providers and denied
+  budgets do not erase useful local context.
 - Explicit Chat prompts and symbol fields are bounded only after credential
   and local-resource detection. If any field contains known credential
   material or a local resource, the entire request stays local and that field

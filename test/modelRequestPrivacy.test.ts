@@ -123,9 +123,7 @@ describe("remote model request privacy", () => {
       const prepared = prepareRemoteModelRequest(request);
       expect(prepared.sensitiveDataDetected).toBe(false);
       expect(prepared.request.evidence).toMatchObject({
-        id: expect.stringMatching(
-          new RegExp(`^evidence:${kind}:[a-f0-9]{16}$`, "u"),
-        ),
+        id: "remote-evidence",
         kind,
         title,
         detail,
@@ -138,6 +136,8 @@ describe("remote model request privacy", () => {
         JSON.stringify(buildOpenAICompatiblePromptPayload(request)),
         buildCopilotPrompt(request),
       ]) {
+        expect(payload).not.toContain("Evidence ID");
+        expect(payload).not.toContain("remote-evidence");
         for (const rawValue of [
           malicious.id,
           malicious.title,
