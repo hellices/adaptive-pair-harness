@@ -18,6 +18,11 @@ export interface PairSessionPreparationContext {
   isCurrent(): boolean;
 }
 
+export interface PairLifecycleFence {
+  readonly generation: number;
+  isCurrent(): boolean;
+}
+
 export interface PairSessionActionResult {
   readonly kind:
     | "started"
@@ -53,6 +58,17 @@ export class PairSessionLifecycle {
 
   public get sessionGeneration(): number {
     return this.generation;
+  }
+
+  public captureFence(requireActive = false): PairLifecycleFence {
+    const generation = this.generation;
+    return {
+      generation,
+      isCurrent: () =>
+        !this.isDisposed &&
+        generation === this.generation &&
+        (!requireActive || this.isActive),
+    };
   }
 
   public start(): Promise<PairSessionActionResult> {
@@ -128,12 +144,13 @@ export class PairSessionLifecycle {
     generation: number,
     abortController: AbortController,
   ): Promise<PairSessionActionResult> {
+    const lifecycleFence = this.captureFence();
     const preparationContext: PairSessionPreparationContext = {
       signal: abortController.signal,
       isCurrent: () =>
-        !this.isDisposed &&
         !abortController.signal.aborted &&
-        generation === this.generation,
+        lifecycleFence.generation === generation &&
+        lifecycleFence.isCurrent(),
     };
     try {
       await this.ports.prepare(preparationContext);
