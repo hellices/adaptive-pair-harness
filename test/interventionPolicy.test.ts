@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { InterventionPolicy } from "../src/core/interventionPolicy";
-import { TokenBudget } from "../src/core/tokenBudget";
 import type { Evidence, PairRange } from "../src/core/types";
 
 const sharedRange: PairRange = {
@@ -9,8 +8,6 @@ const sharedRange: PairRange = {
 };
 
 const defaultGoal = "Ask a concise, evidence-backed question.";
-const longGoal = "Ask a concise, evidence-backed question. ".repeat(8).trim();
-const model = "qwen2.5-coder:7b";
 
 const createEvidence = (overrides: Partial<Evidence> = {}): Evidence => ({
   id: overrides.id ?? "evidence-default",
@@ -24,18 +21,9 @@ const createEvidence = (overrides: Partial<Evidence> = {}): Evidence => ({
   references: overrides.references ?? ["./repository"],
 });
 
-const createBudget = (): TokenBudget =>
-  new TokenBudget({
-    windowMs: 60_000,
-    maxCalls: 10,
-    maxInputTokens: 10_000,
-  });
-
 describe("InterventionPolicy", () => {
   it("asks about the highest-confidence new evidence", () => {
     const policy = new InterventionPolicy({
-      model,
-      budget: createBudget(),
       cooldownMs: 1_000,
     });
     const lowEvidence = createEvidence({
@@ -66,18 +54,18 @@ describe("InterventionPolicy", () => {
 
   it("suppresses duplicate evidence during cooldown", () => {
     const policy = new InterventionPolicy({
-      model,
-      budget: createBudget(),
       cooldownMs: 1_000,
     });
     const highEvidence = createEvidence({ id: "evidence-high", confidence: 0.96 });
 
-    policy.decide({
+    const first = policy.decide({
       evidence: [highEvidence],
       style: "balanced",
       now: 1_000,
       goal: defaultGoal,
     });
+    expect(first.kind).toBe("intervene");
+    policy.markRendered(highEvidence.id, 1_000);
 
     expect(
       policy.decide({
@@ -94,11 +82,11 @@ describe("InterventionPolicy", () => {
 
   it("reconsiders evidence after the cooldown expires", () => {
     const policy = new InterventionPolicy({
-      model,
-      budget: createBudget(),
       cooldownMs: 1_000,
     });
     const highEvidence = createEvidence({ id: "evidence-high", confidence: 0.96 });
+
+    policy.markRendered(highEvidence.id, 1_000);
 
     policy.decide({
       evidence: [highEvidence],
@@ -121,10 +109,54 @@ describe("InterventionPolicy", () => {
     });
   });
 
+  it("does not start cooldown until an intervention renders", () => {
+    const policy = new InterventionPolicy({
+      cooldownMs: 1_000,
+    });
+    const highEvidence = createEvidence({ id: "render-later" });
+
+    expect(
+      policy.decide({
+        evidence: [highEvidence],
+        style: "balanced",
+        now: 1_000,
+        goal: defaultGoal,
+      }).kind,
+    ).toBe("intervene");
+    expect(
+      policy.decide({
+        evidence: [highEvidence],
+        style: "balanced",
+        now: 1_100,
+        goal: defaultGoal,
+      }).kind,
+    ).toBe("intervene");
+
+    policy.markRendered(highEvidence.id, 1_100);
+    expect(
+      policy.decide({
+        evidence: [highEvidence],
+        style: "balanced",
+        now: 1_200,
+        goal: defaultGoal,
+      }),
+    ).toMatchObject({ kind: "quiet", reason: "cooldown-active" });
+  });
+
+  it("clears cooldowns on session stop and removes expired entries", () => {
+    const policy = new InterventionPolicy({
+      cooldownMs: 1_000,
+    });
+    policy.markRendered("old", 0);
+    policy.markRendered("current", 1_500);
+
+    expect(policy.cooldownEntryCount(1_500)).toBe(1);
+    policy.resetTransient();
+    expect(policy.cooldownEntryCount(1_500)).toBe(0);
+  });
+
   it("uses the configured style thresholds", () => {
     const exactThresholdPolicy = new InterventionPolicy({
-      model,
-      budget: createBudget(),
       cooldownMs: 1_000,
     });
 
@@ -165,8 +197,6 @@ describe("InterventionPolicy", () => {
     });
 
     const belowThresholdPolicy = new InterventionPolicy({
-      model,
-      budget: createBudget(),
       cooldownMs: 1_000,
     });
 
@@ -207,69 +237,4 @@ describe("InterventionPolicy", () => {
     });
   });
 
-  it("falls back to a local message when the budget denies a model call", () => {
-    const budget = new TokenBudget({
-      windowMs: 60_000,
-      maxCalls: 0,
-      maxInputTokens: 10_000,
-    });
-    const policy = new InterventionPolicy({
-      model,
-      budget,
-      cooldownMs: 1_000,
-    });
-    const evidence = createEvidence({
-      id: "evidence-high",
-      confidence: 0.96,
-      title: "Exported API signature changed",
-    });
-
-    expect(
-      policy.decide({
-        evidence: [evidence],
-        style: "balanced",
-        now: 1_000,
-        goal: defaultGoal,
-      }),
-    ).toMatchObject({
-      kind: "intervene",
-      evidenceId: evidence.id,
-      useModel: false,
-      localMessage: expect.stringContaining(evidence.title),
-    });
-  });
-
-  it("denies remote usage when the full prompt payload exceeds the token budget", () => {
-    const budget = new TokenBudget({
-      windowMs: 60_000,
-      maxCalls: 10,
-      maxInputTokens: 190,
-    });
-    const policy = new InterventionPolicy({
-      model,
-      budget,
-      cooldownMs: 1_000,
-    });
-    const evidence = createEvidence({
-      id: "evidence-overhead",
-      confidence: 0.96,
-      title: "Public API changed",
-      detail: "A function signature was widened with a new dependency parameter.",
-      kind: "public-api-change",
-    });
-
-    expect(
-      policy.decide({
-        evidence: [evidence],
-        style: "balanced",
-        now: 1_000,
-        goal: longGoal,
-      }),
-    ).toMatchObject({
-      kind: "intervene",
-      evidenceId: evidence.id,
-      useModel: false,
-      localMessage: expect.stringContaining(evidence.title),
-    });
-  });
 });

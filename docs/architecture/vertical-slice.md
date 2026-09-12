@@ -21,20 +21,24 @@ project changes.
 ## Edit episode flow
 
 1. **Activation** initializes shared session state as enabled-but-inactive.
-2. **Configuration rebuild** reads `adaptivePair.*` settings and any stored
-   OpenAI-compatible API key from VS Code `SecretStorage`.
+2. **Configuration rebuild** reads local behavior settings plus
+   application-scoped remote routing. Workspace/folder remote overrides are
+   ignored. OpenAI-compatible keys are looked up by validated canonical origin.
 3. **Session start** is explicit. `adaptivePair.startSession`,
    `adaptivePair.toggle`, and `@pair /start` all route through the same
    lifecycle gate.
-4. **Session preparation** loads workspace memory, seeds open documents, and
-   discovers coexistence signals.
+4. **Session preparation** loads repository-scoped workspace memory, using the
+   owning folder for each document in multi-root workspaces, seeds only stable
+   open documents, and discovers coexistence signals.
 5. **Document changes** invalidate existing inline evidence for that file,
    cancel in-flight work, and queue an edit episode through the debounced
    aggregator.
-6. **Episode analysis** combines semantic evidence and current editor
-   diagnostics.
-7. **Policy evaluation** picks the highest-priority eligible evidence,
-   respecting confidence thresholds, cooldown, and token budget.
+6. **Episode analysis** returns an explicit stable/unstable result. Unstable
+   edits produce no intervention and do not replace the last-stable baseline;
+   the next stable edit is compared with that baseline.
+7. **Policy evaluation** picks the highest-priority eligible evidence and
+   respects confidence thresholds and rendered-intervention cooldown.
+   Runtime-owned rolling budget admission occurs immediately before dispatch.
 8. **Intervention rendering** either uses a local template question or a model
    provider response, then renders the result inline and publishes it to shared
    chat state.
@@ -46,7 +50,9 @@ The semantic analyzer is intentionally narrow.
 ### Supported evidence kinds
 
 - new dependency imports
-- exported API signature changes or removals
+- ESM and CommonJS exported API additions, signature changes, and removals,
+  including aliases, default exports, function-valued variables, and inferred
+  callable signatures
 - substantial complexity growth
 
 ### Supported language boundary
@@ -74,9 +80,12 @@ The analyzer does not currently:
    - `eco`: 0.90
    - `balanced`: 0.72
    - `active`: 0.55
-2. **Cooldown**: the same evidence ID is not resurfaced for 30 seconds.
-3. **Budget**: remote-capable styles reserve estimated input tokens inside a
-   rolling 10-minute budget window.
+2. **Cooldown**: the same privacy-safe, module-qualified evidence ID is not
+   resurfaced for 30 seconds after a successful render. Stop clears cooldown.
+3. **Budget**: remote-capable styles reserve input and output capacity inside a
+   rolling 10-minute window. Budget state is hoisted across runtime rebuilds,
+   successful responses settle actual usage, and only known pre-dispatch
+   Copilot selection/consent failures release their exact reservation.
 
 If the budget denies the request, the runtime falls back to a local-template
 question instead of dropping the intervention entirely.
@@ -100,6 +109,9 @@ Remote-capable providers receive a sanitized `ModelRequest` shape:
   - bounded `userPrompt`
   - bounded symbol identity and symbol range
 
+One central redaction policy covers all of these string fields. Credential-like
+automatic evidence is kept local rather than sent after redaction.
+
 ### Provider behavior
 
 - **Local template**: deterministic local question, zero remote tokens
@@ -107,7 +119,9 @@ Remote-capable providers receive a sanitized `ModelRequest` shape:
   back locally when no model is available, access is denied, or proactive access
   is unavailable
 - **OpenAI-compatible**: posts JSON to `/chat/completions` at the configured
-  base URL, optionally with a bearer token from `SecretStorage`
+  safe base URL, optionally with an origin-bound bearer token from
+  `SecretStorage`; requests have a deadline, 64 KiB response cap, and a
+  completion-token cap
 
 ## Inline rendering lifecycle
 
@@ -117,6 +131,7 @@ Adaptive Pair owns one preview comment thread per file URI.
 - edits clear stale threads and cancel in-flight requests;
 - closing a document disposes only that document's thread;
 - stopping the session clears all transient inline state;
+- cooldown begins only after thread creation succeeds;
 - threads are preview-only (`canReply = false`) and direct follow-up to `@pair`.
 
 The inline message always reminds the user that Adaptive Pair has **not changed
@@ -135,7 +150,9 @@ Instead, it reads the shared Pair snapshot containing:
 - the latest published evidence/question pair.
 
 That is why `@pair /why` expands the latest inline question rather than
-reconstructing unrelated state.
+reconstructing unrelated state. The local provider has distinct `/why` and
+`/explain` summaries. Local `/trace` discloses only the resolved symbol/range
+and explicitly declines to fabricate deeper flow analysis.
 
 ## Coexistence discovery
 
@@ -144,7 +161,7 @@ On session start, the runtime checks for:
 - installed Copilot extensions;
 - installed Cline extensions;
 - `AGENTS.md` files;
-- Superpowers plan files.
+- Markdown files directly under `docs/superpowers/plans/`.
 
 Detection is deliberately **observational only**. The coexistence notice is a
 status annotation such as `...; observing only`.
@@ -161,9 +178,15 @@ Detection does **not** imply:
 Persistent state is stored in VS Code workspace state and secret storage, not in
 repository files.
 
-- pair memory is repository-scoped inside workspace state;
-- the OpenAI-compatible key is stored in `SecretStorage`;
-- remote requests avoid full source text and sanitize diagnostics.
+- pair memory is repository-scoped inside workspace state, including
+  document-owning roots in multi-root workspaces;
+- corrupt memory is preserved while in-memory defaults keep Pair usable, until
+  the user invokes the explicit reset command;
+- OpenAI-compatible keys are stored in `SecretStorage`, separately per
+  validated canonical endpoint origin;
+- remote settings are application-scoped and cannot be supplied by a folder;
+- remote requests avoid full source text and centrally redact every structured
+  evidence/Chat field.
 
 ## Differences from the full design
 

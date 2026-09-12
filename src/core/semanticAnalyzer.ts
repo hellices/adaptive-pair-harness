@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import ts from "typescript";
 import type { EditEpisode, Evidence, PairRange } from "./types";
 
@@ -25,26 +26,70 @@ interface SubjectIdentity {
   readonly displayName: string;
 }
 
+interface SemanticSource {
+  readonly sourceFile: ts.SourceFile;
+  readonly checker: ts.TypeChecker;
+}
+
 const ANALYZER_SOURCE = "typescript-semantic-analyzer";
 const DEFAULT_EXPORT_KEY = "default-export";
 const DEFAULT_EXPORT_DISPLAY = "default export";
 
-export class TypeScriptSemanticAnalyzer {
-  public analyze(episode: EditEpisode): readonly Evidence[] {
-    const previousSource = createSourceFile(episode, episode.previousText);
-    const currentSource = createSourceFile(episode, episode.currentText);
+export type SemanticAnalysisResult =
+  | {
+      readonly stability: "stable";
+      readonly evidence: readonly Evidence[];
+    }
+  | {
+      readonly stability: "unstable";
+      readonly evidence: readonly [];
+    };
 
-    if (hasParseDiagnostics(currentSource)) {
-      return [];
+export class TypeScriptSemanticAnalyzer {
+  public analyze(episode: EditEpisode): SemanticAnalysisResult {
+    const previous = createSemanticSource(episode, episode.previousText);
+    const current = createSemanticSource(episode, episode.currentText);
+
+    if (hasParseDiagnostics(current.sourceFile)) {
+      return {
+        stability: "unstable",
+        evidence: [],
+      };
     }
 
     const evidence = [
-      ...collectNewDependencyEvidence(previousSource, currentSource),
-      ...collectPublicApiChangeEvidence(previousSource, currentSource),
-      ...collectComplexityGrowthEvidence(previousSource, currentSource),
+      ...collectNewDependencyEvidence(previous.sourceFile, current.sourceFile),
+      ...collectPublicApiChangeEvidence(previous, current),
+      ...collectComplexityGrowthEvidence(
+        previous.sourceFile,
+        current.sourceFile,
+      ),
     ];
 
-    return evidence.sort(compareEvidence);
+    return {
+      stability: "stable",
+      evidence: evidence.sort(compareEvidence),
+    };
+  }
+
+  public isStable(
+    uri: string,
+    languageId: string,
+    text: string,
+  ): boolean {
+    return !hasParseDiagnostics(
+      createSourceFile(
+        {
+          uri,
+          languageId,
+          previousText: text,
+          currentText: text,
+          version: 0,
+          observedAt: 0,
+        },
+        text,
+      ),
+    );
   }
 }
 
@@ -56,6 +101,45 @@ const createSourceFile = (episode: EditEpisode, text: string): ts.SourceFile =>
     true,
     scriptKindForLanguageId(episode.languageId),
   );
+
+const createSemanticSource = (
+  episode: EditEpisode,
+  text: string,
+): SemanticSource => {
+  const sourceFile = createSourceFile(episode, text);
+  const compilerOptions: ts.CompilerOptions = {
+    allowJs: true,
+    checkJs: true,
+    module: ts.ModuleKind.CommonJS,
+    noLib: true,
+    noResolve: true,
+    skipLibCheck: true,
+    target: ts.ScriptTarget.Latest,
+  };
+  const defaultHost = ts.createCompilerHost(compilerOptions, true);
+  const host: ts.CompilerHost = {
+    ...defaultHost,
+    fileExists: (fileName) =>
+      fileName === sourceFile.fileName || defaultHost.fileExists(fileName),
+    getSourceFile: (fileName, languageVersionOrOptions) =>
+      fileName === sourceFile.fileName
+        ? sourceFile
+        : defaultHost.getSourceFile(fileName, languageVersionOrOptions),
+    readFile: (fileName) =>
+      fileName === sourceFile.fileName
+        ? text
+        : defaultHost.readFile(fileName),
+  };
+  const program = ts.createProgram(
+    [sourceFile.fileName],
+    compilerOptions,
+    host,
+  );
+  return {
+    sourceFile,
+    checker: program.getTypeChecker(),
+  };
+};
 
 const scriptKindForLanguageId = (languageId: string): ts.ScriptKind => {
   switch (languageId) {
@@ -85,7 +169,7 @@ const collectNewDependencyEvidence = (
     }
 
     evidence.push({
-      id: buildEvidenceId("new-dependency", specifier),
+      id: buildEvidenceId("new-dependency", currentSource.fileName, specifier),
       kind: "new-dependency",
       severity: "warning",
       title: "New dependency introduced",
@@ -128,30 +212,40 @@ const collectImportRecords = (sourceFile: ts.SourceFile): ReadonlyMap<string, Im
 };
 
 const collectPublicApiChangeEvidence = (
-  previousSource: ts.SourceFile,
-  currentSource: ts.SourceFile,
+  previous: SemanticSource,
+  current: SemanticSource,
 ): Evidence[] => {
-  const previousSignatures = collectExportedSignatures(previousSource);
-  const currentSignatures = collectExportedSignatures(currentSource);
+  const previousSignatures = collectExportedSignatures(previous);
+  const currentSignatures = collectExportedSignatures(current);
   const evidence: Evidence[] = [];
 
   for (const [key, currentSignature] of currentSignatures.entries()) {
     const previousSignature = previousSignatures.get(key);
     if (
-      previousSignature === undefined ||
+      previousSignature !== undefined &&
       sameOrderedValues(previousSignature.signatures, currentSignature.signatures)
     ) {
       continue;
     }
 
     evidence.push({
-      id: buildEvidenceId("public-api-change", key),
+      id: buildEvidenceId(
+        "public-api-change",
+        current.sourceFile.fileName,
+        key,
+      ),
       kind: "public-api-change",
       severity: "warning",
-      title: "Exported API signature changed",
-      detail: `Updated the exported signature for ${currentSignature.displayName}.`,
+      title:
+        previousSignature === undefined
+          ? "Exported API added"
+          : "Exported API signature changed",
+      detail:
+        previousSignature === undefined
+          ? `Added the exported signature for ${currentSignature.displayName}.`
+          : `Updated the exported signature for ${currentSignature.displayName}.`,
       source: ANALYZER_SOURCE,
-      confidence: 0.91,
+      confidence: previousSignature === undefined ? 0.86 : 0.91,
       range: currentSignature.range,
       references: [currentSignature.displayName],
     });
@@ -163,14 +257,18 @@ const collectPublicApiChangeEvidence = (
     }
 
     evidence.push({
-      id: buildEvidenceId("public-api-change", key),
+      id: buildEvidenceId(
+        "public-api-change",
+        current.sourceFile.fileName,
+        key,
+      ),
       kind: "public-api-change",
       severity: "warning",
       title: "Exported API removed",
       detail: `Removed the exported signature for ${previousSignature.displayName}.`,
       source: ANALYZER_SOURCE,
       confidence: 0.94,
-      range: zeroWidthRangeAtSourceStart(currentSource),
+      range: zeroWidthRangeAtSourceStart(current.sourceFile),
       references: [previousSignature.displayName],
     });
   }
@@ -179,59 +277,375 @@ const collectPublicApiChangeEvidence = (
 };
 
 const collectExportedSignatures = (
-  sourceFile: ts.SourceFile,
+  source: SemanticSource,
 ): ReadonlyMap<string, SignatureRecord> => {
+  const { checker, sourceFile } = source;
   const signatures = new Map<string, SignatureRecord>();
+  const functionsByName = new Map<
+    string,
+    readonly ts.FunctionLikeDeclaration[]
+  >();
+  const classesByName = new Map<string, ts.ClassDeclaration>();
 
   for (const statement of sourceFile.statements) {
-    if (ts.isFunctionDeclaration(statement) && hasExportModifier(statement)) {
-      const identity = exportedFunctionIdentity(statement);
-      if (identity === undefined) {
+    if (ts.isFunctionDeclaration(statement) && statement.name !== undefined) {
+      const existing = functionsByName.get(statement.name.text) ?? [];
+      functionsByName.set(statement.name.text, [...existing, statement]);
+      continue;
+    }
+    if (ts.isClassDeclaration(statement) && statement.name !== undefined) {
+      classesByName.set(statement.name.text, statement);
+      continue;
+    }
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name)) {
+          continue;
+        }
+        const initializer = unwrapFunctionExpression(declaration.initializer);
+        if (initializer !== undefined) {
+          functionsByName.set(declaration.name.text, [initializer]);
+        }
+      }
+    }
+  }
+
+  const appendFunction = (
+    externalName: string,
+    declarations: readonly ts.FunctionLikeDeclaration[],
+    rangeNode?: ts.Node,
+  ): void => {
+    const displayName =
+      externalName === "default" ? DEFAULT_EXPORT_DISPLAY : externalName;
+    for (const declaration of declarations) {
+      appendSignatureRecord(
+        signatures,
+        `function:${externalName}`,
+        displayName,
+        serializeFunctionLikeSignature(declaration, sourceFile, checker),
+        rangeForNode(
+          sourceFile,
+          rangeNode ??
+            ("name" in declaration && declaration.name !== undefined
+              ? declaration.name
+              : declaration),
+        ),
+      );
+    }
+  };
+
+  const appendClass = (
+    externalName: string,
+    declaration: ts.ClassLikeDeclarationBase,
+    rangeNode?: ts.Node,
+  ): void => {
+    const displayName =
+      externalName === "default" ? DEFAULT_EXPORT_DISPLAY : externalName;
+    for (const member of declaration.members) {
+      if (!isPublicCallableClassMember(member) || hasNonPublicModifier(member)) {
         continue;
       }
 
+      const memberName =
+        ts.isConstructorDeclaration(member)
+          ? "constructor"
+          : propertyNameText(member.name);
+      if (memberName === undefined) {
+        continue;
+      }
+      const staticPrefix = hasModifier(member, ts.SyntaxKind.StaticKeyword)
+        ? "."
+        : "#";
+      const separator = ts.isConstructorDeclaration(member)
+        ? "#"
+        : staticPrefix;
       appendSignatureRecord(
         signatures,
-        `function:${identity.key}`,
-        identity.displayName,
-        serializeFunctionLikeSignature(statement, sourceFile),
-        rangeForNameNode(sourceFile, statement.name, statement),
+        `method:${externalName}${separator}${memberName}`,
+        `${displayName}${separator}${memberName}`,
+        serializeFunctionLikeSignature(member, sourceFile, checker),
+        rangeForNode(sourceFile, rangeNode ?? member.name ?? member),
+      );
+    }
+  };
+
+  const appendLocalExport = (
+    localName: string,
+    externalName: string,
+    rangeNode?: ts.Node,
+  ): void => {
+    const functions = functionsByName.get(localName);
+    if (functions !== undefined) {
+      appendFunction(externalName, functions, rangeNode);
+    }
+    const declaration = classesByName.get(localName);
+    if (declaration !== undefined) {
+      appendClass(externalName, declaration, rangeNode);
+    }
+  };
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement) && hasExportModifier(statement)) {
+      const externalName = externalDeclarationName(statement);
+      if (externalName === undefined) {
+        continue;
+      }
+      appendFunction(externalName, [statement]);
+      continue;
+    }
+
+    if (ts.isClassDeclaration(statement) && hasExportModifier(statement)) {
+      const externalName = externalDeclarationName(statement);
+      if (externalName !== undefined) {
+        appendClass(externalName, statement);
+      }
+      continue;
+    }
+
+    if (ts.isVariableStatement(statement) && hasExportModifier(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name)) {
+          appendLocalExport(
+            declaration.name.text,
+            declaration.name.text,
+            declaration.name,
+          );
+        }
+      }
+      continue;
+    }
+
+    if (ts.isExportDeclaration(statement)) {
+      if (
+        statement.exportClause === undefined ||
+        !ts.isNamedExports(statement.exportClause)
+      ) {
+        continue;
+      }
+      for (const element of statement.exportClause.elements) {
+        const externalName = element.name.text;
+        const localName = element.propertyName?.text ?? externalName;
+        if (statement.moduleSpecifier === undefined) {
+          appendLocalExport(localName, externalName, element.name);
+        } else if (ts.isStringLiteral(statement.moduleSpecifier)) {
+          appendSignatureRecord(
+            signatures,
+            `re-export:${externalName}`,
+            externalName === "default"
+              ? DEFAULT_EXPORT_DISPLAY
+              : externalName,
+            `re-export:${statement.moduleSpecifier.text}:${localName}`,
+            rangeForNode(sourceFile, element.name),
+          );
+        }
+      }
+      continue;
+    }
+
+    if (ts.isExportAssignment(statement) && !statement.isExportEquals) {
+      appendExpressionExport(
+        statement.expression,
+        "default",
+        statement.expression,
+        appendFunction,
+        appendClass,
+        appendLocalExport,
       );
       continue;
     }
 
-    if (!ts.isClassDeclaration(statement) || !hasExportModifier(statement)) {
-      continue;
-    }
-
-    const classIdentity = exportedClassIdentity(statement);
-    if (classIdentity === undefined) {
-      continue;
-    }
-
-    for (const member of statement.members) {
-      if (!ts.isMethodDeclaration(member) || hasNonPublicModifier(member)) {
-        continue;
-      }
-
-      const methodName = propertyNameText(member.name);
-      if (methodName === undefined) {
-        continue;
-      }
-
-      const staticPrefix = hasModifier(member, ts.SyntaxKind.StaticKeyword) ? "." : "#";
-      appendSignatureRecord(
-        signatures,
-        `method:${classIdentity.key}${staticPrefix}${methodName}`,
-        `${classIdentity.displayName}${staticPrefix}${methodName}`,
-        serializeFunctionLikeSignature(member, sourceFile),
-        rangeForNameNode(sourceFile, member.name, member),
+    if (ts.isExpressionStatement(statement)) {
+      collectCommonJsExport(
+        statement.expression,
+        appendFunction,
+        appendClass,
+        appendLocalExport,
       );
     }
   }
 
   return signatures;
 };
+
+type AppendFunctionExport = (
+  externalName: string,
+  declarations: readonly ts.FunctionLikeDeclaration[],
+  rangeNode?: ts.Node,
+) => void;
+
+type AppendClassExport = (
+  externalName: string,
+  declaration: ts.ClassLikeDeclarationBase,
+  rangeNode?: ts.Node,
+) => void;
+
+type AppendLocalExport = (
+  localName: string,
+  externalName: string,
+  rangeNode?: ts.Node,
+) => void;
+
+const externalDeclarationName = (
+  declaration: ts.FunctionDeclaration | ts.ClassDeclaration,
+): string | undefined => {
+  if (hasModifier(declaration, ts.SyntaxKind.DefaultKeyword)) {
+    return "default";
+  }
+  return declaration.name?.text;
+};
+
+const unwrapFunctionExpression = (
+  expression: ts.Expression | undefined,
+): ts.FunctionExpression | ts.ArrowFunction | undefined => {
+  let current = expression;
+  while (
+    current !== undefined &&
+    (ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isTypeAssertionExpression(current) ||
+      ts.isSatisfiesExpression(current) ||
+      ts.isNonNullExpression(current))
+  ) {
+    current = current.expression;
+  }
+  return current !== undefined && isFunctionExpressionLike(current)
+    ? current
+    : undefined;
+};
+
+const appendExpressionExport = (
+  expression: ts.Expression,
+  externalName: string,
+  rangeNode: ts.Node,
+  appendFunction: AppendFunctionExport,
+  appendClass: AppendClassExport,
+  appendLocalExport: AppendLocalExport,
+): void => {
+  const functionExpression = unwrapFunctionExpression(expression);
+  if (functionExpression !== undefined) {
+    appendFunction(externalName, [functionExpression], rangeNode);
+    return;
+  }
+  if (ts.isClassExpression(expression)) {
+    appendClass(externalName, expression, rangeNode);
+    return;
+  }
+  if (ts.isIdentifier(expression)) {
+    appendLocalExport(expression.text, externalName, rangeNode);
+  }
+};
+
+const collectCommonJsExport = (
+  expression: ts.Expression,
+  appendFunction: AppendFunctionExport,
+  appendClass: AppendClassExport,
+  appendLocalExport: AppendLocalExport,
+): void => {
+  if (
+    !ts.isBinaryExpression(expression) ||
+    expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken
+  ) {
+    return;
+  }
+  const externalName = commonJsExportName(expression.left);
+  if (externalName === undefined) {
+    return;
+  }
+
+  if (
+    externalName === "default" &&
+    ts.isObjectLiteralExpression(expression.right)
+  ) {
+    for (const property of expression.right.properties) {
+      if (ts.isShorthandPropertyAssignment(property)) {
+        appendLocalExport(property.name.text, property.name.text, property.name);
+      } else if (ts.isPropertyAssignment(property)) {
+        const propertyName = propertyNameText(property.name);
+        if (propertyName !== undefined) {
+          appendExpressionExport(
+            property.initializer,
+            propertyName,
+            property.name,
+            appendFunction,
+            appendClass,
+            appendLocalExport,
+          );
+        }
+      } else if (ts.isMethodDeclaration(property)) {
+        const propertyName = propertyNameText(property.name);
+        if (propertyName !== undefined) {
+          appendFunction(propertyName, [property], property.name);
+        }
+      }
+    }
+    return;
+  }
+
+  appendExpressionExport(
+    expression.right,
+    externalName,
+    expression.left,
+    appendFunction,
+    appendClass,
+    appendLocalExport,
+  );
+};
+
+const commonJsExportName = (expression: ts.Expression): string | undefined => {
+  if (
+    ts.isPropertyAccessExpression(expression) &&
+    ts.isIdentifier(expression.expression) &&
+    expression.expression.text === "exports"
+  ) {
+    return expression.name.text;
+  }
+  if (
+    ts.isPropertyAccessExpression(expression) &&
+    isModuleExports(expression.expression)
+  ) {
+    return expression.name.text;
+  }
+  if (isModuleExports(expression)) {
+    return "default";
+  }
+  if (ts.isElementAccessExpression(expression)) {
+    const argument = expression.argumentExpression;
+    const name =
+      argument !== undefined &&
+      (ts.isStringLiteral(argument) || ts.isNumericLiteral(argument))
+        ? argument.text
+        : undefined;
+    if (name === undefined) {
+      return undefined;
+    }
+    if (
+      (ts.isIdentifier(expression.expression) &&
+        expression.expression.text === "exports") ||
+      isModuleExports(expression.expression)
+    ) {
+      return name;
+    }
+  }
+  return undefined;
+};
+
+const isModuleExports = (expression: ts.Expression): boolean =>
+  ts.isPropertyAccessExpression(expression) &&
+  ts.isIdentifier(expression.expression) &&
+  expression.expression.text === "module" &&
+  expression.name.text === "exports";
+
+const isPublicCallableClassMember = (
+  member: ts.ClassElement,
+): member is
+  | ts.MethodDeclaration
+  | ts.GetAccessorDeclaration
+  | ts.SetAccessorDeclaration
+  | ts.ConstructorDeclaration =>
+  ts.isMethodDeclaration(member) ||
+  ts.isGetAccessorDeclaration(member) ||
+  ts.isSetAccessorDeclaration(member) ||
+  ts.isConstructorDeclaration(member);
 
 const collectComplexityGrowthEvidence = (
   previousSource: ts.SourceFile,
@@ -249,7 +663,11 @@ const collectComplexityGrowthEvidence = (
     }
 
     evidence.push({
-      id: buildEvidenceId("complexity-growth", key),
+      id: buildEvidenceId(
+        "complexity-growth",
+        currentSource.fileName,
+        key,
+      ),
       kind: "complexity-growth",
       severity: "info",
       title: "Complexity increased substantially",
@@ -357,25 +775,6 @@ const functionIdentity = (node: ts.FunctionDeclaration): SubjectIdentity | undef
   );
 };
 
-const exportedFunctionIdentity = (node: ts.FunctionDeclaration): SubjectIdentity | undefined => {
-  const name = node.name?.text;
-  if (name !== undefined) {
-    return {
-      key: name,
-      displayName: name,
-    };
-  }
-
-  if (!hasModifier(node, ts.SyntaxKind.DefaultKeyword)) {
-    return undefined;
-  }
-
-  return {
-    key: DEFAULT_EXPORT_KEY,
-    displayName: DEFAULT_EXPORT_DISPLAY,
-  };
-};
-
 const classIdentity = (node: ts.ClassDeclaration): SubjectIdentity | undefined => {
   const name = node.name?.text;
   if (name !== undefined) {
@@ -391,25 +790,6 @@ const classIdentity = (node: ts.ClassDeclaration): SubjectIdentity | undefined =
     DEFAULT_EXPORT_KEY,
     DEFAULT_EXPORT_DISPLAY,
   );
-};
-
-const exportedClassIdentity = (node: ts.ClassDeclaration): SubjectIdentity | undefined => {
-  const name = node.name?.text;
-  if (name !== undefined) {
-    return {
-      key: name,
-      displayName: name,
-    };
-  }
-
-  if (!hasModifier(node, ts.SyntaxKind.DefaultKeyword)) {
-    return undefined;
-  }
-
-  return {
-    key: DEFAULT_EXPORT_KEY,
-    displayName: DEFAULT_EXPORT_DISPLAY,
-  };
 };
 
 const methodIdentity = (node: ts.MethodDeclaration): SubjectIdentity | undefined => {
@@ -488,66 +868,42 @@ const sameOrderedValues = (
 ): boolean => left.length === right.length && left.every((value, index) => value === right[index]);
 
 const serializeFunctionLikeSignature = (
-  declaration: ts.FunctionLikeDeclarationBase,
+  declaration: ts.FunctionLikeDeclaration,
   sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
 ): string => {
-  const modifierText = [
+  const syntaxMarkers = [
     hasModifier(declaration, ts.SyntaxKind.AsyncKeyword) ? "async" : "",
     hasModifier(declaration, ts.SyntaxKind.StaticKeyword) ? "static" : "",
+    declaration.asteriskToken === undefined ? "" : "generator",
+    declaration.questionToken === undefined ? "" : "optional",
+    declaration.exclamationToken === undefined ? "" : "definite",
   ]
     .filter((value) => value.length > 0)
-    .join(" ");
-  const typeParameters = declaration.typeParameters
-    ?.map((parameter) => canonicalizeNodeText(parameter, sourceFile))
-    .join(", ");
-  const parameters = declaration.parameters
-    .map((parameter) => serializeParameter(parameter, sourceFile))
-    .join(", ");
-  const returnType =
-    declaration.type === undefined ? "void" : canonicalizeNodeText(declaration.type, sourceFile);
+    .join("|");
+  const signature = checker.getSignatureFromDeclaration(declaration);
+  const checkerSignature =
+    signature === undefined
+      ? fallbackFunctionSignature(declaration, sourceFile)
+      : checker.signatureToString(
+          signature,
+          declaration,
+          ts.TypeFormatFlags.NoTruncation |
+            ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope,
+          ts.SignatureKind.Call,
+        );
 
-  return [
-    modifierText,
-    typeParameters === undefined || typeParameters.length === 0 ? "" : `<${typeParameters}>`,
-    `(${parameters})`,
-    `:${returnType}`,
-  ].join(" ");
+  return `${syntaxMarkers}:${checkerSignature}`;
 };
 
-const serializeParameter = (
-  parameter: ts.ParameterDeclaration,
+const fallbackFunctionSignature = (
+  declaration: ts.FunctionLikeDeclaration,
   sourceFile: ts.SourceFile,
-): string => {
-  const decorators =
-    parameter.modifiers?.map((modifier) => canonicalizeNodeText(modifier, sourceFile)) ?? [];
-  const prefix = parameter.dotDotDotToken === undefined ? "" : "...";
-  const optional = parameter.questionToken === undefined && parameter.initializer === undefined ? "" : "?";
-  const type = parameter.type === undefined ? "unknown" : canonicalizeNodeText(parameter.type, sourceFile);
-
-  return `${decorators.join(" ")}${decorators.length > 0 ? " " : ""}${prefix}${canonicalizeNodeText(
-    parameter.name,
-    sourceFile,
-  )}${optional}: ${type}`;
-};
-
-const canonicalizeNodeText = (node: ts.Node, sourceFile: ts.SourceFile): string => {
-  const text = sourceFile.text.slice(node.getStart(sourceFile), node.getEnd());
-  const scanner = ts.createScanner(
-    sourceFile.languageVersion,
-    true,
-    sourceFile.languageVariant,
-    text,
+): string =>
+  sourceFile.text.slice(
+    declaration.getStart(sourceFile),
+    declaration.body?.getStart(sourceFile) ?? declaration.getEnd(),
   );
-  const tokens: string[] = [];
-
-  let token = scanner.scan();
-  while (token !== ts.SyntaxKind.EndOfFileToken) {
-    tokens.push(scanner.getTokenText());
-    token = scanner.scan();
-  }
-
-  return tokens.join(" ");
-};
 
 const countBranches = (root: ts.Node): number => {
   let branchCount = 0;
@@ -659,8 +1015,34 @@ const lineAndCharacter = (
   };
 };
 
-const buildEvidenceId = (kind: Evidence["kind"], subject: string): string =>
-  `ts-semantic:${kind}:${encodeURIComponent(subject)}`;
+export const canonicalModuleHash = (uri: string): string => {
+  let canonicalUri = uri;
+  try {
+    const parsed = new URL(uri);
+    parsed.search = "";
+    parsed.hash = "";
+    canonicalUri = parsed.toString();
+  } catch {
+    canonicalUri = uri.replaceAll("\\", "/");
+  }
+
+  return createHash("sha256")
+    .update(canonicalUri, "utf8")
+    .digest("hex")
+    .slice(0, 16);
+};
+
+const buildEvidenceId = (
+  kind: Evidence["kind"],
+  uri: string,
+  subject: string,
+): string => {
+  const subjectHash = createHash("sha256")
+    .update(subject, "utf8")
+    .digest("hex")
+    .slice(0, 16);
+  return `ts-semantic:${kind}:${canonicalModuleHash(uri)}:${subjectHash}`;
+};
 
 const hasParseDiagnostics = (sourceFile: ts.SourceFile): boolean =>
   "parseDiagnostics" in sourceFile &&

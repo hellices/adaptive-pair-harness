@@ -1,7 +1,12 @@
 import * as vscode from "vscode";
-import { readPairConfig } from "./config/pairConfig";
+import {
+  apiKeySecretNameForEndpoint,
+  canonicalEndpointOrigin,
+  readPairConfig,
+} from "./config/pairConfig";
 import type { ModelSymbolContext } from "./core/modelRouter";
 import type { PairRange } from "./core/types";
+import { TokenBudget } from "./core/tokenBudget";
 import {
   PairSharedContext,
   registerPairChatParticipant,
@@ -15,8 +20,6 @@ import type {
   VsCodeRequestCancellation,
 } from "./vscode/vsCodeLanguageModelProvider";
 
-const API_KEY_SECRET = "adaptivePair.openaiCompatibleApiKey";
-
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const sharedContext = new PairSharedContext({
     enabled: true,
@@ -27,11 +30,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     provider: "local-template",
     remainingCalls: 0,
     remainingInputTokens: 0,
+    remainingOutputTokens: 0,
     controlNotice: undefined,
     configurationWarning: undefined,
   });
   const languageModelApi = createLanguageModelApi(context);
   let runtime: PairRuntime | undefined;
+  let sharedBudget: TokenBudget | undefined;
   let extensionDisposed = false;
   let rebuildQueue = Promise.resolve();
 
@@ -43,13 +48,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const config = readPairConfig(
       vscode.workspace.getConfiguration("adaptivePair"),
     );
-    const apiKey = await context.secrets.get(API_KEY_SECRET);
+    if (sharedBudget === undefined) {
+      sharedBudget = new TokenBudget(config.budget);
+    } else {
+      sharedBudget.reconfigure(config.budget);
+    }
+    const apiKey =
+      config.provider === "openai-compatible" && config.baseUrl !== undefined
+        ? await context.secrets.get(
+            apiKeySecretNameForEndpoint(config.baseUrl),
+          )
+        : undefined;
     const next = new PairRuntime({
       config,
       extensionContext: context,
       sharedContext,
       languageModelApi,
       apiKey,
+      budget: sharedBudget,
     });
     runtime = next;
     if (extensionDisposed || runtime !== next) {
@@ -84,7 +100,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       },
     },
     {
-      generate: async (uri, goal, evidence, signal, requestContext) => {
+      generate: async (
+        uri,
+        goal,
+        evidence,
+        signal,
+        requestContext,
+        purpose,
+      ) => {
         const activeRuntime = runtime;
         if (activeRuntime === undefined) {
           throw new Error("Adaptive Pair runtime is rebuilding.");
@@ -95,6 +118,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           evidence,
           signal,
           requestContext,
+          purpose,
         );
       },
     },
@@ -173,22 +197,45 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const setApiKey = vscode.commands.registerCommand(
     "adaptivePair.setApiKey",
     async () => {
+      const config = readPairConfig(
+        vscode.workspace.getConfiguration("adaptivePair"),
+      );
+      if (config.baseUrl === undefined) {
+        await vscode.window.showWarningMessage(
+          "Set a valid, safe application-level adaptivePair.model.baseUrl before storing a key.",
+        );
+        return;
+      }
+      const origin = canonicalEndpointOrigin(config.baseUrl);
       const apiKey = await vscode.window.showInputBox({
         ignoreFocusOut: true,
         password: true,
-        prompt:
-          "OpenAI-compatible API key (leave empty to remove the stored key)",
-        title: "Adaptive Pair",
+        prompt: `API key for ${origin} (leave empty to remove this origin's key)`,
+        title: `Adaptive Pair · ${origin}`,
       });
       if (apiKey === undefined) {
         return;
       }
+      const secretName = apiKeySecretNameForEndpoint(config.baseUrl);
       if (apiKey.trim().length === 0) {
-        await context.secrets.delete(API_KEY_SECRET);
+        await context.secrets.delete(secretName);
       } else {
-        await context.secrets.store(API_KEY_SECRET, apiKey.trim());
+        await context.secrets.store(secretName, apiKey.trim());
       }
       await rebuild().catch(reportRuntimeError);
+    },
+  );
+  const resetMemory = vscode.commands.registerCommand(
+    "adaptivePair.resetMemory",
+    async () => {
+      const activeRuntime = runtime;
+      if (activeRuntime === undefined) {
+        await vscode.window.showWarningMessage(
+          "Adaptive Pair runtime is rebuilding. Try again in a moment.",
+        );
+        return;
+      }
+      await activeRuntime.resetMemory();
     },
   );
   const configurationListener = vscode.workspace.onDidChangeConfiguration(
@@ -206,6 +253,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     toggle,
     reviewCurrentBlock,
     setApiKey,
+    resetMemory,
     configurationListener,
     {
       dispose: () => {

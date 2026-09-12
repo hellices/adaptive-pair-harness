@@ -138,6 +138,23 @@ describe("VsCodeLanguageModelProvider", () => {
     expect(api.cancellation.disposed).toBe(true);
   });
 
+  it("caps streamed Copilot output at the request allowance", async () => {
+    const api = new RecordingLanguageModelApi();
+    const provider = new VsCodeLanguageModelProvider(api);
+
+    const response = await provider.generate(
+      {
+        ...request,
+        maxOutputTokens: 3,
+      },
+      new AbortController().signal,
+    );
+
+    expect(response.text.length).toBeLessThanOrEqual(12);
+    expect(response.outputTokens).toBeLessThanOrEqual(3);
+    expect(api.cancellation.cancelled).toBe(true);
+  });
+
   it("throws a typed error when no Copilot model is available", async () => {
     const api = new RecordingLanguageModelApi();
     api.models = [];
@@ -260,13 +277,15 @@ describe("VsCodeLanguageModelProvider", () => {
       windowMs: 60_000,
       maxCalls: 1,
       maxInputTokens: 1_000,
+      maxOutputTokens: 180,
+      maxOutputTokensPerCall: 180,
     });
     const api = new RecordingLanguageModelApi();
     api.access = undefined;
     const provider = new VsCodeLanguageModelProvider(api);
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const reservation = budget.tryReserve(100, attempt);
+      const reservation = budget.tryReserve(100, 180, attempt);
       if (!reservation.allowed) {
         throw new Error("Preflight failure unexpectedly exhausted the budget.");
       }
@@ -283,7 +302,7 @@ describe("VsCodeLanguageModelProvider", () => {
       }
     }
 
-    const explicitReservation = budget.tryReserve(100, 2);
+    const explicitReservation = budget.tryReserve(100, 180, 2);
     expect(explicitReservation.allowed).toBe(true);
     await expect(
       provider.generateFromUserAction(request, new AbortController().signal),

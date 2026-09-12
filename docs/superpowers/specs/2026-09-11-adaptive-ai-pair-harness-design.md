@@ -624,6 +624,13 @@ The project separates consent for:
 2. model inference;
 3. anonymous diagnostic telemetry.
 
+Remote routing is user/application controlled, never repository controlled.
+Provider endpoints are canonicalized, require HTTPS except for explicit
+loopback hosts, reject embedded credentials and ambiguous URL components, and
+bind stored credentials to the validated canonical origin. Structured evidence
+and Chat context pass through one redaction policy; automatic evidence that may
+contain a credential remains local.
+
 ## 12. Model Router and Token Control
 
 ### 12.1 Role-based model slots
@@ -709,6 +716,12 @@ is content-hashed.
 
 Budget exhaustion degrades to the local navigator. It never silently exceeds
 the configured limit or fabricates model output.
+
+Budget ownership belongs above replaceable provider runtimes so configuration
+and credential rebuilds cannot reset a rolling window. Admission reserves both
+input and bounded output capacity. Successful requests settle measured usage;
+only a provider preflight known not to have dispatched a prompt may release its
+exact reservation.
 
 ## 13. Coexistence and Interoperability
 
@@ -893,6 +906,9 @@ Failure behavior:
 | Failure | Behavior |
 |---|---|
 | Model timeout or provider failure | Continue local analysis and show model state; never simulate a reply |
+| OpenAI-compatible oversized response | Abort parsing, retain conservative budget accounting, and show provider failure |
+| Parse-unstable edit | Stay quiet and retain the last stable source baseline |
+| Corrupt local memory | Use in-memory defaults, preserve the corrupt record, warn visibly, and require explicit reset |
 | Stale documentation conflicts with code | Show both sources and mark the decision uncertain |
 | Pack does not support the detected stack deeply | Enter generic mode and disclose the limitation |
 | Command or patch approval is denied | Make no change and return control |

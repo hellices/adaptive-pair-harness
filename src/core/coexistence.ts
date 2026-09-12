@@ -37,7 +37,7 @@ const SIGNAL_DEFINITIONS: readonly SignalDefinition[] = [
     kind: "superpowers-plan",
     label: "Superpowers plan detected",
     matchesWorkspacePath: (workspacePath: string) =>
-      /(^|\/)docs\/superpowers\/plans\/[^/]+-plan\.md$/.test(workspacePath),
+      /(^|\/)docs\/superpowers\/plans\/[^/]+\.md$/.test(workspacePath),
   },
   {
     kind: "agents-instructions",

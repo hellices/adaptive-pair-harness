@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Require Node.js 22.12 or newer, recommend Node.js 24 LTS, and require VS Code 1.136 or newer.
+- Require Node.js 22.13 or newer, recommend Node.js 24 LTS, and require VS Code 1.136 or newer.
 - Compile with TypeScript `strict: true`; do not use `any` or unchecked casts.
 - Namespace commands, settings, storage, and output as `adaptivePair` or `adaptive-pair`.
 - Load dormant: do not observe edits or invoke models until the user explicitly starts a pair session.
@@ -38,13 +38,14 @@ tsconfig.json                                 strict compiler configuration
 eslint.config.mjs                             TypeScript lint rules
 .vscodeignore                                 extension package exclusions
 src/extension.ts                              extension activation and disposal
-src/config/pairConfig.ts                      validated workspace configuration
+src/config/pairConfig.ts                      validated application/endpoint configuration
 src/core/types.ts                             shared domain types
 src/core/editEpisodeAggregator.ts             debounced edit episodes
 src/core/tokenBudget.ts                       rolling call/token limits
 src/core/semanticAnalyzer.ts                  incremental TypeScript evidence
 src/core/interventionPolicy.ts                cooldown and intervention choice
 src/core/modelRouter.ts                       swappable provider interface
+src/core/remoteEndpoint.ts                    canonical endpoint and credential binding
 src/core/coexistence.ts                       external harness discovery
 src/core/memoryStore.ts                       approved local pair preferences
 src/vscode/inlinePairController.ts            Comment Thread rendering
@@ -90,7 +91,7 @@ Create `package.json` with:
   "license": "Apache-2.0",
   "engines": {
     "vscode": "^1.136.0",
-    "node": ">=22.12.0"
+    "node": ">=22.13.0"
   },
   "categories": ["AI", "Programming Languages", "Other"],
   "activationEvents": [
@@ -305,7 +306,7 @@ git commit -m "chore: scaffold VS Code extension"
 **Interfaces:**
 - Produces: `EditEpisode`, `Evidence`, `Intervention`, `PairRange`, and `PairPosition`.
 - Produces: `EditEpisodeAggregator.record(snapshot: EditSnapshot): void`.
-- Produces: `TokenBudget.tryReserve(inputTokens: number, now: number): BudgetDecision`.
+- Produces: `TokenBudget.tryReserve(inputTokens, outputTokens, now): BudgetDecision`.
 
 - [ ] **Step 1: Write failing aggregation tests**
 
@@ -405,20 +406,23 @@ it("rejects calls after either call or token capacity is exhausted", () => {
   const budget = new TokenBudget({
     windowMs: 60_000,
     maxCalls: 2,
-    maxInputTokens: 100
+    maxInputTokens: 100,
+    maxOutputTokens: 50,
+    maxOutputTokensPerCall: 25
   });
 
-  expect(budget.tryReserve(40, 0).allowed).toBe(true);
-  expect(budget.tryReserve(40, 1).allowed).toBe(true);
-  expect(budget.tryReserve(1, 2)).toMatchObject({
+  expect(budget.tryReserve(40, 20, 0).allowed).toBe(true);
+  expect(budget.tryReserve(40, 20, 1).allowed).toBe(true);
+  expect(budget.tryReserve(1, 1, 2)).toMatchObject({
     allowed: false,
     reason: "call-limit"
   });
-  expect(budget.tryReserve(90, 60_001).allowed).toBe(true);
+  expect(budget.tryReserve(90, 10, 60_001).allowed).toBe(true);
 });
 ```
 
-Also test token-limit rejection and exact window expiry.
+Also test input/output-token rejection, exact settlement ownership, preserved
+reservations across reconfiguration, and exact window expiry.
 
 - [ ] **Step 5: Implement the token budget**
 
@@ -429,11 +433,13 @@ export interface TokenBudgetConfig {
   readonly windowMs: number;
   readonly maxCalls: number;
   readonly maxInputTokens: number;
+  readonly maxOutputTokens: number;
+  readonly maxOutputTokensPerCall: number;
 }
 
 export type BudgetDecision =
-  | { readonly allowed: true; readonly remainingCalls: number; readonly remainingInputTokens: number }
-  | { readonly allowed: false; readonly reason: "call-limit" | "token-limit"; readonly retryAfterMs: number };
+  | { readonly allowed: true; readonly reservationId: number; readonly remainingCalls: number; readonly remainingInputTokens: number; readonly remainingOutputTokens: number }
+  | { readonly allowed: false; readonly reason: "call-limit" | "input-token-limit" | "output-token-limit"; readonly retryAfterMs: number };
 ```
 
 - [ ] **Step 6: Run targeted and full tests**
@@ -595,13 +601,14 @@ it("suppresses duplicate evidence during cooldown", () => {
 });
 ```
 
-Also test `eco`, `balanced`, and `active` confidence thresholds and local
-fallback when the budget rejects a call.
+Also test `eco`, `balanced`, and `active` confidence thresholds. Runtime budget
+tests cover local fallback when admission rejects a call.
 
 - [ ] **Step 2: Implement the policy**
 
 Use thresholds `0.90`, `0.72`, and `0.55` for eco, balanced, and active.
-Maintain last-intervention timestamps by evidence ID. Return:
+Maintain successful-render timestamps by evidence ID; decisions do not start
+cooldown. Return:
 
 ```typescript
 export type PolicyDecision =
@@ -818,9 +825,9 @@ export interface PairConfig {
 }
 
 const STYLE_BUDGETS = {
-  eco: { maxCalls: 2, maxInputTokens: 2_000, windowMs: 600_000 },
-  balanced: { maxCalls: 4, maxInputTokens: 6_000, windowMs: 600_000 },
-  active: { maxCalls: 8, maxInputTokens: 12_000, windowMs: 600_000 }
+  eco: { maxCalls: 2, maxInputTokens: 2_000, maxOutputTokens: 360, maxOutputTokensPerCall: 180, windowMs: 600_000 },
+  balanced: { maxCalls: 4, maxInputTokens: 6_000, maxOutputTokens: 720, maxOutputTokensPerCall: 180, windowMs: 600_000 },
+  active: { maxCalls: 8, maxInputTokens: 12_000, maxOutputTokens: 1_440, maxOutputTokensPerCall: 180, windowMs: 600_000 }
 } as const;
 ```
 
@@ -917,7 +924,9 @@ Update `src/extension.ts` to:
 - register `adaptivePair.toggle`;
 - register `adaptivePair.reviewCurrentBlock`;
 - register `adaptivePair.setApiKey`;
-- store the API key under `adaptivePair.openaiCompatibleApiKey`;
+- bind API keys to opaque secret names derived from validated canonical
+  endpoint origins;
+- register `adaptivePair.resetMemory` for explicit corrupt-memory recovery;
 - rebuild runtime configuration after relevant setting changes;
 - dispose every listener, thread, status item, and pending timer.
 
@@ -1145,3 +1154,30 @@ After the broad branch review is clean:
    tests;
 6. repeat CI and review checks until the PR is merge-ready;
 7. leave the PR open and unmerged for the user to test in Codespaces.
+
+---
+
+## Whole-branch review corrections
+
+The final review wave strengthens the implemented slice without expanding its
+navigator-only boundary:
+
+- remote provider/model/endpoint settings are application-scoped and runtime
+  ignores workspace/folder overrides;
+- endpoints are canonicalized and validated, credentials are origin-bound, and
+  non-loopback HTTP plus URL credentials/query/fragment forms are rejected;
+- one remote redaction policy covers semantic, diagnostic, symbol, and Chat
+  strings, while credential-bearing automatic evidence remains local;
+- semantic analysis returns explicit stability, retains the last stable
+  baseline, expands ESM/CommonJS export surfaces, and hashes module identity in
+  evidence IDs;
+- cooldown begins after successful render and resets on stop;
+- rolling input/output budget ownership survives runtime rebuilds and completion
+  output is capped/accounted;
+- local Chat responses are command-specific and local `/trace` does not claim
+  unavailable flow analysis;
+- corrupt memory uses visible in-memory recovery with an explicit reset command;
+- Superpowers discovery matches direct `plans/*.md`, document repository
+  identity is multi-root aware, Node.js minimum is 22.13, and the approved
+  Shift-inclusive shortcut is restored;
+- OpenAI-compatible calls use deadlines and bounded response bodies.

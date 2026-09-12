@@ -1,4 +1,5 @@
 import type { Evidence, PairRange } from "../core/types";
+import type { SemanticAnalysisResult } from "../core/semanticAnalyzer";
 
 export type PairInvocationSource = "automatic" | "manual" | "chat";
 
@@ -293,12 +294,16 @@ export class PairInactiveError extends Error {
 
 export class PairDocumentState {
   private readonly previousTextByUri = new Map<string, string>();
-  private readonly lastAnalyzedTextByUri = new Map<string, string>();
+  private readonly lastStableTextByUri = new Map<string, string>();
   private readonly latestEvidenceByUri = new Map<string, readonly Evidence[]>();
 
-  public seed(uri: string, text: string): void {
+  public seed(uri: string, text: string, stable = true): void {
     this.previousTextByUri.set(uri, text);
-    this.lastAnalyzedTextByUri.set(uri, text);
+    if (stable) {
+      this.lastStableTextByUri.set(uri, text);
+    } else {
+      this.lastStableTextByUri.delete(uri);
+    }
   }
 
   public updateText(uri: string, text: string): string | undefined {
@@ -310,10 +315,14 @@ export class PairDocumentState {
   public recordAnalysis(
     uri: string,
     text: string,
-    evidence: readonly Evidence[],
+    analysis: SemanticAnalysisResult,
   ): void {
-    this.lastAnalyzedTextByUri.set(uri, text);
-    this.latestEvidenceByUri.set(uri, evidence);
+    if (analysis.stability === "unstable") {
+      this.latestEvidenceByUri.delete(uri);
+      return;
+    }
+    this.lastStableTextByUri.set(uri, text);
+    this.latestEvidenceByUri.set(uri, analysis.evidence);
   }
 
   public previousText(uri: string): string | undefined {
@@ -321,7 +330,11 @@ export class PairDocumentState {
   }
 
   public lastAnalyzedText(uri: string): string | undefined {
-    return this.lastAnalyzedTextByUri.get(uri);
+    return this.lastStableText(uri);
+  }
+
+  public lastStableText(uri: string): string | undefined {
+    return this.lastStableTextByUri.get(uri);
   }
 
   public latestEvidence(uri: string): readonly Evidence[] {
@@ -334,13 +347,13 @@ export class PairDocumentState {
 
   public close(uri: string): void {
     this.previousTextByUri.delete(uri);
-    this.lastAnalyzedTextByUri.delete(uri);
+    this.lastStableTextByUri.delete(uri);
     this.latestEvidenceByUri.delete(uri);
   }
 
   public clear(): void {
     this.previousTextByUri.clear();
-    this.lastAnalyzedTextByUri.clear();
+    this.lastStableTextByUri.clear();
     this.latestEvidenceByUri.clear();
   }
 }
@@ -439,6 +452,24 @@ export const diagnosticCodeReference = (
   }
   return [String(typeof code === "object" ? code.value : code)];
 };
+
+interface RepositoryUri {
+  toString(): string;
+}
+
+interface RepositoryWorkspaceFolder {
+  readonly uri: RepositoryUri;
+}
+
+export const repositoryIdentityForDocument = <TUri extends RepositoryUri>(
+  documentUri: TUri,
+  getWorkspaceFolder:
+    | ((
+        uri: TUri,
+      ) => RepositoryWorkspaceFolder | undefined)
+    | undefined,
+): string =>
+  getWorkspaceFolder?.(documentUri)?.uri.toString() ?? "no-workspace";
 
 const pairRangesOverlap = (left: PairRange, right: PairRange): boolean => {
   const leftStartsBeforeRightEnds =

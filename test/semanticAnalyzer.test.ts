@@ -1,17 +1,27 @@
 import { describe, expect, it } from "vitest";
 import { TypeScriptSemanticAnalyzer } from "../src/core/semanticAnalyzer";
-import type { EditEpisode, PairRange } from "../src/core/types";
+import type { EditEpisode, Evidence, PairRange } from "../src/core/types";
 
 const analyzer = new TypeScriptSemanticAnalyzer();
 
-const episode = (previousText: string, currentText: string): EditEpisode => ({
-  uri: "file:///pair.ts",
-  languageId: "typescript",
+const episode = (
+  previousText: string,
+  currentText: string,
+  languageId = "typescript",
+  uri = "file:///pair.ts",
+): EditEpisode => ({
+  uri,
+  languageId,
   previousText,
   currentText,
   version: 1,
   observedAt: 1,
 });
+
+const analyzeEvidence = (edit: EditEpisode): readonly Evidence[] => {
+  const result = analyzer.analyze(edit);
+  return result.stability === "stable" ? result.evidence : [];
+};
 
 const comparePositions = (left: PairRange["start"], right: PairRange["start"]): number => {
   if (left.line === right.line) {
@@ -23,7 +33,7 @@ const comparePositions = (left: PairRange["start"], right: PairRange["start"]): 
 
 describe("TypeScriptSemanticAnalyzer", () => {
   it("reports a newly introduced import", () => {
-    const evidence = analyzer.analyze(
+    const evidence = analyzeEvidence(
       episode(
         "export const value = 1;",
         'import { save } from "./repository";\nexport const value = 1;',
@@ -42,7 +52,7 @@ describe("TypeScriptSemanticAnalyzer", () => {
   });
 
   it("reports a changed exported function signature", () => {
-    const evidence = analyzer.analyze(
+    const evidence = analyzeEvidence(
       episode(
         "export function load(id: string): string { return id; }",
         "export function load(id: number): string { return String(id); }",
@@ -53,7 +63,7 @@ describe("TypeScriptSemanticAnalyzer", () => {
   });
 
   it("reports a changed anonymous default-exported function signature", () => {
-    const evidence = analyzer.analyze(
+    const evidence = analyzeEvidence(
       episode(
         "export default function (value: string): string { return value; }",
         "export default function (value: number): string { return String(value); }",
@@ -70,8 +80,131 @@ describe("TypeScriptSemanticAnalyzer", () => {
     );
   });
 
+  it("keys named default exports by their external default identity", () => {
+    const renamed = analyzeEvidence(
+      episode(
+        "export default function before(value: string): string { return value; }",
+        "export default function after(value: string): string { return value; }",
+      ),
+    );
+    const changed = analyzeEvidence(
+      episode(
+        "export default function before(value: string): string { return value; }",
+        "export default function after(value: number): string { return String(value); }",
+      ),
+    );
+
+    expect(
+      renamed.filter((item) => item.kind === "public-api-change"),
+    ).toEqual([]);
+    expect(changed).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["default export"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports inferred signature changes for exported function-valued variables", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        "export const load = (id = 1) => id + 1;",
+        'export const load = (id = 1) => String(id);',
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["load"],
+        }),
+      ]),
+    );
+  });
+
+  it("tracks local export lists by their external aliases", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        [
+          "const load = (id: string): string => id;",
+          "export { load as fetchItem };",
+        ].join("\n"),
+        [
+          "const load = (id: number): string => String(id);",
+          "export { load as fetchItem };",
+        ].join("\n"),
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["fetchItem"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports CommonJS JavaScript export signature changes", () => {
+    const named = analyzeEvidence(
+      episode(
+        "exports.load = function (id) { return 1; };",
+        'exports.load = function (id) { return "one"; };',
+        "javascript",
+        "file:///pair.js",
+      ),
+    );
+    const defaultExport = analyzeEvidence(
+      episode(
+        "module.exports = (id) => 1;",
+        'module.exports = (id) => "one";',
+        "javascript",
+        "file:///pair.js",
+      ),
+    );
+
+    expect(named).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["load"],
+        }),
+      ]),
+    );
+    expect(defaultExport).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["default export"],
+        }),
+      ]),
+    );
+  });
+
+  it("includes optional, async, and generator changes in exported signatures", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        "export function stream(value: string): Iterable<string> { return [value]; }",
+        "export async function* stream(value?: string) { yield value ?? ''; }",
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["stream"],
+        }),
+      ]),
+    );
+  });
+
   it("reports a changed method signature on an anonymous default-exported class", () => {
-    const evidence = analyzer.analyze(
+    const evidence = analyzeEvidence(
       episode(
         "export default class { render(value: string): string { return value; } }",
         "export default class { render(value: number): string { return String(value); } }",
@@ -89,7 +222,7 @@ describe("TypeScriptSemanticAnalyzer", () => {
   });
 
   it("reports overload-only changes for exported functions", () => {
-    const evidence = analyzer.analyze(
+    const evidence = analyzeEvidence(
       episode(
         [
           "export function load(value: string): string;",
@@ -114,7 +247,7 @@ describe("TypeScriptSemanticAnalyzer", () => {
   });
 
   it("reports overload-only changes for exported class methods", () => {
-    const evidence = analyzer.analyze(
+    const evidence = analyzeEvidence(
       episode(
         [
           "export class Example {",
@@ -147,7 +280,7 @@ describe("TypeScriptSemanticAnalyzer", () => {
   });
 
   it("reports when an exported function is removed", () => {
-    const evidence = analyzer.analyze(
+    const evidence = analyzeEvidence(
       episode("export function load(id: string): string { return id; }", "const value = 1;"),
     );
 
@@ -170,7 +303,7 @@ describe("TypeScriptSemanticAnalyzer", () => {
   });
 
   it("reports when a public method is removed from an exported class", () => {
-    const evidence = analyzer.analyze(
+    const evidence = analyzeEvidence(
       episode(
         [
           "export class Example {",
@@ -202,10 +335,10 @@ describe("TypeScriptSemanticAnalyzer", () => {
   });
 
   it("does not report removal of non-exported functions or private methods", () => {
-    const removedFunctionEvidence = analyzer.analyze(
+    const removedFunctionEvidence = analyzeEvidence(
       episode("function load(id: string): string { return id; }", "const value = 1;"),
     );
-    const removedPrivateMethodEvidence = analyzer.analyze(
+    const removedPrivateMethodEvidence = analyzeEvidence(
       episode(
         [
           "export class Example {",
@@ -223,7 +356,7 @@ describe("TypeScriptSemanticAnalyzer", () => {
   });
 
   it("does not report formatting-only or comment-only exported signature changes", () => {
-    const evidence = analyzer.analyze(
+    const evidence = analyzeEvidence(
       episode(
         "export function load(value: string | number): string | number { return value; }",
         [
@@ -242,7 +375,7 @@ describe("TypeScriptSemanticAnalyzer", () => {
   });
 
   it("still reports real exported signature literal changes", () => {
-    const evidence = analyzer.analyze(
+    const evidence = analyzeEvidence(
       episode(
         'export function load(value: { status: "ok"; note: "a b" }): "done now" { return "done now"; }',
         'export function load(value: { status: "ok"; note: "ab" }): "done now" { return "done now"; }',
@@ -259,16 +392,19 @@ describe("TypeScriptSemanticAnalyzer", () => {
     );
   });
 
-  it("does not intervene while the current source has parse errors", () => {
-    const evidence = analyzer.analyze(
+  it("returns an explicit unstable result while the current source has parse errors", () => {
+    const result = analyzer.analyze(
       episode("export function load() {}", "export function load("),
     );
 
-    expect(evidence).toEqual([]);
+    expect(result).toEqual({
+      stability: "unstable",
+      evidence: [],
+    });
   });
 
   it("reports complexity growth when a function crosses the intervention threshold", () => {
-    const evidence = analyzer.analyze(
+    const evidence = analyzeEvidence(
       episode(
         "export function decide(value: number): number { if (value > 0) { return value; } if (value < 0) { return -value; } return 0; }",
         [
@@ -306,15 +442,32 @@ describe("TypeScriptSemanticAnalyzer", () => {
       'import { save } from "./repository";\nexport function load(id: number): string { return String(id); }',
     );
 
-    const firstEvidence = analyzer.analyze(edit);
-    const secondEvidence = analyzer.analyze(edit);
+    const firstEvidence = analyzeEvidence(edit);
+    const secondEvidence = analyzeEvidence(edit);
 
     expect(firstEvidence.map((item) => item.id)).toEqual(secondEvidence.map((item) => item.id));
   });
 
+  it("uses privacy-safe module hashes to distinguish identical evidence across files", () => {
+    const previous = "export const value = 1;";
+    const current =
+      'import { save } from "./repository";\nexport const value = 1;';
+    const first = analyzeEvidence(
+      episode(previous, current, "typescript", "file:///private/alpha.ts"),
+    );
+    const second = analyzeEvidence(
+      episode(previous, current, "typescript", "file:///private/beta.ts"),
+    );
+
+    expect(first[0]?.id).not.toBe(second[0]?.id);
+    expect(first[0]?.id).not.toContain("private");
+    expect(first[0]?.id).not.toContain("repository");
+    expect(second[0]?.id).not.toContain("beta");
+  });
+
   it("anchors evidence to valid ranges in the current source", () => {
     const currentText = 'import { save } from "./repository";\nexport const value = 1;';
-    const evidence = analyzer.analyze(episode("export const value = 1;", currentText));
+    const evidence = analyzeEvidence(episode("export const value = 1;", currentText));
 
     expect(evidence).not.toEqual([]);
 
@@ -327,7 +480,7 @@ describe("TypeScriptSemanticAnalyzer", () => {
   });
 
   it("assigns distinct complexity evidence ids to same-named nested functions in different scopes", () => {
-    const evidence = analyzer.analyze(
+    const evidence = analyzeEvidence(
       episode(
         [
           "function outerOne(value: number): number {",
@@ -398,5 +551,30 @@ describe("TypeScriptSemanticAnalyzer", () => {
 
     expect(complexityEvidence).toHaveLength(2);
     expect(new Set(complexityEvidence.map((item) => item.id)).size).toBe(2);
+  });
+
+  it("compares the next stable edit with the last stable source", () => {
+    const lastStable =
+      "export function load(id: string): string { return id; }";
+    const unstable = analyzer.analyze(
+      episode(lastStable, "export function load(id:"),
+    );
+    const stableAgain = analyzer.analyze(
+      episode(
+        lastStable,
+        "export function load(id: number): string { return String(id); }",
+      ),
+    );
+
+    expect(unstable.stability).toBe("unstable");
+    expect(stableAgain).toMatchObject({
+      stability: "stable",
+      evidence: [
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["load"],
+        }),
+      ],
+    });
   });
 });

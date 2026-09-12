@@ -290,16 +290,20 @@ describe("explicit pair session lifecycle", () => {
       activationEvents: string[];
       engines: {
         vscode: string;
+        node: string;
       };
       devDependencies: {
         "@types/vscode": string;
       };
       contributes: {
         commands: Array<{ command: string }>;
+        configuration: {
+          properties: Record<string, { scope?: string }>;
+        };
         chatParticipants: Array<{
           commands: Array<{ name: string }>;
         }>;
-        keybindings: Array<{ command: string; key: string }>;
+        keybindings: Array<{ command: string; key: string; mac?: string }>;
       };
     };
     const commands = manifest.contributes.commands.map(
@@ -320,15 +324,30 @@ describe("explicit pair session lifecycle", () => {
         "adaptivePair.startSession",
         "adaptivePair.stopSession",
         "adaptivePair.toggle",
+        "adaptivePair.resetMemory",
       ]),
     );
     expect(chatCommands).toEqual(expect.arrayContaining(["start", "stop"]));
     expect(manifest.contributes.keybindings).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ command: "adaptivePair.toggle" }),
+        expect.objectContaining({
+          command: "adaptivePair.toggle",
+          key: "ctrl+shift+alt+p",
+          mac: "cmd+shift+alt+p",
+        }),
       ]),
     );
+    for (const setting of [
+      "adaptivePair.model.provider",
+      "adaptivePair.model.baseUrl",
+      "adaptivePair.model.name",
+    ]) {
+      expect(
+        manifest.contributes.configuration.properties[setting]?.scope,
+      ).toBe("application");
+    }
     expect(manifest.engines.vscode).toBe("^1.136.0");
+    expect(manifest.engines.node).toBe(">=22.13.0");
     expect(manifest.devDependencies["@types/vscode"]).toBe("^1.136.0");
   });
 });

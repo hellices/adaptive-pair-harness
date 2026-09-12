@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildOpenAICompatiblePromptPayload,
+  prepareRemoteModelRequest,
 } from "../src/core/modelRouter";
 import {
   PairSharedContext,
@@ -137,5 +138,88 @@ describe("remote model request privacy", () => {
       "See VS Code Problems for the complete diagnostic message.",
     );
     expect(serialized).toContain("Please explain this diagnostic.");
+  });
+
+  it("centrally redacts credentials from every semantic and Chat text field", () => {
+    const apiKey = "sk-1234567890abcdefghijklmnop";
+    const bearer = "Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature";
+    const userInfoUrl =
+      "https://alice:password123@example.test/path?token=query-secret&safe=value";
+    const longSecret = "AbCdEf0123456789_".repeat(5);
+    const request: ModelRequest = {
+      goal: `Explain api_key=${apiKey}`,
+      interactionStyle: "ask-first",
+      evidence: {
+        id: `semantic:${apiKey}`,
+        kind: "new-dependency",
+        severity: "warning",
+        title: `Imported ${bearer}`,
+        detail: `Dependency URL ${userInfoUrl}`,
+        source: `credential=${longSecret}`,
+        confidence: 0.94,
+        range: {
+          start: { line: 1, character: 2 },
+          end: { line: 1, character: 8 },
+        },
+        references: [
+          `https://example.test/pkg?access_token=${apiKey}`,
+          longSecret,
+        ],
+      },
+      context: {
+        userPrompt: `password: ${longSecret}`,
+        symbol: {
+          name: `handler_${apiKey}`,
+          kind: `Function ${bearer}`,
+          range: {
+            start: { line: 1, character: 0 },
+            end: { line: 3, character: 1 },
+          },
+        },
+      },
+    };
+
+    const prepared = prepareRemoteModelRequest(request);
+    const serialized = JSON.stringify(prepared.request);
+
+    expect(prepared.sensitiveDataDetected).toBe(true);
+    for (const secret of [
+      apiKey,
+      bearer,
+      "alice",
+      "password123",
+      "query-secret",
+      longSecret,
+    ]) {
+      expect(serialized).not.toContain(secret);
+    }
+    expect(serialized).toContain("[REDACTED]");
+  });
+
+  it("marks sensitive automatic evidence for local-only handling", () => {
+    const prepared = prepareRemoteModelRequest({
+      goal: "Ask about this edit.",
+      interactionStyle: "ask-first",
+      evidence: {
+        id: "dependency:sensitive",
+        kind: "new-dependency",
+        severity: "warning",
+        title: "New dependency introduced",
+        detail:
+          "Imported https://packages.example/module?api_key=workspace-secret.",
+        source: "typescript-semantic-analyzer",
+        confidence: 0.94,
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 10 },
+        },
+        references: [
+          "https://packages.example/module?api_key=workspace-secret",
+        ],
+      },
+    });
+
+    expect(prepared.sensitiveDataDetected).toBe(true);
+    expect(prepared.request.evidence.detail).not.toContain("workspace-secret");
   });
 });

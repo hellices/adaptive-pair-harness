@@ -22,6 +22,7 @@ export interface PairSessionSnapshot {
   readonly provider: PairProvider;
   readonly remainingCalls: number;
   readonly remainingInputTokens: number;
+  readonly remainingOutputTokens?: number;
   readonly controlNotice: string | undefined;
   readonly configurationWarning: string | undefined;
 }
@@ -82,6 +83,7 @@ export type PairChatPlan =
       readonly goal: string;
       readonly evidence: Evidence;
       readonly context: ModelRequestContext;
+      readonly purpose: "why" | "explain" | "trace";
     };
 
 export interface PairChatRequestContext {
@@ -115,7 +117,11 @@ export const buildPairChatPlan = (
       `**Goal:** ${context.session.goal}`,
       `**Role:** ${context.session.role} (you remain the driver)`,
       `**Provider:** ${context.session.provider}`,
-      `**Remaining budget:** ${context.session.remainingCalls} calls / ${context.session.remainingInputTokens} input tokens`,
+      `**Remaining budget:** ${context.session.remainingCalls} calls / ${context.session.remainingInputTokens} input tokens${
+        context.session.remainingOutputTokens === undefined
+          ? ""
+          : ` / ${context.session.remainingOutputTokens} output tokens`
+      }`,
     ];
     if (context.session.controlNotice !== undefined) {
       sessionLines.push(`**Coexistence:** ${context.session.controlNotice}`);
@@ -167,7 +173,22 @@ export const buildPairChatPlan = (
     evidence: safeRequest.evidence,
     goal: safeRequest.goal,
     context: safeRequest.context ?? {},
+    purpose: purposeForCommand(command),
   };
+};
+
+const purposeForCommand = (
+  command: string | undefined,
+): "why" | "explain" | "trace" => {
+  switch (command) {
+    case "trace":
+      return "trace";
+    case "why":
+      return "why";
+    case "explain":
+    default:
+      return "explain";
+  }
 };
 
 const goalForCommand = (
@@ -191,6 +212,7 @@ export interface PairChatGenerator {
     evidence: Evidence,
     signal: AbortSignal,
     context: ModelRequestContext,
+    purpose?: "why" | "explain" | "trace",
   ): Promise<ModelResponse>;
 }
 
@@ -346,6 +368,7 @@ export const registerPairChatParticipant = (
         plan.evidence,
         abortController.signal,
         plan.context,
+        plan.purpose,
       );
       const current = context.snapshot();
       if (

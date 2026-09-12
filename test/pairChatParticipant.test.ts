@@ -60,6 +60,7 @@ describe("pair chat planning", () => {
       provider: "vscode-copilot",
       remainingCalls: 3,
       remainingInputTokens: 5_700,
+      remainingOutputTokens: 690,
       controlNotice: "Cline detected; observing only.",
       configurationWarning: undefined,
     });
@@ -75,7 +76,7 @@ describe("pair chat planning", () => {
         "**Goal:** Navigate with evidence-backed questions.",
         "**Role:** navigator (you remain the driver)",
         "**Provider:** vscode-copilot",
-        "**Remaining budget:** 3 calls / 5700 input tokens",
+        "**Remaining budget:** 3 calls / 5700 input tokens / 690 output tokens",
         "**Coexistence:** Cline detected; observing only.",
       ].join("\n\n"),
     });
@@ -103,6 +104,7 @@ describe("pair chat planning", () => {
       kind: "generate",
       uri: "file:///workspace/pair.ts",
       evidence,
+      purpose: "why",
       goal: expect.not.stringContaining("Did you intend this dependency?"),
     });
   });
@@ -192,6 +194,7 @@ describe("pair chat planning", () => {
 
     expect(plan).toMatchObject({
       kind: "generate",
+      purpose: "trace",
       context: {
         userPrompt: expect.stringContaining("Why this path?"),
         symbol: {

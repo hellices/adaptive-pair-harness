@@ -4,11 +4,13 @@ import { discoverHarnessSignals } from "../core/coexistence";
 import { EditEpisodeAggregator } from "../core/editEpisodeAggregator";
 import { InterventionPolicy } from "../core/interventionPolicy";
 import { PairMemoryStore } from "../core/memoryStore";
+import type { KeyValueStore } from "../core/memoryStore";
 import {
   LocalTemplateProvider,
   ModelRouter,
   OpenAICompatibleProvider,
   estimateOpenAICompatibleInputTokens,
+  prepareRemoteModelRequest,
 } from "../core/modelRouter";
 import type {
   ModelProvider,
@@ -47,6 +49,7 @@ import {
   buildPairStatusText,
   diagnosticCodeReference,
   selectManualEvidence,
+  repositoryIdentityForDocument,
   shouldSuppressCancellation,
 } from "./pairRuntimeSupport";
 import type {
@@ -69,6 +72,7 @@ export interface PairRuntimeOptions {
   readonly sharedContext: PairSharedContext;
   readonly languageModelApi: VsCodeLanguageModelApi;
   readonly apiKey: string | undefined;
+  readonly budget?: TokenBudget;
 }
 
 class TimeoutScheduler implements Scheduler, vscode.Disposable {
@@ -117,23 +121,26 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   private readonly copilotProvider: VsCodeLanguageModelProvider;
   private readonly router: ModelRouter;
   private readonly memoryStore: PairMemoryStore;
+  private readonly memoryBackend: KeyValueStore;
   private readonly inlineController: InlinePairController;
   private readonly status: vscode.StatusBarItem;
   private readonly invocationGate: PairInvocationGate;
   private readonly sessionLifecycle: PairSessionLifecycle;
   private effectiveProvider: PairConfig["provider"];
-  private dismissedEvidenceIds = new Set<string>();
+  private dismissedEvidenceIdsByRepository = new Map<
+    string,
+    ReadonlySet<string>
+  >();
   private controlNotice: string | undefined;
   private statusDetail: string | undefined;
+  private memoryWarning: string | undefined;
   private disposed = false;
 
   public constructor(private readonly options: PairRuntimeOptions) {
-    this.budget = new TokenBudget(options.config.budget);
+    this.budget = options.budget ?? new TokenBudget(options.config.budget);
     this.invocationGate = new PairInvocationGate(options.config.enabled, false);
     this.effectiveProvider = options.config.provider;
-    this.policy = new InterventionPolicy({
-      model: options.config.modelName,
-    });
+    this.policy = new InterventionPolicy({});
     this.copilotProvider = new VsCodeLanguageModelProvider(
       options.languageModelApi,
     );
@@ -159,14 +166,15 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
 
     const repositoryId =
       vscode.workspace.workspaceFolders?.[0]?.uri.toString() ?? "no-workspace";
+    this.memoryBackend = {
+      get: async <T>(key: string): Promise<T | undefined> =>
+        options.extensionContext.workspaceState.get<T>(key),
+      update: async <T>(key: string, value: T): Promise<void> =>
+        options.extensionContext.workspaceState.update(key, value),
+    };
     this.memoryStore = new PairMemoryStore({
       repositoryId,
-      store: {
-        get: async <T>(key: string): Promise<T | undefined> =>
-          options.extensionContext.workspaceState.get<T>(key),
-        update: async <T>(key: string, value: T): Promise<void> =>
-          options.extensionContext.workspaceState.update(key, value),
-      },
+      store: this.memoryBackend,
     });
 
     const commentController = vscode.comments.createCommentController(
@@ -238,7 +246,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     const active = this.sessionLifecycle.active;
     this.invocationGate.setActive(active);
     this.statusDetail = active
-      ? this.options.config.statusWarning
+      ? this.configurationWarning()
       : this.inactiveStatusDetail();
     this.publishSession();
     this.renderStatus();
@@ -275,27 +283,62 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   private async prepareSession(
     context: PairSessionPreparationContext,
   ): Promise<void> {
-    const memory = await this.memoryStore.load();
-    const repositoryId =
-      vscode.workspace.workspaceFolders?.[0]?.uri.toString() ?? "no-workspace";
-    const dismissedEvidenceIds = new Set(
-      memory.dismissedEvidenceByRepository[repositoryId] ?? [],
+    const repositoryIds = new Set([
+      "no-workspace",
+      ...(vscode.workspace.workspaceFolders?.map((folder) =>
+        folder.uri.toString(),
+      ) ?? []),
+    ]);
+    const recoveredByRepository = await Promise.all(
+      [...repositoryIds].map(async (repositoryId) => ({
+        repositoryId,
+        recovered: await new PairMemoryStore({
+          repositoryId,
+          store: this.memoryBackend,
+        }).loadOrDefault(),
+      })),
+    );
+    const recoveredMemory = recoveredByRepository[0]?.recovered ?? {
+      memory: (await this.memoryStore.loadOrDefault()).memory,
+      warning: undefined,
+    };
+    const dismissedEvidenceIdsByRepository = new Map(
+      recoveredByRepository.map(({ repositoryId, recovered }) => [
+        repositoryId,
+        new Set(
+          recovered.memory.dismissedEvidenceByRepository[repositoryId] ?? [],
+        ),
+      ]),
     );
     const controlNotice = await this.discoverCoexistence();
 
     if (!context.isCurrent()) {
       return;
     }
-
+    this.memoryWarning = recoveredMemory.warning;
+    if (recoveredMemory.warning !== undefined) {
+      void vscode.window.showWarningMessage(recoveredMemory.warning);
+    }
     const documentSeeds = vscode.workspace.textDocuments
       .filter(isSupportedDocument)
       .map((document) => ({
-        uri: document.uri.toString(),
+        uri: document.uri,
+        languageId: document.languageId,
         text: document.getText(),
       }));
-    this.dismissedEvidenceIds = dismissedEvidenceIds;
+
+    this.dismissedEvidenceIdsByRepository =
+      dismissedEvidenceIdsByRepository;
     for (const seed of documentSeeds) {
-      this.documentState.seed(seed.uri, seed.text);
+      this.documentState.seed(
+        seed.uri.toString(),
+        seed.text,
+        this.analyzer.isStable(
+          seed.uri.toString(),
+          seed.languageId,
+          seed.text,
+        ),
+      );
     }
     this.controlNotice = controlNotice;
   }
@@ -306,7 +349,11 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
         if (isSupportedDocument(document)) {
           const key = document.uri.toString();
           const text = document.getText();
-          this.documentState.seed(key, text);
+          this.documentState.seed(
+            key,
+            text,
+            this.analyzer.isStable(key, document.languageId, text),
+          );
         }
       }),
       vscode.workspace.onDidCloseTextDocument((document) => {
@@ -351,28 +398,33 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     const key = editor.document.uri.toString();
     const selection = toPairRange(range);
     const currentText = editor.document.getText();
-    const previousAnalyzedText =
-      this.documentState.lastAnalyzedText(key) ?? currentText;
-    const hasUnanalyzedChanges = previousAnalyzedText !== currentText;
-    const analyzed = hasUnanalyzedChanges
+    const previousStableText = this.documentState.lastStableText(key);
+    const hasUnanalyzedChanges = previousStableText !== currentText;
+    const analysis = hasUnanalyzedChanges
       ? this.analyzer.analyze({
             uri: key,
             languageId: editor.document.languageId,
-            previousText: previousAnalyzedText,
+            previousText: previousStableText ?? currentText,
             currentText,
             version: editor.document.version,
             observedAt: Date.now(),
           })
-      : [];
+      : { stability: "stable" as const, evidence: [] };
     this.aggregator.cancel(key);
     if (hasUnanalyzedChanges) {
-      this.documentState.recordAnalysis(key, currentText, analyzed);
+      this.documentState.recordAnalysis(key, currentText, analysis);
+    }
+    if (analysis.stability === "unstable") {
+      await vscode.window.showInformationMessage(
+        "Adaptive Pair is waiting for the current TypeScript or JavaScript syntax to stabilize.",
+      );
+      return;
     }
     const evidence = selectManualEvidence({
       selection,
       diagnostics: diagnosticEvidenceForDocument(editor.document),
       latest: this.documentState.latestEvidence(key),
-      analyzed,
+      analyzed: analysis.evidence,
     });
     if (evidence === undefined) {
       await vscode.window.showInformationMessage(
@@ -395,6 +447,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     evidence: Evidence,
     signal: AbortSignal,
     context: ModelRequestContext = {},
+    purpose?: "why" | "explain" | "trace",
   ): Promise<ModelResponse> {
     const requestController = new AbortController();
     const cancelRequest = (): void => {
@@ -413,6 +466,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
           evidence,
           interactionStyle: "ask-first",
           context,
+          ...(purpose === undefined ? {} : { purpose }),
         },
         requestController.signal,
         "chat",
@@ -472,14 +526,34 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       return;
     }
 
+    const previousStableText = this.documentState.lastStableText(episode.uri);
+    const analysis = this.analyzer.analyze({
+      ...episode,
+      previousText: previousStableText ?? episode.currentText,
+    });
+    if (analysis.stability === "unstable") {
+      this.documentState.recordAnalysis(
+        episode.uri,
+        episode.currentText,
+        analysis,
+      );
+      return;
+    }
+
     const evidence = [
-      ...this.analyzer.analyze(episode),
+      ...analysis.evidence,
       ...diagnosticEvidenceForDocument(document),
-    ].filter((candidate) => !this.dismissedEvidenceIds.has(candidate.id));
+    ].filter(
+      (candidate) =>
+        !this.dismissedEvidenceIdsForUri(document.uri).has(candidate.id),
+    );
     this.documentState.recordAnalysis(
       episode.uri,
       episode.currentText,
-      evidence,
+      {
+        stability: "stable",
+        evidence,
+      },
     );
     const decision = this.policy.decide({
       evidence,
@@ -576,7 +650,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       this.generateWhileEnabled(
         request,
         signal,
-        source !== "automatic",
+        source,
         lifecycleFence,
       ),
     );
@@ -592,7 +666,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   private async generateWhileEnabled(
     request: ModelRequest,
     signal: AbortSignal,
-    userInitiated: boolean,
+    source: PairInvocationSource,
     lifecycleFence: PairLifecycleFence,
   ): Promise<ModelResponse> {
     const provider = this.options.config.provider;
@@ -600,9 +674,28 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       return this.router.generate(provider, request, signal);
     }
 
+    const prepared = prepareRemoteModelRequest(request);
+    if (source === "automatic" && prepared.sensitiveDataDetected) {
+      this.effectiveProvider = "local-template";
+      this.statusDetail = "sensitive evidence suppressed; local-template fallback";
+      this.publishSession();
+      this.renderStatus();
+      return this.router.generate("local-template", request, signal);
+    }
+
+    const now = Date.now();
+    const maxOutputTokens = this.budget.outputTokenLimit(now);
+    const remoteRequest: ModelRequest = {
+      ...prepared.request,
+      maxOutputTokens,
+    };
     const admission = this.budget.tryReserve(
-      estimateOpenAICompatibleInputTokens(request, this.options.config.modelName),
-      Date.now(),
+      estimateOpenAICompatibleInputTokens(
+        remoteRequest,
+        this.options.config.modelName,
+      ),
+      maxOutputTokens,
+      now,
     );
     if (!admission.allowed) {
       this.effectiveProvider = "local-template";
@@ -616,25 +709,37 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
 
     try {
       const response =
-        provider === "vscode-copilot" && userInitiated
-          ? await this.copilotProvider.generateFromUserAction(request, signal)
-          : await this.router.generate(provider, request, signal);
+        provider === "vscode-copilot" && source !== "automatic"
+          ? await this.copilotProvider.generateFromUserAction(
+              remoteRequest,
+              signal,
+            )
+          : await this.router.generate(provider, remoteRequest, signal);
+      this.budget.settle(
+        admission.reservationId,
+        response.inputTokens,
+        response.outputTokens,
+      );
       if (lifecycleFence.isCurrent() && !signal.aborted) {
         this.effectiveProvider = provider;
-        this.statusDetail = this.options.config.statusWarning;
+        this.statusDetail = this.configurationWarning();
         this.publishSession();
         this.renderStatus();
       }
       return response;
     } catch (error: unknown) {
+      releaseUnusedCopilotReservation(
+        this.budget,
+        admission.reservationId,
+        error,
+      );
       if (!lifecycleFence.isCurrent() || signal.aborted) {
         throw error;
       }
       return this.fallbackForUnavailableCopilot(
         error,
-        request,
+        remoteRequest,
         signal,
-        admission.reservationId,
         lifecycleFence,
       );
     }
@@ -644,7 +749,6 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     error: unknown,
     request: ModelRequest,
     signal: AbortSignal,
-    reservationId: number,
     lifecycleFence: PairLifecycleFence,
   ): Promise<ModelResponse> {
     if (!(error instanceof CopilotModelUnavailableError)) {
@@ -653,7 +757,6 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     if (!lifecycleFence.isCurrent()) {
       throw error;
     }
-    releaseUnusedCopilotReservation(this.budget, reservationId, error);
     this.effectiveProvider = "local-template";
     this.statusDetail = `Copilot unavailable (${error.reason}); local-template fallback`;
     this.publishSession();
@@ -672,6 +775,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       question,
       evidence,
     );
+    this.policy.markRendered(evidence.id, Date.now());
     this.options.sharedContext.publishEvidence({
       uri: document.uri.toString(),
       evidence,
@@ -698,6 +802,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
 
   private clearTransientState(): void {
     this.documentState.clear();
+    this.policy.resetTransient();
     this.options.sharedContext.clearEvidence();
     this.inlineController.clear();
   }
@@ -706,7 +811,27 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     if (!this.options.config.enabled) {
       return "disabled by adaptivePair.enabled";
     }
-    return this.options.config.statusWarning;
+    return this.configurationWarning();
+  }
+
+  private configurationWarning(): string | undefined {
+    return [this.options.config.statusWarning, this.memoryWarning]
+      .filter((warning): warning is string => warning !== undefined)
+      .join(" ") || undefined;
+  }
+
+  public async resetMemory(): Promise<void> {
+    await this.memoryStore.reset();
+    this.memoryWarning = undefined;
+    this.dismissedEvidenceIdsByRepository.clear();
+    this.statusDetail = this.sessionLifecycle.active
+      ? this.configurationWarning()
+      : this.inactiveStatusDetail();
+    this.publishSession();
+    this.renderStatus();
+    await vscode.window.showInformationMessage(
+      "Adaptive Pair local memory was reset to safe defaults.",
+    );
   }
 
   private closeDocument(uri: vscode.Uri): void {
@@ -719,9 +844,26 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     this.inlineController.disposeUri(uri);
   }
 
+  private repositoryIdForUri(uri: vscode.Uri): string {
+    return repositoryIdentityForDocument(
+      uri,
+      vscode.workspace.getWorkspaceFolder,
+    );
+  }
+
+  private dismissedEvidenceIdsForUri(
+    uri: vscode.Uri,
+  ): ReadonlySet<string> {
+    return (
+      this.dismissedEvidenceIdsByRepository.get(
+        this.repositoryIdForUri(uri),
+      ) ?? new Set()
+    );
+  }
+
   private async discoverCoexistence(): Promise<string | undefined> {
     const workspaceUris = await vscode.workspace.findFiles(
-      "{AGENTS.md,**/AGENTS.md,docs/superpowers/plans/*-plan.md}",
+      "{AGENTS.md,**/AGENTS.md,docs/superpowers/plans/*.md}",
       "**/node_modules/**",
       50,
     );
@@ -753,8 +895,9 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       provider: this.effectiveProvider,
       remainingCalls: remainingBudget.remainingCalls,
       remainingInputTokens: remainingBudget.remainingInputTokens,
+      remainingOutputTokens: remainingBudget.remainingOutputTokens,
       controlNotice: this.controlNotice,
-      configurationWarning: this.options.config.statusWarning,
+      configurationWarning: this.configurationWarning(),
     };
     this.options.sharedContext.updateSession(session);
   }

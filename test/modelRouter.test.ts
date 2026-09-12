@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { InterventionPolicy } from "../src/core/interventionPolicy";
+import { describe, expect, it, vi } from "vitest";
 import {
   LocalTemplateProvider,
   ModelRouter,
   OpenAICompatibleProvider,
+  buildOpenAICompatibleRequestBody,
+  estimateOpenAICompatibleInputTokens,
 } from "../src/core/modelRouter";
 import { TokenBudget } from "../src/core/tokenBudget";
 import type { Evidence, PairRange } from "../src/core/types";
@@ -11,6 +12,7 @@ import type { ModelProvider, ModelRequest, ModelResponse } from "../src/core/mod
 
 interface ChatCompletionRequestBody {
   readonly model: string;
+  readonly max_tokens: number;
   readonly messages: ReadonlyArray<{
     readonly role: string;
     readonly content: string;
@@ -72,6 +74,46 @@ describe("model routing", () => {
     });
   });
 
+  it("provides distinct, honest local Chat responses by command", async () => {
+    const provider = new LocalTemplateProvider();
+    const signal = new AbortController().signal;
+    const symbol = {
+      name: "loadRepository",
+      kind: "Function",
+      range: {
+        start: { line: 4, character: 2 },
+        end: { line: 8, character: 1 },
+      },
+    };
+
+    const why = await provider.generate(
+      { ...request, purpose: "why" },
+      signal,
+    );
+    const explain = await provider.generate(
+      { ...request, purpose: "explain" },
+      signal,
+    );
+    const trace = await provider.generate(
+      {
+        ...request,
+        purpose: "trace",
+        context: { symbol },
+      },
+      signal,
+    );
+
+    expect(new Set([why.text, explain.text, trace.text]).size).toBe(3);
+    expect(why.text).toContain("Why it matters");
+    expect(explain.text).toContain("Local explanation");
+    expect(trace.text).toContain("loadRepository");
+    expect(trace.text).toContain("4:2-8:1");
+    expect(trace.text).toContain("requires a model");
+    expect(trace.text).not.toMatch(/flows? (?:to|through)/iu);
+    expect(Math.max(why.text.length, explain.text.length, trace.text.length))
+      .toBeLessThanOrEqual(1_000);
+  });
+
   it("router invokes the selected provider and forwards the abort signal", async () => {
     const response: ModelResponse = {
       text: "Did you intend to introduce this dependency?",
@@ -104,9 +146,11 @@ describe("model routing", () => {
   it("parses an OpenAI-compatible response and sends only structured evidence", async () => {
     let receivedUrl = "";
     let receivedBody = "";
+    let receivedRedirect: RequestRedirect | undefined;
     const fetchImplementation: typeof fetch = async (input, init) => {
       receivedUrl = String(input);
       receivedBody = String(init?.body ?? "");
+      receivedRedirect = init?.redirect;
 
       return new Response(
         JSON.stringify({
@@ -144,7 +188,9 @@ describe("model routing", () => {
 
     const parsedBody = JSON.parse(receivedBody) as ChatCompletionRequestBody;
     expect(receivedUrl).toBe("http://localhost:11434/v1/chat/completions");
+    expect(receivedRedirect).toBe("error");
     expect(parsedBody.model).toBe("qwen2.5-coder:7b");
+    expect(parsedBody.max_tokens).toBe(180);
     expect(parsedBody.stream).toBe(false);
     expect(parsedBody.messages).toEqual(
       expect.arrayContaining([
@@ -163,6 +209,7 @@ describe("model routing", () => {
         status: 503,
         statusText: "Service Unavailable",
       });
+
     const provider = new OpenAICompatibleProvider({
       baseUrl: new URL("http://localhost:11434/v1"),
       model: "qwen2.5-coder:7b",
@@ -172,6 +219,21 @@ describe("model routing", () => {
     await expect(provider.generate(request, new AbortController().signal)).rejects.toThrow(
       "OpenAI-compatible provider returned 503 Service Unavailable",
     );
+  });
+
+  it("rejects unsafe endpoints at the provider boundary", () => {
+    const fetchImplementation = vi.fn<typeof fetch>();
+
+    expect(
+      () =>
+        new OpenAICompatibleProvider({
+          baseUrl: new URL("http://models.example/v1"),
+          model: "qwen2.5-coder:7b",
+          fetch: fetchImplementation,
+          apiKey: "must-not-be-sent",
+        }),
+    ).toThrow("unsafe");
+    expect(fetchImplementation).not.toHaveBeenCalled();
   });
 
   it("surfaces invalid payloads explicitly", async () => {
@@ -202,6 +264,72 @@ describe("model routing", () => {
     await expect(provider.generate(request, new AbortController().signal)).rejects.toThrow(
       "OpenAI-compatible provider returned an invalid payload.",
     );
+  });
+
+  it("aborts an OpenAI-compatible request after its deadline", async () => {
+    const fetchImplementation: typeof fetch = async (_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => {
+            reject(init.signal?.reason);
+          },
+          { once: true },
+        );
+      });
+    const provider = new OpenAICompatibleProvider({
+      baseUrl: new URL("http://localhost:11434/v1"),
+      model: "qwen2.5-coder:7b",
+      fetch: fetchImplementation,
+      timeoutMs: 5,
+    });
+
+    await expect(
+      provider.generate(request, new AbortController().signal),
+    ).rejects.toThrow("timed out");
+  });
+
+  it("rejects an oversized OpenAI-compatible response body", async () => {
+    const fetchImplementation: typeof fetch = async () =>
+      new Response("x".repeat(200), {
+        status: 200,
+      });
+    const provider = new OpenAICompatibleProvider({
+      baseUrl: new URL("http://localhost:11434/v1"),
+      model: "qwen2.5-coder:7b",
+      fetch: fetchImplementation,
+      maxResponseBytes: 100,
+    });
+
+    await expect(
+      provider.generate(request, new AbortController().signal),
+    ).rejects.toThrow("response size limit");
+  });
+
+  it("rejects completion usage above the requested output cap", async () => {
+    const fetchImplementation: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "too much output" } }],
+          usage: {
+            prompt_tokens: 10,
+            completion_tokens: 11,
+          },
+        }),
+        { status: 200 },
+      );
+    const provider = new OpenAICompatibleProvider({
+      baseUrl: new URL("http://localhost:11434/v1"),
+      model: "qwen2.5-coder:7b",
+      fetch: fetchImplementation,
+    });
+
+    await expect(
+      provider.generate(
+        { ...request, maxOutputTokens: 10 },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("output token limit");
   });
 
   it("denies remote generation when a long model identifier pushes the serialized request over budget and prevents fetch", async () => {
@@ -235,35 +363,32 @@ describe("model routing", () => {
       model: longModel,
       fetch: fetchImplementation,
     });
-    const policy = new InterventionPolicy({
-      model: longModel,
-      budget: new TokenBudget({
-        windowMs: 60_000,
-        maxCalls: 10,
-        maxInputTokens: 200,
-      }),
-      cooldownMs: 1_000,
+    const budget = new TokenBudget({
+      windowMs: 60_000,
+      maxCalls: 10,
+      maxInputTokens: 200,
+      maxOutputTokens: 180,
+      maxOutputTokensPerCall: 180,
     });
     const deniedRequest: ModelRequest = {
       ...request,
       goal: longGoal,
+      maxOutputTokens: 180,
     };
-    const decision = policy.decide({
-      evidence: [evidence],
-      style: "balanced",
-      now: 1_000,
-      goal: deniedRequest.goal,
-    });
+    const body = buildOpenAICompatibleRequestBody(longModel, deniedRequest);
+    const decision = budget.tryReserve(
+      estimateOpenAICompatibleInputTokens(body),
+      180,
+      1_000,
+    );
 
-    if (decision.kind === "intervene" && decision.useModel) {
+    if (decision.allowed) {
       await provider.generate(deniedRequest, new AbortController().signal);
     }
 
     expect(decision).toMatchObject({
-      kind: "intervene",
-      evidenceId: evidence.id,
-      useModel: false,
-      localMessage: expect.stringContaining(evidence.title),
+      allowed: false,
+      reason: "input-token-limit",
     });
     expect(fetchCalls).toBe(0);
   });

@@ -288,6 +288,55 @@ describe("PairMemoryStore", () => {
     expect(store.values.get("adaptive-pair.memory")).toEqual(corruptedMemory);
   });
 
+  it("recovers corrupt memory in memory without overwriting it", async () => {
+    const corruptedMemory = {
+      version: 99,
+      credential: "preserve-this-opaque-corrupt-record",
+    };
+    const store = new InMemoryKeyValueStore();
+    await store.update("adaptive-pair.memory", corruptedMemory);
+    const memoryStore = new PairMemoryStore({
+      store,
+      repositoryId: repositoryA,
+    });
+
+    const recovered = await memoryStore.loadOrDefault();
+
+    expect(recovered.warning).toContain("corrupt");
+    expect(recovered.memory).toEqual({
+      version: 1,
+      preferences: {
+        interventionStyle: "balanced",
+        pauseThresholdMs: 1_000,
+      },
+      dismissedEvidenceByRepository: {},
+      approvedEvidence: [],
+    });
+    expect(store.values.get("adaptive-pair.memory")).toEqual(corruptedMemory);
+  });
+
+  it("resets corrupt memory only through an explicit reset", async () => {
+    const corruptedMemory = { version: "broken" };
+    const store = new InMemoryKeyValueStore();
+    await store.update("adaptive-pair.memory", corruptedMemory);
+    const memoryStore = new PairMemoryStore({
+      store,
+      repositoryId: repositoryA,
+    });
+
+    await memoryStore.reset();
+
+    await expect(memoryStore.load()).resolves.toMatchObject({
+      version: 1,
+      preferences: {
+        interventionStyle: "balanced",
+      },
+    });
+    expect(store.values.get("adaptive-pair.memory")).not.toEqual(
+      corruptedMemory,
+    );
+  });
+
   it("stores approved evidence without raw source text or complete code", async () => {
     const store = new InMemoryKeyValueStore();
     const memoryStore = new PairMemoryStore({

@@ -134,7 +134,10 @@ describe("Pair runtime support", () => {
       recordAnalysis(
         uri: string,
         text: string,
-        evidence: readonly Evidence[],
+        analysis: {
+          readonly stability: "stable";
+          readonly evidence: readonly Evidence[];
+        },
       ): void;
       previousText(uri: string): string | undefined;
       lastAnalyzedText(uri: string): string | undefined;
@@ -145,12 +148,43 @@ describe("Pair runtime support", () => {
 
     state.seed("file:///pair.ts", "before");
     expect(state.updateText("file:///pair.ts", "after")).toBe("before");
-    state.recordAnalysis("file:///pair.ts", "after", [evidence]);
+    state.recordAnalysis("file:///pair.ts", "after", {
+      stability: "stable",
+      evidence: [evidence],
+    });
     state.close("file:///pair.ts");
 
     expect(state.previousText("file:///pair.ts")).toBeUndefined();
     expect(state.lastAnalyzedText("file:///pair.ts")).toBeUndefined();
     expect(state.latestEvidence("file:///pair.ts")).toEqual([]);
+  });
+
+  it("retains the last stable baseline across unstable analysis", async () => {
+    const { PairDocumentState } = await import(
+      "../src/vscode/pairRuntimeSupport"
+    );
+    const state = new PairDocumentState();
+    const uri = "file:///pair.ts";
+
+    state.seed(uri, "export const value: string = 'before';");
+    state.recordAnalysis(uri, "export const value:", {
+      stability: "unstable",
+      evidence: [],
+    });
+
+    expect(state.lastStableText(uri)).toBe(
+      "export const value: string = 'before';",
+    );
+    expect(state.latestEvidence(uri)).toEqual([]);
+
+    state.recordAnalysis(uri, "export const value: number = 1;", {
+      stability: "stable",
+      evidence: [evidence],
+    });
+    expect(state.lastStableText(uri)).toBe(
+      "export const value: number = 1;",
+    );
+    expect(state.latestEvidence(uri)).toEqual([evidence]);
   });
 
   it("extracts the public diagnostic code value without forwarding its target", async () => {
@@ -174,6 +208,29 @@ describe("Pair runtime support", () => {
       }),
     ).toEqual(["TS2322"]);
     expect(diagnosticCodeReference(undefined)).toEqual([]);
+  });
+
+  it("uses the workspace folder that owns each document as repository identity", async () => {
+    const { repositoryIdentityForDocument } = await import(
+      "../src/vscode/pairRuntimeSupport"
+    );
+    const first = { uri: { toString: () => "file:///workspace/first" } };
+    const second = { uri: { toString: () => "file:///workspace/second" } };
+    const getWorkspaceFolder = (uri: { toString(): string }) =>
+      uri.toString().includes("/second/") ? second : first;
+
+    expect(
+      repositoryIdentityForDocument(
+        { toString: () => "file:///workspace/second/src/pair.ts" },
+        getWorkspaceFolder,
+      ),
+    ).toBe("file:///workspace/second");
+    expect(
+      repositoryIdentityForDocument(
+        { toString: () => "untitled:pair.ts" },
+        () => undefined,
+      ),
+    ).toBe("no-workspace");
   });
 
   it("cancels every pending model request for a closed URI only", async () => {

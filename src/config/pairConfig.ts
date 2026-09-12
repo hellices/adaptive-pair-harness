@@ -1,5 +1,11 @@
 import type * as vscode from "vscode";
 import type { TokenBudgetConfig } from "../core/tokenBudget";
+import { parseSafeRemoteEndpoint } from "../core/remoteEndpoint";
+
+export {
+  apiKeySecretNameForEndpoint,
+  canonicalEndpointOrigin,
+} from "../core/remoteEndpoint";
 
 export type PairProvider =
   | "local-template"
@@ -19,12 +25,42 @@ export interface PairConfig {
 
 export interface ConfigurationReader {
   get(key: string): unknown;
+  inspect?(key: string): ConfigurationInspection | undefined;
+}
+
+export interface ConfigurationInspection {
+  readonly defaultValue?: unknown;
+  readonly globalValue?: unknown;
+  readonly workspaceValue?: unknown;
+  readonly workspaceFolderValue?: unknown;
+  readonly defaultLanguageValue?: unknown;
+  readonly globalLanguageValue?: unknown;
+  readonly workspaceLanguageValue?: unknown;
+  readonly workspaceFolderLanguageValue?: unknown;
 }
 
 const STYLE_BUDGETS = {
-  eco: { maxCalls: 2, maxInputTokens: 2_000, windowMs: 600_000 },
-  balanced: { maxCalls: 4, maxInputTokens: 6_000, windowMs: 600_000 },
-  active: { maxCalls: 8, maxInputTokens: 12_000, windowMs: 600_000 },
+  eco: {
+    maxCalls: 2,
+    maxInputTokens: 2_000,
+    maxOutputTokens: 360,
+    maxOutputTokensPerCall: 180,
+    windowMs: 600_000,
+  },
+  balanced: {
+    maxCalls: 4,
+    maxInputTokens: 6_000,
+    maxOutputTokens: 720,
+    maxOutputTokensPerCall: 180,
+    windowMs: 600_000,
+  },
+  active: {
+    maxCalls: 8,
+    maxInputTokens: 12_000,
+    maxOutputTokens: 1_440,
+    maxOutputTokensPerCall: 180,
+    windowMs: 600_000,
+  },
 } as const;
 
 const DEFAULT_BASE_URL = "http://localhost:11434/v1";
@@ -45,7 +81,8 @@ export function readPairConfig(workspace: ConfigurationReader): PairConfig {
     configuredStyle === "active"
       ? configuredStyle
       : "balanced";
-  const configuredProvider = workspace.get("model.provider");
+  const providerSetting = readApplicationSetting(workspace, "model.provider");
+  const configuredProvider = providerSetting.value;
   const validProvider =
     configuredProvider === "vscode-copilot" ||
     configuredProvider === "openai-compatible" ||
@@ -53,22 +90,36 @@ export function readPairConfig(workspace: ConfigurationReader): PairConfig {
   let provider: PairProvider = validProvider
     ? configuredProvider
     : "local-template";
-  const configuredBaseUrl = workspace.get("model.baseUrl");
+  const baseUrlSetting = readApplicationSetting(workspace, "model.baseUrl");
+  const configuredBaseUrl = baseUrlSetting.value;
   const baseUrl =
     configuredBaseUrl === undefined
-      ? parseUrl(DEFAULT_BASE_URL)
+      ? parseSafeRemoteEndpoint(DEFAULT_BASE_URL)
       : typeof configuredBaseUrl === "string"
-        ? parseUrl(configuredBaseUrl)
+        ? parseSafeRemoteEndpoint(configuredBaseUrl)
         : undefined;
-  let statusWarning: string | undefined;
+  const warnings: string[] = [];
+  if (
+    providerSetting.ignoredWorkspaceOverride ||
+    baseUrlSetting.ignoredWorkspaceOverride
+  ) {
+    warnings.push("Unsafe workspace remote settings ignored; using application settings.");
+  }
   if (configuredProvider !== undefined && !validProvider) {
-    statusWarning = `Unknown model provider "${String(configuredProvider)}"; using local-template.`;
+    warnings.push(
+      `Unknown model provider "${String(configuredProvider)}"; using local-template.`,
+    );
   } else if (provider === "openai-compatible" && baseUrl === undefined) {
     provider = "local-template";
-    statusWarning =
-      "OpenAI-compatible provider disabled: adaptivePair.model.baseUrl is invalid.";
+    warnings.push(
+      "OpenAI-compatible provider disabled: adaptivePair.model.baseUrl is invalid or unsafe.",
+    );
   }
-  const configuredModelName = workspace.get("model.name");
+  const modelNameSetting = readApplicationSetting(workspace, "model.name");
+  if (modelNameSetting.ignoredWorkspaceOverride) {
+    warnings.push("Unsafe workspace remote settings ignored; using application settings.");
+  }
+  const configuredModelName = modelNameSetting.value;
   const modelName =
     typeof configuredModelName === "string" && configuredModelName.trim().length > 0
       ? configuredModelName.trim()
@@ -82,20 +133,38 @@ export function readPairConfig(workspace: ConfigurationReader): PairConfig {
     baseUrl,
     modelName,
     budget: STYLE_BUDGETS[interventionStyle],
-    statusWarning,
+    statusWarning:
+      warnings.length === 0 ? undefined : [...new Set(warnings)].join(" "),
   };
 }
 
-const parseUrl = (value: string): URL | undefined => {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:"
-      ? parsed
-      : undefined;
-  } catch (error: unknown) {
-    if (!(error instanceof TypeError)) {
-      throw error;
-    }
-    return undefined;
+interface ApplicationSetting {
+  readonly value: unknown;
+  readonly ignoredWorkspaceOverride: boolean;
+}
+
+const readApplicationSetting = (
+  workspace: ConfigurationReader,
+  key: string,
+): ApplicationSetting => {
+  const inspected = workspace.inspect?.(key);
+  if (inspected === undefined) {
+    return {
+      value: workspace.get(key),
+      ignoredWorkspaceOverride: false,
+    };
   }
+
+  return {
+    value:
+      inspected.globalLanguageValue ??
+      inspected.globalValue ??
+      inspected.defaultLanguageValue ??
+      inspected.defaultValue,
+    ignoredWorkspaceOverride:
+      inspected.workspaceValue !== undefined ||
+      inspected.workspaceFolderValue !== undefined ||
+      inspected.workspaceLanguageValue !== undefined ||
+      inspected.workspaceFolderLanguageValue !== undefined,
+  };
 };

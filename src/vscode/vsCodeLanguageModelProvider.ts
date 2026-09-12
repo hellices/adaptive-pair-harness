@@ -125,6 +125,8 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
       }
 
       const prompt = buildCopilotPrompt(request);
+      const maxOutputCharacters =
+        Math.max(1, Math.floor(request.maxOutputTokens ?? 180)) * 4;
       const text = await this.callAndMapUnavailable(
         async () => {
           const stream = await this.api.sendRequest(
@@ -135,6 +137,12 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
           let streamedText = "";
           for await (const fragment of stream) {
             signal.throwIfAborted();
+            const remaining = maxOutputCharacters - streamedText.length;
+            if (fragment.length >= remaining) {
+              streamedText += fragment.slice(0, remaining);
+              cancellation.cancel();
+              break;
+            }
             streamedText += fragment;
           }
           return streamedText;

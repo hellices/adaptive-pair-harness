@@ -1,10 +1,6 @@
 import {
-  buildOpenAICompatibleRequestBody,
   createLocalInterventionQuestion,
-  estimateOpenAICompatibleInputTokens,
 } from "./modelRouter";
-import type { ModelRequest } from "./modelRouter";
-import type { TokenBudget } from "./tokenBudget";
 import type { Evidence } from "./types";
 
 export type InterventionStyle = "eco" | "balanced" | "active";
@@ -26,9 +22,7 @@ export type PolicyDecision =
     };
 
 export interface InterventionPolicyConfig {
-  readonly budget?: TokenBudget;
   readonly cooldownMs?: number;
-  readonly model: string;
 }
 
 const STYLE_THRESHOLDS: Readonly<Record<InterventionStyle, number>> = {
@@ -41,17 +35,14 @@ const DEFAULT_COOLDOWN_MS = 30_000;
 
 export class InterventionPolicy {
   private readonly lastInterventionByEvidenceId = new Map<string, number>();
-  private readonly budget: TokenBudget | undefined;
   private readonly cooldownMs: number;
-  private readonly model: string;
 
   public constructor(config: InterventionPolicyConfig) {
-    this.budget = config.budget;
     this.cooldownMs = config.cooldownMs ?? DEFAULT_COOLDOWN_MS;
-    this.model = config.model;
   }
 
   public decide(input: PolicyInput): PolicyDecision {
+    this.purgeExpiredCooldowns(input.now);
     const threshold = STYLE_THRESHOLDS[input.style];
     const thresholdEligibleEvidence = input.evidence
       .filter((candidate) => candidate.confidence >= threshold)
@@ -84,27 +75,6 @@ export class InterventionPolicy {
     }
 
     const localMessage = createLocalInterventionQuestion(selectedEvidence);
-    const remoteRequest: ModelRequest = {
-      goal: input.goal,
-      evidence: selectedEvidence,
-      interactionStyle: "ask-first",
-    };
-    const requestBody = buildOpenAICompatibleRequestBody(this.model, remoteRequest);
-    const reservation = this.budget?.tryReserve(
-      estimateOpenAICompatibleInputTokens(requestBody),
-      input.now,
-    );
-
-    this.lastInterventionByEvidenceId.set(selectedEvidence.id, input.now);
-
-    if (reservation?.allowed === false) {
-      return {
-        kind: "intervene",
-        evidenceId: selectedEvidence.id,
-        useModel: false,
-        localMessage,
-      };
-    }
 
     return {
       kind: "intervene",
@@ -114,6 +84,20 @@ export class InterventionPolicy {
     };
   }
 
+  public markRendered(evidenceId: string, now: number): void {
+    this.purgeExpiredCooldowns(now);
+    this.lastInterventionByEvidenceId.set(evidenceId, now);
+  }
+
+  public resetTransient(): void {
+    this.lastInterventionByEvidenceId.clear();
+  }
+
+  public cooldownEntryCount(now: number): number {
+    this.purgeExpiredCooldowns(now);
+    return this.lastInterventionByEvidenceId.size;
+  }
+
   private isCoolingDown(evidenceId: string, now: number): boolean {
     const previousInterventionAt = this.lastInterventionByEvidenceId.get(evidenceId);
     if (previousInterventionAt === undefined) {
@@ -121,6 +105,14 @@ export class InterventionPolicy {
     }
 
     return now - previousInterventionAt < this.cooldownMs;
+  }
+
+  private purgeExpiredCooldowns(now: number): void {
+    for (const [evidenceId, renderedAt] of this.lastInterventionByEvidenceId) {
+      if (now - renderedAt >= this.cooldownMs) {
+        this.lastInterventionByEvidenceId.delete(evidenceId);
+      }
+    }
   }
 }
 

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as vscode from "vscode";
 import type { PairConfig } from "../src/config/pairConfig";
+import { TokenBudget } from "../src/core/tokenBudget";
 import type { Evidence } from "../src/core/types";
 
 interface TestDocument {
@@ -10,7 +11,12 @@ interface TestDocument {
   };
   readonly languageId: string;
   readonly version: number;
+  readonly lineCount: number;
   getText(): string;
+  lineAt(line: number): {
+    readonly text: string;
+    readonly range: unknown;
+  };
 }
 
 interface TestStatusItem {
@@ -40,6 +46,7 @@ const vscodeState = vi.hoisted(() => ({
   changeListeners: [] as Array<(event: unknown) => void>,
   statusItems: [] as TestStatusItem[],
   commentThreads: [] as TestCommentThread[],
+  warningMessages: [] as string[],
 }));
 
 vi.mock("vscode", () => {
@@ -75,6 +82,21 @@ vi.mock("vscode", () => {
     public constructor(public readonly value: string) {}
   }
 
+  class Range {
+    public readonly start: { readonly line: number; readonly character: number };
+    public readonly end: { readonly line: number; readonly character: number };
+
+    public constructor(
+      startLine: number,
+      startCharacter: number,
+      endLine: number,
+      endCharacter: number,
+    ) {
+      this.start = { line: startLine, character: startCharacter };
+      this.end = { line: endLine, character: endCharacter };
+    }
+  }
+
   class CancellationError extends Error {}
   class LanguageModelError extends Error {}
 
@@ -98,6 +120,7 @@ vi.mock("vscode", () => {
     CommentMode: { Preview: 1 },
     LanguageModelError,
     MarkdownString,
+    Range,
     StatusBarAlignment: { Right: 1 },
     comments: {
       createCommentController: () => ({
@@ -133,6 +156,9 @@ vi.mock("vscode", () => {
       },
       showErrorMessage: async () => undefined,
       showInformationMessage: async () => undefined,
+      showWarningMessage: async (message: string) => {
+        vscodeState.warningMessages.push(message);
+      },
     },
     workspace: {
       workspaceFolders: [
@@ -170,10 +196,12 @@ import type {
 
 const deferred = <T>() => {
   let resolve!: (value: T | PromiseLike<T>) => void;
-  const promise = new Promise<T>((resolvePromise) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
+    reject = rejectPromise;
   });
-  return { promise, resolve };
+  return { promise, reject, resolve };
 };
 
 const evidence: Evidence = {
@@ -203,6 +231,8 @@ const config = (
   budget: {
     maxCalls: 4,
     maxInputTokens: 6_000,
+    maxOutputTokens: 720,
+    maxOutputTokensPerCall: 180,
     windowMs: 600_000,
   },
   statusWarning: undefined,
@@ -252,7 +282,18 @@ const document = (uri: string, text: string, version = 1): TestDocument => ({
   },
   languageId: "typescript",
   version,
+  lineCount: text.split("\n").length,
   getText: () => text,
+  lineAt: (line) => {
+    const lineText = text.split("\n")[line] ?? "";
+    return {
+      text: lineText,
+      range: {
+        start: { line, character: 0 },
+        end: { line, character: lineText.length },
+      },
+    };
+  },
 });
 
 beforeEach(() => {
@@ -264,10 +305,270 @@ beforeEach(() => {
   vscodeState.changeListeners.length = 0;
   vscodeState.statusItems.length = 0;
   vscodeState.commentThreads.length = 0;
+  vscodeState.warningMessages.length = 0;
   vi.unstubAllGlobals();
 });
 
 describe("PairRuntime lifecycle ownership", () => {
+  it("starts with visible in-memory defaults when stored memory is corrupt", async () => {
+    let stored: unknown = {
+      version: 1,
+      preferences: { interventionStyle: "invalid" },
+    };
+    const corruptContext = {
+      workspaceState: {
+        get: () => stored,
+        update: async (_key: string, value: unknown) => {
+          stored = value;
+        },
+      },
+    } as unknown as vscode.ExtensionContext;
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext: corruptContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+
+    await expect(runtime.startSession()).resolves.toMatchObject({
+      kind: "started",
+    });
+    expect(vscodeState.warningMessages.join("\n")).toContain("corrupt");
+    expect(vscodeState.statusItems[0]?.text).toContain("memory");
+
+    await runtime.resetMemory();
+    expect(stored).toMatchObject({
+      version: 1,
+      preferences: { interventionStyle: "balanced" },
+    });
+    runtime.dispose();
+  });
+
+  it("keeps credential-bearing automatic evidence local", async () => {
+    const fetchImplementation = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "remote" } }],
+          usage: { prompt_tokens: 10, completion_tokens: 1 },
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchImplementation);
+    const uri = "file:///workspace/pair.ts";
+    const before = "export const value = 1;";
+    const after =
+      'import "https://packages.example/pkg?api_key=workspace-secret";\nexport const value = 1;';
+    vscodeState.textDocuments = [document(uri, before, 1)];
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "openai-compatible",
+        baseUrl: new URL("https://models.example/v1"),
+      }),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    vscodeState.textDocuments = [document(uri, after, 2)];
+
+    await (
+      runtime as unknown as {
+        handleEpisode(episode: {
+          uri: string;
+          languageId: string;
+          previousText: string;
+          currentText: string;
+          version: number;
+          observedAt: number;
+        }): Promise<void>;
+      }
+    ).handleEpisode({
+      uri,
+      languageId: "typescript",
+      previousText: before,
+      currentText: after,
+      version: 2,
+      observedAt: 1,
+    });
+
+    expect(fetchImplementation).not.toHaveBeenCalled();
+    expect(vscodeState.commentThreads).toHaveLength(1);
+    expect(vscodeState.statusItems[0]?.text).toContain(
+      "sensitive evidence suppressed",
+    );
+    runtime.dispose();
+  });
+
+  it("retains the last stable source through an invalid edit", async () => {
+    const uri = "file:///workspace/pair.ts";
+    const before =
+      "export function load(id: string): string { return id; }";
+    const invalid = "export function load(id:";
+    const after =
+      "export function load(id: number): string { return String(id); }";
+    vscodeState.textDocuments = [document(uri, before, 1)];
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    const handleEpisode = (
+      runtime as unknown as {
+        handleEpisode(episode: {
+          uri: string;
+          languageId: string;
+          previousText: string;
+          currentText: string;
+          version: number;
+          observedAt: number;
+        }): Promise<void>;
+      }
+    ).handleEpisode.bind(runtime);
+
+    vscodeState.textDocuments = [document(uri, invalid, 2)];
+    await handleEpisode({
+      uri,
+      languageId: "typescript",
+      previousText: before,
+      currentText: invalid,
+      version: 2,
+      observedAt: 1,
+    });
+    expect(vscodeState.commentThreads).toHaveLength(0);
+
+    vscodeState.textDocuments = [document(uri, after, 3)];
+    await handleEpisode({
+      uri,
+      languageId: "typescript",
+      previousText: invalid,
+      currentText: after,
+      version: 3,
+      observedAt: 2,
+    });
+    expect(vscodeState.commentThreads).toHaveLength(1);
+    expect(shared.snapshot().latest?.evidence.references).toEqual(["load"]);
+    runtime.dispose();
+  });
+
+  it("preserves a shared rolling budget across runtime rebuilds", async () => {
+    const fetchImplementation = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "remote" } }],
+          usage: { prompt_tokens: 10, completion_tokens: 1 },
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchImplementation);
+    const limitedConfig = config({
+      provider: "openai-compatible",
+      baseUrl: new URL("https://models.example/v1"),
+      budget: {
+        maxCalls: 1,
+        maxInputTokens: 6_000,
+        maxOutputTokens: 180,
+        maxOutputTokensPerCall: 180,
+        windowMs: 600_000,
+      },
+    });
+    const budget = new TokenBudget(limitedConfig.budget);
+    const first = new PairRuntime({
+      config: limitedConfig,
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+      budget,
+    });
+    await first.startSession();
+    await first.generate(
+      "file:///workspace/first.ts",
+      "Ask.",
+      evidence,
+      new AbortController().signal,
+    );
+    first.dispose();
+
+    const replacement = new PairRuntime({
+      config: limitedConfig,
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+      budget,
+    });
+    await replacement.startSession();
+    await expect(
+      replacement.generate(
+        "file:///workspace/second.ts",
+        "Ask again.",
+        evidence,
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+
+    expect(fetchImplementation).toHaveBeenCalledTimes(1);
+    replacement.dispose();
+  });
+
+  it("refunds an exact pre-dispatch Copilot reservation after stop", async () => {
+    const selection = deferred<readonly CopilotModelReference[]>();
+    const selectionFailure = new Error("selection denied");
+    let selectionStarted = false;
+    const budgetConfig = config().budget;
+    const budget = new TokenBudget({
+      ...budgetConfig,
+      maxCalls: 1,
+    });
+    const runtime = new PairRuntime({
+      config: config({ provider: "vscode-copilot", budget: budgetConfig }),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: {
+        ...languageModelApi(),
+        selectChatModels: async () => {
+          selectionStarted = true;
+          return selection.promise;
+        },
+        classifyError: (error) =>
+          error === selectionFailure ? "no-permissions" : "unknown",
+      },
+      apiKey: undefined,
+      budget,
+    });
+    await runtime.startSession();
+
+    const pending = runtime.generate(
+      "file:///workspace/pair.ts",
+      "Ask.",
+      evidence,
+      new AbortController().signal,
+    );
+    await vi.waitFor(() => {
+      expect(selectionStarted).toBe(true);
+    });
+    runtime.stopSession();
+    selection.reject(selectionFailure);
+    await expect(pending).rejects.toMatchObject({
+      name: "CopilotModelUnavailableError",
+      requestMayHaveBeenSent: false,
+    });
+
+    expect(budget.snapshot(Date.now()).remainingCalls).toBe(1);
+    runtime.dispose();
+  });
+
   it("does not let a disposed provider completion overwrite replacement runtime state", async () => {
     const providerCompletion = deferred<Response>();
     vi.stubGlobal(
@@ -445,6 +746,8 @@ describe("PairRuntime lifecycle ownership", () => {
         budget: {
           maxCalls: 1,
           maxInputTokens: 6_000,
+          maxOutputTokens: 180,
+          maxOutputTokensPerCall: 180,
           windowMs: 600_000,
         },
       }),

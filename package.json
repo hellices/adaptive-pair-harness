@@ -7,7 +7,7 @@
   "license": "Apache-2.0",
   "engines": {
     "vscode": "^1.136.0",
-    "node": ">=22.12.0"
+    "node": ">=22.13.0"
   },
   "categories": [
     "AI",
@@ -24,6 +24,7 @@
     "onCommand:adaptivePair.toggle",
     "onCommand:adaptivePair.reviewCurrentBlock",
     "onCommand:adaptivePair.setApiKey",
+    "onCommand:adaptivePair.resetMemory",
     "onChatParticipant:adaptivePair.chat"
   ],
   "main": "./dist/src/extension.js",
@@ -48,6 +49,10 @@
       {
         "command": "adaptivePair.setApiKey",
         "title": "Adaptive Pair: Set OpenAI-Compatible API Key"
+      },
+      {
+        "command": "adaptivePair.resetMemory",
+        "title": "Adaptive Pair: Reset Local Memory"
       }
     ],
     "chatParticipants": [
@@ -87,8 +92,8 @@
     "keybindings": [
       {
         "command": "adaptivePair.toggle",
-        "key": "ctrl+alt+p",
-        "mac": "cmd+alt+p"
+        "key": "ctrl+shift+alt+p",
+        "mac": "cmd+shift+alt+p"
       }
     ],
     "configuration": {
@@ -114,6 +119,7 @@
           "default": "balanced"
         },
         "adaptivePair.model.provider": {
+          "scope": "application",
           "type": "string",
           "enum": [
             "local-template",
@@ -123,10 +129,12 @@
           "default": "local-template"
         },
         "adaptivePair.model.baseUrl": {
+          "scope": "application",
           "type": "string",
           "default": "http://localhost:11434/v1"
         },
         "adaptivePair.model.name": {
+          "scope": "application",
           "type": "string",
           "default": "qwen2.5-coder:7b"
         }

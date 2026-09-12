@@ -19,6 +19,11 @@ export interface PairMemory {
   readonly approvedEvidence: readonly ApprovedEvidence[];
 }
 
+export interface PairMemoryRecovery {
+  readonly memory: PairMemory;
+  readonly warning: string | undefined;
+}
+
 export interface KeyValueStore {
   get<T>(key: string): Promise<T | undefined>;
   update<T>(key: string, value: T): Promise<void>;
@@ -268,6 +273,42 @@ export class PairMemoryStore {
             }),
       approvedEvidence: stored.approvedEvidence,
     });
+  }
+
+  public async loadOrDefault(): Promise<PairMemoryRecovery> {
+    try {
+      return {
+        memory: await this.load(),
+        warning: undefined,
+      };
+    } catch (error: unknown) {
+      if (!(error instanceof InvalidPairMemoryError)) {
+        throw error;
+      }
+      return {
+        memory: freezeMemory(EMPTY_MEMORY),
+        warning:
+          "Stored Adaptive Pair memory is corrupt. Safe in-memory defaults are active; the stored record was preserved. Run Adaptive Pair: Reset Local Memory to replace it.",
+      };
+    }
+  }
+
+  public async reset(): Promise<void> {
+    const previousMutation =
+      mutationQueues.get(this.options.store) ?? Promise.resolve();
+    const mutation = previousMutation
+      .catch(() => undefined)
+      .then(async () => {
+        await this.saveStoredMemory(EMPTY_MEMORY);
+      });
+    mutationQueues.set(
+      this.options.store,
+      mutation.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return mutation;
   }
 
   public async updatePreferences(

@@ -11,17 +11,24 @@ pairing remains off until the user starts a session.
 | `adaptivePair.enabled` | boolean | `true` | Global enable/disable flag. When `false`, sessions cannot start and no model provider is invoked. |
 | `adaptivePair.debounceMs` | number | `500` | Delay before edit episodes are analyzed after typing stops. Values are clamped to `300`-`800`. |
 | `adaptivePair.interventionStyle` | `eco` \| `balanced` \| `active` | `balanced` | Sets the threshold and 10-minute token budget used for remote interventions. |
-| `adaptivePair.model.provider` | `local-template` \| `vscode-copilot` \| `openai-compatible` | `local-template` | Selects local generation, the official VS Code Copilot LM provider, or an OpenAI-compatible endpoint. |
-| `adaptivePair.model.baseUrl` | string | `http://localhost:11434/v1` | Base URL for the OpenAI-compatible provider. Must be `http` or `https`; invalid values disable that provider and fall back locally. |
-| `adaptivePair.model.name` | string | `qwen2.5-coder:7b` | Model identifier used for OpenAI-compatible requests and token estimation. Blank values fall back to the default. |
+| `adaptivePair.model.provider` | `local-template` \| `vscode-copilot` \| `openai-compatible` | `local-template` | Application-scoped provider selection. |
+| `adaptivePair.model.baseUrl` | string | `http://localhost:11434/v1` | Application-scoped OpenAI-compatible root. HTTPS is required except for exact loopback hosts. URL credentials, queries, and fragments are rejected. |
+| `adaptivePair.model.name` | string | `qwen2.5-coder:7b` | Application-scoped model identifier used for OpenAI-compatible requests and token estimation. |
+
+The three remote-routing settings are deliberately application-scoped. Runtime
+loading reads only application/user values and defaults; workspace,
+workspace-folder, and workspace-language overrides are ignored with a visible
+warning. This prevents a repository from redirecting credentials or evidence.
 
 ## Secret storage behavior
 
 Adaptive Pair does not write secrets to workspace files.
 
-- The OpenAI-compatible API key is stored in VS Code `SecretStorage` under
-  `adaptivePair.openaiCompatibleApiKey`.
+- The OpenAI-compatible API key is stored in VS Code `SecretStorage` under an
+  opaque name derived from the validated canonical endpoint origin.
 - Set or clear it with **Adaptive Pair: Set OpenAI-Compatible API Key**.
+- Changing endpoint origin never reuses the previous origin's key; run the key
+  command explicitly for the new origin.
 - If no API key is stored, OpenAI-compatible requests are sent without an
   `Authorization` header.
 - Pair memory lives in VS Code workspace state, not in tracked project files.
@@ -73,6 +80,12 @@ The extension sends requests to:
 - `content-type: application/json`
 - an authorization bearer header only when a key is stored.
 
+Non-loopback endpoints must use HTTPS. Loopback HTTP is limited to
+`localhost`, the `127.0.0.0/8` range, and `[::1]`. Endpoint URLs containing
+userinfo, a query, a fragment, surrounding whitespace, or a non-HTTP(S) scheme
+are rejected. Requests time out after 15 seconds and response bodies are capped
+at 64 KiB.
+
 ## Exact data sent for a remote request
 
 Adaptive Pair does **not** send full source buffers, edit histories, or project
@@ -94,6 +107,12 @@ Every remote request is reduced to a bounded structured prompt containing:
 - optional user-initiated context:
   - bounded `userPrompt`
   - current symbol `name`, `kind`, and `range`
+
+All string fields pass through the same suppression/redaction policy. It
+handles URL userinfo, sensitive query parameters, bearer/JWT and common token
+formats, credential assignments, control characters, and long opaque
+secret-like values. If an automatic intervention contains possible credential
+material, no remote provider is called; the local template is used instead.
 
 ### Diagnostic sanitization
 
@@ -120,15 +139,19 @@ Remote requests exclude:
 
 Budgets are enforced over a rolling 10-minute window.
 
-| Style | Max remote calls | Max estimated input tokens |
-| --- | --- | --- |
-| `eco` | 2 | 2,000 |
-| `balanced` | 4 | 6,000 |
-| `active` | 8 | 12,000 |
+| Style | Max remote calls | Max input tokens | Max output tokens |
+| --- | --- | --- | --- |
+| `eco` | 2 | 2,000 | 360 |
+| `balanced` | 4 | 6,000 | 720 |
+| `active` | 8 | 12,000 | 1,440 |
 
 Behavior:
 
-- estimates are based on the serialized remote request payload;
+- input estimates are based on the serialized remote request payload;
+- each completion is capped at 180 output tokens and output usage is accounted;
+- reservations and usage survive configuration and API-key runtime rebuilds;
+- only a Copilot selection/consent failure known to occur before prompt
+  dispatch releases its exact reservation;
 - if a remote request would exceed call or token limits, the current
   intervention falls back to `local-template`;
 - the shared `@pair /session` view reports remaining budget.
@@ -154,8 +177,8 @@ Enabled does not mean active.
 ### Cooldown
 
 The current vertical slice applies a fixed per-evidence cooldown of **30 seconds**.
-If the same evidence ID was just surfaced, the policy suppresses repeat
-interventions until the cooldown expires.
+Cooldown starts only after an inline thread renders successfully. Entries expire
+from memory, and stop/restart clears all transient cooldown state.
 
 ### Active local-template sessions
 
@@ -168,6 +191,19 @@ An active session stays local when any of the following is true:
 - an OpenAI-compatible base URL is invalid;
 - a Copilot model is unavailable or inaccessible;
 - the remote token budget is exhausted;
+- automatic evidence may contain credential material;
 
 In this active local-template mode, the extension still analyzes supported
 evidence and can render inline navigator questions without network traffic.
+
+Local Chat is command-specific: `/why` explains significance, `/explain`
+summarizes the evidence, and `/trace` reports only the VS Code-resolved
+symbol/range while stating that deeper analysis requires a model.
+
+## Memory recovery and multi-root identity
+
+Repository dismissals use the workspace folder that owns each document, rather
+than always using the first folder. If the persisted memory record is corrupt,
+Pair starts with in-memory defaults, preserves the stored corruption, and shows
+a warning. **Adaptive Pair: Reset Local Memory** is the only operation that
+replaces that record with defaults.
