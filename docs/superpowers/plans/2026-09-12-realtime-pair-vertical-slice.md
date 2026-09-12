@@ -47,6 +47,7 @@ src/core/modelRouter.ts                       swappable provider interface
 src/core/coexistence.ts                       external harness discovery
 src/core/memoryStore.ts                       approved local pair preferences
 src/vscode/inlinePairController.ts            Comment Thread rendering
+src/vscode/vsCodeLanguageModelProvider.ts     official GitHub Copilot model adapter
 src/vscode/pairRuntime.ts                     VS Code event orchestration
 test/editEpisodeAggregator.test.ts            aggregation behavior
 test/tokenBudget.test.ts                      budget boundaries
@@ -134,7 +135,7 @@ Create `package.json` with:
         },
         "adaptivePair.model.provider": {
           "type": "string",
-          "enum": ["local-template", "openai-compatible"],
+          "enum": ["local-template", "vscode-copilot", "openai-compatible"],
           "default": "local-template"
         },
         "adaptivePair.model.baseUrl": {
@@ -771,6 +772,7 @@ git commit -m "feat: add coexistence discovery and local memory"
 **Files:**
 - Create: `src/config/pairConfig.ts`
 - Create: `src/vscode/inlinePairController.ts`
+- Create: `src/vscode/vsCodeLanguageModelProvider.ts`
 - Create: `src/vscode/pairRuntime.ts`
 - Modify: `src/extension.ts`
 
@@ -789,7 +791,7 @@ export interface PairConfig {
   readonly enabled: boolean;
   readonly debounceMs: number;
   readonly interventionStyle: "eco" | "balanced" | "active";
-  readonly provider: "local-template" | "openai-compatible";
+  readonly provider: "local-template" | "vscode-copilot" | "openai-compatible";
   readonly baseUrl: URL | undefined;
   readonly modelName: string;
   readonly budget: TokenBudgetConfig;
@@ -805,7 +807,25 @@ const STYLE_BUDGETS = {
 Invalid strings fall back to `balanced` or `local-template`; invalid URLs
 disable the remote provider and display a status warning.
 
-- [ ] **Step 2: Implement inline Comment Thread rendering**
+- [ ] **Step 2: Implement the official GitHub Copilot model adapter**
+
+Create `VsCodeLanguageModelProvider` as a VS Code-only adapter for the pure
+`ModelProvider` contract:
+
+- select models with `vscode.lm.selectChatModels({ vendor: "copilot" })`;
+- use the first available model selected by VS Code and the user's Copilot
+  entitlement;
+- send only the structured goal, evidence, references, and ask-first style;
+- pass cancellation through a `vscode.CancellationTokenSource`;
+- collect streamed fragments into one `ModelResponse`;
+- estimate token usage locally when the API does not expose exact usage;
+- throw a typed unavailable error when no Copilot model is available.
+
+The runtime catches this specific unavailable error, updates the status bar,
+and uses `LocalTemplateProvider` for that intervention. The fallback must be
+visible; it must not silently route context to a different remote provider.
+
+- [ ] **Step 3: Implement inline Comment Thread rendering**
 
 Create one `vscode.CommentController` named `adaptivePair`. Render:
 
@@ -818,7 +838,7 @@ Dispose the previous active thread for the same URI before replacing it. Mark
 the thread `canReply = false` in this slice and expose deeper interaction through
 the `Adaptive Pair: Review Current Block` command.
 
-- [ ] **Step 3: Implement runtime orchestration**
+- [ ] **Step 4: Implement runtime orchestration**
 
 `PairRuntime` must:
 
@@ -828,13 +848,14 @@ the `Adaptive Pair: Review Current Block` command.
 4. cancel stale model requests per URI;
 5. analyze the latest episode;
 6. apply memory dismissal and intervention policy;
-7. use local or configured remote provider;
+7. use local, official VS Code Copilot, or configured OpenAI-compatible
+   provider;
 8. verify the document version still matches before rendering;
 9. update the status item with `You drive - Pair navigates`;
 10. discover external harness signals and append an observe-only notice without
     changing driver state.
 
-- [ ] **Step 4: Wire commands and secret storage**
+- [ ] **Step 5: Wire commands and secret storage**
 
 Update `src/extension.ts` to:
 
@@ -846,7 +867,7 @@ Update `src/extension.ts` to:
 - rebuild runtime configuration after relevant setting changes;
 - dispose every listener, thread, status item, and pending timer.
 
-- [ ] **Step 5: Compile and lint the extension**
+- [ ] **Step 6: Compile and lint the extension**
 
 Run:
 
@@ -857,7 +878,7 @@ npm run lint
 
 Expected: both commands exit 0.
 
-- [ ] **Step 6: Manually exercise the development host**
+- [ ] **Step 7: Manually exercise the development host**
 
 Run the VS Code extension-development host from the repository:
 
@@ -869,7 +890,20 @@ In a TypeScript file, add a new import and pause for the configured debounce.
 Expected: an inline Comment Thread appears at the import and the status bar
 shows `Pair: You drive`.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Verify GitHub Copilot integration**
+
+With GitHub Copilot installed and authenticated:
+
+1. set `adaptivePair.model.provider` to `vscode-copilot`;
+2. trigger `Adaptive Pair: Review Current Block`;
+3. approve the VS Code model-access consent prompt if shown.
+
+Expected: the inline response is generated by a model returned from
+`vscode.lm.selectChatModels({ vendor: "copilot" })`. When Copilot is unavailable,
+the status bar explicitly reports local-template fallback and no other remote
+provider receives context.
+
+- [ ] **Step 9: Commit**
 
 ```bash
 git add src/config src/vscode src/extension.ts
