@@ -22,15 +22,13 @@ class FakeScheduler implements Scheduler {
   advanceBy(milliseconds: number): void {
     this.now += milliseconds;
 
-    while (true) {
-      const dueTask = [...this.tasks.entries()].find(([, task]) => task.runAt <= this.now);
-      if (dueTask === undefined) {
-        return;
-      }
-
+    let dueTask = [...this.tasks.entries()].find(([, task]) => task.runAt <= this.now);
+    while (dueTask !== undefined) {
       const [handle, task] = dueTask;
       this.tasks.delete(handle);
       task.callback();
+
+      dueTask = [...this.tasks.entries()].find(([, task]) => task.runAt <= this.now);
     }
   }
 }

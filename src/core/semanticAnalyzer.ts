@@ -540,13 +540,10 @@ const canonicalizeNodeText = (node: ts.Node, sourceFile: ts.SourceFile): string 
   );
   const tokens: string[] = [];
 
-  while (true) {
-    const token = scanner.scan();
-    if (token === ts.SyntaxKind.EndOfFileToken) {
-      break;
-    }
-
+  let token = scanner.scan();
+  while (token !== ts.SyntaxKind.EndOfFileToken) {
     tokens.push(scanner.getTokenText());
+    token = scanner.scan();
   }
 
   return tokens.join(" ");
