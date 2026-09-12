@@ -568,6 +568,136 @@ describe("TypeScriptSemanticAnalyzer", () => {
     );
   });
 
+  it("tracks the CommonJS root callable separately from its default property", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        "",
+        [
+          "module.exports = (root) => root;",
+          "module.exports.default = (value) => value;",
+        ].join("\n"),
+        "javascript",
+        "file:///pair.js",
+      ),
+    );
+    const changes = evidence.filter(
+      (item) => item.kind === "public-api-change",
+    );
+
+    expect(changes).toHaveLength(2);
+    expect(changes.map((item) => item.references[0])).toEqual([
+      "default export",
+      "default export",
+    ]);
+    expect(new Set(changes.map((item) => item.id)).size).toBe(2);
+  });
+
+  it("reports a changed CommonJS root when its default property stays unchanged", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        [
+          "module.exports = (root) => root;",
+          "module.exports.default = (value) => value;",
+        ].join("\n"),
+        [
+          "module.exports = (root, options) => root;",
+          "module.exports.default = (value) => value;",
+        ].join("\n"),
+        "javascript",
+        "file:///pair.js",
+      ),
+    );
+    const changes = evidence.filter(
+      (item) => item.kind === "public-api-change",
+    );
+
+    expect(changes).toEqual([
+      expect.objectContaining({
+        title: "Exported API signature changed",
+        references: ["default export"],
+        range: expect.objectContaining({
+          start: expect.objectContaining({ line: 0 }),
+        }),
+      }),
+    ]);
+  });
+
+  it("distinguishes a literal dotted CommonJS property from a nested path", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        [
+          'module.exports["foo.bar"] = class { static run(value) { return value; } };',
+          "module.exports.foo = {};",
+          "module.exports.foo.bar = (nested) => nested;",
+        ].join("\n"),
+        [
+          'module.exports["foo.bar"] = class { static run(value, options) { return value; } };',
+          "module.exports.foo = {};",
+          "module.exports.foo.bar = (nested, options) => nested;",
+        ].join("\n"),
+        "javascript",
+        "file:///pair.js",
+      ),
+    );
+    const changes = evidence.filter(
+      (item) => item.kind === "public-api-change",
+    );
+
+    expect(changes).toHaveLength(2);
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ references: ["foo.bar.run"] }),
+        expect.objectContaining({ references: ["foo.bar"] }),
+      ]),
+    );
+    expect(new Set(changes.map((item) => item.id)).size).toBe(2);
+  });
+
+  it("clears the complete CommonJS state on whole-object replacement", () => {
+    const previousText = [
+      "module.exports = (root) => root;",
+      "module.exports.default = (value) => value;",
+      'module.exports["foo.bar"] = (literal) => literal;',
+      "module.exports.foo = {};",
+      "module.exports.foo.bar = (nested) => nested;",
+    ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(
+        previousText,
+        [
+          previousText,
+          "module.exports = { keep: (value) => value };",
+        ].join("\n"),
+        "javascript",
+        "file:///pair.js",
+      ),
+    );
+    const changes = evidence.filter(
+      (item) => item.kind === "public-api-change",
+    );
+    const removals = changes.filter(
+      (item) => item.title === "Exported API removed",
+    );
+
+    expect(changes).toHaveLength(5);
+    expect(removals).toHaveLength(4);
+    expect(removals.map((item) => item.references[0]).sort()).toEqual([
+      "default export",
+      "default export",
+      "foo.bar",
+      "foo.bar",
+    ]);
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: "Exported API added",
+          references: ["keep"],
+        }),
+      ]),
+    );
+    expect(new Set(changes.map((item) => item.id)).size).toBe(5);
+  });
+
   it("ignores a changed CommonJS assignment overwritten by the same final replacement", () => {
     const evidence = analyzeEvidence(
       episode(

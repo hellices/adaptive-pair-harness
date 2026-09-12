@@ -1015,3 +1015,58 @@
 - Live VS Code document-symbol providers were unavailable in this
   non-interactive environment; handler-level tests cover the changed `/trace`
   guidance and stale-lookup boundaries.
+
+---
+
+## CommonJS export identity collision follow-up (2026-09-13)
+
+### Corrections implemented
+
+- Replaced flattened CommonJS export names with structured property-segment
+  paths and JSON-encoded internal identities. The root callable, property
+  `default`, nested `foo.bar`, and literal property `"foo.bar"` are now
+  independent subjects.
+- Kept human-readable external names in signature records, separate from the
+  encoded identity used for matching and evidence IDs.
+- Made property assignment removal compare path segments. Reassigning
+  `module.exports.foo` removes only `foo` and its descendants, without removing
+  the root callable or a literal `"foo.bar"` sibling.
+- Added nested property traversal for dot/bracket assignment chains and nested
+  object-literal exports.
+- Kept whole `module.exports = ...` replacement as a complete reset of prior
+  CommonJS signatures and path ownership.
+
+### TDD evidence
+
+- RED: the focused semantic suite produced the four expected regression
+  failures: root plus `.default` collapsed to one record, a root-only change
+  disappeared behind unchanged `.default`, dotted literal/nested paths
+  disappeared or collided, and whole replacement exposed only three of five
+  expected changes.
+- GREEN: `npm test -- test/semanticAnalyzer.test.ts` passed with **45/45
+  tests**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **17 files, 367 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 89.11%, branches 80.98%, functions 92.04%, lines 89.26%
+- `npm run package`: **PASS — 156 files, 4.35 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- VSIX content scan: required compiled semantic analyzer and public docs are
+  present; source, tests, coverage, private review material, source maps,
+  workspace, and CI files are absent.
+- Runtime dependency root scan: **PASS — `typescript` only**
+- Production and packaged credential-value scans: **PASS**
+- Production and packaged fake-URL scans, including package repository, bugs,
+  and homepage metadata assertions: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review found no remaining high-confidence identity, replacement,
+  display, or regression issue.
+- Dynamically computed CommonJS property names remain intentionally outside the
+  analyzer's static, per-document scope.
