@@ -1070,3 +1070,74 @@
   display, or regression issue.
 - Dynamically computed CommonJS property names remain intentionally outside the
   analyzer's static, per-document scope.
+
+---
+
+## Copilot review 5187487833 follow-up (2026-09-13)
+
+### Corrections implemented
+
+- Bounded VS Code global-state memory to **256** recent unique dismissal hashes
+  per repository, **32** most recently used repository entries, and **256**
+  recent unique approved summaries.
+- Added explicit persisted repository recency order. Repeated dismissals and
+  approvals move to the newest position, repository isolation remains intact,
+  and preference values plus `interventionStyleExplicit` are never evicted.
+- Reworked legacy/current validation to scan all input for corruption while
+  retaining and cloning only bounded collections. Oversized valid records are
+  compacted on load through the shared mutation queue when the revision is
+  still current, and every save re-applies compaction.
+- Made document-listener startup atomic. Concrete registration disposes every
+  earlier listener if a later registration throws; lifecycle startup then
+  cancels pending work, clears prepared/transient state, and rethrows the
+  current-generation failure. Replaced-generation failures remain suppressed.
+- Replaced per-character Copilot stream truncation with a binary search over
+  UTF-16 code-point boundaries. It returns the longest officially counted
+  prefix within the output cap, never cuts a surrogate pair, preserves
+  conservative observed-output settlement, and checks cancellation immediately
+  after every awaited token count.
+- Documented the retention limits and deterministic eviction behavior in the
+  README privacy guidance and configuration reference.
+
+### TDD evidence
+
+- RED: dismissal load compaction initially had no retention contract; mutation
+  retained the wrong repository and did not refresh the repeated evidence.
+- RED: approval load compaction had no configured limit, and a new unique
+  approval persisted **257** entries instead of **256**.
+- RED: first-listener failure retained prepared document state; second-listener
+  failure also leaked the first registered listener. A reentrant stale
+  registration failure rejected instead of resolving as stopped.
+- RED: a 4,096-code-point fragment made **2,050** output `countTokens` calls
+  against a logarithmic ceiling of **15**. Cancellation during the first binary
+  probe made two additional token-count calls instead of stopping at **3**.
+- GREEN: focused verification passed with **4 files, 106 tests**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **17 files, 376 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 89.03%, branches 80.90%, functions 92.05%, lines 89.16%
+- `npm run package`: **PASS — 156 files, 4.35 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- VSIX content scan: required compiled memory/lifecycle/provider modules and
+  public configuration/privacy docs are present; source, tests, coverage,
+  private review material, source maps, workspace, and CI files are absent.
+- Runtime dependency root scan: **PASS — `typescript` only**
+- `git diff --check`: **PASS**
+- Production and packaged credential-value scans: **PASS**
+- Production and packaged fake-URL scans plus package repository, bugs, and
+  homepage metadata assertions: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review found no remaining high-confidence retention, repository
+  isolation, startup cleanup, Unicode truncation, cancellation, packaging, or
+  documentation issue.
+- Live VS Code listener registration and GitHub Copilot tokenization were not
+  available in this non-interactive environment. Deterministic VS Code adapter
+  failures and injected official-token-count behavior cover the changed
+  boundaries.

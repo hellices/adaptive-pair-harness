@@ -414,30 +414,52 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   }
 
   private registerDocumentListeners(): vscode.Disposable {
-    const listeners = [
-      vscode.workspace.onDidOpenTextDocument((document) => {
-        if (isSupportedDocument(document)) {
-          const key = document.uri.toString();
-          const text = document.getText();
-          this.documentState.seed(
-            key,
-            text,
-            this.analyzer.isStable(key, document.languageId, text),
-          );
+    const listeners: vscode.Disposable[] = [];
+    const disposeListeners = (preserveFailure: boolean): void => {
+      let disposalFailure: unknown;
+      for (const listener of listeners.reverse()) {
+        try {
+          listener.dispose();
+        } catch (error: unknown) {
+          disposalFailure ??= error;
         }
-      }),
-      vscode.workspace.onDidCloseTextDocument((document) => {
-        this.closeDocument(document.uri);
-      }),
-      vscode.workspace.onDidChangeTextDocument((event) => {
-        this.onDocumentChanged(event);
-      }),
-    ];
+      }
+      listeners.length = 0;
+      if (!preserveFailure && disposalFailure !== undefined) {
+        throw disposalFailure;
+      }
+    };
+    try {
+      listeners.push(
+        vscode.workspace.onDidOpenTextDocument((document) => {
+          if (isSupportedDocument(document)) {
+            const key = document.uri.toString();
+            const text = document.getText();
+            this.documentState.seed(
+              key,
+              text,
+              this.analyzer.isStable(key, document.languageId, text),
+            );
+          }
+        }),
+      );
+      listeners.push(
+        vscode.workspace.onDidCloseTextDocument((document) => {
+          this.closeDocument(document.uri);
+        }),
+      );
+      listeners.push(
+        vscode.workspace.onDidChangeTextDocument((event) => {
+          this.onDocumentChanged(event);
+        }),
+      );
+    } catch (error: unknown) {
+      disposeListeners(true);
+      throw error;
+    }
     return {
       dispose: () => {
-        for (const listener of listeners) {
-          listener.dispose();
-        }
+        disposeListeners(false);
       },
     };
   }

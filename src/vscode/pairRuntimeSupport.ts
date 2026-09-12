@@ -173,9 +173,7 @@ export class PairSessionLifecycle {
           message: "Adaptive Pair session remained stopped.",
         };
       }
-      this.ports.cancelPendingWork();
-      this.ports.clearTransientState();
-      throw error;
+      this.cleanupFailedStart(error);
     }
     if (!preparationContext.isCurrent()) {
       return {
@@ -194,13 +192,52 @@ export class PairSessionLifecycle {
       };
     }
 
-    this.listener = this.ports.registerDocumentListeners();
+    let listener: PairDisposable;
+    try {
+      listener = this.ports.registerDocumentListeners();
+    } catch (error: unknown) {
+      if (!preparationContext.isCurrent()) {
+        return {
+          kind: "already-stopped",
+          active: false,
+          message: "Adaptive Pair session remained stopped.",
+        };
+      }
+      this.cleanupFailedStart(error);
+    }
+    if (!preparationContext.isCurrent()) {
+      try {
+        listener.dispose();
+      } catch {
+        // A replaced generation owns cleanup and stale failures stay suppressed.
+      }
+      return {
+        kind: "already-stopped",
+        active: false,
+        message: "Adaptive Pair session remained stopped.",
+      };
+    }
+    this.listener = listener;
     this.isActive = true;
     return {
       kind: "started",
       active: true,
       message: "Adaptive Pair session started. You drive - Pair navigates.",
     };
+  }
+
+  private cleanupFailedStart(error: unknown): never {
+    try {
+      this.ports.cancelPendingWork();
+    } catch {
+      // Preserve the startup failure while still attempting all cleanup.
+    }
+    try {
+      this.ports.clearTransientState();
+    } catch {
+      // Preserve the startup failure.
+    }
+    throw error;
   }
 }
 

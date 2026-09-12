@@ -55,6 +55,11 @@ const vscodeState = vi.hoisted(() => ({
   openListeners: [] as Array<(document: TestDocument) => void>,
   closeListeners: [] as Array<(document: TestDocument) => void>,
   changeListeners: [] as Array<(event: unknown) => void>,
+  listenerRegistrationCallCount: 0,
+  listenerRegistrationFailure:
+    undefined as Error | undefined,
+  listenerRegistrationFailureAt:
+    undefined as number | undefined,
   statusItems: [] as TestStatusItem[],
   commentThreads: [] as TestCommentThread[],
   diagnostics: [] as Array<{
@@ -136,6 +141,13 @@ vi.mock("vscode", () => {
     listeners: Array<(value: T) => void>,
     listener: (value: T) => void,
   ) => {
+    vscodeState.listenerRegistrationCallCount += 1;
+    if (
+      vscodeState.listenerRegistrationCallCount ===
+      vscodeState.listenerRegistrationFailureAt
+    ) {
+      throw vscodeState.listenerRegistrationFailure;
+    }
     listeners.push(listener);
     return {
       dispose: () => {
@@ -374,6 +386,9 @@ beforeEach(() => {
   vscodeState.openListeners.length = 0;
   vscodeState.closeListeners.length = 0;
   vscodeState.changeListeners.length = 0;
+  vscodeState.listenerRegistrationCallCount = 0;
+  vscodeState.listenerRegistrationFailure = undefined;
+  vscodeState.listenerRegistrationFailureAt = undefined;
   vscodeState.statusItems.length = 0;
   vscodeState.commentThreads.length = 0;
   vscodeState.diagnostics.length = 0;
@@ -383,6 +398,47 @@ beforeEach(() => {
 });
 
 describe("PairRuntime lifecycle ownership", () => {
+  it.each([
+    ["first", 1],
+    ["second", 2],
+  ] as const)(
+    "rolls back prepared state when the %s document listener registration throws",
+    async (_label, failureAt) => {
+      const seededUri = "file:///workspace/prepared.ts";
+      vscodeState.textDocuments = [
+        document(seededUri, "export const prepared = true;"),
+      ];
+      const failure = new Error(
+        `listener registration ${failureAt} failed`,
+      );
+      vscodeState.listenerRegistrationFailure = failure;
+      vscodeState.listenerRegistrationFailureAt = failureAt;
+      const runtime = new PairRuntime({
+        config: config(),
+        extensionContext,
+        sharedContext: sharedContext(),
+        languageModelApi: languageModelApi(),
+        apiKey: undefined,
+      });
+
+      await expect(runtime.startSession()).rejects.toBe(failure);
+
+      expect(runtime.isSessionActive()).toBe(false);
+      expect(vscodeState.openListeners).toHaveLength(0);
+      expect(vscodeState.closeListeners).toHaveLength(0);
+      expect(vscodeState.changeListeners).toHaveLength(0);
+      const state = (
+        runtime as unknown as {
+          documentState: {
+            previousText(uri: string): string | undefined;
+          };
+        }
+      ).documentState;
+      expect(state.previousText(seededUri)).toBeUndefined();
+      runtime.dispose();
+    },
+  );
+
   it("seeds file and vscode-remote TypeScript documents but rejects unrelated schemes and languages", async () => {
     const remoteUri =
       "vscode-remote://ssh-remote+pair-host/workspace/remote.ts";

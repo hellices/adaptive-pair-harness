@@ -86,6 +86,25 @@ export const buildCopilotPrompt = (request: ModelRequest): string =>
     buildStructuredModelPrompt(createRemoteSafeModelRequest(request)),
   ].join("\n");
 
+const isCodePointBoundary = (text: string, index: number): boolean =>
+  index <= 0 ||
+  index >= text.length ||
+  !(
+    text.charCodeAt(index - 1) >= 0xd800 &&
+    text.charCodeAt(index - 1) <= 0xdbff &&
+    text.charCodeAt(index) >= 0xdc00 &&
+    text.charCodeAt(index) <= 0xdfff
+  );
+
+const previousCodePointBoundary = (
+  text: string,
+  index: number,
+): number =>
+  isCodePointBoundary(text, index) ? index : index - 1;
+
+const nextCodePointBoundary = (text: string, index: number): number =>
+  isCodePointBoundary(text, index) ? index : index + 1;
+
 export class VsCodeLanguageModelProvider implements ModelProvider {
   public readonly id = "vscode-copilot";
 
@@ -328,20 +347,14 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
             continue;
           }
 
-          for (const character of fragment) {
-            const prefixCandidate = streamedText + character;
-            const countedPrefixTokens = await this.api.countTokens(
-              model,
-              prefixCandidate,
-              cancellation,
-            );
-            signal.throwIfAborted();
-            const prefixTokens = normalizeTokenCount(countedPrefixTokens);
-            if (prefixTokens > maxOutputTokens) {
-              break;
-            }
-            streamedText = prefixCandidate;
-          }
+          streamedText += await this.longestFittingFragmentPrefix(
+            model,
+            streamedText,
+            fragment,
+            maxOutputTokens,
+            signal,
+            cancellation,
+          );
           cancellation.cancel();
           break;
         }
@@ -362,6 +375,47 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
       inputTokens,
       outputTokens: text.observedOutputTokens,
     };
+  }
+
+  private async longestFittingFragmentPrefix(
+    model: CopilotModelReference,
+    streamedText: string,
+    fragment: string,
+    maxOutputTokens: number,
+    signal: AbortSignal,
+    cancellation: VsCodeRequestCancellation,
+  ): Promise<string> {
+    let fittingLength = 0;
+    let failingLength = fragment.length;
+    while (fittingLength < failingLength) {
+      let probeLength = previousCodePointBoundary(
+        fragment,
+        Math.floor((fittingLength + failingLength) / 2),
+      );
+      if (probeLength <= fittingLength) {
+        probeLength = nextCodePointBoundary(
+          fragment,
+          fittingLength + 1,
+        );
+      }
+      if (probeLength >= failingLength) {
+        break;
+      }
+
+      const countedPrefixTokens = await this.api.countTokens(
+        model,
+        streamedText + fragment.slice(0, probeLength),
+        cancellation,
+      );
+      signal.throwIfAborted();
+      const prefixTokens = normalizeTokenCount(countedPrefixTokens);
+      if (prefixTokens <= maxOutputTokens) {
+        fittingLength = probeLength;
+      } else {
+        failingLength = probeLength;
+      }
+    }
+    return fragment.slice(0, fittingLength);
   }
 
   private async callAndMapUnavailable<T>(

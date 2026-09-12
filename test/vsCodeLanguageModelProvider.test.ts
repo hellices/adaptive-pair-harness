@@ -229,6 +229,81 @@ describe("VsCodeLanguageModelProvider", () => {
     },
   );
 
+  it("finds a code-point-safe capped prefix with logarithmic official token counts", async () => {
+    const api = new RecordingLanguageModelApi();
+    const streamedText = "😀".repeat(4_096);
+    const maxOutputTokens = 2_048;
+    api.fragments = [streamedText];
+    const prompt = buildCopilotPrompt(request);
+    api.countTokensImplementation = (text) =>
+      text === prompt ? 37 : Array.from(text).length;
+    const provider = new VsCodeLanguageModelProvider(api);
+
+    const response = await provider.generate(
+      {
+        ...request,
+        maxOutputTokens,
+      },
+      new AbortController().signal,
+    );
+
+    expect(response.text).toBe("😀".repeat(maxOutputTokens));
+    expect(Array.from(response.text)).toHaveLength(maxOutputTokens);
+    expect(response.text).not.toMatch(/[\uD800-\uDBFF]$/u);
+    expect(response.outputTokens).toBe(4_096);
+    const outputTokenCounts = api.countedTexts.filter(
+      (text) => text !== prompt,
+    );
+    expect(outputTokenCounts.length).toBeLessThanOrEqual(
+      Math.ceil(Math.log2(streamedText.length)) + 2,
+    );
+    expect(api.cancellation.cancelled).toBe(true);
+  });
+
+  it("stops binary prefix counting immediately when cancellation wins an await", async () => {
+    const api = new RecordingLanguageModelApi();
+    api.fragments = ["abcdefgh"];
+    const prompt = buildCopilotPrompt(request);
+    api.countTokensImplementation = (text) =>
+      text === prompt ? 37 : Array.from(text).length;
+    const originalCountTokens = api.countTokens.bind(api);
+    let countCalls = 0;
+    let announceProbeStarted!: () => void;
+    const probeStarted = new Promise<void>((resolve) => {
+      announceProbeStarted = resolve;
+    });
+    let resolveProbe!: (tokens: number) => void;
+    const probe = new Promise<number>((resolve) => {
+      resolveProbe = resolve;
+    });
+    api.countTokens = async (model, text, cancellation) => {
+      countCalls += 1;
+      if (countCalls === 3) {
+        announceProbeStarted();
+        return probe;
+      }
+      return originalCountTokens(model, text, cancellation);
+    };
+    const provider = new VsCodeLanguageModelProvider(api);
+    const abortController = new AbortController();
+    const operation = provider.generate(
+      {
+        ...request,
+        maxOutputTokens: 4,
+      },
+      abortController.signal,
+    );
+
+    await probeStarted;
+    abortController.abort();
+    resolveProbe(4);
+
+    await expect(operation).rejects.toBe(abortController.signal.reason);
+    expect(countCalls).toBe(3);
+    expect(api.cancellation.cancelled).toBe(true);
+    expect(api.cancellation.disposed).toBe(true);
+  });
+
   it("throws a typed error when no Copilot model is available", async () => {
     const api = new RecordingLanguageModelApi();
     api.models = [];

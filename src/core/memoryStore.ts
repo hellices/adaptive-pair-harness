@@ -43,6 +43,7 @@ interface StoredPairMemory {
   readonly version: 1;
   readonly preferences: PairPreferences;
   readonly dismissedEvidenceByRepository: Readonly<Record<string, readonly string[]>>;
+  readonly dismissedRepositoryOrder: readonly string[];
   readonly approvedEvidence: readonly ApprovedEvidence[];
 }
 
@@ -60,6 +61,11 @@ const TITLE_URI_PATTERN = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s<>"'`]+/gu;
 const TITLE_PATH_PATTERN =
   /(?:[A-Za-z]:[\\/]|(?:\.{1,2})?[\\/]|(?:[\p{L}\p{N}_.@-]+[\\/])+)[^\s<>"'`]+/gu;
 const MAX_PERSISTED_TITLE_LENGTH = 120;
+export const PAIR_MEMORY_RETENTION_LIMITS = Object.freeze({
+  approvedEvidenceSummaries: 256,
+  dismissedEvidencePerRepository: 256,
+  dismissedRepositories: 32,
+});
 const DEFAULT_PREFERENCES: PairPreferences = Object.freeze({
   interventionStyle: "balanced",
   interventionStyleExplicit: false,
@@ -69,6 +75,7 @@ const EMPTY_MEMORY: StoredPairMemory = Object.freeze({
   version: 1,
   preferences: DEFAULT_PREFERENCES,
   dismissedEvidenceByRepository: freezeDismissals({}),
+  dismissedRepositoryOrder: Object.freeze([]),
   approvedEvidence: Object.freeze([]),
 });
 
@@ -147,7 +154,21 @@ function ownDismissalsFor(
     : undefined;
 }
 
-function freezeMemory(memory: StoredPairMemory): StoredPairMemory {
+function freezeStoredMemory(memory: StoredPairMemory): StoredPairMemory {
+  return Object.freeze({
+    version: memory.version,
+    preferences: freezePreferences(memory.preferences),
+    dismissedEvidenceByRepository: freezeDismissals(
+      memory.dismissedEvidenceByRepository,
+    ),
+    dismissedRepositoryOrder: Object.freeze([
+      ...memory.dismissedRepositoryOrder,
+    ]),
+    approvedEvidence: freezeApprovedEvidence(memory.approvedEvidence),
+  });
+}
+
+function freezeMemory(memory: PairMemory): PairMemory {
   return Object.freeze({
     version: memory.version,
     preferences: freezePreferences(memory.preferences),
@@ -259,27 +280,177 @@ function validatePreferences(value: unknown): PairPreferences {
   });
 }
 
+interface ValidatedDismissals {
+  readonly dismissedEvidenceByRepository: Readonly<
+    Record<string, readonly string[]>
+  >;
+  readonly dismissedRepositoryOrder: readonly string[];
+  readonly compacted: boolean;
+}
+
+function validateDismissedEvidenceIds(
+  value: unknown,
+  path: string,
+  retain: boolean,
+): { readonly evidenceIds: readonly string[]; readonly compacted: boolean } {
+  if (!Array.isArray(value)) {
+    throw invalidMemory(
+      `${path} must be an array of strings`,
+    );
+  }
+
+  const retainedNewestFirst: string[] = [];
+  const retainedIds = new Set<string>();
+  for (let index = value.length - 1; index >= 0; index -= 1) {
+    const evidenceId = value[index];
+    if (typeof evidenceId !== "string") {
+      throw invalidMemory(
+        `${path}[${index}] must be a string; received ${JSON.stringify(evidenceId)}`,
+      );
+    }
+    if (
+      !retain ||
+      retainedNewestFirst.length >=
+        PAIR_MEMORY_RETENTION_LIMITS.dismissedEvidencePerRepository
+    ) {
+      continue;
+    }
+
+    const persistedEvidenceId = hashEvidenceIdentity(evidenceId);
+    if (retainedIds.has(persistedEvidenceId)) {
+      continue;
+    }
+    retainedIds.add(persistedEvidenceId);
+    retainedNewestFirst.push(persistedEvidenceId);
+  }
+
+  retainedNewestFirst.reverse();
+  return {
+    evidenceIds: Object.freeze(retainedNewestFirst),
+    compacted: retain && retainedNewestFirst.length !== value.length,
+  };
+}
+
 function validateDismissals(
   value: unknown,
-): Readonly<Record<string, readonly string[]>> {
+  repositoryOrderValue: unknown,
+): ValidatedDismissals {
   if (!isRecord(value)) {
     throw invalidMemory(
       `dismissedEvidenceByRepository must be an object; received ${JSON.stringify(value)}`,
     );
   }
 
-  const dismissals = createDismissalRecord();
-  for (const [repositoryId, evidenceIds] of Object.entries(value)) {
-    if (!Array.isArray(evidenceIds) || evidenceIds.some((evidenceId) => typeof evidenceId !== "string")) {
-      throw invalidMemory(
-        `dismissedEvidenceByRepository.${repositoryId} must be an array of strings; received ${JSON.stringify(evidenceIds)}`,
-      );
-    }
-
-    dismissals[repositoryId] = evidenceIds.map(hashEvidenceIdentity);
+  if (
+    repositoryOrderValue !== undefined &&
+    !Array.isArray(repositoryOrderValue)
+  ) {
+    throw invalidMemory(
+      "dismissedRepositoryOrder must be an array of strings",
+    );
   }
 
-  return freezeDismissals(dismissals);
+  const explicitlyOrderedRepositories = new Map<string, true>();
+  if (Array.isArray(repositoryOrderValue)) {
+    for (const repositoryId of repositoryOrderValue) {
+      if (typeof repositoryId !== "string") {
+        throw invalidMemory(
+          `dismissedRepositoryOrder entries must be strings; received ${JSON.stringify(repositoryId)}`,
+        );
+      }
+      if (
+        !Object.prototype.hasOwnProperty.call(value, repositoryId)
+      ) {
+        continue;
+      }
+      explicitlyOrderedRepositories.delete(repositoryId);
+      explicitlyOrderedRepositories.set(repositoryId, true);
+      if (
+        explicitlyOrderedRepositories.size >
+        PAIR_MEMORY_RETENTION_LIMITS.dismissedRepositories
+      ) {
+        const oldestRepositoryId =
+          explicitlyOrderedRepositories.keys().next().value;
+        if (oldestRepositoryId !== undefined) {
+          explicitlyOrderedRepositories.delete(oldestRepositoryId);
+        }
+      }
+    }
+  }
+
+  const unorderedCapacity =
+    PAIR_MEMORY_RETENTION_LIMITS.dismissedRepositories -
+    explicitlyOrderedRepositories.size;
+  const unorderedRepositories = new Map<string, true>();
+  let repositoryCount = 0;
+  for (const repositoryId in value) {
+    if (!Object.prototype.hasOwnProperty.call(value, repositoryId)) {
+      continue;
+    }
+    repositoryCount += 1;
+    if (
+      unorderedCapacity === 0 ||
+      explicitlyOrderedRepositories.has(repositoryId)
+    ) {
+      continue;
+    }
+    unorderedRepositories.set(repositoryId, true);
+    if (unorderedRepositories.size > unorderedCapacity) {
+      const oldestRepositoryId =
+        unorderedRepositories.keys().next().value;
+      if (oldestRepositoryId !== undefined) {
+        unorderedRepositories.delete(oldestRepositoryId);
+      }
+    }
+  }
+
+  const dismissedRepositoryOrder = Object.freeze([
+    ...unorderedRepositories.keys(),
+    ...explicitlyOrderedRepositories.keys(),
+  ]);
+  const retainedRepositories = new Set(dismissedRepositoryOrder);
+  const retainedEvidenceByRepository = new Map<
+    string,
+    readonly string[]
+  >();
+  let compacted =
+    repositoryCount !== dismissedRepositoryOrder.length ||
+    (Array.isArray(repositoryOrderValue) &&
+      (repositoryOrderValue.length !== dismissedRepositoryOrder.length ||
+        dismissedRepositoryOrder.some(
+          (repositoryId, index) =>
+            repositoryOrderValue[index] !== repositoryId,
+        )));
+
+  for (const repositoryId in value) {
+    if (!Object.prototype.hasOwnProperty.call(value, repositoryId)) {
+      continue;
+    }
+    const validated = validateDismissedEvidenceIds(
+      value[repositoryId],
+      `dismissedEvidenceByRepository.${repositoryId}`,
+      retainedRepositories.has(repositoryId),
+    );
+    if (retainedRepositories.has(repositoryId)) {
+      retainedEvidenceByRepository.set(
+        repositoryId,
+        validated.evidenceIds,
+      );
+      compacted ||= validated.compacted;
+    }
+  }
+
+  const dismissals = createDismissalRecord();
+  for (const repositoryId of dismissedRepositoryOrder) {
+    dismissals[repositoryId] =
+      retainedEvidenceByRepository.get(repositoryId) ?? Object.freeze([]);
+  }
+
+  return {
+    dismissedEvidenceByRepository: freezeDismissals(dismissals),
+    dismissedRepositoryOrder,
+    compacted,
+  };
 }
 
 function validateApprovedEvidenceKind(value: unknown, path: string): Evidence["kind"] {
@@ -292,12 +463,20 @@ function validateApprovedEvidenceKind(value: unknown, path: string): Evidence["k
   return value as Evidence["kind"];
 }
 
-function validateApprovedEvidence(value: unknown): readonly ApprovedEvidence[] {
+function validateApprovedEvidence(
+  value: unknown,
+): {
+  readonly approvedEvidence: readonly ApprovedEvidence[];
+  readonly compacted: boolean;
+} {
   if (!Array.isArray(value)) {
     throw invalidMemory(`approvedEvidence must be an array; received ${JSON.stringify(value)}`);
   }
 
-  const approvedEvidence = value.map((entry, index) => {
+  const retainedNewestFirst: ApprovedEvidence[] = [];
+  const retainedIds = new Set<string>();
+  for (let index = value.length - 1; index >= 0; index -= 1) {
+    const entry = value[index];
     if (!isRecord(entry)) {
       throw invalidMemory(
         `approvedEvidence[${index}] must be an object; received ${JSON.stringify(entry)}`,
@@ -308,23 +487,53 @@ function validateApprovedEvidence(value: unknown): readonly ApprovedEvidence[] {
       entry.kind,
       `approvedEvidence[${index}].kind`,
     );
-    return Object.freeze({
-      id: hashEvidenceIdentity(
-        validateString(entry.id, `approvedEvidence[${index}].id`),
-      ),
-      kind,
-      title: sanitizePersistedTitle(
-        validateString(entry.title, `approvedEvidence[${index}].title`),
-        kind,
-      ),
-      approvedAt: validateFiniteNumber(entry.approvedAt, `approvedEvidence[${index}].approvedAt`),
-    });
-  });
+    const id = validateString(
+      entry.id,
+      `approvedEvidence[${index}].id`,
+    );
+    const title = validateString(
+      entry.title,
+      `approvedEvidence[${index}].title`,
+    );
+    const approvedAt = validateFiniteNumber(
+      entry.approvedAt,
+      `approvedEvidence[${index}].approvedAt`,
+    );
+    if (
+      retainedNewestFirst.length >=
+      PAIR_MEMORY_RETENTION_LIMITS.approvedEvidenceSummaries
+    ) {
+      continue;
+    }
 
-  return Object.freeze(approvedEvidence);
+    const persistedEvidenceId = hashEvidenceIdentity(id);
+    if (retainedIds.has(persistedEvidenceId)) {
+      continue;
+    }
+    retainedIds.add(persistedEvidenceId);
+    retainedNewestFirst.push(
+      Object.freeze({
+        id: persistedEvidenceId,
+        kind,
+        title: sanitizePersistedTitle(title, kind),
+        approvedAt,
+      }),
+    );
+  }
+
+  retainedNewestFirst.reverse();
+  return {
+    approvedEvidence: Object.freeze(retainedNewestFirst),
+    compacted: retainedNewestFirst.length !== value.length,
+  };
 }
 
-function validateStoredMemory(value: unknown): StoredPairMemory {
+interface ValidatedStoredMemory {
+  readonly memory: StoredPairMemory;
+  readonly compacted: boolean;
+}
+
+function validateStoredMemory(value: unknown): ValidatedStoredMemory {
   if (!isRecord(value)) {
     throw invalidMemory(`persisted pair memory must be an object; received ${JSON.stringify(value)}`);
   }
@@ -333,12 +542,27 @@ function validateStoredMemory(value: unknown): StoredPairMemory {
     throw invalidMemory(`version must be 1; received ${JSON.stringify(value.version)}`);
   }
 
-  return freezeMemory({
-    version: 1,
-    preferences: validatePreferences(value.preferences),
-    dismissedEvidenceByRepository: validateDismissals(value.dismissedEvidenceByRepository),
-    approvedEvidence: validateApprovedEvidence(value.approvedEvidence),
-  });
+  const validatedDismissals = validateDismissals(
+    value.dismissedEvidenceByRepository,
+    value.dismissedRepositoryOrder,
+  );
+  const validatedApprovedEvidence = validateApprovedEvidence(
+    value.approvedEvidence,
+  );
+  return {
+    memory: freezeStoredMemory({
+      version: 1,
+      preferences: validatePreferences(value.preferences),
+      dismissedEvidenceByRepository:
+        validatedDismissals.dismissedEvidenceByRepository,
+      dismissedRepositoryOrder:
+        validatedDismissals.dismissedRepositoryOrder,
+      approvedEvidence: validatedApprovedEvidence.approvedEvidence,
+    }),
+    compacted:
+      validatedDismissals.compacted ||
+      validatedApprovedEvidence.compacted,
+  };
 }
 
 export class PairMemoryStore {
@@ -362,8 +586,16 @@ export class PairMemoryStore {
 
   public async load(): Promise<PairMemory> {
     await this.waitForPendingMutations();
-    const stored = await this.loadStoredMemory();
-    return this.scopeToRepository(stored);
+    const revision = this.revision;
+    const stored = await this.options.store.get<unknown>(this.memoryKey);
+    if (stored === undefined) {
+      return this.scopeToRepository(EMPTY_MEMORY);
+    }
+    const validated = validateStoredMemory(stored);
+    if (validated.compacted) {
+      await this.persistCompactionIfCurrent(revision);
+    }
+    return this.scopeToRepository(validated.memory);
   }
 
   private scopeToRepository(stored: StoredPairMemory): PairMemory {
@@ -387,6 +619,7 @@ export class PairMemoryStore {
 
   public async loadOrDefault(): Promise<PairMemoryRecovery> {
     await this.waitForPendingMutations();
+    const revision = this.revision;
     const stored = await this.options.store.get<unknown>(this.memoryKey);
     if (stored === undefined) {
       return {
@@ -396,8 +629,12 @@ export class PairMemoryStore {
       };
     }
     try {
+      const validated = validateStoredMemory(stored);
+      if (validated.compacted) {
+        await this.persistCompactionIfCurrent(revision);
+      }
       return {
-        memory: this.scopeToRepository(validateStoredMemory(stored)),
+        memory: this.scopeToRepository(validated.memory),
         warning: undefined,
         source: "stored",
       };
@@ -447,6 +684,7 @@ export class PairMemoryStore {
           preferences.pauseThresholdMs ?? stored.preferences.pauseThresholdMs,
       }),
       dismissedEvidenceByRepository: stored.dismissedEvidenceByRepository,
+      dismissedRepositoryOrder: stored.dismissedRepositoryOrder,
       approvedEvidence: stored.approvedEvidence,
     }));
   }
@@ -462,18 +700,35 @@ export class PairMemoryStore {
           dismissedEvidenceByRepository,
           this.options.repositoryId,
         ) ?? [];
-
-      if (!currentDismissed.includes(persistedEvidenceId)) {
-        dismissedEvidenceByRepository[this.options.repositoryId] = [
-          ...currentDismissed,
-          persistedEvidenceId,
-        ];
+      dismissedEvidenceByRepository[this.options.repositoryId] = [
+        ...currentDismissed.filter(
+          (dismissedId) => dismissedId !== persistedEvidenceId,
+        ),
+        persistedEvidenceId,
+      ].slice(
+        -PAIR_MEMORY_RETENTION_LIMITS.dismissedEvidencePerRepository,
+      );
+      const dismissedRepositoryOrder = [
+        ...stored.dismissedRepositoryOrder.filter(
+          (repositoryId) => repositoryId !== this.options.repositoryId,
+        ),
+        this.options.repositoryId,
+      ];
+      if (
+        dismissedRepositoryOrder.length >
+        PAIR_MEMORY_RETENTION_LIMITS.dismissedRepositories
+      ) {
+        const removedRepositoryId = dismissedRepositoryOrder.shift();
+        if (removedRepositoryId !== undefined) {
+          delete dismissedEvidenceByRepository[removedRepositoryId];
+        }
       }
 
       return {
         version: 1,
         preferences: stored.preferences,
         dismissedEvidenceByRepository,
+        dismissedRepositoryOrder,
         approvedEvidence: stored.approvedEvidence,
       };
     });
@@ -496,11 +751,18 @@ export class PairMemoryStore {
           approvedAt,
         }),
       );
+      if (
+        updatedApprovedEvidence.length >
+        PAIR_MEMORY_RETENTION_LIMITS.approvedEvidenceSummaries
+      ) {
+        updatedApprovedEvidence.shift();
+      }
 
       return {
         version: 1,
         preferences: stored.preferences,
         dismissedEvidenceByRepository: stored.dismissedEvidenceByRepository,
+        dismissedRepositoryOrder: stored.dismissedRepositoryOrder,
         approvedEvidence: updatedApprovedEvidence,
       };
     });
@@ -539,16 +801,47 @@ export class PairMemoryStore {
     }
   }
 
+  private persistCompactionIfCurrent(revision: number): Promise<void> {
+    const coordinator = coordinatorFor(this.options.store);
+    const compaction = coordinator.queue
+      .catch(() => undefined)
+      .then(async () => {
+        if (coordinator.revision !== revision) {
+          return;
+        }
+        const current = await this.options.store.get<unknown>(
+          this.memoryKey,
+        );
+        if (current === undefined) {
+          return;
+        }
+        const validated = validateStoredMemory(current);
+        if (
+          validated.compacted &&
+          coordinator.revision === revision
+        ) {
+          await this.saveStoredMemory(validated.memory);
+        }
+      });
+    coordinator.queue = compaction.then(
+      () => undefined,
+      () => undefined,
+    );
+    return compaction;
+  }
+
   private async loadStoredMemory(): Promise<StoredPairMemory> {
     const stored = await this.options.store.get<unknown>(this.memoryKey);
     if (stored === undefined) {
       return EMPTY_MEMORY;
     }
 
-    return validateStoredMemory(stored);
+    const validated = validateStoredMemory(stored);
+    return validated.memory;
   }
 
   private async saveStoredMemory(memory: StoredPairMemory): Promise<void> {
-    await this.options.store.update(this.memoryKey, freezeMemory(memory));
+    const compacted = validateStoredMemory(memory).memory;
+    await this.options.store.update(this.memoryKey, compacted);
   }
 }

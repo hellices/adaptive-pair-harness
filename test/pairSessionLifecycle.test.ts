@@ -195,6 +195,32 @@ describe("explicit pair session lifecycle", () => {
     expect(ports.clearTransientState).toHaveBeenCalledOnce();
   });
 
+  it("suppresses listener registration failure from a replaced generation", async () => {
+    const failure = new Error("stale listener registration");
+    const lifecycleReference: {
+      current: PairSessionLifecycle | undefined;
+    } = { current: undefined };
+    const ports = {
+      prepare: vi.fn(async () => undefined),
+      registerDocumentListeners: vi.fn(() => {
+        lifecycleReference.current?.stop();
+        throw failure;
+      }),
+      cancelPendingWork: vi.fn(),
+      clearTransientState: vi.fn(),
+    };
+    const lifecycle = new PairSessionLifecycle(() => true, ports);
+    lifecycleReference.current = lifecycle;
+
+    await expect(lifecycle.start()).resolves.toMatchObject({
+      kind: "already-stopped",
+      active: false,
+    });
+    expect(lifecycle.active).toBe(false);
+    expect(ports.cancelPendingWork).toHaveBeenCalledOnce();
+    expect(ports.clearTransientState).toHaveBeenCalledOnce();
+  });
+
   it("keeps startup state cleared when deferred preparation resolves after stop", async () => {
     const preparation = deferred<void>();
     const previousTexts = new Map<string, string>();

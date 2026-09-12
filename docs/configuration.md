@@ -63,6 +63,28 @@ retain their selected behavior. Repository dismissals remain isolated per
 document-owning workspace root, including multi-root and `vscode-remote:`
 workspaces.
 
+### Retention limits
+
+The version-1 global-state record has fixed retention limits:
+
+| Persisted item | Limit | Eviction order |
+| --- | ---: | --- |
+| Dismissed evidence IDs | 256 per repository | Oldest unique ID first |
+| Repositories containing dismissals | 32 | Least recently dismissed-in repository first |
+| Approved evidence summaries | 256 total | Oldest unique approval first |
+
+Recording an existing dismissal or approval removes its older occurrence and
+appends the new occurrence, so the most recent unique entries survive.
+Repository recency is stored explicitly and does not merge dismissal sets
+across roots. The preferences object, including
+`interventionStyleExplicit`, is never subject to evidence retention.
+
+Valid legacy records without repository-order metadata and valid oversized
+current records are compacted deterministically during load. Compacted data is
+written back only if no newer memory mutation has won the serialization fence.
+Every save applies the same limits before writing, and validation retains only
+bounded collections rather than first cloning the full persisted arrays.
+
 ## Provider setup
 
 ### `local-template`

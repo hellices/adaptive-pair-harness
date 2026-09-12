@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Evidence } from "../src/core/types";
 import {
   hashEvidenceIdentity,
+  PAIR_MEMORY_RETENTION_LIMITS,
   PairMemoryStore,
 } from "../src/core/memoryStore";
 
@@ -30,6 +31,10 @@ interface StoredValue {
 
 interface PersistedMemory {
   readonly approvedEvidence?: readonly Readonly<Record<string, unknown>>[];
+  readonly dismissedEvidenceByRepository?: Readonly<
+    Record<string, readonly string[]>
+  >;
+  readonly dismissedRepositoryOrder?: readonly string[];
 }
 
 class InMemoryKeyValueStore {
@@ -245,6 +250,254 @@ describe("PairMemoryStore", () => {
         },
       ],
     });
+  });
+
+  it("compacts legacy dismissal overflow on load to the most recent unique evidence and repositories", async () => {
+    const repositoryIds = Array.from(
+      {
+        length:
+          PAIR_MEMORY_RETENTION_LIMITS.dismissedRepositories + 1,
+      },
+      (_, index) => `/workspace/legacy-${index}`,
+    );
+    const retainedRepositoryId = repositoryIds.at(-1)!;
+    const evidenceIds = Array.from(
+      {
+        length:
+          PAIR_MEMORY_RETENTION_LIMITS.dismissedEvidencePerRepository + 1,
+      },
+      (_, index) => `legacy-evidence-${index}`,
+    );
+    const mostRecentDuplicate = evidenceIds[0]!;
+    const oversizedEvidenceIds = [
+      ...evidenceIds,
+      mostRecentDuplicate,
+    ];
+    const dismissedEvidenceByRepository = Object.fromEntries(
+      repositoryIds.map((repositoryId) => [
+        repositoryId,
+        repositoryId === retainedRepositoryId
+          ? oversizedEvidenceIds
+          : [`evidence-for-${repositoryId}`],
+      ]),
+    );
+    const store = new InMemoryKeyValueStore();
+    await store.update("adaptive-pair.memory", {
+      version: 1,
+      preferences: {
+        interventionStyle: "balanced",
+        interventionStyleExplicit: true,
+        pauseThresholdMs: 1_000,
+      },
+      dismissedEvidenceByRepository,
+      approvedEvidence: [],
+    });
+    const memoryStore = new PairMemoryStore({
+      store,
+      repositoryId: retainedRepositoryId,
+    });
+
+    const memory = await memoryStore.load();
+
+    const expectedEvidenceIds = [
+      ...evidenceIds.slice(2),
+      mostRecentDuplicate,
+    ].map(hashEvidenceIdentity);
+    expect(memory.preferences.interventionStyleExplicit).toBe(true);
+    expect(
+      memory.dismissedEvidenceByRepository[retainedRepositoryId],
+    ).toEqual(expectedEvidenceIds);
+
+    const persisted = store.snapshot(
+      "adaptive-pair.memory",
+    ) as PersistedMemory;
+    const expectedRepositoryOrder = repositoryIds.slice(1);
+    expect(persisted.dismissedRepositoryOrder).toEqual(
+      expectedRepositoryOrder,
+    );
+    expect(
+      Object.keys(persisted.dismissedEvidenceByRepository ?? {}),
+    ).toEqual(expectedRepositoryOrder);
+    expect(
+      persisted.dismissedEvidenceByRepository?.[retainedRepositoryId],
+    ).toEqual(expectedEvidenceIds);
+    expect(
+      persisted.dismissedEvidenceByRepository?.[repositoryIds[0]!],
+    ).toBeUndefined();
+  });
+
+  it("compacts approval overflow on load to the most recent unique summaries", async () => {
+    expect(
+      PAIR_MEMORY_RETENTION_LIMITS.approvedEvidenceSummaries,
+    ).toBe(256);
+    const approvalLimit =
+      PAIR_MEMORY_RETENTION_LIMITS.approvedEvidenceSummaries;
+    const uniqueApprovals = Array.from(
+      {
+        length: approvalLimit + 1,
+      },
+      (_, index) => ({
+        id: `approved-evidence-${index}`,
+        kind: "public-api-change",
+        title: `Approved summary ${index}`,
+        approvedAt: index,
+      }),
+    );
+    const latestDuplicate = {
+      ...uniqueApprovals[0]!,
+      title: "Most recent approved summary",
+      approvedAt: uniqueApprovals.length,
+    };
+    const store = new InMemoryKeyValueStore();
+    await store.update("adaptive-pair.memory", {
+      version: 1,
+      preferences: {
+        interventionStyle: "balanced",
+        interventionStyleExplicit: false,
+        pauseThresholdMs: 1_000,
+      },
+      dismissedEvidenceByRepository: {},
+      approvedEvidence: [...uniqueApprovals, latestDuplicate],
+    });
+    const memoryStore = new PairMemoryStore({
+      store,
+      repositoryId: repositoryA,
+    });
+
+    const memory = await memoryStore.load();
+
+    expect(memory.approvedEvidence).toHaveLength(
+      approvalLimit,
+    );
+    expect(memory.approvedEvidence[0]?.id).toBe(
+      hashEvidenceIdentity(uniqueApprovals[2]!.id),
+    );
+    expect(memory.approvedEvidence.at(-1)).toEqual({
+      id: hashEvidenceIdentity(latestDuplicate.id),
+      kind: latestDuplicate.kind,
+      title: latestDuplicate.title,
+      approvedAt: latestDuplicate.approvedAt,
+    });
+    const persisted = store.snapshot(
+      "adaptive-pair.memory",
+    ) as PersistedMemory;
+    expect(persisted.approvedEvidence).toEqual(memory.approvedEvidence);
+  });
+
+  it("bounds approved summaries before saving a new unique approval", async () => {
+    const approvalLimit =
+      PAIR_MEMORY_RETENTION_LIMITS.approvedEvidenceSummaries;
+    const existingApprovals = Array.from(
+      { length: approvalLimit },
+      (_, index) => ({
+        id: `existing-approval-${index}`,
+        kind: evidence.kind,
+        title: `Existing approval ${index}`,
+        approvedAt: index,
+      }),
+    );
+    const store = new InMemoryKeyValueStore();
+    await store.update("adaptive-pair.memory", {
+      version: 1,
+      preferences: {
+        interventionStyle: "eco",
+        interventionStyleExplicit: true,
+        pauseThresholdMs: 1_000,
+      },
+      dismissedEvidenceByRepository: {},
+      approvedEvidence: existingApprovals,
+    });
+    const memoryStore = new PairMemoryStore({
+      store,
+      repositoryId: repositoryA,
+    });
+    const newestEvidence = {
+      ...evidence,
+      id: "newest-approved-evidence",
+      title: "Newest approved summary",
+    };
+
+    await memoryStore.approveEvidence(newestEvidence, approvalLimit);
+
+    const persisted = store.snapshot(
+      "adaptive-pair.memory",
+    ) as PersistedMemory;
+    expect(persisted.approvedEvidence).toHaveLength(approvalLimit);
+    expect(persisted.approvedEvidence?.[0]?.id).toBe(
+      hashEvidenceIdentity(existingApprovals[1]!.id),
+    );
+    expect(persisted.approvedEvidence?.at(-1)).toEqual({
+      id: hashEvidenceIdentity(newestEvidence.id),
+      kind: newestEvidence.kind,
+      title: newestEvidence.title,
+      approvedAt: approvalLimit,
+    });
+  });
+
+  it("refreshes dismissal recency while bounding evidence and repositories before save", async () => {
+    const repositoryIds = Array.from(
+      {
+        length: PAIR_MEMORY_RETENTION_LIMITS.dismissedRepositories,
+      },
+      (_, index) => `/workspace/current-${index}`,
+    );
+    const refreshedRepositoryId = repositoryIds[0]!;
+    const existingEvidenceIds = Array.from(
+      {
+        length:
+          PAIR_MEMORY_RETENTION_LIMITS.dismissedEvidencePerRepository,
+      },
+      (_, index) => `current-evidence-${index}`,
+    );
+    const store = new InMemoryKeyValueStore();
+    await store.update("adaptive-pair.memory", {
+      version: 1,
+      preferences: {
+        interventionStyle: "active",
+        interventionStyleExplicit: true,
+        pauseThresholdMs: 2_000,
+      },
+      dismissedEvidenceByRepository: Object.fromEntries(
+        repositoryIds.map((repositoryId) => [
+          repositoryId,
+          repositoryId === refreshedRepositoryId
+            ? existingEvidenceIds
+            : [`evidence-for-${repositoryId}`],
+        ]),
+      ),
+      dismissedRepositoryOrder: repositoryIds,
+      approvedEvidence: [],
+    });
+    const memoryStore = new PairMemoryStore({
+      store,
+      repositoryId: refreshedRepositoryId,
+    });
+
+    await memoryStore.dismissEvidence(existingEvidenceIds[0]!);
+    await memoryStore
+      .forRepository("/workspace/newest")
+      .dismissEvidence("newest-evidence");
+
+    const persisted = store.snapshot(
+      "adaptive-pair.memory",
+    ) as PersistedMemory;
+    expect(persisted.dismissedRepositoryOrder).toEqual([
+      ...repositoryIds.slice(2),
+      refreshedRepositoryId,
+      "/workspace/newest",
+    ]);
+    expect(
+      persisted.dismissedEvidenceByRepository?.[refreshedRepositoryId],
+    ).toEqual(
+      [...existingEvidenceIds.slice(1), existingEvidenceIds[0]!].map(
+        hashEvidenceIdentity,
+      ),
+    );
+    expect(
+      persisted.dismissedEvidenceByRepository?.[repositoryIds[1]!],
+    ).toBeUndefined();
+    expect(persisted.dismissedEvidenceByRepository?.["/workspace/newest"])
+      .toEqual([hashEvidenceIdentity("newest-evidence")]);
   });
 
   it("persists preferences and repository-scoped dismissals", async () => {

@@ -135,6 +135,11 @@ Dismissals are stored only under the workspace root that owns the evidence.
 Persisted evidence identities are SHA-256 hashes; approvals retain only the
 kind, approval time, and a sanitized title bounded to 120 characters, never a
 raw evidence URI, source buffer, reference, or secret.
+Retention is also bounded to the 256 most recent unique dismissals in each of
+the 32 most recently used repository entries and the 256 most recent unique
+approved summaries. Repeating an entry refreshes its position without creating
+a duplicate. Valid legacy or oversized records are compacted on load and
+before saves; preference values and the explicit-selection marker are retained.
 
 ## Using `@pair` Chat and inline comments
 
@@ -227,6 +232,11 @@ See the repository documentation for the full configuration reference:
   closing markup, package names, or ordinary prose as local paths.
 - The latest local inline question is **not** forwarded back to remote chat
   providers.
+- VS Code global-state memory retains at most 256 unique dismissal hashes per
+  repository, 32 repository entries, and 256 unique approved summaries.
+  Retention is deterministic: oldest entries are evicted so the newest survive,
+  repository isolation is preserved, and intervention preferences are not
+  part of eviction.
 - Token budgets are enforced per 10-minute window and survive configuration or
   API-key runtime rebuilds:
   - `eco`: 2 calls / 2,000 input / 360 output tokens
