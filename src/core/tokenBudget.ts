@@ -16,6 +16,14 @@ interface Reservation {
 
 export type TokenBudgetReservationId = number;
 
+export type BudgetDenialReason =
+  | "call-limit"
+  | "input-token-limit"
+  | "output-token-limit"
+  | "input-request-too-large"
+  | "output-request-too-large"
+  | "empty-output-reservation";
+
 export type BudgetDecision =
   | {
       readonly allowed: true;
@@ -31,7 +39,16 @@ export type BudgetDecision =
         | "call-limit"
         | "input-token-limit"
         | "output-token-limit";
+      readonly retryable: true;
       readonly retryAfterMs: number;
+    }
+  | {
+      readonly allowed: false;
+      readonly reason:
+        | "input-request-too-large"
+        | "output-request-too-large"
+        | "empty-output-reservation";
+      readonly retryable: false;
     };
 
 export interface BudgetSnapshot {
@@ -70,6 +87,31 @@ export class TokenBudget {
 
     const normalizedInputTokens = normalizeTokenCount(inputTokens);
     const normalizedOutputTokens = normalizeTokenCount(outputTokens);
+    if (normalizedOutputTokens === 0) {
+      return {
+        allowed: false,
+        reason: "empty-output-reservation",
+        retryable: false,
+      };
+    }
+    if (normalizedInputTokens > this.config.maxInputTokens) {
+      return {
+        allowed: false,
+        reason: "input-request-too-large",
+        retryable: false,
+      };
+    }
+    if (
+      normalizedOutputTokens > this.config.maxOutputTokensPerCall ||
+      normalizedOutputTokens > this.config.maxOutputTokens
+    ) {
+      return {
+        allowed: false,
+        reason: "output-request-too-large",
+        retryable: false,
+      };
+    }
+
     const currentInputTokens = this.currentInputTokens();
     const currentOutputTokens = this.currentOutputTokens();
     const callLimitExceeded =
@@ -78,8 +120,6 @@ export class TokenBudget {
       currentInputTokens + normalizedInputTokens >
       this.config.maxInputTokens;
     const outputLimitExceeded =
-      normalizedOutputTokens === 0 ||
-      normalizedOutputTokens > this.config.maxOutputTokensPerCall ||
       currentOutputTokens + normalizedOutputTokens >
         this.config.maxOutputTokens;
 
@@ -125,14 +165,12 @@ export class TokenBudget {
           )
         : 0,
       outputLimitExceeded
-        ? normalizedOutputTokens === 0
-          ? this.retryAfterForNextExpiry(now)
-          : this.retryAfterForTokenCapacity(
-              now,
-              normalizedOutputTokens,
-              "outputTokens",
-              this.config.maxOutputTokens,
-            )
+        ? this.retryAfterForTokenCapacity(
+            now,
+            normalizedOutputTokens,
+            "outputTokens",
+            this.config.maxOutputTokens,
+          )
         : 0,
     ];
     const reason = callLimitExceeded
@@ -144,6 +182,7 @@ export class TokenBudget {
     return {
       allowed: false,
       reason,
+      retryable: true,
       retryAfterMs: Math.max(...relevantRetryTimes),
     };
   }

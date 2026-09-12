@@ -8,6 +8,27 @@ export interface PairDisposable {
   dispose(): void;
 }
 
+export const runCleanupSteps = (
+  steps: readonly (() => void)[],
+  message: string,
+  initialErrors: readonly unknown[] = [],
+): void => {
+  const errors = [...initialErrors];
+  for (const step of steps) {
+    try {
+      step();
+    } catch (error: unknown) {
+      errors.push(error);
+    }
+  }
+  if (errors.length === 1) {
+    throw errors[0];
+  }
+  if (errors.length > 1) {
+    throw new AggregateError(errors, message);
+  }
+};
+
 export const createRuntimeAfterSecretLookup = async <TRuntime>(
   lookupSecret: () => PromiseLike<string | undefined>,
   isDisposed: () => boolean,
@@ -52,8 +73,8 @@ export class PairSessionLifecycle {
     | {
         readonly generation: number;
         readonly promise: Promise<PairSessionActionResult>;
-      readonly abortController: AbortController;
-    }
+        readonly abortController: AbortController;
+      }
     | undefined;
   private isDisposed = false;
   private isActive = false;
@@ -128,12 +149,11 @@ export class PairSessionLifecycle {
     const pendingStart = this.pendingStart;
     this.generation += 1;
     this.pendingStart = undefined;
-    pendingStart?.abortController.abort();
-    this.isActive = false;
-    this.listener?.dispose();
-    this.listener = undefined;
-    this.ports.cancelPendingWork();
-    this.ports.clearTransientState();
+    this.cleanupStoppedState(
+      pendingStart?.abortController,
+      [],
+      "Failed to stop the Adaptive Pair session cleanly.",
+    );
     return {
       kind: wasActive ? "stopped" : "already-stopped",
       active: false,
@@ -147,8 +167,8 @@ export class PairSessionLifecycle {
     if (this.isDisposed) {
       return;
     }
-    this.stop();
     this.isDisposed = true;
+    this.stop();
   }
 
   private async startOnce(
@@ -173,7 +193,7 @@ export class PairSessionLifecycle {
           message: "Adaptive Pair session remained stopped.",
         };
       }
-      this.cleanupFailedStart(error);
+      this.cleanupFailedStart(error, abortController);
     }
     if (!preparationContext.isCurrent()) {
       return {
@@ -183,8 +203,11 @@ export class PairSessionLifecycle {
       };
     }
     if (!this.isEnabled()) {
-      this.ports.cancelPendingWork();
-      this.ports.clearTransientState();
+      this.cleanupStoppedState(
+        abortController,
+        [],
+        "Failed to roll back disabled Adaptive Pair startup.",
+      );
       return {
         kind: "already-stopped",
         active: false,
@@ -203,14 +226,10 @@ export class PairSessionLifecycle {
           message: "Adaptive Pair session remained stopped.",
         };
       }
-      this.cleanupFailedStart(error);
+      this.cleanupFailedStart(error, abortController);
     }
     if (!preparationContext.isCurrent()) {
-      try {
-        listener.dispose();
-      } catch {
-        // A replaced generation owns cleanup and stale failures stay suppressed.
-      }
+      listener.dispose();
       return {
         kind: "already-stopped",
         active: false,
@@ -226,18 +245,36 @@ export class PairSessionLifecycle {
     };
   }
 
-  private cleanupFailedStart(error: unknown): never {
-    try {
-      this.ports.cancelPendingWork();
-    } catch {
-      // Preserve the startup failure while still attempting all cleanup.
-    }
-    try {
-      this.ports.clearTransientState();
-    } catch {
-      // Preserve the startup failure.
-    }
+  private cleanupFailedStart(
+    error: unknown,
+    abortController: AbortController,
+  ): never {
+    this.cleanupStoppedState(
+      abortController,
+      [error],
+      "Adaptive Pair startup and rollback both failed.",
+    );
     throw error;
+  }
+
+  private cleanupStoppedState(
+    abortController: AbortController | undefined,
+    initialErrors: readonly unknown[],
+    message: string,
+  ): void {
+    const listener = this.listener;
+    this.listener = undefined;
+    this.isActive = false;
+    runCleanupSteps(
+      [
+        () => abortController?.abort(),
+        () => listener?.dispose(),
+        () => this.ports.cancelPendingWork(),
+        () => this.ports.clearTransientState(),
+      ],
+      message,
+      initialErrors,
+    );
   }
 }
 

@@ -60,6 +60,10 @@ const vscodeState = vi.hoisted(() => ({
     undefined as Error | undefined,
   listenerRegistrationFailureAt:
     undefined as number | undefined,
+  listenerDisposalFailureAt:
+    undefined as number | undefined,
+  listenerDisposalOrder: [] as number[],
+  commentControllerDisposed: false,
   statusItems: [] as TestStatusItem[],
   commentThreads: [] as TestCommentThread[],
   diagnostics: [] as Array<{
@@ -142,8 +146,9 @@ vi.mock("vscode", () => {
     listener: (value: T) => void,
   ) => {
     vscodeState.listenerRegistrationCallCount += 1;
+    const registrationNumber = vscodeState.listenerRegistrationCallCount;
     if (
-      vscodeState.listenerRegistrationCallCount ===
+      registrationNumber ===
       vscodeState.listenerRegistrationFailureAt
     ) {
       throw vscodeState.listenerRegistrationFailure;
@@ -151,9 +156,17 @@ vi.mock("vscode", () => {
     listeners.push(listener);
     return {
       dispose: () => {
+        vscodeState.listenerDisposalOrder.push(registrationNumber);
         const index = listeners.indexOf(listener);
         if (index >= 0) {
           listeners.splice(index, 1);
+        }
+        if (
+          registrationNumber === vscodeState.listenerDisposalFailureAt
+        ) {
+          throw new Error(
+            `listener disposal ${registrationNumber} failed`,
+          );
         }
       },
     };
@@ -196,7 +209,9 @@ vi.mock("vscode", () => {
           vscodeState.commentThreads.push(thread);
           return thread;
         },
-        dispose: () => undefined,
+        dispose: () => {
+          vscodeState.commentControllerDisposed = true;
+        },
       }),
     },
     extensions: { all: [] },
@@ -389,6 +404,9 @@ beforeEach(() => {
   vscodeState.listenerRegistrationCallCount = 0;
   vscodeState.listenerRegistrationFailure = undefined;
   vscodeState.listenerRegistrationFailureAt = undefined;
+  vscodeState.listenerDisposalFailureAt = undefined;
+  vscodeState.listenerDisposalOrder.length = 0;
+  vscodeState.commentControllerDisposed = false;
   vscodeState.statusItems.length = 0;
   vscodeState.commentThreads.length = 0;
   vscodeState.diagnostics.length = 0;
@@ -438,6 +456,31 @@ describe("PairRuntime lifecycle ownership", () => {
       runtime.dispose();
     },
   );
+
+  it("disposes every listener and later runtime resource when one listener throws", async () => {
+    vscodeState.listenerDisposalFailureAt = 3;
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+
+    expect(() => runtime.dispose()).toThrow(
+      "listener disposal 3 failed",
+    );
+
+    expect(vscodeState.listenerDisposalOrder).toEqual([3, 2, 1]);
+    expect(vscodeState.openListeners).toHaveLength(0);
+    expect(vscodeState.closeListeners).toHaveLength(0);
+    expect(vscodeState.changeListeners).toHaveLength(0);
+    expect(vscodeState.commentControllerDisposed).toBe(true);
+    expect(vscodeState.statusItems[0]?.disposed).toBe(true);
+    expect(runtime.isSessionActive()).toBe(false);
+    expect(() => runtime.dispose()).not.toThrow();
+  });
 
   it("seeds file and vscode-remote TypeScript documents but rejects unrelated schemes and languages", async () => {
     const remoteUri =
@@ -1936,6 +1979,9 @@ describe("PairRuntime lifecycle ownership", () => {
         remainingInputTokens: 500,
         remainingOutputTokens: 180,
       });
+      expect(vscodeState.statusItems[0]?.text).toContain(
+        "remote input-request-too-large; local-template fallback",
+      );
       runtime.dispose();
     },
   );

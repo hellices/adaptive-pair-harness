@@ -25,6 +25,7 @@ import type {
 } from "../core/modelRouter";
 import { TypeScriptSemanticAnalyzer } from "../core/semanticAnalyzer";
 import { TokenBudget } from "../core/tokenBudget";
+import type { BudgetDenialReason } from "../core/tokenBudget";
 import type {
   EditEpisode,
   Evidence,
@@ -56,6 +57,7 @@ import {
   diagnosticCodeReference,
   selectManualEvidence,
   repositoryIdentityForDocument,
+  runCleanupSteps,
   stableDiagnosticEvidenceId,
   shouldSuppressCancellation,
 } from "./pairRuntimeSupport";
@@ -298,12 +300,20 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
 
   public stopSession(): PairSessionActionResult {
     this.invocationGate.setActive(false);
-    const result = this.sessionLifecycle.stop();
     this.effectiveProvider = this.options.config.provider;
     this.controlNotice = undefined;
     this.statusDetail = this.inactiveStatusDetail();
-    this.publishSession();
-    this.renderStatus();
+    let result!: PairSessionActionResult;
+    runCleanupSteps(
+      [
+        () => {
+          result = this.sessionLifecycle.stop();
+        },
+        () => this.publishSession(),
+        () => this.renderStatus(),
+      ],
+      "Failed to stop the Adaptive Pair runtime cleanly.",
+    );
     return result;
   }
 
@@ -415,19 +425,17 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
 
   private registerDocumentListeners(): vscode.Disposable {
     const listeners: vscode.Disposable[] = [];
-    const disposeListeners = (preserveFailure: boolean): void => {
-      let disposalFailure: unknown;
-      for (const listener of listeners.reverse()) {
-        try {
-          listener.dispose();
-        } catch (error: unknown) {
-          disposalFailure ??= error;
-        }
-      }
-      listeners.length = 0;
-      if (!preserveFailure && disposalFailure !== undefined) {
-        throw disposalFailure;
-      }
+    const disposeListeners = (
+      initialErrors: readonly unknown[] = [],
+    ): void => {
+      const registeredListeners = listeners.splice(0).reverse();
+      runCleanupSteps(
+        registeredListeners.map(
+          (listener) => () => listener.dispose(),
+        ),
+        "Multiple Adaptive Pair document-listener cleanups failed.",
+        initialErrors,
+      );
     };
     try {
       listeners.push(
@@ -454,12 +462,12 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
         }),
       );
     } catch (error: unknown) {
-      disposeListeners(true);
+      disposeListeners([error]);
       throw error;
     }
     return {
       dispose: () => {
-        disposeListeners(false);
+        disposeListeners();
       },
     };
   }
@@ -1021,7 +1029,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   }
 
   private fallbackForBudget(
-    reason: "call-limit" | "input-token-limit" | "output-token-limit",
+    reason: BudgetDenialReason,
     request: ModelRequest,
     signal: AbortSignal,
   ): Promise<ModelResponse> {
@@ -1317,15 +1325,20 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     }
     this.disposed = true;
     this.invocationGate.setActive(false);
-    this.sessionLifecycle.dispose();
     this.effectiveProvider = this.options.config.provider;
     this.controlNotice = undefined;
     this.statusDetail = this.inactiveStatusDetail();
-    this.publishSession();
-    this.aggregator.dispose();
-    this.scheduler.dispose();
-    this.inlineController.dispose();
-    this.status.dispose();
+    runCleanupSteps(
+      [
+        () => this.sessionLifecycle.dispose(),
+        () => this.publishSession(),
+        () => this.aggregator.dispose(),
+        () => this.scheduler.dispose(),
+        () => this.inlineController.dispose(),
+        () => this.status.dispose(),
+      ],
+      "Failed to dispose the Adaptive Pair runtime cleanly.",
+    );
   }
 }
 

@@ -1306,3 +1306,76 @@
 - The analyzer remains intentionally per-document and does not resolve
   cross-module runtime bindings; this change only normalizes equivalent local
   declaration/export syntax.
+
+---
+
+## Token budget and lifecycle cleanup follow-up (2026-09-13)
+
+### Corrections implemented
+
+- `TokenBudget.tryReserve` now classifies input requests above the total window
+  maximum, output requests above either the per-call or total window maximum,
+  and zero-output reservations before computing expiry-based delays.
+- Impossible reservations return an explicit `retryable: false` decision with
+  a specific request-level reason and no `retryAfterMs`. Temporary call/input/
+  output exhaustion retains `retryable: true` and the time at which enough
+  occupied capacity expires.
+- Exact input/output boundaries remain admissible. Remote callers continue to
+  fall back locally without dispatching or consuming budget, and surface the
+  new non-retryable reason in runtime status.
+- Cleanup now runs through an all-attempted cleanup primitive. A single failure
+  is rethrown unchanged; multiple failures are surfaced as an `AggregateError`
+  in deterministic attempt order.
+- Session stop, dispose, disabled-start rollback, and failed-start rollback
+  clear active/listener state before cleanup, abort pending startup, attempt
+  listener disposal, cancellation, and transient-state clearing, and only then
+  surface failures. Disposal marks the lifecycle disposed before cleanup.
+- Document-listener composites detach and attempt every registered listener in
+  reverse registration order, including registration rollback. Runtime stop
+  and disposal continue through session publication, aggregator, scheduler,
+  inline controller, and status resources even if listener cleanup fails.
+
+### TDD evidence
+
+- RED: the focused budget/lifecycle/runtime run reported **12 failures and 62
+  passes**. Failures demonstrated finite zero-delay decisions for impossible
+  reservations, missing retryability discrimination, early lifecycle cleanup
+  termination, cleanup-error loss, incomplete runtime disposal, and the old
+  caller fallback reason.
+- GREEN: the same three focused suites passed with **74 tests**, covering
+  oversized input, per-call and total oversized output, exact boundaries,
+  empty reservations, expiry-backed retry delays, local fallback, ordered
+  multi-listener disposal, stop failure aggregation, disposal finality, and
+  startup rollback aggregation.
+- The existing serialized-request budget assertion was updated to require the
+  non-retryable oversized-input decision and absence of `retryAfterMs`.
+
+### Verification
+
+- Focused budget/lifecycle/runtime suites: **PASS — 3 files, 74 tests**
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **17 files, 396 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 89.46%, branches 81.55%, functions 92.37%, lines 89.59%
+- `npm run package`: **PASS — 156 files, 4.35 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript` only**
+- VSIX content and compiled-marker scans: **PASS**
+  - non-retryable budget reasons and aggregate cleanup paths are present in
+    compiled and packaged output;
+  - project source, tests, coverage, private review material, source maps,
+    workspace, and CI files are absent.
+- Production and packaged secret-pattern and fake-URL scans: **PASS**
+- Packaged repository, bugs, and homepage metadata assertions: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review found no remaining high-confidence budget retry,
+  listener ordering, lifecycle state-finalization, runtime disposal, or
+  packaging issue.
+- Live VS Code listener disposal and GitHub Copilot dispatch were unavailable
+  in this non-interactive environment. Deterministic adapter failures and
+  injected official-token counts cover the changed boundaries.

@@ -36,6 +36,102 @@ describe("TokenBudget", () => {
     });
   });
 
+  it.each([
+    ["input", 51, 1, "input-request-too-large"],
+    ["per-call output", 1, 26, "output-request-too-large"],
+    ["window output", 1, 21, "output-request-too-large"],
+  ] as const)(
+    "rejects impossible %s reservations without a retry delay",
+    (_label, inputTokens, outputTokens, reason) => {
+      const budget = new TokenBudget({
+        windowMs: 1_000,
+        maxCalls: 10,
+        maxInputTokens: 50,
+        maxOutputTokens: 20,
+        maxOutputTokensPerCall: 25,
+      });
+
+      const decision = budget.tryReserve(inputTokens, outputTokens, 0);
+
+      expect(decision).toEqual({
+        allowed: false,
+        retryable: false,
+        reason,
+      });
+      expect("retryAfterMs" in decision).toBe(false);
+    },
+  );
+
+  it("accepts requests exactly at every immutable token boundary", () => {
+    const budget = new TokenBudget({
+      windowMs: 1_000,
+      maxCalls: 1,
+      maxInputTokens: 50,
+      maxOutputTokens: 25,
+      maxOutputTokensPerCall: 25,
+    });
+
+    expect(budget.tryReserve(50, 25, 0)).toMatchObject({
+      allowed: true,
+      remainingInputTokens: 0,
+      remainingOutputTokens: 0,
+    });
+  });
+
+  it("rejects an empty output reservation as non-retryable", () => {
+    const budget = new TokenBudget({
+      windowMs: 1_000,
+      maxCalls: 1,
+      maxInputTokens: 50,
+      maxOutputTokens: 25,
+      maxOutputTokensPerCall: 25,
+    });
+
+    const decision = budget.tryReserve(0, 0, 0);
+
+    expect(decision).toEqual({
+      allowed: false,
+      retryable: false,
+      reason: "empty-output-reservation",
+    });
+    expect("retryAfterMs" in decision).toBe(false);
+  });
+
+  it.each([
+    ["input", 40, 10, 11, 1, "input-token-limit"],
+    ["output", 10, 20, 1, 11, "output-token-limit"],
+  ] as const)(
+    "keeps a retry delay when occupied %s capacity will expire",
+    (
+      _label,
+      reservedInput,
+      reservedOutput,
+      requestedInput,
+      requestedOutput,
+      reason,
+    ) => {
+      const budget = new TokenBudget({
+        windowMs: 1_000,
+        maxCalls: 10,
+        maxInputTokens: 50,
+        maxOutputTokens: 30,
+        maxOutputTokensPerCall: 20,
+      });
+      expect(
+        budget.tryReserve(reservedInput, reservedOutput, 100).allowed,
+      ).toBe(true);
+
+      expect(
+        budget.tryReserve(requestedInput, requestedOutput, 200),
+      ).toEqual({
+        allowed: false,
+        retryable: true,
+        reason,
+        retryAfterMs: 900,
+      });
+    },
+  );
+
   it("expires reservations exactly at the window boundary", () => {
     const budget = new TokenBudget({
       windowMs: 10,

@@ -51,6 +51,73 @@ describe("explicit pair session lifecycle", () => {
     expect(ports.clearTransientState).toHaveBeenCalledOnce();
   });
 
+  it("attempts every stop cleanup in order and leaves the session stopped when cleanup fails", async () => {
+    const order: string[] = [];
+    const listenerFailure = new Error("listener disposal failed");
+    const cancellationFailure = new Error("request cancellation failed");
+    const listener = {
+      dispose: vi.fn(() => {
+        order.push("listener");
+        throw listenerFailure;
+      }),
+    };
+    const ports = {
+      prepare: vi.fn(async () => undefined),
+      registerDocumentListeners: vi.fn(() => listener),
+      cancelPendingWork: vi.fn(() => {
+        order.push("cancel");
+        throw cancellationFailure;
+      }),
+      clearTransientState: vi.fn(() => {
+        order.push("clear");
+      }),
+    };
+    const lifecycle = new PairSessionLifecycle(() => true, ports);
+    await lifecycle.start();
+
+    let failure: unknown;
+    try {
+      lifecycle.stop();
+    } catch (error: unknown) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).toEqual([
+      listenerFailure,
+      cancellationFailure,
+    ]);
+    expect(order).toEqual(["listener", "cancel", "clear"]);
+    expect(lifecycle.active).toBe(false);
+  });
+
+  it("marks the lifecycle disposed before propagating stop cleanup failure", async () => {
+    const listenerFailure = new Error("listener disposal failed");
+    const ports = {
+      prepare: vi.fn(async () => undefined),
+      registerDocumentListeners: vi.fn(() => ({
+        dispose: () => {
+          throw listenerFailure;
+        },
+      })),
+      cancelPendingWork: vi.fn(),
+      clearTransientState: vi.fn(),
+    };
+    const lifecycle = new PairSessionLifecycle(() => true, ports);
+    await lifecycle.start();
+
+    expect(() => lifecycle.dispose()).toThrow(listenerFailure);
+    expect(ports.cancelPendingWork).toHaveBeenCalledOnce();
+    expect(ports.clearTransientState).toHaveBeenCalledOnce();
+    expect(lifecycle.active).toBe(false);
+    await expect(lifecycle.start()).resolves.toMatchObject({
+      kind: "already-stopped",
+      active: false,
+      message: expect.stringContaining("disposed"),
+    });
+    expect(() => lifecycle.dispose()).not.toThrow();
+  });
+
   it("reports the master permission and remains dormant when disabled", async () => {
     const ports = {
       prepare: vi.fn(async () => undefined),
@@ -87,6 +154,41 @@ describe("explicit pair session lifecycle", () => {
     expect(ports.registerDocumentListeners).not.toHaveBeenCalled();
     expect(ports.cancelPendingWork).toHaveBeenCalledOnce();
     expect(ports.clearTransientState).toHaveBeenCalledOnce();
+  });
+
+  it("reports startup and rollback failures after attempting every cleanup", async () => {
+    const order: string[] = [];
+    const startupFailure = new Error("memory unavailable");
+    const cancellationFailure = new Error("cancellation failed");
+    const ports = {
+      prepare: vi.fn(async () => {
+        throw startupFailure;
+      }),
+      registerDocumentListeners: vi.fn(() => ({ dispose: vi.fn() })),
+      cancelPendingWork: vi.fn(() => {
+        order.push("cancel");
+        throw cancellationFailure;
+      }),
+      clearTransientState: vi.fn(() => {
+        order.push("clear");
+      }),
+    };
+    const lifecycle = new PairSessionLifecycle(() => true, ports);
+
+    let failure: unknown;
+    try {
+      await lifecycle.start();
+    } catch (error: unknown) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).toEqual([
+      startupFailure,
+      cancellationFailure,
+    ]);
+    expect(order).toEqual(["cancel", "clear"]);
+    expect(lifecycle.active).toBe(false);
   });
 
   it("starts a new generation immediately after stopping a pending start", async () => {

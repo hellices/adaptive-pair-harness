@@ -607,10 +607,12 @@ describe("model routing", () => {
       await provider.generate(deniedRequest, new AbortController().signal);
     }
 
-    expect(decision).toMatchObject({
+    expect(decision).toEqual({
       allowed: false,
-      reason: "input-token-limit",
+      retryable: false,
+      reason: "input-request-too-large",
     });
+    expect("retryAfterMs" in decision).toBe(false);
     expect(fetchCalls).toBe(0);
   });
 });
