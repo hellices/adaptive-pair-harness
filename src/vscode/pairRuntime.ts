@@ -9,7 +9,6 @@ import {
   LocalTemplateProvider,
   ModelRouter,
   OpenAICompatibleProvider,
-  estimateOpenAICompatibleInputTokens,
   prepareRemoteModelRequest,
 } from "../core/modelRouter";
 import type {
@@ -685,36 +684,68 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
 
     const now = Date.now();
     const maxOutputTokens = this.budget.outputTokenLimit(now);
+    const availableBudget = this.budget.snapshot(now);
+    const unavailableCapacity =
+      availableBudget.remainingCalls === 0
+        ? "call-limit"
+        : availableBudget.remainingInputTokens === 0
+          ? "input-token-limit"
+          : maxOutputTokens === 0
+            ? "output-token-limit"
+            : undefined;
+    if (unavailableCapacity !== undefined) {
+      return this.fallbackForBudget(
+        unavailableCapacity,
+        request,
+        signal,
+      );
+    }
+
     const remoteRequest: ModelRequest = {
       ...prepared.request,
       maxOutputTokens,
     };
-    const admission = this.budget.tryReserve(
-      estimateOpenAICompatibleInputTokens(
+    let dispatch;
+    try {
+      dispatch = await this.router.prepare(
+        provider,
         remoteRequest,
-        this.options.config.modelName,
-      ),
+        signal,
+        {
+          userInitiated:
+            provider === "vscode-copilot" && source !== "automatic",
+        },
+      );
+    } catch (error: unknown) {
+      if (!lifecycleFence.isCurrent() || signal.aborted) {
+        throw error;
+      }
+      return this.fallbackForUnavailableCopilot(
+        error,
+        remoteRequest,
+        signal,
+        lifecycleFence,
+      );
+    }
+    if (signal.aborted) {
+      dispatch.dispose();
+      signal.throwIfAborted();
+    }
+
+    const admission = this.budget.tryReserve(
+      dispatch.inputTokens,
       maxOutputTokens,
-      now,
+      Date.now(),
     );
     if (!admission.allowed) {
-      this.effectiveProvider = "local-template";
-      this.statusDetail = `remote ${admission.reason}; local-template fallback`;
-      this.publishSession();
-      this.renderStatus();
-      return this.router.generate("local-template", request, signal);
+      dispatch.dispose();
+      return this.fallbackForBudget(admission.reason, request, signal);
     }
 
     this.publishSession();
 
     try {
-      const response =
-        provider === "vscode-copilot" && source !== "automatic"
-          ? await this.copilotProvider.generateFromUserAction(
-              remoteRequest,
-              signal,
-            )
-          : await this.router.generate(provider, remoteRequest, signal);
+      const response = await dispatch.send();
       this.budget.settle(
         admission.reservationId,
         response.inputTokens,
@@ -742,7 +773,21 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
         signal,
         lifecycleFence,
       );
+    } finally {
+      dispatch.dispose();
     }
+  }
+
+  private fallbackForBudget(
+    reason: "call-limit" | "input-token-limit" | "output-token-limit",
+    request: ModelRequest,
+    signal: AbortSignal,
+  ): Promise<ModelResponse> {
+    this.effectiveProvider = "local-template";
+    this.statusDetail = `remote ${reason}; local-template fallback`;
+    this.publishSession();
+    this.renderStatus();
+    return this.router.generate("local-template", request, signal);
   }
 
   private async fallbackForUnavailableCopilot(

@@ -33,11 +33,17 @@ const sensitiveKeyVariants = [
   "client_secret",
   "clientSecret",
   "client-secret",
+  "client.secret",
   "api_key",
+  "api.key",
+  "access_key",
   "accessToken",
+  "dbCredential",
   "privateKey",
   "password",
   "passwd",
+  "requestSignature",
+  "X-Amz-Signature",
   "token",
   "secret",
   "database_password",
@@ -327,6 +333,40 @@ describe("remote model request privacy", () => {
       expect(serialized).toContain("[REDACTED]");
     },
   );
+
+  it("redacts a single-quoted dotted sensitive key", () => {
+    const credential = "single quoted credential";
+    const prepared = prepareRemoteModelRequest(
+      requestContaining(`'api.key': '${credential}'`),
+    );
+    const serialized = JSON.stringify(prepared.request);
+
+    expect(prepared.sensitiveDataDetected).toBe(true);
+    expect(serialized).not.toContain(credential);
+    expect(serialized).toContain("[REDACTED]");
+  });
+
+  it("redacts a lowercase hexadecimal presigned signature by its sensitive key", () => {
+    const signature = "0123456789abcdef".repeat(4);
+    const prepared = prepareRemoteModelRequest(
+      requestContaining(`X-Amz-Signature=${signature}`),
+    );
+    const serialized = JSON.stringify(prepared.request);
+
+    expect(prepared.sensitiveDataDetected).toBe(true);
+    expect(serialized).not.toContain(signature);
+    expect(serialized).toContain("[REDACTED]");
+  });
+
+  it("preserves an unrelated lowercase hexadecimal commit hash", () => {
+    const commitHash = "0123456789abcdef0123456789abcdef01234567";
+    const prepared = prepareRemoteModelRequest(
+      requestContaining(`commit=${commitHash}`),
+    );
+
+    expect(prepared.sensitiveDataDetected).toBe(false);
+    expect(JSON.stringify(prepared.request)).toContain(commitHash);
+  });
 
   it("redacts userinfo credentials from non-HTTP DSNs", () => {
     const dsn =

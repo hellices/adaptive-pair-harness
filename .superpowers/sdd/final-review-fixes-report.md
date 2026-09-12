@@ -345,3 +345,85 @@
 - Semantic analysis intentionally remains per-document and refuses project or
   cross-file resolution. Only the installed TypeScript standard library is
   available to the checker.
+
+---
+
+## Whole-Branch Review Round 4
+
+- Date: 2026-09-12
+- Binding input: `.superpowers/sdd/final-review-round-4.md`
+- Status: **COMPLETE — no blocked finding**
+
+### Corrections implemented
+
+- TypeScript library access now uses an injectable, narrow filesystem adapter.
+  The installed library directory and every allowed-looking `lib*.d.ts`
+  candidate are resolved to real paths before a read. Candidates outside the
+  canonical root—including direct symlink files and symlinked path
+  components—are rejected without probing or returning their target.
+- Sensitive-key classification now uses one normalized root list across URL
+  query parameters, quoted keys, assignments, and header-shaped text.
+  Dotted, dashed, underscored, camel-case, and quoted forms now cover
+  credential, signature, client-secret, API-key, access-key, token, password,
+  private-key, and secret roots. Keyed lowercase hexadecimal signatures are
+  redacted while unrelated commit hashes remain intact.
+- Model providers now expose a prepared-dispatch contract carrying the
+  provider-specific input count. Copilot selects one model and uses that
+  model's official `countTokens` result before atomic budget reservation and
+  before sending. OpenAI-compatible admission uses the UTF-8 byte length of
+  the exact serialized body, which cannot undercount the previous
+  character-length/4 heuristic.
+- Budget denial disposes the prepared request and falls back locally without
+  dispatch. Existing atomic input/output reservation, conservative settlement,
+  unavailable-provider fallback, and exact-release rules remain intact.
+- Cancellation is rechecked after asynchronous Copilot counting and after
+  provider preparation so a stale request cannot reserve capacity or dispatch.
+- README, configuration, and architecture documentation now describe the
+  provider-aware pre-reservation counts and estimates.
+
+### Focused RED/GREEN evidence
+
+- The injected standard-library symlink regression failed because the analyzer
+  ignored the adapter, then passed after canonical containment was added; the
+  semantic suite finishes with **31 passing tests**.
+- New normalized-key cases produced **13 expected failures** before
+  centralization. The privacy suite finishes with **61 passing tests**, including
+  presigned lowercase hexadecimal signatures and benign commit hashes.
+- CJK/code-dense Copilot admission and OpenAI UTF-8 estimate cases produced
+  **4 expected failures** before provider-aware preparation. Cancellation
+  regressions independently reproduced reservation leaks during Copilot
+  counting and after OpenAI preparation before passing.
+- Combined focused verification finishes with **151 passing tests**.
+
+### Final verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **16 files, 242 tests passed**
+- `npm run package`: **PASS**
+- VSIX inspection: **155 files**
+  - canonical containment, centralized key handling, UTF-8 estimation, and
+    provider-aware prepared dispatch are present in compiled runtime output;
+  - updated public budget documentation and TypeScript runtime libraries are
+    included;
+  - source, tests, coverage, private Superpowers material, source maps, and
+    workspace/CI files are excluded.
+- `git diff --check`: **PASS**
+- Production credential-value scan: **PASS**
+- Package metadata fake-URL scan: **PASS**
+- Production URL literals remain limited to the documented loopback default
+  `http://localhost:11434/v1`.
+- Full changed-file self-review found and fixed two stale-cancellation
+  reservation windows; no remaining high-confidence correctness, security, or
+  lifecycle finding was identified.
+
+### Residual concerns
+
+- Official Copilot consent/UI behavior and a live third-party
+  OpenAI-compatible service were not exercised in this non-interactive
+  environment; narrow injected adapters cover model selection, exact token
+  counting, cancellation, dispatch, and fallback behavior.
+- The OpenAI-compatible input estimate intentionally treats each UTF-8 byte as
+  a token. This is conservative and may reduce remote-call throughput for
+  multibyte or code-dense prompts, but prevents admission underestimation.

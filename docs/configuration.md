@@ -153,8 +153,9 @@ Budgets are enforced over a rolling 10-minute window.
 
 Behavior:
 
-- pre-dispatch input estimates are based on the serialized remote request
-  payload; Copilot settles with its official model token count;
+- before reservation, Copilot input is counted with the selected model's
+  official `countTokens` API, while OpenAI-compatible input uses a conservative
+  UTF-8 byte estimate of the exact serialized request body;
 - each request atomically reserves up to its 180-token output allowance before
   dispatch, so concurrent calls cannot reuse pending capacity;
 - OpenAI-compatible requests send `max_tokens`, reject blank output, reject
@@ -169,8 +170,9 @@ Behavior:
   cancellation are best effort, and conservative accounting can exceed the
   reserved allowance when an already-received fragment crosses it;
 - reservations and usage survive configuration and API-key runtime rebuilds;
-- only a Copilot selection/consent failure known to occur before prompt
-  dispatch releases its exact reservation;
+- Copilot selection, consent, and input-count failures occur before reservation;
+  an owned reservation is released only when the provider proves that no
+  request was sent;
 - if a remote request would exceed call or token limits, the current
   intervention falls back to `local-template`;
 - the shared `@pair /session` view reports remaining budget.

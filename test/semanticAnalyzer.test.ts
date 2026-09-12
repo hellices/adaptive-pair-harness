@@ -145,6 +145,81 @@ describe("TypeScriptSemanticAnalyzer", () => {
     }
   });
 
+  it("rejects an allowed-looking standard library symlink that resolves outside the canonical root", () => {
+    const installedLibraryDirectory = resolve("virtual-typescript-link", "lib");
+    const canonicalLibraryDirectory = resolve("virtual-typescript", "lib");
+    const installedLibraryFile = resolve(
+      installedLibraryDirectory,
+      "lib.esnext.full.d.ts",
+    );
+    const canonicalLibraryFile = resolve(
+      canonicalLibraryDirectory,
+      "lib.esnext.full.d.ts",
+    );
+    const symlinkFile = resolve(canonicalLibraryDirectory, "lib.es5.d.ts");
+    const escapedTarget = resolve("private-project", "secret.d.ts");
+    const operations: Array<{
+      readonly operation: "fileExists" | "readFile" | "realpath";
+      readonly path: string;
+    }> = [];
+    const fakeFileSystem = {
+      fileExists: (path: string): boolean => {
+        operations.push({ operation: "fileExists", path });
+        return path === canonicalLibraryFile || path === escapedTarget;
+      },
+      getDefaultLibFilePath: (): string => installedLibraryFile,
+      readFile: (path: string): string | undefined => {
+        operations.push({ operation: "readFile", path });
+        if (path === canonicalLibraryFile) {
+          return '/// <reference lib="es5" />\ninterface Array<T> {}';
+        }
+        if (path === escapedTarget) {
+          return "declare const leakedSecret: unique symbol;";
+        }
+        return undefined;
+      },
+      realpath: (path: string): string | undefined => {
+        operations.push({ operation: "realpath", path });
+        if (path === installedLibraryDirectory) {
+          return canonicalLibraryDirectory;
+        }
+        if (path === symlinkFile) {
+          return escapedTarget;
+        }
+        return path;
+      },
+    };
+    const analyzerWithFileSystem = new TypeScriptSemanticAnalyzer(
+      fakeFileSystem,
+    );
+
+    const result = analyzerWithFileSystem.analyze(
+      episode("export const value = 1;", "export const value = 2;"),
+    );
+
+    expect(result.stability).toBe("stable");
+    expect(operations).toContainEqual({
+      operation: "realpath",
+      path: symlinkFile,
+    });
+    expect(operations).not.toContainEqual({
+      operation: "fileExists",
+      path: escapedTarget,
+    });
+    expect(operations).not.toContainEqual({
+      operation: "fileExists",
+      path: symlinkFile,
+    });
+    expect(operations).not.toContainEqual({
+      operation: "readFile",
+      path: escapedTarget,
+    });
+    expect(operations).not.toContainEqual({
+      operation: "readFile",
+      path: symlinkFile,
+    });
+  });
+
   it("reports a newly introduced import", () => {
     const evidence = analyzeEvidence(
       episode(

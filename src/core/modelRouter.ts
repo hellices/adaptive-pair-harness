@@ -32,8 +32,23 @@ export interface ModelResponse {
   readonly outputTokens: number;
 }
 
+export interface ModelPreparationOptions {
+  readonly userInitiated?: boolean;
+}
+
+export interface PreparedModelDispatch {
+  readonly inputTokens: number;
+  send(): Promise<ModelResponse>;
+  dispose(): void;
+}
+
 export interface ModelProvider {
   readonly id: string;
+  prepare(
+    request: ModelRequest,
+    signal: AbortSignal,
+    options?: ModelPreparationOptions,
+  ): Promise<PreparedModelDispatch>;
   generate(request: ModelRequest, signal: AbortSignal): Promise<ModelResponse>;
 }
 
@@ -83,26 +98,58 @@ export class ModelRouter {
     request: ModelRequest,
     signal: AbortSignal,
   ): Promise<ModelResponse> {
+    const dispatch = await this.prepare(providerId, request, signal);
+    try {
+      return await dispatch.send();
+    } finally {
+      dispatch.dispose();
+    }
+  }
+
+  public async prepare(
+    providerId: string,
+    request: ModelRequest,
+    signal: AbortSignal,
+    options?: ModelPreparationOptions,
+  ): Promise<PreparedModelDispatch> {
     const provider = this.providersById.get(providerId);
     if (provider === undefined) {
       throw new Error(`Unknown model provider: ${providerId}`);
     }
 
-    return provider.generate(request, signal);
+    return provider.prepare(request, signal, options);
   }
 }
 
 export class LocalTemplateProvider implements ModelProvider {
   public readonly id = "local-template";
 
-  public async generate(request: ModelRequest, signal: AbortSignal): Promise<ModelResponse> {
+  public async prepare(
+    request: ModelRequest,
+    signal: AbortSignal,
+  ): Promise<PreparedModelDispatch> {
     signal.throwIfAborted();
-
     return {
-      text: createLocalResponse(request),
       inputTokens: 0,
-      outputTokens: 0,
+      send: async () => {
+        signal.throwIfAborted();
+        return {
+          text: createLocalResponse(request),
+          inputTokens: 0,
+          outputTokens: 0,
+        };
+      },
+      dispose: () => undefined,
     };
+  }
+
+  public async generate(request: ModelRequest, signal: AbortSignal): Promise<ModelResponse> {
+    const dispatch = await this.prepare(request, signal);
+    try {
+      return await dispatch.send();
+    } finally {
+      dispatch.dispose();
+    }
   }
 }
 
@@ -121,10 +168,33 @@ export class OpenAICompatibleProvider implements ModelProvider {
     this.maxResponseBytes = config.maxResponseBytes ?? 65_536;
   }
 
-  public async generate(request: ModelRequest, signal: AbortSignal): Promise<ModelResponse> {
+  public async prepare(
+    request: ModelRequest,
+    signal: AbortSignal,
+  ): Promise<PreparedModelDispatch> {
     signal.throwIfAborted();
     const requestBody = buildOpenAICompatibleRequestBody(this.config.model, request);
+    return {
+      inputTokens: estimateOpenAICompatibleInputTokens(requestBody),
+      send: () => this.generatePrepared(requestBody, signal),
+      dispose: () => undefined,
+    };
+  }
 
+  public async generate(request: ModelRequest, signal: AbortSignal): Promise<ModelResponse> {
+    const dispatch = await this.prepare(request, signal);
+    try {
+      return await dispatch.send();
+    } finally {
+      dispatch.dispose();
+    }
+  }
+
+  private async generatePrepared(
+    requestBody: ChatCompletionRequestBody,
+    signal: AbortSignal,
+  ): Promise<ModelResponse> {
+    signal.throwIfAborted();
     const requestController = new AbortController();
     let timedOut = false;
     const abortFromCaller = (): void => {
@@ -405,7 +475,7 @@ const buildHeaders = (apiKey: string | undefined): HeadersInit => {
 };
 
 const estimateSerializedTokens = (serializedPayload: string): number =>
-  Math.max(1, Math.ceil(serializedPayload.length / 4));
+  Math.max(1, new TextEncoder().encode(serializedPayload).byteLength);
 
 const sanitizeDiagnosticEvidence = (
   evidence: Evidence,
@@ -475,36 +545,37 @@ const boundSingleLine = (value: string, maxLength: number): string =>
     .trim()
     .slice(0, maxLength);
 
-const SENSITIVE_KEYS = new Set([
+const SENSITIVE_KEY_ROOTS = [
   "authorization",
   "credential",
-  "sig",
   "signature",
-]);
-const SENSITIVE_KEY_SUFFIXES = [
+  "clientsecret",
   "apikey",
+  "accesskey",
+  "token",
   "password",
   "passwd",
   "privatekey",
   "secret",
-  "token",
+  "sig",
 ] as const;
 const normalizeSensitiveKey = (key: string): string =>
   key.replace(/[^A-Za-z0-9]/gu, "").toLowerCase();
 const isSensitiveKey = (key: string): boolean => {
   const normalizedKey = normalizeSensitiveKey(key);
-  return (
-    SENSITIVE_KEYS.has(normalizedKey) ||
-    SENSITIVE_KEY_SUFFIXES.some((suffix) => normalizedKey.endsWith(suffix))
+  return SENSITIVE_KEY_ROOTS.some(
+    (root) => normalizedKey === root || normalizedKey.endsWith(root),
   );
 };
 const URI_PATTERN = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s<>"'`]+/gu;
 const ASSIGNED_SECRET_PATTERN =
-  /\b([A-Za-z][A-Za-z0-9_-]*)(\s*[:=]\s*)(["']?)([^\s,;"']+)\3/gu;
+  /\b([A-Za-z][A-Za-z0-9_.-]*)(\s*[:=]\s*)(["']?)([^\s,;"']+)\3/gu;
 const QUOTED_ASSIGNED_SECRET_PATTERN =
-  /\b([A-Za-z][A-Za-z0-9_-]*)(\s*[:=]\s*)(["'])([^"'\\\r\n]*)\3/gu;
-const JSON_QUOTED_ASSIGNED_SECRET_PATTERN =
-  /"([A-Za-z][A-Za-z0-9_-]*)"(\s*:\s*)"((?:\\.|[^"\\\r\n])*)"/gu;
+  /\b([A-Za-z][A-Za-z0-9_.-]*)(\s*[:=]\s*)(["'])([^"'\\\r\n]*)\3/gu;
+const DOUBLE_QUOTED_KEY_ASSIGNED_SECRET_PATTERN =
+  /"([A-Za-z][A-Za-z0-9_.-]*)"(\s*:\s*)"((?:\\.|[^"\\\r\n])*)"/gu;
+const SINGLE_QUOTED_KEY_ASSIGNED_SECRET_PATTERN =
+  /'([A-Za-z][A-Za-z0-9_.-]*)'(\s*:\s*)'((?:\\.|[^'\\\r\n])*)'/gu;
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/giu;
 const BASIC_PATTERN = /\bBasic\s+[A-Za-z0-9._~+/-]+=*/giu;
 const KNOWN_TOKEN_PATTERN =
@@ -558,14 +629,35 @@ const sanitizeRemoteText = (
   redact(BASIC_PATTERN, "[REDACTED]");
   redact(KNOWN_TOKEN_PATTERN, "[REDACTED]");
   redact(JWT_PATTERN, "[REDACTED]");
+  const redactSensitiveKeyValue = (
+    candidate: string,
+    key: string,
+    replacement: string,
+  ): string => {
+    if (!isSensitiveKey(key)) {
+      return candidate;
+    }
+    sensitiveDataDetected = true;
+    return replacement;
+  };
   sanitized = sanitized.replace(
-    JSON_QUOTED_ASSIGNED_SECRET_PATTERN,
+    DOUBLE_QUOTED_KEY_ASSIGNED_SECRET_PATTERN,
     (candidate, key: string, separator: string) => {
-      if (!isSensitiveKey(key)) {
-        return candidate;
-      }
-      sensitiveDataDetected = true;
-      return `"${key}"${separator}"[REDACTED]"`;
+      return redactSensitiveKeyValue(
+        candidate,
+        key,
+        `"${key}"${separator}"[REDACTED]"`,
+      );
+    },
+  );
+  sanitized = sanitized.replace(
+    SINGLE_QUOTED_KEY_ASSIGNED_SECRET_PATTERN,
+    (candidate, key: string, separator: string) => {
+      return redactSensitiveKeyValue(
+        candidate,
+        key,
+        `'${key}'${separator}'[REDACTED]'`,
+      );
     },
   );
   sanitized = sanitized.replace(
@@ -576,11 +668,11 @@ const sanitizeRemoteText = (
       separator: string,
       quote: string,
     ) => {
-      if (!isSensitiveKey(key)) {
-        return candidate;
-      }
-      sensitiveDataDetected = true;
-      return `${key}${separator}${quote}[REDACTED]${quote}`;
+      return redactSensitiveKeyValue(
+        candidate,
+        key,
+        `${key}${separator}${quote}[REDACTED]${quote}`,
+      );
     },
   );
   sanitized = sanitized.replace(
@@ -591,11 +683,11 @@ const sanitizeRemoteText = (
       separator: string,
       quote: string,
     ) => {
-      if (!isSensitiveKey(key)) {
-        return candidate;
-      }
-      sensitiveDataDetected = true;
-      return `${key}${separator}${quote}[REDACTED]${quote}`;
+      return redactSensitiveKeyValue(
+        candidate,
+        key,
+        `${key}${separator}${quote}[REDACTED]${quote}`,
+      );
     },
   );
   LONG_OPAQUE_PATTERN.lastIndex = 0;

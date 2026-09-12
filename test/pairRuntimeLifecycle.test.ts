@@ -627,6 +627,184 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
+  it.each([
+    ["CJK", "你好世界".repeat(40)],
+    ["code-dense", "()=>{value?.map(x=>x+1)??=[];}".repeat(12)],
+  ])(
+    "uses the official Copilot count to reject an over-budget %s prompt before dispatch",
+    async (_label, userPrompt) => {
+      const countedTexts: string[] = [];
+      const sendRequest = vi.fn(
+        async () =>
+          (async function* (): AsyncIterable<string> {
+            yield "remote response";
+          })(),
+      );
+      const budgetConfig = {
+        maxCalls: 1,
+        maxInputTokens: 500,
+        maxOutputTokens: 180,
+        maxOutputTokensPerCall: 180,
+        windowMs: 600_000,
+      };
+      const budget = new TokenBudget(budgetConfig);
+      const runtime = new PairRuntime({
+        config: config({
+          provider: "vscode-copilot",
+          budget: budgetConfig,
+        }),
+        extensionContext,
+        sharedContext: sharedContext(),
+        languageModelApi: {
+          ...languageModelApi([
+            {
+              id: "copilot-model",
+              name: "Copilot model",
+            },
+          ]),
+          countTokens: async (_model, text) => {
+            countedTexts.push(text);
+            return text.includes(userPrompt)
+              ? budgetConfig.maxInputTokens + 1
+              : Math.max(1, Math.ceil(text.length / 4));
+          },
+          sendRequest,
+        },
+        apiKey: undefined,
+        budget,
+      });
+      await runtime.startSession();
+
+      await expect(
+        runtime.generate(
+          "file:///workspace/pair.ts",
+          "Ask.",
+          evidence,
+          new AbortController().signal,
+          { userPrompt },
+        ),
+      ).resolves.toMatchObject({
+        inputTokens: 0,
+        outputTokens: 0,
+      });
+
+      expect(countedTexts).toEqual([
+        expect.stringContaining(userPrompt),
+      ]);
+      expect(sendRequest).not.toHaveBeenCalled();
+      expect(budget.snapshot(Date.now())).toEqual({
+        remainingCalls: 1,
+        remainingInputTokens: 500,
+        remainingOutputTokens: 180,
+      });
+      runtime.dispose();
+    },
+  );
+
+  it("does not reserve or dispatch when a session stops during Copilot input counting", async () => {
+    const budgetConfig = {
+      maxCalls: 1,
+      maxInputTokens: 500,
+      maxOutputTokens: 180,
+      maxOutputTokensPerCall: 180,
+      windowMs: 600_000,
+    };
+    const budget = new TokenBudget(budgetConfig);
+    const sendRequest = vi.fn(
+      async () =>
+        (async function* (): AsyncIterable<string> {
+          yield "remote response";
+        })(),
+    );
+    const runtimeHolder: { current?: PairRuntime } = {};
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "vscode-copilot",
+        budget: budgetConfig,
+      }),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: {
+        ...languageModelApi([
+          {
+            id: "copilot-model",
+            name: "Copilot model",
+          },
+        ]),
+        countTokens: async () => {
+          runtimeHolder.current?.stopSession();
+          return 10;
+        },
+        sendRequest,
+      },
+      apiKey: undefined,
+      budget,
+    });
+    runtimeHolder.current = runtime;
+    await runtime.startSession();
+
+    await expect(
+      runtime.generate(
+        "file:///workspace/pair.ts",
+        "Ask.",
+        evidence,
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(sendRequest).not.toHaveBeenCalled();
+    expect(budget.snapshot(Date.now())).toEqual({
+      remainingCalls: 1,
+      remainingInputTokens: 500,
+      remainingOutputTokens: 180,
+    });
+    runtime.dispose();
+  });
+
+  it("does not reserve an OpenAI request cancelled after provider preparation", async () => {
+    const fetchImplementation = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchImplementation);
+    const budgetConfig = {
+      maxCalls: 1,
+      maxInputTokens: 6_000,
+      maxOutputTokens: 180,
+      maxOutputTokensPerCall: 180,
+      windowMs: 600_000,
+    };
+    const budget = new TokenBudget(budgetConfig);
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "openai-compatible",
+        baseUrl: new URL("https://models.example/v1"),
+        budget: budgetConfig,
+      }),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+      budget,
+    });
+    await runtime.startSession();
+    const cancellation = new AbortController();
+
+    const pending = runtime.generate(
+      "file:///workspace/pair.ts",
+      "Ask.",
+      evidence,
+      cancellation.signal,
+    );
+    cancellation.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchImplementation).not.toHaveBeenCalled();
+    expect(budget.snapshot(Date.now())).toEqual({
+      remainingCalls: 1,
+      remainingInputTokens: 6_000,
+      remainingOutputTokens: 180,
+    });
+    runtime.dispose();
+  });
+
   it("refunds an exact pre-dispatch Copilot reservation after stop", async () => {
     const selection = deferred<readonly CopilotModelReference[]>();
     const selectionFailure = new Error("selection denied");

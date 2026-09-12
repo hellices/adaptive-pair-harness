@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import ts from "typescript";
 import type { EditEpisode, Evidence, PairRange } from "./types";
 
@@ -32,9 +32,29 @@ interface SemanticSource {
   readonly checker: ts.TypeChecker;
 }
 
+interface TypeScriptLibraryFileSystem {
+  readonly fileExists: (path: string) => boolean;
+  readonly getDefaultLibFilePath: (options: ts.CompilerOptions) => string;
+  readonly readFile: (path: string) => string | undefined;
+  readonly realpath: (path: string) => string | undefined;
+}
+
 const ANALYZER_SOURCE = "typescript-semantic-analyzer";
 const DEFAULT_EXPORT_KEY = "default-export";
 const DEFAULT_EXPORT_DISPLAY = "default export";
+const TYPESCRIPT_LIBRARY_FILE_SYSTEM: TypeScriptLibraryFileSystem = {
+  fileExists: (path) => ts.sys.fileExists(path),
+  getDefaultLibFilePath: (options) => ts.getDefaultLibFilePath(options),
+  readFile: (path) => ts.sys.readFile(path),
+  realpath: (path) => {
+    try {
+      const realPath = ts.sys.realpath?.(path);
+      return realPath === undefined ? undefined : resolve(realPath);
+    } catch {
+      return undefined;
+    }
+  },
+};
 
 export type SemanticAnalysisResult =
   | {
@@ -47,9 +67,22 @@ export type SemanticAnalysisResult =
     };
 
 export class TypeScriptSemanticAnalyzer {
+  public constructor(
+    private readonly libraryFileSystem: TypeScriptLibraryFileSystem =
+      TYPESCRIPT_LIBRARY_FILE_SYSTEM,
+  ) {}
+
   public analyze(episode: EditEpisode): SemanticAnalysisResult {
-    const previous = createSemanticSource(episode, episode.previousText);
-    const current = createSemanticSource(episode, episode.currentText);
+    const previous = createSemanticSource(
+      episode,
+      episode.previousText,
+      this.libraryFileSystem,
+    );
+    const current = createSemanticSource(
+      episode,
+      episode.currentText,
+      this.libraryFileSystem,
+    );
 
     if (hasParseDiagnostics(current.sourceFile)) {
       return {
@@ -106,6 +139,7 @@ const createSourceFile = (episode: EditEpisode, text: string): ts.SourceFile =>
 const createSemanticSource = (
   episode: EditEpisode,
   text: string,
+  fileSystem: TypeScriptLibraryFileSystem,
 ): SemanticSource => {
   const sourceFile = createSourceFile(episode, text);
   const compilerOptions: ts.CompilerOptions = {
@@ -117,13 +151,16 @@ const createSemanticSource = (
     target: ts.ScriptTarget.Latest,
   };
   const installedLibraryFile = resolve(
-    ts.getDefaultLibFilePath(compilerOptions),
+    fileSystem.getDefaultLibFilePath(compilerOptions),
   );
   const installedLibraryDirectory = dirname(installedLibraryFile);
-  const standardLibraryDirectory =
-    ts.sys.realpath?.(installedLibraryDirectory) ??
-    installedLibraryDirectory;
+  const standardLibraryDirectory = fileSystem.realpath(
+    installedLibraryDirectory,
+  );
   const standardLibraryFile = (fileName: string): string | undefined => {
+    if (standardLibraryDirectory === undefined) {
+      return undefined;
+    }
     const resolvedFileName = resolve(fileName);
     const fileBaseName = basename(resolvedFileName);
     if (!/^lib(?:\..+)?\.d\.ts$/u.test(fileBaseName)) {
@@ -135,11 +172,20 @@ const createSemanticSource = (
     ) {
       return undefined;
     }
-    return resolve(standardLibraryDirectory, fileBaseName);
+    const canonicalFile = fileSystem.realpath(resolvedFileName);
+    if (
+      canonicalFile === undefined ||
+      !isContainedPath(standardLibraryDirectory, canonicalFile)
+    ) {
+      return undefined;
+    }
+    return canonicalFile;
   };
   const readStandardLibraryFile = (fileName: string): string | undefined => {
     const libraryFile = standardLibraryFile(fileName);
-    return libraryFile === undefined ? undefined : ts.sys.readFile(libraryFile);
+    return libraryFile === undefined
+      ? undefined
+      : fileSystem.readFile(libraryFile);
   };
   const getSourceFile: ts.CompilerHost["getSourceFile"] = (
     fileName,
@@ -178,14 +224,19 @@ const createSemanticSource = (
       fileName === sourceFile.fileName ||
       (() => {
         const libraryFile = standardLibraryFile(fileName);
-        return libraryFile !== undefined && ts.sys.fileExists(libraryFile);
+        return libraryFile !== undefined && fileSystem.fileExists(libraryFile);
       })(),
     getCanonicalFileName: (fileName) =>
       ts.sys.useCaseSensitiveFileNames ? fileName : fileName.toLowerCase(),
-    getCurrentDirectory: () => standardLibraryDirectory,
+    getCurrentDirectory: () =>
+      standardLibraryDirectory ?? installedLibraryDirectory,
     getDefaultLibFileName: () =>
-      resolve(standardLibraryDirectory, basename(installedLibraryFile)),
-    getDefaultLibLocation: () => standardLibraryDirectory,
+      resolve(
+        standardLibraryDirectory ?? installedLibraryDirectory,
+        basename(installedLibraryFile),
+      ),
+    getDefaultLibLocation: () =>
+      standardLibraryDirectory ?? installedLibraryDirectory,
     getDirectories: () => [],
     getNewLine: () => ts.sys.newLine,
     getSourceFile,
@@ -233,6 +284,16 @@ const createSemanticSource = (
     sourceFile,
     checker: program.getTypeChecker(),
   };
+};
+
+const isContainedPath = (root: string, candidate: string): boolean => {
+  const pathFromRoot = relative(root, candidate);
+  return (
+    pathFromRoot === "" ||
+    (pathFromRoot !== ".." &&
+      !pathFromRoot.startsWith(`..${sep}`) &&
+      !isAbsolute(pathFromRoot))
+  );
 };
 
 const scriptKindForLanguageId = (languageId: string): ts.ScriptKind => {

@@ -193,16 +193,19 @@ See the repository documentation for the full configuration reference:
   - `eco`: 2 calls / 2,000 input / 360 output tokens
   - `balanced`: 4 calls / 6,000 input / 720 output tokens
   - `active`: 8 calls / 12,000 input / 1,440 output tokens
-- Each remote call pre-reserves up to its 180-token output allowance.
+- Before reservation, Copilot requests use the selected model's official
+  `countTokens` result and OpenAI-compatible requests use a conservative UTF-8
+  byte estimate of the exact serialized body. Each admitted remote call then
+  atomically reserves its input count and up to its 180-token output allowance.
   OpenAI-compatible requests send `max_tokens`, reject blank or conservatively
   over-limit output, and account for the greater of reported and conservative
   observed usage.
 - Copilot requests pass the supported `max_tokens` model option and use the
-  selected model's official `countTokens` API to cap displayed stream output
-  and account for the maximum observed token count. The stable VS Code API does
-  not promise a provider-side generation or billing hard limit; cancellation
-  at the display boundary is best effort, while the budget retains conservative
-  accounting.
+  same selected model's official `countTokens` API to cap displayed stream
+  output and account for the maximum observed token count. The stable VS Code
+  API does not promise a provider-side generation or billing hard limit;
+  cancellation at the display boundary is best effort, while the budget
+  retains conservative accounting.
 - OpenAI-compatible requests also use a deadline and a bounded response body.
 - If a remote request would exceed the budget, Adaptive Pair falls back to the
   local template for that intervention.

@@ -8,7 +8,12 @@ import {
 } from "../src/core/modelRouter";
 import { TokenBudget } from "../src/core/tokenBudget";
 import type { Evidence, PairRange } from "../src/core/types";
-import type { ModelProvider, ModelRequest, ModelResponse } from "../src/core/modelRouter";
+import type {
+  ModelProvider,
+  ModelRequest,
+  ModelResponse,
+  PreparedModelDispatch,
+} from "../src/core/modelRouter";
 
 interface ChatCompletionRequestBody {
   readonly model: string;
@@ -57,9 +62,27 @@ class RecordingProvider implements ModelProvider {
     private readonly response: ModelResponse,
   ) {}
 
+  public async prepare(
+    request: ModelRequest,
+    signal: AbortSignal,
+  ): Promise<PreparedModelDispatch> {
+    return {
+      inputTokens: this.response.inputTokens,
+      send: async () => {
+        this.calls.push({ request, signal });
+        return this.response;
+      },
+      dispose: () => undefined,
+    };
+  }
+
   public async generate(request: ModelRequest, signal: AbortSignal): Promise<ModelResponse> {
-    this.calls.push({ request, signal });
-    return this.response;
+    const dispatch = await this.prepare(request, signal);
+    try {
+      return await dispatch.send();
+    } finally {
+      dispatch.dispose();
+    }
   }
 }
 
@@ -389,6 +412,27 @@ describe("model routing", () => {
       outputTokens: new TextEncoder().encode(content).byteLength,
     });
   });
+
+  it.each([
+    ["CJK", "你好世界".repeat(40)],
+    ["code-dense", "()=>{value?.map(x=>x+1)??=[];}".repeat(12)],
+  ])(
+    "uses a conservative UTF-8 body estimate for %s OpenAI-compatible input",
+    (_label, goal) => {
+      const body = buildOpenAICompatibleRequestBody("pair-model", {
+        ...request,
+        goal,
+      });
+      const serializedBody = JSON.stringify(body);
+
+      expect(estimateOpenAICompatibleInputTokens(body)).toBeGreaterThanOrEqual(
+        new TextEncoder().encode(serializedBody).byteLength,
+      );
+      expect(estimateOpenAICompatibleInputTokens(body)).toBeGreaterThanOrEqual(
+        Math.ceil(serializedBody.length / 4),
+      );
+    },
+  );
 
   it("rejects blank OpenAI-compatible output", async () => {
     const fetchImplementation: typeof fetch = async () =>
