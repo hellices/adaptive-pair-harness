@@ -5,6 +5,7 @@ import type {
   ModelResponse,
   PreparedModelDispatch,
 } from "../core/modelRouter";
+import { ModelProviderTimeoutError } from "../core/modelRouter";
 import type {
   TokenBudget,
   TokenBudgetReservationId,
@@ -42,6 +43,10 @@ export interface VsCodeLanguageModelApi {
     cancellation: VsCodeRequestCancellation,
     maxOutputTokens: number,
   ): PromiseLike<AsyncIterable<string>>;
+}
+
+export interface VsCodeLanguageModelProviderOptions {
+  readonly timeoutMs?: number;
 }
 
 export type VsCodeLanguageModelErrorKind =
@@ -111,10 +116,117 @@ const isHighSurrogate = (codeUnit: number): boolean =>
 const isLowSurrogate = (codeUnit: number): boolean =>
   codeUnit >= 0xdc00 && codeUnit <= 0xdfff;
 
+type DeadlineOutcome<T> =
+  | { readonly kind: "value"; readonly value: T }
+  | { readonly kind: "error"; readonly error: unknown }
+  | { readonly kind: "deadline" }
+  | { readonly kind: "aborted" };
+
+class CopilotProviderDeadline {
+  private readonly timeout: ReturnType<typeof setTimeout>;
+  private readonly deadlineReached: Promise<void>;
+  private readonly callerAborted: Promise<void>;
+  private readonly abortListener: () => void;
+  private expired = false;
+
+  public constructor(
+    timeoutMs: number,
+    private readonly signal: AbortSignal,
+    onDeadline: () => void,
+  ) {
+    let announceDeadline!: () => void;
+    this.deadlineReached = new Promise<void>((resolve) => {
+      announceDeadline = resolve;
+    });
+    this.timeout = setTimeout(() => {
+      this.expired = true;
+      try {
+        onDeadline();
+      } finally {
+        announceDeadline();
+      }
+    }, timeoutMs);
+
+    let announceAbort!: () => void;
+    this.callerAborted = new Promise<void>((resolve) => {
+      announceAbort = resolve;
+    });
+    this.abortListener = announceAbort;
+    if (signal.aborted) {
+      announceAbort();
+    } else {
+      signal.addEventListener("abort", this.abortListener, { once: true });
+    }
+  }
+
+  public throwIfExpired(requestDispatched: boolean): void {
+    this.signal.throwIfAborted();
+    if (this.expired) {
+      throw new ModelProviderTimeoutError(
+        "vscode-copilot",
+        requestDispatched,
+      );
+    }
+  }
+
+  public isExpired(): boolean {
+    return this.expired;
+  }
+
+  public async waitFor<T>(
+    operation: () => T | PromiseLike<T>,
+    requestDispatched: boolean,
+  ): Promise<T> {
+    this.throwIfExpired(requestDispatched);
+    const operationOutcome = Promise.resolve()
+      .then(operation)
+      .then<DeadlineOutcome<T>, DeadlineOutcome<T>>(
+        (value) => ({ kind: "value", value }),
+        (error: unknown) => ({ kind: "error", error }),
+      );
+    const outcome = await Promise.race([
+      operationOutcome,
+      this.deadlineReached.then<DeadlineOutcome<T>>(() => ({
+        kind: "deadline",
+      })),
+      this.callerAborted.then<DeadlineOutcome<T>>(() => ({
+        kind: "aborted",
+      })),
+    ]);
+
+    this.signal.throwIfAborted();
+    if (this.expired || outcome.kind === "deadline") {
+      throw new ModelProviderTimeoutError(
+        "vscode-copilot",
+        requestDispatched,
+      );
+    }
+    if (outcome.kind === "error") {
+      throw outcome.error;
+    }
+    if (outcome.kind === "aborted") {
+      this.signal.throwIfAborted();
+      throw new Error("Copilot request cancellation state is inconsistent.");
+    }
+    return outcome.value;
+  }
+
+  public dispose(): void {
+    clearTimeout(this.timeout);
+    this.signal.removeEventListener("abort", this.abortListener);
+  }
+}
+
 export class VsCodeLanguageModelProvider implements ModelProvider {
   public readonly id = "vscode-copilot";
+  private readonly timeoutMs: number;
 
-  public constructor(private readonly api: VsCodeLanguageModelApi) {}
+  public constructor(
+    private readonly api: VsCodeLanguageModelApi,
+    options: VsCodeLanguageModelProviderOptions = {},
+  ) {
+    this.timeoutMs = normalizeTimeoutMs(options.timeoutMs ?? 15_000);
+  }
 
   public async prepare(
     request: ModelRequest,
@@ -211,12 +323,18 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
       cancellation.cancel();
     };
     signal.addEventListener("abort", cancelRequest, { once: true });
+    const deadline = new CopilotProviderDeadline(
+      this.timeoutMs,
+      signal,
+      cancelRequest,
+    );
     let disposed = false;
     const dispose = (): void => {
       if (disposed) {
         return;
       }
       disposed = true;
+      deadline.dispose();
       signal.removeEventListener("abort", cancelRequest);
       cancellation.dispose();
     };
@@ -231,6 +349,7 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
         () => this.api.selectChatModels({ vendor: "copilot" }),
         false,
         signal,
+        deadline,
       );
       signal.throwIfAborted();
       const prompt = buildCopilotPrompt(request);
@@ -270,6 +389,7 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
                   () => this.api.countTokens(model, prompt, cancellation),
                   false,
                   signal,
+                  deadline,
                 ),
               );
             } catch (error: unknown) {
@@ -291,6 +411,7 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
                   inputTokens,
                   signal,
                   cancellation,
+                  deadline,
                 ),
               dispose: () => undefined,
             };
@@ -314,76 +435,106 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
     inputTokens: number,
     signal: AbortSignal,
     cancellation: VsCodeRequestCancellation,
+    deadline: CopilotProviderDeadline,
   ): Promise<ModelResponse> {
     signal.throwIfAborted();
+    deadline.throwIfExpired(false);
     const text = await this.callAndMapUnavailable(
       async () => {
-        const stream = await this.api.sendRequest(
-          model,
-          prompt,
-          cancellation,
-          maxOutputTokens,
+        const stream = await deadline.waitFor(
+          () =>
+            this.api.sendRequest(
+              model,
+              prompt,
+              cancellation,
+              maxOutputTokens,
+            ),
+          true,
         );
         signal.throwIfAborted();
         let streamedText = "";
         let observedOutputTokens = 0;
         let bufferedHighSurrogate: string | undefined;
-        for await (const streamedFragment of stream) {
-          signal.throwIfAborted();
-          if (streamedFragment.length === 0) {
-            continue;
-          }
-          let fragment = streamedFragment;
-          if (bufferedHighSurrogate !== undefined) {
-            if (isLowSurrogate(fragment.charCodeAt(0))) {
-              fragment = bufferedHighSurrogate + fragment;
-            }
-            bufferedHighSurrogate = undefined;
-          }
-          if (isHighSurrogate(fragment.charCodeAt(fragment.length - 1))) {
-            bufferedHighSurrogate = fragment.slice(-1);
-            fragment = fragment.slice(0, -1);
-          }
-          if (fragment.length === 0) {
-            continue;
-          }
-          const candidate = streamedText + fragment;
-          const countedCandidateTokens = await this.api.countTokens(
-            model,
-            candidate,
-            cancellation,
-          );
-          signal.throwIfAborted();
-          const candidateTokens = normalizeTokenCount(countedCandidateTokens);
-          observedOutputTokens = Math.max(
-            observedOutputTokens,
-            candidateTokens,
-          );
-          if (candidateTokens <= maxOutputTokens) {
-            streamedText = candidate;
-            if (candidateTokens === maxOutputTokens) {
-              cancellation.cancel();
+        const iterator = stream[Symbol.asyncIterator]();
+        let streamCompleted = false;
+        try {
+          for (;;) {
+            const iteration = await deadline.waitFor(
+              () => iterator.next(),
+              true,
+            );
+            signal.throwIfAborted();
+            if (iteration.done === true) {
+              streamCompleted = true;
               break;
             }
-            continue;
-          }
+            const streamedFragment = iteration.value;
+            if (streamedFragment.length === 0) {
+              continue;
+            }
+            let fragment = streamedFragment;
+            if (bufferedHighSurrogate !== undefined) {
+              if (isLowSurrogate(fragment.charCodeAt(0))) {
+                fragment = bufferedHighSurrogate + fragment;
+              }
+              bufferedHighSurrogate = undefined;
+            }
+            if (isHighSurrogate(fragment.charCodeAt(fragment.length - 1))) {
+              bufferedHighSurrogate = fragment.slice(-1);
+              fragment = fragment.slice(0, -1);
+            }
+            if (fragment.length === 0) {
+              continue;
+            }
+            const candidate = streamedText + fragment;
+            const countedCandidateTokens = await deadline.waitFor(
+              () => this.api.countTokens(model, candidate, cancellation),
+              true,
+            );
+            signal.throwIfAborted();
+            const candidateTokens = normalizeTokenCount(
+              countedCandidateTokens,
+            );
+            observedOutputTokens = Math.max(
+              observedOutputTokens,
+              candidateTokens,
+            );
+            if (candidateTokens <= maxOutputTokens) {
+              streamedText = candidate;
+              if (candidateTokens === maxOutputTokens) {
+                cancellation.cancel();
+                break;
+              }
+              continue;
+            }
 
-          streamedText += await this.longestFittingFragmentPrefix(
-            model,
-            streamedText,
-            fragment,
-            maxOutputTokens,
-            signal,
-            cancellation,
-          );
-          cancellation.cancel();
-          break;
+            streamedText += await this.longestFittingFragmentPrefix(
+              model,
+              streamedText,
+              fragment,
+              maxOutputTokens,
+              signal,
+              cancellation,
+              deadline,
+            );
+            cancellation.cancel();
+            break;
+          }
+        } finally {
+          if (!streamCompleted && iterator.return !== undefined) {
+            if (signal.aborted || deadline.isExpired()) {
+              observeLateSettlement(() => iterator.return!());
+            } else {
+              await deadline.waitFor(() => iterator.return!(), true);
+            }
+          }
         }
         signal.throwIfAborted();
         return { streamedText, observedOutputTokens };
       },
       true,
       signal,
+      deadline,
     );
 
     if (text.streamedText.trim().length === 0) {
@@ -405,6 +556,7 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
     maxOutputTokens: number,
     signal: AbortSignal,
     cancellation: VsCodeRequestCancellation,
+    deadline: CopilotProviderDeadline,
   ): Promise<string> {
     let fittingLength = 0;
     let failingLength = fragment.length;
@@ -423,10 +575,14 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
         break;
       }
 
-      const countedPrefixTokens = await this.api.countTokens(
-        model,
-        streamedText + fragment.slice(0, probeLength),
-        cancellation,
+      const countedPrefixTokens = await deadline.waitFor(
+        () =>
+          this.api.countTokens(
+            model,
+            streamedText + fragment.slice(0, probeLength),
+            cancellation,
+          ),
+        true,
       );
       signal.throwIfAborted();
       const prefixTokens = normalizeTokenCount(countedPrefixTokens);
@@ -443,12 +599,16 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
     operation: () => PromiseLike<T>,
     requestMayHaveBeenSent: boolean,
     signal: AbortSignal,
+    deadline: CopilotProviderDeadline,
   ): Promise<T> {
     let result: T;
     try {
-      result = await operation();
+      result = await deadline.waitFor(operation, requestMayHaveBeenSent);
     } catch (error: unknown) {
       signal.throwIfAborted();
+      if (error instanceof ModelProviderTimeoutError) {
+        throw error;
+      }
       switch (this.api.classifyError(error)) {
         case "no-permissions":
           throw new CopilotModelUnavailableError(
@@ -476,9 +636,28 @@ export const releaseUnusedCopilotReservation = (
   reservationId: TokenBudgetReservationId,
   error: unknown,
 ): boolean =>
-  error instanceof CopilotModelUnavailableError &&
-  !error.requestMayHaveBeenSent &&
+  ((error instanceof CopilotModelUnavailableError &&
+    !error.requestMayHaveBeenSent) ||
+    (error instanceof ModelProviderTimeoutError &&
+      !error.requestDispatched)) &&
   budget.release(reservationId);
+
+const observeLateSettlement = (
+  operation: () => unknown | PromiseLike<unknown>,
+): void => {
+  try {
+    void Promise.resolve(operation()).catch(() => undefined);
+  } catch {
+    // Best-effort stream cleanup must not replace the primary failure.
+  }
+};
+
+const normalizeTimeoutMs = (timeoutMs: number): number => {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("GitHub Copilot provider timeout must be positive.");
+  }
+  return Math.ceil(timeoutMs);
+};
 
 const normalizeTokenCount = (tokens: number): number => {
   if (!Number.isFinite(tokens) || tokens < 0) {

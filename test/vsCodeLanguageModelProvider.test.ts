@@ -6,6 +6,7 @@ import {
   buildCopilotPrompt,
   releaseUnusedCopilotReservation,
 } from "../src/vscode/vsCodeLanguageModelProvider";
+import { mapLanguageModelAccessKind } from "../src/vscode/languageModelAccess";
 import { TokenBudget } from "../src/core/tokenBudget";
 import type {
   CopilotModelReference,
@@ -32,6 +33,53 @@ const request = {
   goal: "Ask a concise, evidence-backed question.",
   evidence,
   interactionStyle: "ask-first" as const,
+};
+
+enum LanguageModelAccessKind {
+  Allowed,
+  Disallowed,
+  NeedsConsent,
+}
+
+const deferred = <T>(): {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+  readonly reject: (reason: unknown) => void;
+} => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
+
+type PromiseObservation<T> =
+  | { readonly state: "fulfilled"; readonly value: T }
+  | { readonly state: "rejected"; readonly reason: unknown }
+  | { readonly state: "pending" };
+
+const observeWithin = async <T>(
+  promise: Promise<T>,
+  waitMs: number,
+): Promise<PromiseObservation<T>> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const observation = await Promise.race([
+    promise.then<PromiseObservation<T>, PromiseObservation<T>>(
+      (value) => ({ state: "fulfilled", value }),
+      (reason: unknown) => ({ state: "rejected", reason }),
+    ),
+    new Promise<PromiseObservation<T>>((resolve) => {
+      timer = setTimeout(() => {
+        resolve({ state: "pending" });
+      }, waitMs);
+    }),
+  ]);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+  }
+  return observation;
 };
 
 class TestCancellation implements VsCodeRequestCancellation {
@@ -384,6 +432,279 @@ describe("VsCodeLanguageModelProvider", () => {
     expect(api.cancellation.disposed).toBe(true);
   });
 
+  it("bounds model selection even when VS Code never settles it", async () => {
+    const api = new RecordingLanguageModelApi();
+    const selection = deferred<readonly CopilotModelReference[]>();
+    const selectionStarted = deferred<void>();
+    api.selectChatModels = () => {
+      selectionStarted.resolve(undefined);
+      return selection.promise;
+    };
+    const provider = new VsCodeLanguageModelProvider(api, {
+      timeoutMs: 5,
+    });
+    const operation = provider.generate(
+      request,
+      new AbortController().signal,
+    );
+
+    await selectionStarted.promise;
+    const observation = await observeWithin(operation, 50);
+    selection.reject(new Error("late selection failure"));
+    await operation.catch(() => undefined);
+
+    expect(observation).toMatchObject({
+      state: "rejected",
+      reason: {
+        name: "ModelProviderTimeoutError",
+        providerId: "vscode-copilot",
+        requestDispatched: false,
+      },
+    });
+    expect(api.cancellation.cancelled).toBe(true);
+    expect(api.cancellation.disposed).toBe(true);
+  });
+
+  it("times out a never-resolving send before a later caller cancellation", async () => {
+    const api = new RecordingLanguageModelApi();
+    const send = deferred<AsyncIterable<string>>();
+    const sendStarted = deferred<void>();
+    api.sendRequest = () => {
+      api.sendCalls += 1;
+      sendStarted.resolve(undefined);
+      return send.promise;
+    };
+    const provider = new VsCodeLanguageModelProvider(api, {
+      timeoutMs: 5,
+    });
+    const abortController = new AbortController();
+    const operation = provider.generate(request, abortController.signal);
+
+    await sendStarted.promise;
+    const observation = await observeWithin(operation, 50);
+    abortController.abort(new Error("late caller cancellation"));
+    send.reject(new Error("late send failure"));
+    await operation.catch(() => undefined);
+
+    expect(observation).toMatchObject({
+      state: "rejected",
+      reason: {
+        name: "ModelProviderTimeoutError",
+        providerId: "vscode-copilot",
+        requestDispatched: true,
+      },
+    });
+    expect(api.sendCalls).toBe(1);
+    expect(api.cancellation.cancelled).toBe(true);
+    expect(api.cancellation.disposed).toBe(true);
+  });
+
+  it("bounds a stalled async response-stream next call", async () => {
+    const api = new RecordingLanguageModelApi();
+    const next = deferred<IteratorResult<string>>();
+    const nextStarted = deferred<void>();
+    api.sendRequest = async () => ({
+      [Symbol.asyncIterator](): AsyncIterator<string> {
+        return {
+          next: () => {
+            nextStarted.resolve(undefined);
+            return next.promise;
+          },
+        };
+      },
+    });
+    const provider = new VsCodeLanguageModelProvider(api, {
+      timeoutMs: 5,
+    });
+    const operation = provider.generate(
+      request,
+      new AbortController().signal,
+    );
+
+    await nextStarted.promise;
+    const observation = await observeWithin(operation, 50);
+    next.reject(new Error("late stream failure"));
+    await operation.catch(() => undefined);
+
+    expect(observation).toMatchObject({
+      state: "rejected",
+      reason: {
+        name: "ModelProviderTimeoutError",
+        requestDispatched: true,
+      },
+    });
+    expect(api.cancellation.cancelled).toBe(true);
+    expect(api.cancellation.disposed).toBe(true);
+  });
+
+  it("bounds the final official token count", async () => {
+    const api = new RecordingLanguageModelApi();
+    api.fragments = ["Complete response"];
+    const finalCount = deferred<number>();
+    const finalCountStarted = deferred<void>();
+    const originalCountTokens = api.countTokens.bind(api);
+    let countCalls = 0;
+    api.countTokens = (model, text, cancellation) => {
+      countCalls += 1;
+      if (countCalls === 2) {
+        finalCountStarted.resolve(undefined);
+        return finalCount.promise;
+      }
+      return originalCountTokens(model, text, cancellation);
+    };
+    const provider = new VsCodeLanguageModelProvider(api, {
+      timeoutMs: 5,
+    });
+    const operation = provider.generate(
+      request,
+      new AbortController().signal,
+    );
+
+    await finalCountStarted.promise;
+    const observation = await observeWithin(operation, 50);
+    finalCount.reject(new Error("late count failure"));
+    await operation.catch(() => undefined);
+
+    expect(observation).toMatchObject({
+      state: "rejected",
+      reason: {
+        name: "ModelProviderTimeoutError",
+        requestDispatched: true,
+      },
+    });
+    expect(api.cancellation.cancelled).toBe(true);
+    expect(api.cancellation.disposed).toBe(true);
+  });
+
+  it("gives caller cancellation precedence over the provider deadline", async () => {
+    const api = new RecordingLanguageModelApi();
+    const send = deferred<AsyncIterable<string>>();
+    const sendStarted = deferred<void>();
+    api.sendRequest = () => {
+      sendStarted.resolve(undefined);
+      return send.promise;
+    };
+    const provider = new VsCodeLanguageModelProvider(api, {
+      timeoutMs: 100,
+    });
+    const abortController = new AbortController();
+    const cancellationReason = new Error("caller cancelled");
+    const operation = provider.generate(request, abortController.signal);
+
+    await sendStarted.promise;
+    abortController.abort(cancellationReason);
+    const observation = await observeWithin(operation, 25);
+    send.reject(new Error("late send failure"));
+    await operation.catch(() => undefined);
+
+    expect(observation).toEqual({
+      state: "rejected",
+      reason: cancellationReason,
+    });
+    expect(api.cancellation.cancelled).toBe(true);
+    expect(api.cancellation.disposed).toBe(true);
+  });
+
+  it("releases an exact reservation when the deadline expires before dispatch", async () => {
+    const budget = new TokenBudget({
+      windowMs: 60_000,
+      maxCalls: 1,
+      maxInputTokens: 1_000,
+      maxOutputTokens: 180,
+      maxOutputTokensPerCall: 180,
+    });
+    const api = new RecordingLanguageModelApi();
+    const provider = new VsCodeLanguageModelProvider(api, {
+      timeoutMs: 5,
+    });
+    const dispatch = await provider.prepare(
+      request,
+      new AbortController().signal,
+    );
+    const reservation = budget.tryReserve(dispatch.inputTokens, 180, 0);
+    if (!reservation.allowed) {
+      throw new Error("Expected the test reservation to be admitted.");
+    }
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 15);
+    });
+    const error = await dispatch.send().catch((reason: unknown) => reason);
+    const released = releaseUnusedCopilotReservation(
+      budget,
+      reservation.reservationId,
+      error,
+    );
+    dispatch.dispose();
+
+    expect(error).toMatchObject({
+      name: "ModelProviderTimeoutError",
+      requestDispatched: false,
+    });
+    expect(released).toBe(true);
+    expect(budget.snapshot(20)).toEqual({
+      remainingCalls: 1,
+      remainingInputTokens: 1_000,
+      remainingOutputTokens: 180,
+    });
+    expect(api.sendCalls).toBe(0);
+    expect(api.cancellation.cancelled).toBe(true);
+    expect(api.cancellation.disposed).toBe(true);
+  });
+
+  it("retains conservative reservation accounting after a dispatched timeout", async () => {
+    const budget = new TokenBudget({
+      windowMs: 60_000,
+      maxCalls: 1,
+      maxInputTokens: 1_000,
+      maxOutputTokens: 180,
+      maxOutputTokensPerCall: 180,
+    });
+    const api = new RecordingLanguageModelApi();
+    const send = deferred<AsyncIterable<string>>();
+    const sendStarted = deferred<void>();
+    api.sendRequest = () => {
+      api.sendCalls += 1;
+      sendStarted.resolve(undefined);
+      return send.promise;
+    };
+    const provider = new VsCodeLanguageModelProvider(api, {
+      timeoutMs: 5,
+    });
+    const dispatch = await provider.prepare(
+      request,
+      new AbortController().signal,
+    );
+    const reservation = budget.tryReserve(dispatch.inputTokens, 180, 0);
+    if (!reservation.allowed) {
+      throw new Error("Expected the test reservation to be admitted.");
+    }
+    const operation = dispatch.send();
+
+    await sendStarted.promise;
+    const observation = await observeWithin(operation, 50);
+    send.reject(new Error("late send failure"));
+    const error = await operation.catch((reason: unknown) => reason);
+    const released = releaseUnusedCopilotReservation(
+      budget,
+      reservation.reservationId,
+      error,
+    );
+    dispatch.dispose();
+
+    expect(observation).toMatchObject({
+      state: "rejected",
+      reason: {
+        name: "ModelProviderTimeoutError",
+        requestDispatched: true,
+      },
+    });
+    expect(released).toBe(false);
+    expect(budget.snapshot(20).remainingCalls).toBe(0);
+    expect(api.cancellation.cancelled).toBe(true);
+    expect(api.cancellation.disposed).toBe(true);
+  });
+
   it("does not start a model request when cancellation arrives during selection", async () => {
     const api = new RecordingLanguageModelApi();
     const provider = new VsCodeLanguageModelProvider(api);
@@ -539,9 +860,12 @@ describe("VsCodeLanguageModelProvider", () => {
     },
   );
 
-  it("requires prior consent for proactive requests but allows user-initiated consent", async () => {
+  it("does not prompt for consent during an automatic intervention", async () => {
     const api = new RecordingLanguageModelApi();
-    api.access = undefined;
+    api.access = mapLanguageModelAccessKind(
+      LanguageModelAccessKind.NeedsConsent,
+      LanguageModelAccessKind,
+    );
     const provider = new VsCodeLanguageModelProvider(api);
 
     await expect(
@@ -549,11 +873,57 @@ describe("VsCodeLanguageModelProvider", () => {
     ).rejects.toMatchObject({
       reason: "consent-required",
     });
+    expect(api.countedTexts).toEqual([]);
+    expect(api.sendCalls).toBe(0);
+  });
+
+  it("may request consent for a user-initiated call", async () => {
+    const api = new RecordingLanguageModelApi();
+    api.access = mapLanguageModelAccessKind(
+      LanguageModelAccessKind.NeedsConsent,
+      LanguageModelAccessKind,
+    );
+    const provider = new VsCodeLanguageModelProvider(api);
+
     await expect(
       provider.generateFromUserAction(request, new AbortController().signal),
     ).resolves.toMatchObject({
       text: "Did you intend this dependency?",
     });
+    expect(api.sendCalls).toBe(1);
+  });
+
+  it("never attempts a disallowed model for a user-initiated call", async () => {
+    const api = new RecordingLanguageModelApi();
+    api.access = mapLanguageModelAccessKind(
+      LanguageModelAccessKind.Disallowed,
+      LanguageModelAccessKind,
+    );
+    const provider = new VsCodeLanguageModelProvider(api);
+
+    await expect(
+      provider.generateFromUserAction(request, new AbortController().signal),
+    ).rejects.toMatchObject({
+      reason: "access-denied",
+    });
+    expect(api.countedTexts).toEqual([]);
+    expect(api.sendCalls).toBe(0);
+  });
+
+  it("attempts an allowed model for an automatic intervention", async () => {
+    const api = new RecordingLanguageModelApi();
+    api.access = mapLanguageModelAccessKind(
+      LanguageModelAccessKind.Allowed,
+      LanguageModelAccessKind,
+    );
+    const provider = new VsCodeLanguageModelProvider(api);
+
+    await expect(
+      provider.generate(request, new AbortController().signal),
+    ).resolves.toMatchObject({
+      text: "Did you intend this dependency?",
+    });
+    expect(api.sendCalls).toBe(1);
   });
 
   it("uses the next Copilot model when the first candidate lacks access", async () => {

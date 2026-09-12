@@ -5,6 +5,10 @@ import {
   hashEvidenceIdentity,
   PairMemoryStore,
 } from "../src/core/memoryStore";
+import type {
+  ModelRequest,
+  ModelResponse,
+} from "../src/core/modelRouter";
 import { TokenBudget } from "../src/core/tokenBudget";
 import type { Evidence } from "../src/core/types";
 
@@ -2135,6 +2139,144 @@ describe("PairRuntime lifecycle ownership", () => {
       remainingOutputTokens: 177,
     });
     runtime.dispose();
+  });
+
+  it("routes consent-needed Copilot access only from user actions", async () => {
+    let sendCalls = 0;
+    const api: VsCodeLanguageModelApi = {
+      ...languageModelApi([
+        {
+          id: "copilot-model",
+          name: "Copilot model",
+        },
+      ]),
+      canSendRequest: () => undefined,
+      sendRequest: async () => {
+        sendCalls += 1;
+        return (async function* (): AsyncIterable<string> {
+          yield "remote response";
+        })();
+      },
+    };
+    const runtime = new PairRuntime({
+      config: config({ provider: "vscode-copilot" }),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: api,
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    const automaticRequest: ModelRequest = {
+      goal: "Ask.",
+      evidence,
+      interactionStyle: "ask-first",
+    };
+
+    await expect(
+      (
+        runtime as unknown as {
+          generateWithProvider(
+            request: ModelRequest,
+            signal: AbortSignal,
+            source: "automatic",
+          ): Promise<ModelResponse>;
+        }
+      ).generateWithProvider(
+        automaticRequest,
+        new AbortController().signal,
+        "automatic",
+      ),
+    ).resolves.toMatchObject({
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+    expect(sendCalls).toBe(0);
+
+    await expect(
+      runtime.generate(
+        "file:///workspace/pair.ts",
+        "Ask.",
+        evidence,
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      text: "remote response",
+    });
+    expect(sendCalls).toBe(1);
+    runtime.dispose();
+  });
+
+  it("disposes Copilot request resources and retains a dispatched timeout reservation", async () => {
+    vi.useFakeTimers();
+    const budgetConfig = {
+      maxCalls: 1,
+      maxInputTokens: 500,
+      maxOutputTokens: 180,
+      maxOutputTokensPerCall: 180,
+      windowMs: 600_000,
+    };
+    const budget = new TokenBudget(budgetConfig);
+    const send = deferred<AsyncIterable<string>>();
+    const sendStarted = deferred<void>();
+    let cancellationCancelled = false;
+    let cancellationDisposed = false;
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "vscode-copilot",
+        budget: budgetConfig,
+      }),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: {
+        ...languageModelApi([
+          {
+            id: "copilot-model",
+            name: "Copilot model",
+          },
+        ]),
+        createCancellationTokenSource: () => ({
+          cancel: () => {
+            cancellationCancelled = true;
+          },
+          dispose: () => {
+            cancellationDisposed = true;
+          },
+        }),
+        sendRequest: () => {
+          sendStarted.resolve();
+          return send.promise;
+        },
+      },
+      apiKey: undefined,
+      budget,
+    });
+
+    try {
+      await runtime.startSession();
+      const operation = runtime.generate(
+        "file:///workspace/pair.ts",
+        "Ask.",
+        evidence,
+        new AbortController().signal,
+      );
+      const rejection = operation.catch((error: unknown) => error);
+      await sendStarted.promise;
+      await vi.advanceTimersByTimeAsync(15_000);
+
+      await expect(rejection).resolves.toMatchObject({
+        name: "ModelProviderTimeoutError",
+        providerId: "vscode-copilot",
+        requestDispatched: true,
+      });
+      expect(cancellationCancelled).toBe(true);
+      expect(cancellationDisposed).toBe(true);
+      expect(budget.snapshot(Date.now()).remainingCalls).toBe(0);
+      send.reject(new Error("late send failure"));
+      await Promise.resolve();
+    } finally {
+      runtime.dispose();
+      vi.useRealTimers();
+    }
   });
 
   it("does not dispatch another Copilot candidate after its exact reservation is denied", async () => {

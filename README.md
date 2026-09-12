@@ -251,10 +251,12 @@ See the repository documentation for the full configuration reference:
   observed usage.
 - Copilot requests pass the supported `max_tokens` model option and use the
   same selected model's official `countTokens` API to cap displayed stream
-  output and account for the maximum observed token count. The stable VS Code
+  output and account for the maximum observed token count. A 15-second
+  provider deadline bounds model selection, request dispatch, stream reads,
+  and token counting even when the provider ignores cancellation. Timed-out
+  dispatched calls retain conservative budget accounting. The stable VS Code
   API does not promise a provider-side generation or billing hard limit;
-  cancellation at the display boundary is best effort, while the budget
-  retains conservative accounting.
+  cancellation at the display boundary is best effort.
 - OpenAI-compatible requests also use a deadline and a bounded response body.
   Rejected status and size-limit paths cancel the body before returning the
   primary provider error; a cancellation failure is retained as its cause.

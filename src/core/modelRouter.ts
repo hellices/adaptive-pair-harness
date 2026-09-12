@@ -43,6 +43,16 @@ export class ModelOutputLimitError extends Error {
   }
 }
 
+export class ModelProviderTimeoutError extends Error {
+  public constructor(
+    public readonly providerId: string,
+    public readonly requestDispatched: boolean,
+  ) {
+    super(`${providerId} provider request timed out.`);
+    this.name = "ModelProviderTimeoutError";
+  }
+}
+
 export interface ModelPreparationOptions {
   readonly userInitiated?: boolean;
 }
@@ -273,7 +283,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       };
     } catch (error: unknown) {
       if (timedOut && !signal.aborted) {
-        throw new Error("OpenAI-compatible provider request timed out.");
+        throw new ModelProviderTimeoutError("openai-compatible", true);
       }
       throw error;
     } finally {

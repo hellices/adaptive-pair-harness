@@ -18,6 +18,8 @@ import {
   createPairSessionCommandHandlers,
   createRuntimeAfterSecretLookup,
 } from "./vscode/pairRuntimeSupport";
+import { mapLanguageModelAccessKind } from "./vscode/languageModelAccess";
+import type { LanguageModelAccessKindValues } from "./vscode/languageModelAccess";
 import type {
   CopilotModelReference,
   VsCodeLanguageModelApi,
@@ -366,6 +368,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 const createLanguageModelApi = (
   context: vscode.ExtensionContext,
 ): VsCodeLanguageModelApi => {
+  const languageModelAccessKinds = (
+    vscode as unknown as {
+      readonly LanguageModelAccessKind?: LanguageModelAccessKindValues;
+    }
+  ).LanguageModelAccessKind ?? {
+    Allowed: true,
+    Disallowed: false,
+    NeedsConsent: undefined,
+  };
   const nativeModels = new WeakMap<
     CopilotModelReference,
     vscode.LanguageModelChat
@@ -390,9 +401,12 @@ const createLanguageModelApi = (
     canSendRequest: (modelReference) => {
       const model = nativeModels.get(modelReference);
       if (model === undefined) {
-        return undefined;
+        return false;
       }
-      return context.languageModelAccessInformation.canSendRequest(model);
+      return mapLanguageModelAccessKind(
+        context.languageModelAccessInformation.canSendRequest(model),
+        languageModelAccessKinds,
+      );
     },
     createCancellationTokenSource: () => {
       const source = new vscode.CancellationTokenSource();

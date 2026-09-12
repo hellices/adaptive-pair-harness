@@ -1547,3 +1547,77 @@
   static block before another will renumber later identities, while editing a
   static block's contents will not.
 - No remaining high-confidence lexical-identity or packaging concern was found.
+
+---
+
+## GitHub Copilot access and deadline findings (2026-09-13)
+
+### Corrections implemented
+
+- The VS Code adapter now maps `LanguageModelAccessKind.Allowed` to `true`,
+  `Disallowed` to `false`, and `NeedsConsent` to `undefined` before values
+  reach the provider contract. Unknown values fail closed. A compatibility
+  fallback preserves the prior boolean API shape when the runtime does not
+  expose the enum object.
+- Automatic interventions skip consent-needed models without invoking
+  `countTokens` or `sendRequest`. User actions may enter VS Code's consent
+  path, while disallowed models are never attempted.
+- One 15-second Copilot deadline now spans model selection, preflight token
+  counting, `sendRequest`, each async stream `next()` wait, streamed/prefix
+  token counts, and iterator cleanup.
+- Deadline and caller-cancellation outcomes race every provider await.
+  Deadline expiry cancels the VS Code cancellation source immediately, and
+  late provider rejections are observed without delaying cleanup.
+- Copilot and OpenAI-compatible timeouts now surface the shared typed
+  `ModelProviderTimeoutError`, including provider identity and whether a
+  request was dispatched.
+- A pre-dispatch Copilot timeout can release its exact unused reservation.
+  Once dispatch was attempted, the reservation remains conservatively charged
+  until normal budget-window expiry. Candidate and cancellation-registry
+  resources are disposed on every terminal path.
+- README, configuration, and architecture documentation now describe the
+  access-kind and deadline behavior.
+
+### TDD evidence
+
+- Access RED: the focused suites reported **4 failures and 36 passes** because
+  allowed and disallowed enum values were not mapped and therefore routed as
+  consent-needed.
+- Access GREEN: **2 files, 40 tests passed**, covering all three enum values,
+  automatic consent suppression, user-initiated consent, denied access, and
+  allowed automatic routing.
+- Deadline RED: the provider suite reported **7 failures and 37 passes** for
+  unresolved selection/send, stalled stream reads, final token counting,
+  cancellation precedence, and reservation ownership.
+- Deadline GREEN: the provider suite passed **44 tests**. A separate RED/GREEN
+  cycle changed the OpenAI-compatible timeout assertion from an untyped
+  `Error` to `ModelProviderTimeoutError`.
+- Final focused provider/runtime/extension run: **5 files, 122 tests passed**,
+  including runtime consent routing and timeout cleanup/accounting.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 424 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 89.81%, branches 82.14%, functions 92.51%, lines 89.95%
+- `npm run package`: **PASS — 157 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript` only**
+- VSIX exclusion and compiled access/deadline marker scans: **PASS**
+- Production credential-pattern, placeholder-URL, and packaged metadata scans:
+  **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review covered adapter mapping, provider races, late rejection
+  handling, stream closure, runtime routing, cancellation-source disposal, and
+  reservation transitions. No high-confidence correctness, security,
+  lifecycle, or packaging issue remains.
+- The deadline is intentionally one end-to-end 15-second budget, rather than a
+  fresh timeout for each stage.
+- A dispatched timeout intentionally retains conservative call/input/output
+  reservation values because final provider usage may be unknowable.

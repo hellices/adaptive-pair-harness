@@ -155,15 +155,19 @@ ordinary prose are not classified as local resources.
   zero remote tokens
 - **Official VS Code Copilot**: uses the VS Code language model API and falls
   back locally when no model is available, access is denied, or proactive access
-  is unavailable. Candidates advance only after unavailable/no-permission
-  failures; blocked, cancelled, and unknown failures surface. Every candidate
-  counts the exact prepared prompt and receives its own runtime-owned
-  reservation before dispatch, and iteration stops on lifecycle cancellation
-  or budget denial. The request passes the supported `max_tokens` model option;
-  streamed display is bounded with that candidate's official `countTokens` API
-  and cancellation. VS Code does not guarantee a provider-side generation or
-  billing hard limit, so observed over-boundary fragments are conservatively
-  accounted.
+  is unavailable. VS Code access kinds map explicitly to allowed, disallowed,
+  and consent-needed adapter states; only user actions may enter the consent
+  path. Candidates advance only after unavailable/no-permission failures;
+  blocked, cancelled, and unknown failures surface. Every candidate counts the
+  exact prepared prompt and receives its own runtime-owned reservation before
+  dispatch, and iteration stops on lifecycle cancellation or budget denial.
+  One deadline spans selection, dispatch, stream reads, and official token
+  counts, racing provider operations that ignore cancellation. Expiry cancels
+  and disposes the VS Code request source. The request passes the supported
+  `max_tokens` model option; streamed display is bounded with that candidate's
+  official `countTokens` API and cancellation. VS Code does not guarantee a
+  provider-side generation or billing hard limit, so dispatched timeouts and
+  observed over-boundary fragments are conservatively accounted.
 - **OpenAI-compatible**: posts JSON to `/chat/completions` at the configured
   safe base URL, optionally with an origin-bound bearer token from
   `SecretStorage`; requests have a deadline, 64 KiB response cap, and a

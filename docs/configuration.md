@@ -108,14 +108,19 @@ Implementation notes for this slice:
 
 - Requests go through the official VS Code Language Model API with
   `selectChatModels({ vendor: "copilot" })`.
-- Automatic inline interventions require access to already be available through
-  `languageModelAccessInformation.canSendRequest(...)`.
+- `LanguageModelAccessKind.Allowed`, `.Disallowed`, and `.NeedsConsent` map to
+  allowed, denied, and consent-needed adapter states respectively. Automatic
+  inline interventions proceed only for `Allowed`.
 - User-initiated actions such as `@pair /why` or **Adaptive Pair: Review Current
-  Block** are allowed to attempt the official request path even when proactive
-  access is not yet available.
+  Block** may attempt the official request path for `NeedsConsent`, allowing VS
+  Code to request consent; `Disallowed` models are never attempted.
 - Candidate models advance only for unavailable or no-permission failures.
   Blocked and unknown failures surface; cancellation stops iteration. Each
   candidate is counted and admitted separately before it can dispatch.
+- One 15-second deadline spans model selection, dispatch, every streamed
+  `next()` wait, and official token counts. Expiry cancels and disposes the VS
+  Code request source; reservations for dispatched calls remain conservative,
+  while an exact reservation can be released if expiry precedes dispatch.
 - If no candidate is available, access is denied, or candidate admission
   exhausts the budget, Adaptive Pair falls back to `local-template` and
   surfaces that in status.

@@ -397,7 +397,11 @@ describe("model routing", () => {
 
     await expect(
       provider.generate(request, new AbortController().signal),
-    ).rejects.toThrow("timed out");
+    ).rejects.toMatchObject({
+      name: "ModelProviderTimeoutError",
+      providerId: "openai-compatible",
+      requestDispatched: true,
+    });
   });
 
   it("rejects an oversized OpenAI-compatible response body", async () => {
