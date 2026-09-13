@@ -703,6 +703,9 @@ describe("PairMemoryStore", () => {
       store,
       repositoryId: repositoryA,
     });
+    const storedSnapshot = structuredClone(
+      store.values.get("adaptive-pair.memory"),
+    );
 
     const loadError = await memoryStore.load().catch((error: unknown) => error);
     expect(loadError).toBeInstanceOf(Error);
@@ -715,7 +718,7 @@ describe("PairMemoryStore", () => {
       name: "InvalidPairMemoryError",
       message: expect.stringContaining("preferences.interventionStyle"),
     });
-    expect(store.values.get("adaptive-pair.memory")).toEqual(corruptedMemory);
+    expect(store.values.get("adaptive-pair.memory")).toEqual(storedSnapshot);
   });
 
   it("recovers corrupt memory in memory without overwriting it", async () => {
@@ -729,6 +732,9 @@ describe("PairMemoryStore", () => {
       store,
       repositoryId: repositoryA,
     });
+    const storedSnapshot = structuredClone(
+      store.values.get("adaptive-pair.memory"),
+    );
 
     const recovered = await memoryStore.loadOrDefault();
 
@@ -743,7 +749,7 @@ describe("PairMemoryStore", () => {
       dismissedEvidenceByRepository: {},
       approvedEvidence: [],
     });
-    expect(store.values.get("adaptive-pair.memory")).toEqual(corruptedMemory);
+    expect(store.values.get("adaptive-pair.memory")).toEqual(storedSnapshot);
   });
 
   it("resets corrupt memory only through an explicit reset", async () => {

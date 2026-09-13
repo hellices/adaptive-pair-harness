@@ -1689,3 +1689,68 @@
 - The deterministic tests exercise the public event contract through a VS Code
   test double. A live VS Code multi-root UI session was not available in this
   non-interactive environment.
+
+---
+
+## Overnight semantic and memory review fixes (2026-09-13)
+
+### Corrections implemented
+
+- Recursively collect identifiers from object and array binding patterns in
+  top-level variable declarations. Each binding identifier is registered with
+  the TypeScript checker, and direct exports plus aliased local export lists
+  now compare checker-resolved callable signatures.
+- Treat getter and setter declarations as enclosing complexity scopes.
+  Accessor keys include owning class identity, static/instance scope, get/set
+  kind, and property name, preventing same-named nested arrows from replacing
+  one another.
+- Preserve the accumulated lexical block path when scope traversal reaches a
+  source file. Same-named arrows in sibling top-level blocks now retain
+  distinct keys while keeping their public display names unchanged.
+- Deep-clone corrupt values from the backing test store before calling
+  `updatePreferences` or `loadOrDefault`, then compare storage against those
+  independent snapshots.
+- Made no change for the reported missing outer `describe` closure: the test
+  file already compiles and closes correctly.
+
+### TDD evidence
+
+- Destructuring RED: **2 expected failures** showed that nested object and
+  array binding identifiers were omitted. GREEN: both direct-export and
+  aliased local-export regressions passed.
+- Accessor RED: **1 expected failure** showed first-accessor-only complexity
+  growth was lost to a later same-named arrow. GREEN: the regression passed
+  with all accessor identity dimensions represented.
+- Top-level block RED: **1 expected failure** showed first-block-only growth
+  was lost at the source-file boundary. GREEN: the sibling-block regression
+  passed with a stable `helper` display name.
+- Corrupt-memory mutation check RED: a temporary in-place mutation probe made
+  both strengthened snapshot assertions fail. After removing the probe,
+  GREEN passed for both `updatePreferences` and `loadOrDefault`.
+- Final focused semantic/memory run: **2 files, 77 tests passed**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 440 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 89.37%, branches 82.27%, functions 92.73%, lines 89.50%
+- `npm run package`: **PASS — 157 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript` only**
+- VSIX exclusion and compiled destructuring/accessor/block marker scans:
+  **PASS**
+- Production credential-pattern and packaged metadata scans: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review covered recursive binding aliases/defaults, checker
+  signature resolution, accessor identity dimensions, source-root lexical
+  paths, evidence ranges/display names, and independent corrupt-store
+  snapshots. No high-confidence correctness, security, or packaging issue
+  remains.
+- No production memory behavior changed; the strengthened tests now detect
+  any future in-place corruption before a rejected update or safe recovery.

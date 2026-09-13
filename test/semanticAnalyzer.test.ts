@@ -566,6 +566,60 @@ describe("TypeScriptSemanticAnalyzer", () => {
     );
   });
 
+  it("reports signature changes for directly exported object-destructured callables", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        [
+          "declare const source: { api: { load?: (id: string) => string } };",
+          "const fallback = (id: string): string => id;",
+          "export const { api: { load: fetchItem = fallback } } = source;",
+        ].join("\n"),
+        [
+          "declare const source: { api: { load?: (id: number) => string } };",
+          "const fallback = (id: number): string => String(id);",
+          "export const { api: { load: fetchItem = fallback } } = source;",
+        ].join("\n"),
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["fetchItem"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports return changes for array-destructured callables in local export lists", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        [
+          "declare const source: [[((id: string) => string)?]];",
+          "const fallback = (id: string): string => id;",
+          "const [[load = fallback]] = source;",
+          "export { load as fetchItem };",
+        ].join("\n"),
+        [
+          "declare const source: [[((id: string) => number)?]];",
+          "const fallback = (id: string): number => id.length;",
+          "const [[load = fallback]] = source;",
+          "export { load as fetchItem };",
+        ].join("\n"),
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["fetchItem"],
+        }),
+      ]),
+    );
+  });
+
   it("resolves CommonJS exports through JavaScript alias variables", () => {
     const evidence = analyzeEvidence(
       episode(
@@ -1294,6 +1348,111 @@ describe("TypeScriptSemanticAnalyzer", () => {
       "outerOne.helper",
       "outerTwo.helper",
     ]);
+  });
+
+  it("attributes complexity growth to only the first same-named arrow across distinct accessors", () => {
+    const simpleHelper = [
+      "    const helper = (input: number): number => {",
+      "      if (input > 0) return input;",
+      "      if (input < 0) return -input;",
+      "      return 0;",
+      "    };",
+    ];
+    const complexHelper = [
+      "    const helper = (input: number): number => {",
+      "      if (input > 10) return 10;",
+      "      if (input > 0 && input < 10) return input;",
+      "      for (const item of [input]) {",
+      "        if (item === 0) return 0;",
+      "      }",
+      "      return input < 0 ? -input : input;",
+      "    };",
+    ];
+    const source = (firstHelper: readonly string[]): string =>
+      [
+        "class Worker {",
+        "  static get primary(): number {",
+        ...firstHelper,
+        "    return helper(1);",
+        "  }",
+        "  static set primary(input: number) {",
+        ...simpleHelper,
+        "    helper(input);",
+        "  }",
+        "  get primary(): number {",
+        ...simpleHelper,
+        "    return helper(1);",
+        "  }",
+        "  static get secondary(): number {",
+        ...simpleHelper,
+        "    return helper(1);",
+        "  }",
+        "}",
+        "class OtherWorker {",
+        "  static get primary(): number {",
+        ...simpleHelper,
+        "    return helper(1);",
+        "  }",
+        "}",
+      ].join("\n");
+
+    const evidence = analyzeEvidence(
+      episode(source(simpleHelper), source(complexHelper)),
+    ).filter((item) => item.kind === "complexity-growth");
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]).toMatchObject({
+      detail: expect.stringContaining("now has 6 branches, up from 2."),
+      range: {
+        start: { line: 2, character: 10 },
+      },
+    });
+  });
+
+  it("attributes complexity growth to the first same-named arrow in sibling top-level blocks", () => {
+    const simpleBlock = [
+      "{",
+      "  const helper = (input: number): number => {",
+      "    if (input > 0) return input;",
+      "    if (input < 0) return -input;",
+      "    return 0;",
+      "  };",
+      "  helper(1);",
+      "}",
+    ];
+    const complexBlock = [
+      "{",
+      "  const helper = (input: number): number => {",
+      "    if (input > 10) return 10;",
+      "    if (input > 0 && input < 10) return input;",
+      "    for (const item of [input]) {",
+      "      if (item === 0) return 0;",
+      "    }",
+      "    return input < 0 ? -input : input;",
+      "  };",
+      "  helper(1);",
+      "}",
+    ];
+    const source = (
+      firstBlock: readonly string[],
+      secondBlock: readonly string[],
+    ): string => [...firstBlock, ...secondBlock].join("\n");
+
+    const evidence = analyzeEvidence(
+      episode(
+        source(simpleBlock, simpleBlock),
+        source(complexBlock, simpleBlock),
+      ),
+    ).filter((item) => item.kind === "complexity-growth");
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]).toMatchObject({
+      detail: "helper now has 6 branches, up from 2.",
+      references: ["helper"],
+      range: {
+        start: { line: 1, character: 8 },
+      },
+    });
   });
 
   it("keeps same-named arrows distinct and stable across sibling lexical blocks", () => {

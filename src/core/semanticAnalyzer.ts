@@ -469,14 +469,15 @@ const collectExportedSignatures = (
     }
     if (ts.isVariableStatement(statement)) {
       for (const declaration of statement.declarationList.declarations) {
-        if (!ts.isIdentifier(declaration.name)) {
-          continue;
+        for (const identifier of bindingIdentifiers(declaration.name)) {
+          identifiersByName.set(identifier.text, identifier);
+          variableNames.add(identifier.text);
         }
-        identifiersByName.set(declaration.name.text, declaration.name);
-        variableNames.add(declaration.name.text);
-        const initializer = unwrapFunctionExpression(declaration.initializer);
-        if (initializer !== undefined) {
-          functionsByName.set(declaration.name.text, [initializer]);
+        if (ts.isIdentifier(declaration.name)) {
+          const initializer = unwrapFunctionExpression(declaration.initializer);
+          if (initializer !== undefined) {
+            functionsByName.set(declaration.name.text, [initializer]);
+          }
         }
       }
     }
@@ -644,11 +645,11 @@ const collectExportedSignatures = (
 
     if (ts.isVariableStatement(statement) && hasExportModifier(statement)) {
       for (const declaration of statement.declarationList.declarations) {
-        if (ts.isIdentifier(declaration.name)) {
+        for (const identifier of bindingIdentifiers(declaration.name)) {
           appendLocalExport(
-            declaration.name.text,
-            exportIdentity(declaration.name.text),
-            declaration.name,
+            identifier.text,
+            exportIdentity(identifier.text),
+            identifier,
           );
         }
       }
@@ -811,6 +812,16 @@ const unwrapFunctionExpression = (
   return unwrapped !== undefined && isFunctionExpressionLike(unwrapped)
     ? unwrapped
     : undefined;
+};
+
+const bindingIdentifiers = (name: ts.BindingName): readonly ts.Identifier[] => {
+  if (ts.isIdentifier(name)) {
+    return [name];
+  }
+
+  return name.elements.flatMap((element) =>
+    ts.isOmittedExpression(element) ? [] : bindingIdentifiers(element.name),
+  );
 };
 
 const appendExpressionExport = (
@@ -1179,6 +1190,31 @@ const methodIdentity = (node: ts.MethodDeclaration): SubjectIdentity | undefined
   };
 };
 
+const accessorIdentity = (
+  node: ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
+): SubjectIdentity | undefined => {
+  const classDeclaration = node.parent;
+  if (!ts.isClassDeclaration(classDeclaration)) {
+    return undefined;
+  }
+
+  const ownerIdentity = classIdentity(classDeclaration);
+  const propertyName = propertyNameText(node.name);
+  if (ownerIdentity === undefined || propertyName === undefined) {
+    return undefined;
+  }
+
+  const accessorKind = ts.isGetAccessorDeclaration(node) ? "get" : "set";
+  const staticMember = hasModifier(node, ts.SyntaxKind.StaticKeyword);
+  const memberPrefix = staticMember ? "." : "#";
+  const scopeKind = staticMember ? "static" : "instance";
+
+  return {
+    key: `${ownerIdentity.key}/${scopeKind}-${accessorKind}-accessor:${propertyName}`,
+    displayName: `${ownerIdentity.displayName}${memberPrefix}${accessorKind} ${propertyName}`,
+  };
+};
+
 const variableFunctionIdentity = (node: ts.VariableDeclaration): SubjectIdentity | undefined => {
   if (!ts.isIdentifier(node.name)) {
     return undefined;
@@ -1194,6 +1230,22 @@ const enclosingScopeIdentity = (node: ts.Node | undefined): SubjectIdentity | un
   while (current !== undefined) {
     if (isIdentityBearingLexicalScope(current)) {
       lexicalBlockPath.unshift(lexicalScopeIdentitySegment(current));
+    }
+
+    if (ts.isSourceFile(current)) {
+      return lexicalBlockPath.length === 0
+        ? undefined
+        : {
+            key: lexicalBlockPath.join("/"),
+            displayName: "",
+          };
+    }
+
+    if (
+      ts.isGetAccessorDeclaration(current) ||
+      ts.isSetAccessorDeclaration(current)
+    ) {
+      return withLexicalBlockPath(accessorIdentity(current), lexicalBlockPath);
     }
 
     if (ts.isMethodDeclaration(current)) {
@@ -1327,7 +1379,10 @@ const qualifyIdentity = (
 
   return {
     key: `${parent.key}/${key}`,
-    displayName: `${parent.displayName}.${displayName}`,
+    displayName:
+      parent.displayName.length === 0
+        ? displayName
+        : `${parent.displayName}.${displayName}`,
   };
 };
 
