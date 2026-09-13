@@ -835,15 +835,17 @@ const methodIdentity = (
     return undefined;
   }
 
-  const staticPrefix =
-    !ts.isObjectLiteralExpression(node.parent) &&
-    hasModifier(node, ts.SyntaxKind.StaticKeyword)
-      ? "."
-      : "#";
+  const objectMethod = ts.isObjectLiteralExpression(node.parent);
+  const staticMethod =
+    !objectMethod && hasModifier(node, ts.SyntaxKind.StaticKeyword);
+  const memberPrefix = staticMethod ? "." : "#";
+  const memberKind = objectMethod
+    ? "object-method"
+    : `class-method:${staticMethod ? "static" : "instance"}`;
 
   return {
-    key: `${ownerIdentity.key}${staticPrefix}${methodName}`,
-    displayName: `${ownerIdentity.displayName}${staticPrefix}${methodName}`,
+    key: `${ownerIdentity.key}/${memberKind}:${methodName}`,
+    displayName: `${ownerIdentity.displayName}${memberPrefix}${methodName}`,
   };
 };
 

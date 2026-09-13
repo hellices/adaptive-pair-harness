@@ -1683,6 +1683,53 @@ describe("TypeScriptSemanticAnalyzer", () => {
     expect(evidence[0]?.references).toEqual(["Alpha#decide"]);
   });
 
+  const methodContainer = (
+    container: "class" | "object",
+    complex: boolean,
+  ): string =>
+    [
+      `const Worker = ${container === "class" ? "class {" : "{"}`,
+      "  decide(input: number): number {",
+      ...returningComplexityBody("    ", complex),
+      `  }${container === "object" ? "," : ""}`,
+      "};",
+    ].join("\n");
+
+  it.each([
+    ["object literal", "class expression", "object", "class"],
+    ["class expression", "object literal", "class", "object"],
+  ] as const)(
+    "does not match a replaced %s method to a %s method",
+    (_previousLabel, _currentLabel, previousContainer, currentContainer) => {
+      const evidence = analyzeEvidence(
+        episode(
+          methodContainer(previousContainer, false),
+          methodContainer(currentContainer, true),
+        ),
+      ).filter((item) => item.kind === "complexity-growth");
+
+      expect(evidence).toEqual([]);
+    },
+  );
+
+  it.each([
+    ["class"],
+    ["object"],
+  ] as const)(
+    "still reports genuine method growth within the same %s container",
+    (container) => {
+      const evidence = analyzeEvidence(
+        episode(
+          methodContainer(container, false),
+          methodContainer(container, true),
+        ),
+      ).filter((item) => item.kind === "complexity-growth");
+
+      expect(evidence).toHaveLength(1);
+      expect(evidence[0]?.references).toEqual(["Worker#decide"]);
+    },
+  );
+
   it("records class-expression method, static method, getter, and setter growth under the named owner", () => {
     const source = (complex: boolean): string =>
       [

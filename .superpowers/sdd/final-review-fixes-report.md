@@ -3706,3 +3706,55 @@
   Deterministic VS Code adapters, real TypeScript AST analysis, deferred
   runtime behavior, and package byte-integrity checks cover the changed
   boundaries.
+
+---
+
+## Method container identity collision follow-up (2026-09-14)
+
+### Correction implemented
+
+- Method complexity identities now encode `object-method` or `class-method`
+  explicitly. Class identities additionally retain the `instance` or `static`
+  dimension.
+- User-facing method names remain separate and unchanged, including `#` for
+  object/instance methods and `.` for static methods.
+- Replacing an object literal with a class expression, or the reverse, no
+  longer aligns same-owner, same-named methods as one complexity record.
+  Methods that remain within the same container kind continue to align and
+  report genuine growth.
+
+### TDD evidence
+
+- RED: the focused regression run produced **2 expected failures and 2
+  passes**. Both object-to-class and class-to-object replacements incorrectly
+  emitted `Worker#decide` complexity growth.
+- GREEN: the same focused run passed **4 tests**, covering both replacement
+  directions and genuine class/class and object/object growth.
+- The complete semantic analyzer suite passed **86 tests**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **20 files, 589 tests passed**
+- `npm run test:coverage`: **PASS — 20 files, 589 tests**
+  - statements 90.52%, branches 83.17%, functions 93.56%, lines 90.65%
+- `npm run package`: **PASS — 161 files, 4.37 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX exclusion and compiled JavaScript byte-integrity scans: **PASS — 22
+  compiled modules**
+- Compiled method-kind marker, production/package credential-shaped value,
+  runtime/fake URL, repository metadata, conflict-marker, and
+  `git diff --check` scans: **PASS**
+
+### Self-review and residual concerns
+
+- Reviewed grouping/alignment behavior, class static/instance separation,
+  object/class replacement symmetry, stable same-container matching,
+  user-facing references, and packaged output. No high-confidence defect
+  remains in the changed scope.
+- No live VS Code extension-host run was performed; this behavior is isolated
+  to real TypeScript AST identity collection and is covered by focused and full
+  semantic tests.
