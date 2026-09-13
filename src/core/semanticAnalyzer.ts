@@ -774,6 +774,7 @@ const collectExportedSignatures = (
     const appendPublicMembers = (
       type: ts.Type,
       separator: "#" | ".",
+      memberSelfTypeSymbols: ReadonlySet<ts.Symbol> = selfTypeSymbols,
     ): boolean => {
       let appendedMember = false;
       const checkerReadonlyMembers = readonlyPropertyNamesForType(
@@ -860,7 +861,7 @@ const collectExportedSignatures = (
                 getterType,
                 getter,
                 checker,
-                selfTypeSymbols,
+                memberSelfTypeSymbols,
               )}`,
             );
           }
@@ -878,7 +879,7 @@ const collectExportedSignatures = (
                     checker.getTypeAtLocation(setterTypeNode),
                     setter,
                     checker,
-                    selfTypeSymbols,
+                    memberSelfTypeSymbols,
                   )}`,
             );
           }
@@ -917,7 +918,7 @@ const collectExportedSignatures = (
                       checker,
                       ts.SignatureKind.Call,
                       new Set([
-                        ...selfTypeSymbols,
+                        ...memberSelfTypeSymbols,
                         ...exportedSelfTypeSymbols(
                           group.type,
                           memberLocation,
@@ -951,25 +952,35 @@ const collectExportedSignatures = (
         if (memberConstructSignatures.length > 0) {
           const memberSignatureGroups =
             constructSignatureGroupsForType(memberType)
-              .map((signatures) =>
-                signatures.filter((signature) => {
+              .map((group) => ({
+                type: group.type,
+                signatures: group.signatures.filter((signature) => {
                   const declaration = signature.getDeclaration();
                   return (
                     declaration === undefined ||
                     !hasNonPublicModifier(declaration)
                   );
                 }),
-              )
-              .filter((signatures) => signatures.length > 0)
-              .map((signatures) =>
+              }))
+              .filter((group) => group.signatures.length > 0)
+              .map((group) =>
                 overloadGroupSurfaceSignature(
-                  signatures.map(
+                  group.signatures.map(
                     (signature) =>
                       `${declarationMarkers}:construct:${serializeStructuralConstructSignature(
                         signature,
                         memberLocation,
                         checker,
-                        selfTypeSymbols,
+                        new Set([
+                          ...memberSelfTypeSymbols,
+                          ...exportedSelfTypeSymbols(
+                            group.type,
+                            memberLocation,
+                            undefined,
+                            checker,
+                            namespace,
+                          ),
+                        ]),
                       )}`,
                   ),
                 ),
@@ -1048,10 +1059,10 @@ const collectExportedSignatures = (
                     ) ||
                     readonlyMembers.has(attachedMember.name),
                     serializeExportedTypeRoot(
-                    attachedType,
-                    attachedLocation,
-                    checker,
-                    selfTypeSymbols,
+                      attachedType,
+                      attachedLocation,
+                      checker,
+                      memberSelfTypeSymbols,
                       sourceFile,
                     ),
                 ]),
@@ -1085,7 +1096,7 @@ const collectExportedSignatures = (
                 memberType,
                 memberLocation,
                 checker,
-                selfTypeSymbols,
+                memberSelfTypeSymbols,
               )}`,
             ),
             memberLocation,
@@ -1210,25 +1221,26 @@ const collectExportedSignatures = (
     }
     const publicConstructSignatureGroups =
       constructSignatureGroupsForType(valueType)
-        .map((signatures) =>
-          signatures.filter((signature) => {
+        .map((group) => ({
+          type: group.type,
+          signatures: group.signatures.filter((signature) => {
             const declaration = signature.getDeclaration();
             return (
               declaration === undefined ||
               !hasNonPublicModifier(declaration)
             );
           }),
-        )
-        .filter((signatures) => signatures.length > 0);
+        }))
+        .filter((group) => group.signatures.length > 0);
     const publicConstructSignatures =
-      publicConstructSignatureGroups.flat();
+      publicConstructSignatureGroups.flatMap((group) => group.signatures);
     const constructorKey = keyFor("method", "#constructor");
     const nominalClassDeclaration =
       classDeclarations.length === 1 ? classDeclarations[0] : undefined;
     const serializedConstructSignatureGroups =
-      publicConstructSignatureGroups.map((signatures) =>
+      publicConstructSignatureGroups.map((group) =>
         overloadGroupSurfaceSignature(
-          signatures.map((signature) => {
+          group.signatures.map((signature) => {
             const nominalClassSignature =
               nominalClassDeclaration !== undefined &&
               isNominalClassConstructSignature(
@@ -1236,18 +1248,28 @@ const collectExportedSignatures = (
                 nominalClassDeclaration,
                 checker,
               );
+            const constituentSelfTypeSymbols = new Set([
+              ...selfTypeSymbols,
+              ...exportedSelfTypeSymbols(
+                group.type,
+                location,
+                undefined,
+                checker,
+                namespace,
+              ),
+            ]);
             return nominalClassSignature
               ? serializeClassConstructSignature(
                   signature,
                   location,
                   checker,
-                  selfTypeSymbols,
+                  constituentSelfTypeSymbols,
                 )
               : serializeStructuralConstructSignature(
                   signature,
                   location,
                   checker,
-                  selfTypeSymbols,
+                  constituentSelfTypeSymbols,
                 );
           }),
         ),
@@ -1300,14 +1322,32 @@ const collectExportedSignatures = (
 
       if (!ownMembersOnly) {
         const visitedInstanceTypes = new Set<ts.Type>();
-        for (const signature of constructSignatures) {
-          const instanceType = signature.getReturnType();
-          if (visitedInstanceTypes.has(instanceType)) {
-            continue;
-          }
-          visitedInstanceTypes.add(instanceType);
-          if (appendPublicMembers(instanceType, "#")) {
-            appended = true;
+        for (const group of constructSignatureGroupsForType(valueType)) {
+          const constituentSelfTypeSymbols = new Set([
+            ...selfTypeSymbols,
+            ...exportedSelfTypeSymbols(
+              group.type,
+              location,
+              undefined,
+              checker,
+              namespace,
+            ),
+          ]);
+          for (const signature of group.signatures) {
+            const instanceType = signature.getReturnType();
+            if (visitedInstanceTypes.has(instanceType)) {
+              continue;
+            }
+            visitedInstanceTypes.add(instanceType);
+            if (
+              appendPublicMembers(
+                instanceType,
+                "#",
+                constituentSelfTypeSymbols,
+              )
+            ) {
+              appended = true;
+            }
           }
         }
       }
@@ -1939,6 +1979,7 @@ const collectExportedSignatures = (
           assignmentChain.value,
           path,
           target,
+          checker,
           appendFunction,
           appendClass,
           appendLocalExport,
@@ -1997,6 +2038,7 @@ const collectExportedSignatures = (
     }
     collectCommonJsExport(
       assignment,
+      checker,
       appendFunction,
       appendClass,
       appendLocalExport,
@@ -2166,6 +2208,7 @@ const appendExpressionExport = (
 
 const collectCommonJsExport = (
   assignment: CommonJsExportAssignment,
+  checker: ts.TypeChecker,
   appendFunction: AppendFunctionExport,
   appendClass: AppendClassExport,
   appendLocalExport: AppendLocalExport,
@@ -2176,6 +2219,7 @@ const collectCommonJsExport = (
     assignment.expression.right,
     assignment.path,
     assignment.expression.left,
+    checker,
     appendFunction,
     appendClass,
     appendLocalExport,
@@ -2188,6 +2232,7 @@ const collectCommonJsExportValue = (
   expression: ts.Expression,
   path: CommonJsExportPath,
   rangeNode: ts.Node,
+  checker: ts.TypeChecker,
   appendFunction: AppendFunctionExport,
   appendClass: AppendClassExport,
   appendLocalExport: AppendLocalExport,
@@ -2196,9 +2241,20 @@ const collectCommonJsExportValue = (
 ): void => {
   const unwrapped = unwrapExpression(expression);
   if (unwrapped !== undefined && ts.isObjectLiteralExpression(unwrapped)) {
+    const accessorDeclarations = new Map<
+      string,
+      {
+        readonly getter: ts.GetAccessorDeclaration | undefined;
+        readonly setter: ts.SetAccessorDeclaration | undefined;
+      }
+    >();
+    const overwriteProperty = (propertyName: string): void => {
+      removeExportPath([...path, propertyName]);
+      accessorDeclarations.delete(propertyName);
+    };
     for (const property of unwrapped.properties) {
       if (ts.isShorthandPropertyAssignment(property)) {
-        removeExportPath([...path, property.name.text]);
+        overwriteProperty(property.name.text);
         appendLocalExport(
           property.name.text,
           commonJsExportIdentity([...path, property.name.text]),
@@ -2207,11 +2263,12 @@ const collectCommonJsExportValue = (
       } else if (ts.isPropertyAssignment(property)) {
         const propertyName = propertyNameText(property.name);
         if (propertyName !== undefined) {
-          removeExportPath([...path, propertyName]);
+          overwriteProperty(propertyName);
           collectCommonJsExportValue(
             property.initializer,
             [...path, propertyName],
             property.name,
+            checker,
             appendFunction,
             appendClass,
             appendLocalExport,
@@ -2220,30 +2277,64 @@ const collectCommonJsExportValue = (
           );
         }
       } else if (ts.isSpreadAssignment(property)) {
+        const spreadProperties = commonJsSpreadProperties(
+          property.expression,
+          checker,
+        );
+        if (spreadProperties.hasUnknownKeys) {
+          removeExportPath(path);
+          accessorDeclarations.clear();
+        } else {
+          for (const propertyName of spreadProperties.keys) {
+            overwriteProperty(propertyName);
+          }
+        }
         collectCommonJsExportValue(
           property.expression,
           path,
           property,
+          checker,
           appendFunction,
           appendClass,
           appendLocalExport,
           appendCallableExpression,
           removeExportPath,
         );
-      } else if (
-        ts.isMethodDeclaration(property) ||
-        ts.isGetAccessorDeclaration(property) ||
-        ts.isSetAccessorDeclaration(property)
-      ) {
+      } else if (ts.isMethodDeclaration(property)) {
         const propertyName = propertyNameText(property.name);
         if (
           propertyName !== undefined &&
           !isNonPublicDeclaration(property)
         ) {
-          removeExportPath([...path, propertyName]);
+          overwriteProperty(propertyName);
           appendFunction(
             commonJsExportIdentity([...path, propertyName]),
             [property],
+            property.name,
+          );
+        }
+      } else if (
+        (ts.isGetAccessorDeclaration(property) ||
+          ts.isSetAccessorDeclaration(property)) &&
+        !isNonPublicDeclaration(property)
+      ) {
+        const propertyName = propertyNameText(property.name);
+        if (propertyName !== undefined) {
+          const existing = accessorDeclarations.get(propertyName);
+          const combined = ts.isGetAccessorDeclaration(property)
+            ? { getter: property, setter: existing?.setter }
+            : { getter: existing?.getter, setter: property };
+          removeExportPath([...path, propertyName]);
+          accessorDeclarations.set(propertyName, combined);
+          appendFunction(
+            commonJsExportIdentity([...path, propertyName]),
+            [combined.getter, combined.setter].filter(
+              (
+                declaration,
+              ): declaration is
+                | ts.GetAccessorDeclaration
+                | ts.SetAccessorDeclaration => declaration !== undefined,
+            ),
             property.name,
           );
         }
@@ -2261,6 +2352,48 @@ const collectCommonJsExportValue = (
     appendLocalExport,
     appendCallableExpression,
   );
+};
+
+interface CommonJsSpreadProperties {
+  readonly keys: readonly string[];
+  readonly hasUnknownKeys: boolean;
+}
+
+const commonJsSpreadProperties = (
+  expression: ts.Expression,
+  checker: ts.TypeChecker,
+): CommonJsSpreadProperties => {
+  const keys = new Set<string>();
+  let hasUnknownKeys = false;
+  const visited = new Set<ts.Type>();
+  const visit = (type: ts.Type): void => {
+    if (visited.has(type)) {
+      return;
+    }
+    visited.add(type);
+    if (type.isUnionOrIntersection()) {
+      type.types.forEach(visit);
+      return;
+    }
+    for (const property of checker.getPropertiesOfType(type)) {
+      if (property.name !== "prototype") {
+        keys.add(property.name);
+      }
+    }
+    if (
+      (type.flags &
+        (ts.TypeFlags.Any |
+          ts.TypeFlags.Unknown |
+          ts.TypeFlags.TypeParameter |
+          ts.TypeFlags.NonPrimitive)) !==
+        0 ||
+      checker.getIndexInfosOfType(type).length > 0
+    ) {
+      hasUnknownKeys = true;
+    }
+  };
+  visit(checker.getTypeAtLocation(expression));
+  return { keys: [...keys].sort(), hasUnknownKeys };
 };
 
 interface CommonJsAssignmentChain {
@@ -2844,6 +2977,19 @@ const classInstanceType = (
 const classDeclarationsForValueType = (
   type: ts.Type,
 ): readonly ts.ClassLikeDeclarationBase[] => {
+  if (type.isIntersection()) {
+    return [
+      ...new Set(
+        type.types.flatMap((constituent) =>
+          classDeclarationsForValueType(constituent),
+        ),
+      ),
+    ];
+  }
+  if (type.getConstructSignatures().length === 0) {
+    return [];
+  }
+
   const declarations =
     type
     .getSymbol()
@@ -2853,31 +2999,25 @@ const classDeclarationsForValueType = (
         ts.isClassDeclaration(candidate) || ts.isClassExpression(candidate),
     ) ?? [];
 
-  if (type.isIntersection()) {
-    for (const constituent of type.types) {
-      declarations.push(...classDeclarationsForValueType(constituent));
-    }
-  }
-
   return [...new Set(declarations)];
-};
-
-const constructSignatureGroupsForType = (
-  type: ts.Type,
-): readonly (readonly ts.Signature[])[] => {
-  if (!type.isIntersection()) {
-    return [type.getConstructSignatures()];
-  }
-
-  return type.types.flatMap((constituent) =>
-    constructSignatureGroupsForType(constituent),
-  );
 };
 
 interface CheckerSignatureGroup {
   readonly type: ts.Type;
   readonly signatures: readonly ts.Signature[];
 }
+
+const constructSignatureGroupsForType = (
+  type: ts.Type,
+): readonly CheckerSignatureGroup[] => {
+  if (!type.isIntersection()) {
+    return [{ type, signatures: type.getConstructSignatures() }];
+  }
+
+  return type.types.flatMap((constituent) =>
+    constructSignatureGroupsForType(constituent),
+  );
+};
 
 const callSignatureGroupsForType = (
   type: ts.Type,
@@ -3224,7 +3364,7 @@ const documentTypeFingerprint = (
     }
     const nextAncestors = new Set(ancestors);
     nextAncestors.add(canonicalSymbol);
-    const properties = checker
+    const propertyWorklist = checker
       .getPropertiesOfType(type)
       .flatMap((member) => {
         const declarations = (member.getDeclarations() ?? []).filter(
@@ -3237,30 +3377,89 @@ const documentTypeFingerprint = (
           return [];
         }
         return [
-          JSON.stringify([
-            surfaceMemberIdentity(
+          {
+            declaration,
+            declarations,
+            identity: surfaceMemberIdentity(
               member,
               declarations,
               checker,
               sourceFile,
-            ).key,
-            (member.flags & ts.SymbolFlags.Optional) !== 0,
-            declarations.some((candidate) =>
-              hasModifier(candidate, ts.SyntaxKind.ReadonlyKeyword),
-            ) || declarations.some(isConstVariableDeclaration),
-            documentTypeFingerprint(
-              checker.getTypeOfSymbolAtLocation(member, declaration),
-              declaration,
-              checker,
-              selfTypeSymbols,
-              nextAncestors,
-              cache,
-              budget,
             ),
-          ]),
+            member,
+          },
         ];
       })
-      .sort();
+      .sort((left, right) =>
+        left.identity.key.localeCompare(right.identity.key),
+      );
+    const properties = propertyWorklist.map(
+      ({ declaration, declarations, identity, member }) => {
+        const getter = declarations.find(ts.isGetAccessorDeclaration);
+        const setter = declarations.find(ts.isSetAccessorDeclaration);
+        const memberFingerprint =
+          getter === undefined && setter === undefined
+            ? documentTypeFingerprint(
+                checker.getTypeOfSymbolAtLocation(member, declaration),
+                declaration,
+                checker,
+                selfTypeSymbols,
+                nextAncestors,
+                cache,
+                budget,
+              )
+            : JSON.stringify([
+                "accessor",
+                getter === undefined
+                  ? null
+                  : documentTypeFingerprint(
+                      checker.getSignatureFromDeclaration(getter) === undefined
+                        ? checker.getTypeAtLocation(getter.type ?? getter)
+                        : checker.getReturnTypeOfSignature(
+                            checker.getSignatureFromDeclaration(
+                              getter,
+                            ) as ts.Signature,
+                          ),
+                      getter,
+                      checker,
+                      selfTypeSymbols,
+                      nextAncestors,
+                      cache,
+                      budget,
+                    ),
+                (() => {
+                  if (setter === undefined) {
+                    return null;
+                  }
+                  const parameter = setter.parameters[0];
+                  const typeNode =
+                    parameter?.type ??
+                    (parameter === undefined
+                      ? undefined
+                      : ts.getJSDocType(parameter));
+                  return typeNode === undefined
+                    ? "implicit"
+                    : documentTypeFingerprint(
+                        checker.getTypeAtLocation(typeNode),
+                        typeNode,
+                        checker,
+                        selfTypeSymbols,
+                        nextAncestors,
+                        cache,
+                        budget,
+                      );
+                })(),
+              ]);
+        return JSON.stringify([
+          identity.key,
+          (member.flags & ts.SymbolFlags.Optional) !== 0,
+          declarations.some((candidate) =>
+            hasModifier(candidate, ts.SyntaxKind.ReadonlyKeyword),
+          ) || declarations.some(isConstVariableDeclaration),
+          memberFingerprint,
+        ]);
+      },
+    );
     const signatures = [
       ...type.getCallSignatures(),
       ...type.getConstructSignatures(),
@@ -4291,25 +4490,34 @@ const surfaceMemberIdentity = (
     }
     const directName = propertyNameText(name);
     if (directName !== undefined) {
-      return { key: directName, displayName: directName };
+      return {
+        key: JSON.stringify(["literal", directName]),
+        displayName: directName,
+      };
     }
     if (!ts.isComputedPropertyName(name)) {
       continue;
     }
     const expression = name.expression;
     if (ts.isStringLiteralLike(expression) || ts.isNumericLiteral(expression)) {
-      return { key: expression.text, displayName: expression.text };
+      return {
+        key: JSON.stringify(["computed-literal", expression.text]),
+        displayName: expression.text,
+      };
     }
     const expressionType = checker.getTypeAtLocation(expression);
     if (expressionType.isStringLiteral()) {
       return {
-        key: expressionType.value,
+        key: JSON.stringify(["computed-literal", expressionType.value]),
         displayName: expressionType.value,
       };
     }
     if (expressionType.isNumberLiteral()) {
       const value = String(expressionType.value);
-      return { key: value, displayName: value };
+      return {
+        key: JSON.stringify(["computed-literal", value]),
+        displayName: value,
+      };
     }
     const symbol = referencedSymbol(expression, checker);
     if (symbol === undefined) {

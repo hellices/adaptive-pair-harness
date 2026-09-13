@@ -2462,3 +2462,81 @@
   syntax-level provenance, but external module bodies are not resolved or
   analyzed. A live VS Code extension host was not exercised in this
   non-interactive run.
+
+---
+
+## Type-surface provenance review fixes (2026-09-13)
+
+### Corrections implemented
+
+- Recursive local-type fingerprints now collect public getter returns and
+  setter parameters independently. Private and protected accessor halves are
+  excluded before type derivation, while public setter-only and
+  public-setter/private-getter changes remain observable.
+- Constructable intersections retain each constituent type alongside its
+  overload group. Constructor signatures and constructed-instance members use
+  that constituent's self symbols, eliminating equivalent local class rename
+  noise without hiding structurally different return classes.
+- Checker-resolved values only acquire class-constructor and type-namespace
+  surfaces when the exported value type is constructable. A value such as
+  `export const api = new Container()` now remains an instance value.
+- Every checker member identity now uses a tagged structured key for literal,
+  computed-literal, exported-computed, computed-symbol, or checker fallback
+  provenance. Literal text cannot collide with a computed-key encoding.
+- CommonJS object collection now combines getter/setter halves and applies
+  source-order overwrite semantics to checker-known spread keys. Index,
+  `any`, `unknown`, broad-object, and type-parameter spreads conservatively
+  invalidate prior property certainty before their own surface is collected.
+- Recursive property worklists are sorted by canonical member identity before
+  the shared 512-node fingerprint budget is consumed. Equivalent large
+  interfaces therefore remain stable across reversed declaration order while
+  the existing hard bound, cache, and cycle guards remain intact.
+
+### TDD evidence
+
+- RED: the focused new-regression run produced **9 expected failures and 3
+  passes**. Failures covered private/protected getter contamination,
+  constructor constituent self references, class-instance type fabrication,
+  literal/computed key collision, split CommonJS accessors, known and unknown
+  spread overwrites, and reversed large-interface budgets.
+- Two tightened regressions independently failed for a public setter hidden by
+  a private getter and the extra class-instance type namespace.
+- GREEN: the focused provenance run passed **13 tests**; the complete semantic
+  analyzer suite passed **254 tests**.
+- The older non-primary class-return control was strengthened with distinct
+  public instance shapes so it continues to prove real constituent return
+  changes while equivalent nominal renames normalize.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 688 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 91.58%, branches 85.18%, functions 93.88%, lines 91.68%
+- `npm run package`: **PASS — 158 files, 4.37 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX inclusion/exclusion and compiled-marker scans: **PASS**
+  - the compiled provenance implementation is present;
+  - source, tests, coverage, private review material, editor/CI files, and
+    source maps are absent.
+- Production and packaged credential-value scans: **PASS**
+- Production runtime URL scan: **PASS — loopback default only**
+- Source and packaged repository/bugs/homepage and fake-URL scans: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Base-to-working-tree review covered accessor filtering, constituent
+  ownership, constructor/instance discrimination, structured identities,
+  CommonJS accessor/spread ordering, budget exhaustion, cache/cycle behavior,
+  and every added regression. No remaining high-confidence correctness,
+  privacy, packaging, or dependency finding was identified.
+- Unknown-key CommonJS spreads intentionally discard certainty about prior
+  properties; this is conservative and may suppress a change that depends on
+  a runtime-absent spread key, but it never presents an earlier value as the
+  definite final export.
+- Analysis remains per-document with external module bodies unresolved. A live
+  VS Code extension host was not exercised in this non-interactive run.
