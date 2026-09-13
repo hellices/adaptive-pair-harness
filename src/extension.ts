@@ -17,6 +17,7 @@ import { PairRuntime } from "./vscode/pairRuntime";
 import {
   createPairSessionCommandHandlers,
   createRuntimeAfterSecretLookup,
+  rebuildRuntimeAfterDisposal,
 } from "./vscode/pairRuntimeSupport";
 import { mapLanguageModelAccessKind } from "./vscode/languageModelAccess";
 import type { LanguageModelAccessKindValues } from "./vscode/languageModelAccess";
@@ -61,44 +62,44 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const rebuildNow = async (): Promise<void> => {
     const previous = runtime;
-    runtime = undefined;
-    previous?.dispose();
-
-    const config = readPairConfig(
-      vscode.workspace.getConfiguration("adaptivePair"),
+    await rebuildRuntimeAfterDisposal(
+      previous,
+      async () => {
+        const config = readPairConfig(
+          vscode.workspace.getConfiguration("adaptivePair"),
+        );
+        if (sharedBudget === undefined) {
+          sharedBudget = new TokenBudget(config.budget);
+        } else {
+          sharedBudget.reconfigure(config.budget);
+        }
+        const budget = sharedBudget;
+        return createRuntimeAfterSecretLookup<PairRuntime>(
+          () =>
+            config.provider === "openai-compatible" &&
+            config.baseUrl !== undefined
+              ? context.secrets.get(
+                  apiKeySecretNameForEndpoint(config.baseUrl),
+                )
+              : Promise.resolve(undefined),
+          () => extensionDisposed,
+          (apiKey) =>
+            new PairRuntime({
+              config,
+              extensionContext: context,
+              sharedContext,
+              languageModelApi,
+              apiKey,
+              budget,
+              budgetFollowsInterventionStyle: true,
+              memoryStore,
+            }),
+        );
+      },
+      (next) => {
+        runtime = next;
+      },
     );
-    if (sharedBudget === undefined) {
-      sharedBudget = new TokenBudget(config.budget);
-    } else {
-      sharedBudget.reconfigure(config.budget);
-    }
-    const budget = sharedBudget;
-    const next = await createRuntimeAfterSecretLookup<PairRuntime>(
-      () =>
-        config.provider === "openai-compatible" &&
-        config.baseUrl !== undefined
-          ? context.secrets.get(apiKeySecretNameForEndpoint(config.baseUrl))
-          : Promise.resolve(undefined),
-      () => extensionDisposed,
-      (apiKey) =>
-        new PairRuntime({
-          config,
-          extensionContext: context,
-          sharedContext,
-          languageModelApi,
-          apiKey,
-          budget,
-          budgetFollowsInterventionStyle: true,
-          memoryStore,
-        }),
-    );
-    if (next === undefined) {
-      return;
-    }
-    runtime = next;
-    if (extensionDisposed || runtime !== next) {
-      next.dispose();
-    }
   };
 
   const rebuild = (): Promise<void> => {

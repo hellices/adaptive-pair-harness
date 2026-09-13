@@ -4208,6 +4208,183 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
+  it("keeps an in-flight intervention current across unrelated URI revision churn", async () => {
+    const providerCompletion = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => providerCompletion.promise),
+    );
+    const uri = "file:///workspace/pinned.ts";
+    const currentDocument = document(uri, "export const pinned = true;");
+    vscodeState.textDocuments = [currentDocument];
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "openai-compatible",
+        baseUrl: new URL("https://model.example/v1"),
+      }),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    const intervene = (
+      runtime as unknown as {
+        intervene(
+          document: vscode.TextDocument,
+          evidence: Evidence,
+          source: "automatic" | "manual",
+          goal: string,
+        ): Promise<void>;
+      }
+    ).intervene.bind(runtime);
+
+    const pending = intervene(
+      currentDocument as unknown as vscode.TextDocument,
+      evidence,
+      "manual",
+      "Review pinned evidence.",
+    );
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalledOnce();
+    });
+    for (
+      let index = 0;
+      index <= PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT;
+      index += 1
+    ) {
+      shared.clearEvidence(`file:///workspace/unrelated-${index}.ts`);
+    }
+
+    providerCompletion.resolve(providerResponse("Pinned response"));
+    await pending;
+
+    expect(shared.snapshot().latest).toMatchObject({
+      uri,
+      question: "Pinned response",
+    });
+    expect(vscodeState.commentThreads).toHaveLength(1);
+    runtime.dispose();
+  });
+
+  it("suppresses a pinned in-flight intervention when its target URI changes", async () => {
+    const providerCompletion = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => providerCompletion.promise),
+    );
+    const uri = "file:///workspace/pinned-change.ts";
+    const initialDocument = document(uri, "export const pinned = true;", 1);
+    vscodeState.textDocuments = [initialDocument];
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "openai-compatible",
+        baseUrl: new URL("https://model.example/v1"),
+      }),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    const intervene = (
+      runtime as unknown as {
+        intervene(
+          document: vscode.TextDocument,
+          evidence: Evidence,
+          source: "automatic" | "manual",
+          goal: string,
+        ): Promise<void>;
+      }
+    ).intervene.bind(runtime);
+
+    const pending = intervene(
+      initialDocument as unknown as vscode.TextDocument,
+      evidence,
+      "manual",
+      "Review pinned evidence.",
+    );
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalledOnce();
+    });
+    for (
+      let index = 0;
+      index <= PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT;
+      index += 1
+    ) {
+      shared.clearEvidence(`file:///workspace/unrelated-change-${index}.ts`);
+    }
+    const changedDocument = document(
+      uri,
+      "export const pinned = false;",
+      2,
+    );
+    vscodeState.textDocuments = [changedDocument];
+    vscodeState.changeListeners[0]!({
+      document: changedDocument,
+      contentChanges: [{ text: "false" }],
+    });
+
+    providerCompletion.resolve(providerResponse("Stale pinned response"));
+    await pending;
+
+    expect(shared.snapshot().latest).toBeUndefined();
+    expect(vscodeState.commentThreads).toEqual([]);
+    runtime.dispose();
+  });
+
+  it("releases an intervention URI fence after the request settles", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => providerResponse("Completed response")),
+    );
+    const uri = "file:///workspace/released-pin.ts";
+    const currentDocument = document(uri, "export const released = true;");
+    vscodeState.textDocuments = [currentDocument];
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "openai-compatible",
+        baseUrl: new URL("https://model.example/v1"),
+      }),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    const intervene = (
+      runtime as unknown as {
+        intervene(
+          document: vscode.TextDocument,
+          evidence: Evidence,
+          source: "automatic" | "manual",
+          goal: string,
+        ): Promise<void>;
+      }
+    ).intervene.bind(runtime);
+
+    await intervene(
+      currentDocument as unknown as vscode.TextDocument,
+      evidence,
+      "manual",
+      "Review released evidence.",
+    );
+    expect(shared.evidenceRevisionForUri(uri)).toBeDefined();
+    for (
+      let index = 0;
+      index <= PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT;
+      index += 1
+    ) {
+      shared.clearEvidence(`file:///workspace/post-request-${index}.ts`);
+    }
+
+    expect(shared.evidenceRevisionForUri(uri)).toBeUndefined();
+    runtime.dispose();
+  });
+
   it("does not let a slower URI success overwrite a newer URI publication", async () => {
     const firstCompletion = deferred<Response>();
     const secondCompletion = deferred<Response>();

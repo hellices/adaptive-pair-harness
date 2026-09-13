@@ -43,6 +43,41 @@ export const createRuntimeAfterSecretLookup = async <TRuntime>(
   return isDisposed() ? undefined : createRuntime(apiKey);
 };
 
+export const rebuildRuntimeAfterDisposal = async <
+  TRuntime extends PairDisposable,
+>(
+  previous: TRuntime | undefined,
+  createReplacement: () => PromiseLike<TRuntime | undefined>,
+  install: (runtime: TRuntime | undefined) => void,
+): Promise<void> => {
+  install(undefined);
+  const cleanupErrors: unknown[] = [];
+  try {
+    previous?.dispose();
+  } catch (error: unknown) {
+    cleanupErrors.push(error);
+  }
+
+  let replacement: TRuntime | undefined;
+  try {
+    replacement = await createReplacement();
+  } catch (error: unknown) {
+    runCleanupSteps(
+      [],
+      "Adaptive Pair runtime disposal and replacement both failed.",
+      [...cleanupErrors, error],
+    );
+    throw error;
+  }
+
+  install(replacement);
+  runCleanupSteps(
+    [],
+    "Failed to dispose the previous Adaptive Pair runtime cleanly.",
+    cleanupErrors,
+  );
+};
+
 export interface PairSessionLifecyclePorts {
   prepare(
     context: PairSessionPreparationContext,

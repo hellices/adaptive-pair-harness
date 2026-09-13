@@ -53,6 +53,10 @@ export type PairRuntimeRevision = number & {
   readonly [pairRuntimeRevisionBrand]: true;
 };
 
+export interface PairEvidenceRevisionFence extends PairDisposable {
+  isCurrent(): boolean;
+}
+
 export const PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT = 256;
 
 export class PairSharedContext {
@@ -61,6 +65,7 @@ export class PairSharedContext {
   private revision = 0;
   private evidenceEpoch = 0;
   private readonly evidenceRevisionByUri = new Map<string, number>();
+  private readonly activeEvidencePinsByUri = new Map<string, number>();
   private readonly contextRevisionByFence = new WeakMap<
     PairContextRevisionFence,
     number
@@ -213,6 +218,35 @@ export class PairSharedContext {
     return this.storeEvidenceRevision(uri, this.nextEvidenceRevision());
   }
 
+  public captureEvidenceRevisionFenceForUri(
+    uri: string,
+  ): PairEvidenceRevisionFence {
+    const revision = this.captureEvidenceRevisionForUri(uri);
+    this.activeEvidencePinsByUri.set(
+      uri,
+      (this.activeEvidencePinsByUri.get(uri) ?? 0) + 1,
+    );
+    let active = true;
+    return {
+      isCurrent: () =>
+        active && this.evidenceRevisionForUri(uri) === revision,
+      dispose: () => {
+        if (!active) {
+          return;
+        }
+        active = false;
+        const remaining =
+          (this.activeEvidencePinsByUri.get(uri) ?? 1) - 1;
+        if (remaining === 0) {
+          this.activeEvidencePinsByUri.delete(uri);
+        } else {
+          this.activeEvidencePinsByUri.set(uri, remaining);
+        }
+        this.evictIdleEvidenceRevisions();
+      },
+    };
+  }
+
   public invalidateEvidenceFenceForUri(
     uri: string,
     runtimeRevision?: PairRuntimeRevision,
@@ -253,17 +287,27 @@ export class PairSharedContext {
   private storeEvidenceRevision(uri: string, revision: number): number {
     this.evidenceRevisionByUri.delete(uri);
     this.evidenceRevisionByUri.set(uri, revision);
-    if (
+    this.evictIdleEvidenceRevisions();
+    return revision;
+  }
+
+  private evictIdleEvidenceRevisions(): void {
+    while (
       this.evidenceRevisionByUri.size >
       PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT
     ) {
-      const leastRecentlyUsedUri =
-        this.evidenceRevisionByUri.keys().next().value;
-      if (leastRecentlyUsedUri !== undefined) {
-        this.evidenceRevisionByUri.delete(leastRecentlyUsedUri);
+      let evicted = false;
+      for (const candidate of this.evidenceRevisionByUri.keys()) {
+        if (!this.activeEvidencePinsByUri.has(candidate)) {
+          this.evidenceRevisionByUri.delete(candidate);
+          evicted = true;
+          break;
+        }
+      }
+      if (!evicted) {
+        return;
       }
     }
-    return revision;
   }
 
   private releaseAllEvidenceUris(): void {

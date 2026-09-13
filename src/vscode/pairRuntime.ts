@@ -122,6 +122,7 @@ export interface PairMemoryActionResult {
 interface PairGenerationFence {
   readonly revisionFence: PairContextRevisionFence;
   isCurrent(): boolean;
+  dispose(): void;
 }
 
 class TimeoutScheduler implements Scheduler, vscode.Disposable {
@@ -672,6 +673,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
         generationFence,
       );
     } finally {
+      generationFence.dispose();
       signal.removeEventListener("abort", cancelRequest);
       this.chatRequests.remove(uri, requestController);
     }
@@ -890,6 +892,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
         `Adaptive Pair model request failed: ${error.message}`,
       );
     } finally {
+      generationFence.dispose();
       if (this.requestByUri.get(key) === abortController) {
         this.requestByUri.delete(key);
       }
@@ -904,25 +907,31 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   ): Promise<ModelResponse> {
     const activeFence =
       generationFence ?? this.captureGenerationFence(signal);
-    if (!activeFence.isCurrent()) {
-      signal.throwIfAborted();
-      throw new PairInactiveError(source);
+    try {
+      if (!activeFence.isCurrent()) {
+        signal.throwIfAborted();
+        throw new PairInactiveError(source);
+      }
+      const result = await this.invocationGate.run(source, async () =>
+        this.generateWhileEnabled(
+          request,
+          signal,
+          source,
+          activeFence,
+        ),
+      );
+      if (result.kind === "disabled") {
+        throw new PairDisabledError(source);
+      }
+      if (result.kind === "inactive") {
+        throw new PairInactiveError(source);
+      }
+      return result.value;
+    } finally {
+      if (generationFence === undefined) {
+        activeFence.dispose();
+      }
     }
-    const result = await this.invocationGate.run(source, async () =>
-      this.generateWhileEnabled(
-        request,
-        signal,
-        source,
-        activeFence,
-      ),
-    );
-    if (result.kind === "disabled") {
-      throw new PairDisabledError(source);
-    }
-    if (result.kind === "inactive") {
-      throw new PairInactiveError(source);
-    }
-    return result.value;
   }
 
   private captureGenerationFence(
@@ -932,10 +941,10 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     revisionFence = this.options.sharedContext.captureRevisionFence(),
   ): PairGenerationFence {
     const lifecycleFence = this.sessionLifecycle.captureFence(true);
-    const evidenceRevision =
+    const evidenceFence =
       uri === undefined
         ? undefined
-        : this.options.sharedContext.captureEvidenceRevisionForUri(uri);
+        : this.options.sharedContext.captureEvidenceRevisionFenceForUri(uri);
     return {
       revisionFence,
       isCurrent: () =>
@@ -944,8 +953,10 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
         ownsRequest() &&
         this.options.sharedContext.isRevisionFenceCurrent(revisionFence) &&
         (uri === undefined ||
-          this.options.sharedContext.evidenceRevisionForUri(uri) ===
-            evidenceRevision),
+          evidenceFence?.isCurrent() === true),
+      dispose: () => {
+        evidenceFence?.dispose();
+      },
     };
   }
 

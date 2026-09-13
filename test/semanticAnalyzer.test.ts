@@ -1208,6 +1208,121 @@ describe("TypeScriptSemanticAnalyzer", () => {
     });
   });
 
+  it("does not report complexity growth when an unrelated sibling block is inserted before a function", () => {
+    const complexBlock = [
+      "{",
+      "  const helper = (input: number): number => {",
+      "    if (input > 10) return 10;",
+      "    if (input > 0 && input < 10) return input;",
+      "    for (const item of [input]) {",
+      "      if (item === 0) return 0;",
+      "    }",
+      "    return input < 0 ? -input : input;",
+      "  };",
+      "  helper(1);",
+      "}",
+    ];
+    const previous = complexBlock.join("\n");
+    const current = [
+      "{",
+      "  const unrelated = true;",
+      "}",
+      ...complexBlock,
+    ].join("\n");
+
+    const evidence = analyzeEvidence(
+      episode(previous, current),
+    ).filter((item) => item.kind === "complexity-growth");
+
+    expect(evidence).toEqual([]);
+  });
+
+  it("matches same-named sibling functions when only the first grows after unrelated insertion", () => {
+    const helperBlock = (complex: boolean): readonly string[] => [
+      "{",
+      "  const helper = (input: number): number => {",
+      ...(complex
+        ? [
+            "    if (input > 10) return 10;",
+            "    if (input > 0 && input < 10) return input;",
+            "    for (const item of [input]) {",
+            "      if (item === 0) return 0;",
+            "    }",
+            "    return input < 0 ? -input : input;",
+          ]
+        : [
+            "    if (input > 0) return input;",
+            "    if (input < 0) return -input;",
+            "    return 0;",
+          ]),
+      "  };",
+      "  helper(1);",
+      "}",
+    ];
+    const previous = [
+      ...helperBlock(false),
+      ...helperBlock(true),
+    ].join("\n");
+    const current = [
+      "{",
+      "  const unrelated = true;",
+      "}",
+      ...helperBlock(true),
+      ...helperBlock(true),
+    ].join("\n");
+
+    const evidence = analyzeEvidence(
+      episode(previous, current),
+    ).filter((item) => item.kind === "complexity-growth");
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]).toMatchObject({
+      detail: "helper now has 6 branches, up from 2.",
+      range: {
+        start: { line: 4, character: 8 },
+      },
+    });
+  });
+
+  it("does not fabricate growth when a same-named sibling function is inserted", () => {
+    const helperBlock = (complex: boolean): readonly string[] => [
+      "{",
+      "  const helper = (input: number): number => {",
+      ...(complex
+        ? [
+            "    if (input > 10) return 10;",
+            "    if (input > 0 && input < 10) return input;",
+            "    for (const item of [input]) {",
+            "      if (item === 0) return 0;",
+            "    }",
+            "    return input < 0 ? -input : input;",
+          ]
+        : [
+            "    if (input > 0) return input;",
+            "    if (input < 0) return -input;",
+            "    return 0;",
+          ]),
+      "  };",
+      "  helper(1);",
+      "}",
+    ];
+    const previous = [
+      ...helperBlock(false),
+      ...helperBlock(true),
+    ].join("\n");
+    const current = [
+      ...helperBlock(false),
+      ...helperBlock(false),
+      ...helperBlock(true),
+    ].join("\n");
+
+    const evidence = analyzeEvidence(
+      episode(previous, current),
+    ).filter((item) => item.kind === "complexity-growth");
+
+    expect(evidence).toEqual([]);
+  });
+
   it("keeps same-named arrows distinct and stable across sibling lexical blocks", () => {
     const simpleBlock = [
       "  {",

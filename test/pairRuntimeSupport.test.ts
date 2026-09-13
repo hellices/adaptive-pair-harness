@@ -50,6 +50,115 @@ describe("Pair runtime support", () => {
     expect(createRuntime).not.toHaveBeenCalled();
   });
 
+  it("installs a replacement after disposal fails and permits a later rebuild", async () => {
+    const module = (await import(
+      "../src/vscode/pairRuntimeSupport"
+    )) as typeof import("../src/vscode/pairRuntimeSupport") & {
+      rebuildRuntimeAfterDisposal<TRuntime extends { dispose(): void }>(
+        previous: TRuntime | undefined,
+        createReplacement: () => PromiseLike<TRuntime | undefined>,
+        install: (runtime: TRuntime | undefined) => void,
+      ): Promise<void>;
+    };
+    expect(module.rebuildRuntimeAfterDisposal).toBeTypeOf("function");
+    const disposalFailure = new Error("old runtime cleanup failed");
+    const oldDispose = vi.fn(() => {
+      throw disposalFailure;
+    });
+    const replacementDispose = vi.fn();
+    const oldRuntime: { dispose(): void } = { dispose: oldDispose };
+    const replacement: { dispose(): void } = {
+      dispose: replacementDispose,
+    };
+    const laterReplacement: { dispose(): void } = {
+      dispose: vi.fn(),
+    };
+    let runtime: { dispose(): void } | undefined = oldRuntime;
+    const install = vi.fn((next: { dispose(): void } | undefined) => {
+      runtime = next;
+    });
+    const createReplacement = vi.fn(async () => replacement);
+
+    await expect(
+      module.rebuildRuntimeAfterDisposal(
+        runtime,
+        createReplacement,
+        install,
+      ),
+    ).rejects.toBe(disposalFailure);
+
+    expect(oldDispose).toHaveBeenCalledOnce();
+    expect(createReplacement).toHaveBeenCalledOnce();
+    expect(runtime).toBe(replacement);
+
+    await expect(
+      module.rebuildRuntimeAfterDisposal(
+        runtime,
+        async () => laterReplacement,
+        install,
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(replacementDispose).toHaveBeenCalledOnce();
+    expect(runtime).toBe(laterReplacement);
+  });
+
+  it("aggregates disposal and replacement failures without retaining the old runtime", async () => {
+    const module = (await import(
+      "../src/vscode/pairRuntimeSupport"
+    )) as typeof import("../src/vscode/pairRuntimeSupport") & {
+      rebuildRuntimeAfterDisposal<TRuntime extends { dispose(): void }>(
+        previous: TRuntime | undefined,
+        createReplacement: () => PromiseLike<TRuntime | undefined>,
+        install: (runtime: TRuntime | undefined) => void,
+      ): Promise<void>;
+    };
+    expect(module.rebuildRuntimeAfterDisposal).toBeTypeOf("function");
+    const disposalFailure = new Error("old runtime cleanup failed");
+    const replacementFailure = new Error("replacement creation failed");
+    const oldRuntime: { dispose(): void } = {
+      dispose: () => {
+        throw disposalFailure;
+      },
+    };
+    const recoveredRuntime: { dispose(): void } = {
+      dispose: vi.fn(),
+    };
+    let runtime: { dispose(): void } | undefined = oldRuntime;
+    const install = (next: { dispose(): void } | undefined): void => {
+      runtime = next;
+    };
+
+    let failure: unknown;
+    try {
+      await module.rebuildRuntimeAfterDisposal(
+        runtime,
+        async () => {
+          throw replacementFailure;
+        },
+        install,
+      );
+    } catch (error: unknown) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).toEqual([
+      disposalFailure,
+      replacementFailure,
+    ]);
+    expect(runtime).toBeUndefined();
+
+    await expect(
+      module.rebuildRuntimeAfterDisposal(
+        runtime,
+        async () => recoveredRuntime,
+        install,
+      ),
+    ).resolves.toBeUndefined();
+    expect(runtime).toBe(recoveredRuntime);
+  });
+
   it.each(["automatic", "manual", "chat"] as const)(
     "does not invoke providers for disabled %s work",
     async (source) => {

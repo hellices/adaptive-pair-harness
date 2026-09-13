@@ -13,8 +13,10 @@ interface ImportRecord {
 
 interface ComplexityRecord {
   readonly key: string;
+  readonly baseKey: string;
   readonly displayName: string;
   readonly branchCount: number;
+  readonly fingerprint: string;
   readonly range: PairRange;
 }
 
@@ -562,11 +564,18 @@ const collectComplexityGrowthEvidence = (
 ): Evidence[] => {
   const previousComplexity = collectComplexityRecords(previousSource);
   const currentComplexity = collectComplexityRecords(currentSource);
+  const previousByCurrent = matchComplexityRecords(
+    previousComplexity,
+    currentComplexity,
+  );
   const evidence: Evidence[] = [];
 
-  for (const [key, currentRecord] of currentComplexity.entries()) {
-    const previousCount = previousComplexity.get(key)?.branchCount ?? 0;
-    const growth = currentRecord.branchCount - previousCount;
+  for (const currentRecord of currentComplexity) {
+    const previousRecord = previousByCurrent.get(currentRecord);
+    if (previousRecord === undefined) {
+      continue;
+    }
+    const growth = currentRecord.branchCount - previousRecord.branchCount;
     if (currentRecord.branchCount < 6 || growth < 3) {
       continue;
     }
@@ -575,12 +584,12 @@ const collectComplexityGrowthEvidence = (
       id: buildEvidenceId(
         "complexity-growth",
         currentSource.fileName,
-        key,
+        previousRecord.key,
       ),
       kind: "complexity-growth",
       severity: "info",
       title: "Complexity increased substantially",
-      detail: `${currentRecord.displayName} now has ${currentRecord.branchCount} branches, up from ${previousCount}.`,
+      detail: `${currentRecord.displayName} now has ${currentRecord.branchCount} branches, up from ${previousRecord.branchCount}.`,
       source: ANALYZER_SOURCE,
       confidence: 0.79,
       range: currentRecord.range,
@@ -593,40 +602,52 @@ const collectComplexityGrowthEvidence = (
 
 const collectComplexityRecords = (
   sourceFile: ts.SourceFile,
-): ReadonlyMap<string, ComplexityRecord> => {
-  const records = new Map<string, ComplexityRecord>();
+): readonly ComplexityRecord[] => {
+  const records: ComplexityRecord[] = [];
+  const occurrencesByBaseKey = new Map<string, number>();
+
+  const recordFunction = (
+    identity: SubjectIdentity,
+    node: ts.FunctionLikeDeclaration,
+    name: ts.Identifier | undefined,
+  ): void => {
+    const baseKey = `function:${identity.key}`;
+    const occurrence = occurrencesByBaseKey.get(baseKey) ?? 0;
+    occurrencesByBaseKey.set(baseKey, occurrence + 1);
+    records.push({
+      key: `${baseKey}/occurrence:${occurrence}`,
+      baseKey,
+      displayName: identity.displayName,
+      branchCount: countBranches(node),
+      fingerprint: node.getText(sourceFile),
+      range: rangeForNameNode(sourceFile, name, node),
+    });
+  };
 
   const visit = (node: ts.Node): void => {
     if (ts.isFunctionDeclaration(node)) {
-      const identity = functionIdentity(node);
+      const identity = functionIdentity(node, false);
       if (identity !== undefined) {
-        records.set(`function:${identity.key}`, {
-          key: `function:${identity.key}`,
-          displayName: identity.displayName,
-          branchCount: countBranches(node),
-          range: rangeForNameNode(sourceFile, node.name, node),
-        });
+        recordFunction(identity, node, node.name);
       }
     } else if (ts.isMethodDeclaration(node)) {
       const identity = methodIdentity(node);
       if (identity !== undefined) {
-        records.set(`method:${identity.key}`, {
+        const key = `method:${identity.key}`;
+        records.push({
+          baseKey: key,
           key: `method:${identity.key}`,
           displayName: identity.displayName,
           branchCount: countBranches(node),
+          fingerprint: node.getText(sourceFile),
           range: rangeForNameNode(sourceFile, node.name, node),
         });
       }
     } else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
       const initializer = unwrapFunctionExpression(node.initializer);
-      const identity = variableFunctionIdentity(node);
+      const identity = variableFunctionIdentity(node, false);
       if (initializer !== undefined && identity !== undefined) {
-        records.set(`function:${identity.key}`, {
-          key: `function:${identity.key}`,
-          displayName: identity.displayName,
-          branchCount: countBranches(initializer),
-          range: rangeForNameNode(sourceFile, node.name, node),
-        });
+        recordFunction(identity, initializer, node.name);
       }
     }
 
@@ -637,12 +658,118 @@ const collectComplexityRecords = (
   return records;
 };
 
+const matchComplexityRecords = (
+  previousRecords: readonly ComplexityRecord[],
+  currentRecords: readonly ComplexityRecord[],
+): ReadonlyMap<ComplexityRecord, ComplexityRecord> => {
+  const previousByBaseKey = groupComplexityRecords(previousRecords);
+  const currentByBaseKey = groupComplexityRecords(currentRecords);
+  const previousByCurrent = new Map<ComplexityRecord, ComplexityRecord>();
+
+  for (const [baseKey, currentGroup] of currentByBaseKey) {
+    const previousGroup = previousByBaseKey.get(baseKey);
+    if (previousGroup === undefined) {
+      continue;
+    }
+    for (const [previousRecord, currentRecord] of alignComplexityRecords(
+      previousGroup,
+      currentGroup,
+    )) {
+      previousByCurrent.set(currentRecord, previousRecord);
+    }
+  }
+
+  return previousByCurrent;
+};
+
+const groupComplexityRecords = (
+  records: readonly ComplexityRecord[],
+): ReadonlyMap<string, readonly ComplexityRecord[]> => {
+  const recordsByBaseKey = new Map<string, ComplexityRecord[]>();
+  for (const record of records) {
+    const group = recordsByBaseKey.get(record.baseKey) ?? [];
+    group.push(record);
+    recordsByBaseKey.set(record.baseKey, group);
+  }
+  return recordsByBaseKey;
+};
+
+const alignComplexityRecords = (
+  previous: readonly ComplexityRecord[],
+  current: readonly ComplexityRecord[],
+): ReadonlyArray<readonly [ComplexityRecord, ComplexityRecord]> => {
+  const matches: Array<readonly [ComplexityRecord, ComplexityRecord]> = [];
+
+  const alignRange = (
+    previousStart: number,
+    previousEnd: number,
+    currentStart: number,
+    currentEnd: number,
+  ): void => {
+    while (
+      previousStart < previousEnd &&
+      currentStart < currentEnd &&
+      previous[previousStart]!.fingerprint ===
+        current[currentStart]!.fingerprint
+    ) {
+      matches.push([
+        previous[previousStart]!,
+        current[currentStart]!,
+      ]);
+      previousStart += 1;
+      currentStart += 1;
+    }
+
+    const suffix: Array<
+      readonly [ComplexityRecord, ComplexityRecord]
+    > = [];
+    while (
+      previousStart < previousEnd &&
+      currentStart < currentEnd &&
+      previous[previousEnd - 1]!.fingerprint ===
+        current[currentEnd - 1]!.fingerprint
+    ) {
+      previousEnd -= 1;
+      currentEnd -= 1;
+      suffix.unshift([
+        previous[previousEnd]!,
+        current[currentEnd]!,
+      ]);
+    }
+
+    if (
+      previousEnd - previousStart ===
+      currentEnd - currentStart
+    ) {
+      for (
+        let offset = 0;
+        offset < previousEnd - previousStart;
+        offset += 1
+      ) {
+        matches.push([
+          previous[previousStart + offset]!,
+          current[currentStart + offset]!,
+        ]);
+      }
+    }
+    matches.push(...suffix);
+  };
+
+  alignRange(0, previous.length, 0, current.length);
+  return matches;
+};
+
 const functionIdentity = (
   node: ts.FunctionDeclaration,
+  includeLexicalScopes = true,
 ): SubjectIdentity | undefined => {
   const name = node.name?.text;
   if (name !== undefined) {
-    return qualifyIdentity(enclosingScopeIdentity(node.parent), name, name);
+    return qualifyIdentity(
+      enclosingScopeIdentity(node.parent, includeLexicalScopes),
+      name,
+      name,
+    );
   }
 
   if (
@@ -653,7 +780,7 @@ const functionIdentity = (
   }
 
   return qualifyIdentity(
-    enclosingScopeIdentity(node.parent),
+    enclosingScopeIdentity(node.parent, includeLexicalScopes),
     DEFAULT_EXPORT_KEY,
     DEFAULT_EXPORT_DISPLAY,
   );
@@ -661,10 +788,15 @@ const functionIdentity = (
 
 const classIdentity = (
   node: ts.ClassDeclaration,
+  includeLexicalScopes = true,
 ): SubjectIdentity | undefined => {
   const name = node.name?.text;
   if (name !== undefined) {
-    return qualifyIdentity(enclosingScopeIdentity(node.parent), name, name);
+    return qualifyIdentity(
+      enclosingScopeIdentity(node.parent, includeLexicalScopes),
+      name,
+      name,
+    );
   }
 
   if (
@@ -675,7 +807,7 @@ const classIdentity = (
   }
 
   return qualifyIdentity(
-    enclosingScopeIdentity(node.parent),
+    enclosingScopeIdentity(node.parent, includeLexicalScopes),
     DEFAULT_EXPORT_KEY,
     DEFAULT_EXPORT_DISPLAY,
   );
@@ -683,13 +815,17 @@ const classIdentity = (
 
 const methodIdentity = (
   node: ts.MethodDeclaration,
+  includeLexicalScopes = true,
 ): SubjectIdentity | undefined => {
   const classDeclaration = node.parent;
   if (!ts.isClassDeclaration(classDeclaration)) {
     return undefined;
   }
 
-  const ownerIdentity = classIdentity(classDeclaration);
+  const ownerIdentity = classIdentity(
+    classDeclaration,
+    includeLexicalScopes,
+  );
   const methodName = propertyNameText(node.name);
   if (ownerIdentity === undefined || methodName === undefined) {
     return undefined;
@@ -705,13 +841,17 @@ const methodIdentity = (
 
 const accessorIdentity = (
   node: ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
+  includeLexicalScopes = true,
 ): SubjectIdentity | undefined => {
   const classDeclaration = node.parent;
   if (!ts.isClassDeclaration(classDeclaration)) {
     return undefined;
   }
 
-  const ownerIdentity = classIdentity(classDeclaration);
+  const ownerIdentity = classIdentity(
+    classDeclaration,
+    includeLexicalScopes,
+  );
   const propertyName = propertyNameText(node.name);
   if (ownerIdentity === undefined || propertyName === undefined) {
     return undefined;
@@ -730,13 +870,14 @@ const accessorIdentity = (
 
 const variableFunctionIdentity = (
   node: ts.VariableDeclaration,
+  includeLexicalScopes = true,
 ): SubjectIdentity | undefined => {
   if (!ts.isIdentifier(node.name)) {
     return undefined;
   }
 
   return qualifyIdentity(
-    enclosingScopeIdentity(node.parent),
+    enclosingScopeIdentity(node.parent, includeLexicalScopes),
     node.name.text,
     node.name.text,
   );
@@ -744,12 +885,16 @@ const variableFunctionIdentity = (
 
 const enclosingScopeIdentity = (
   node: ts.Node | undefined,
+  includeLexicalScopes = true,
 ): SubjectIdentity | undefined => {
   let current = node;
   const lexicalBlockPath: string[] = [];
 
   while (current !== undefined) {
-    if (isIdentityBearingLexicalScope(current)) {
+    if (
+      includeLexicalScopes &&
+      isIdentityBearingLexicalScope(current)
+    ) {
       lexicalBlockPath.unshift(lexicalScopeIdentitySegment(current));
     }
 
@@ -766,28 +911,37 @@ const enclosingScopeIdentity = (
       ts.isGetAccessorDeclaration(current) ||
       ts.isSetAccessorDeclaration(current)
     ) {
-      const identity = accessorIdentity(current);
+      const identity = accessorIdentity(current, includeLexicalScopes);
       if (identity !== undefined) {
         return withLexicalBlockPath(identity, lexicalBlockPath);
       }
     }
 
     if (ts.isMethodDeclaration(current)) {
-      return withLexicalBlockPath(methodIdentity(current), lexicalBlockPath);
+      return withLexicalBlockPath(
+        methodIdentity(current, includeLexicalScopes),
+        lexicalBlockPath,
+      );
     }
 
     if (ts.isFunctionDeclaration(current)) {
-      return withLexicalBlockPath(functionIdentity(current), lexicalBlockPath);
+      return withLexicalBlockPath(
+        functionIdentity(current, includeLexicalScopes),
+        lexicalBlockPath,
+      );
     }
 
     if (ts.isClassDeclaration(current)) {
-      return withLexicalBlockPath(classIdentity(current), lexicalBlockPath);
+      return withLexicalBlockPath(
+        classIdentity(current, includeLexicalScopes),
+        lexicalBlockPath,
+      );
     }
 
     if (ts.isModuleDeclaration(current)) {
       return withLexicalBlockPath(
         qualifyIdentity(
-          enclosingScopeIdentity(current.parent),
+          enclosingScopeIdentity(current.parent, includeLexicalScopes),
           `module:${current.name.text}`,
           current.name.text,
         ),
@@ -799,7 +953,7 @@ const enclosingScopeIdentity = (
       const initializer = unwrapFunctionExpression(current.initializer);
       if (initializer !== undefined) {
         return withLexicalBlockPath(
-          variableFunctionIdentity(current),
+          variableFunctionIdentity(current, includeLexicalScopes),
           lexicalBlockPath,
         );
       }

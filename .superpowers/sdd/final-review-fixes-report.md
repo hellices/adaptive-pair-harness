@@ -3443,3 +3443,73 @@
 - A live VS Code host and live remote provider were unavailable. The deferred
   provider integration test exercises the production runtime/participant
   boundary and mocked persistence ordering.
+
+---
+
+## Stable identities, rebuild recovery, and active URI fences (2026-09-14)
+
+### Corrections implemented
+
+- Complexity records for named function declarations and function-valued
+  variables now use lexical-block-independent base identities plus deterministic
+  same-base-name occurrences. Previous/current groups preserve exact unchanged
+  prefix and suffix matches, pair unambiguous changed occurrences, and leave
+  unequal ambiguous insertion regions unmatched rather than reporting growth
+  from a fabricated zero baseline.
+- Same-named functions in sibling lexical blocks and class static blocks remain
+  distinct. Inserting an unrelated earlier block no longer changes their
+  matching identity or moves growth evidence to another declaration.
+- Runtime rebuild clears the live reference before disposal, captures a
+  disposal failure, and still constructs and installs the replacement. A
+  simultaneous replacement failure is reported as an ordered
+  `AggregateError`; the old runtime is never restored, and the serialized queue
+  remains usable by later configuration or secret-triggered rebuilds.
+- Active generation fences now pin their target URI revision independently of
+  idle LRU eviction. Unrelated churn beyond the 256-entry limit cannot stale an
+  in-flight request, while target edit, close, dismissal, session/runtime
+  teardown, and replacement still invalidate it.
+- Every request/action fence releases its URI pin in `finally`. Idle revisions
+  are re-evicted after release, so retained state is bounded by the LRU plus
+  currently active concurrent URI requests. Existing stale-response and
+  double-eviction dismissal protections remain intact.
+
+### TDD evidence
+
+- Complexity RED: **3 expected failures** showed false growth after unrelated
+  block insertion, attribution to the wrong same-named sibling, and fabricated
+  growth after a same-name insertion. GREEN: the semantic suite passed
+  **62 tests**.
+- Runtime rebuild RED: **2 expected failures** showed the missing rebuild
+  helper. GREEN: **19 runtime-support tests** passed, covering throwing
+  disposal with successful replacement, dual disposal/construction failure,
+  cleared old references, and a later successful rebuild.
+- URI-fence RED: the over-limit churn case suppressed a still-current
+  intervention. GREEN: the runtime regression passed while target-change
+  suppression and post-request pin release remained green.
+- Focused semantic, extension-symbol, runtime-support, runtime-lifecycle, and
+  Chat verification passed **5 files and 235 tests**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **20 files, 550 tests passed**
+- `npm run test:coverage`: **PASS — 20 files, 550 tests**
+  - statements 89.89%, branches 82.17%, functions 92.95%, lines 90.01%
+- `npm run package`: **PASS — 161 files, 4.37 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX inclusion/exclusion and compiled behavior-marker scans: **PASS**
+- Production credential-value, runtime URL, package metadata, conflict-marker,
+  and `git diff --check` scans: **PASS**
+
+### Self-review and residual concerns
+
+- Reviewed matching determinism, evidence-ID ownership, ambiguous insertion
+  handling, rebuild failure ordering, queue recovery, pin reference counting,
+  target invalidation, stale response suppression, dismissal double eviction,
+  and packaged output. No high-confidence defect remains in the changed scope.
+- A live VS Code extension host and live remote provider were unavailable.
+  Deterministic compiler inputs, injected disposal/construction failures, and
+  deferred provider responses cover the changed boundaries.
