@@ -409,6 +409,110 @@ describe("TypeScriptSemanticAnalyzer", () => {
       expect(evidence).toEqual([]);
     });
 
+    it.each(["d.ts", "d.mts", "d.cts"])(
+      "ignores optional member semicolon/comma changes in %s",
+      (extension) => {
+        const evidence = publicApiEvidence(
+          episode(
+            [
+              "export interface Model {",
+              "  readonly value?: string;",
+              "  run?(input: number): boolean;",
+              "}",
+            ].join("\n"),
+            [
+              "export interface Model {",
+              "  readonly value?: string,",
+              "  run?(input: number): boolean,",
+              "}",
+            ].join("\n"),
+            "typescript",
+            `file:///types.${extension}`,
+          ),
+        );
+
+        expect(evidence).toEqual([]);
+      },
+    );
+
+    it.each(["d.ts", "d.mts", "d.cts"])(
+      "still reports a real member type change in %s",
+      (extension) => {
+        const evidence = publicApiEvidence(
+          episode(
+            "export interface Model { readonly value?: string; }",
+            "export interface Model { readonly value?: number; }",
+            "typescript",
+            `file:///types.${extension}`,
+          ),
+        );
+
+        expect(evidence).toHaveLength(1);
+        expect(evidence[0]).toMatchObject({
+          kind: "public-api-change",
+          detail: "Changed public declaration surface in this document.",
+        });
+      },
+    );
+
+    it.each([
+      [
+        "function body",
+        "export declare function load(): string;",
+        'export declare function load(): string { return "private"; }',
+      ],
+      [
+        "disallowed initializer",
+        "export declare const version: string;",
+        'export declare const version: string = "private";',
+      ],
+    ])(
+      "keeps a declaration with a %s stable but unsupported",
+      (_label, valid, invalid) => {
+        for (const extension of ["d.ts", "d.mts", "d.cts"]) {
+          expect(
+            analyzer.analyze(
+              episode(
+                valid,
+                invalid,
+                "typescript",
+                `file:///types.${extension}`,
+              ),
+            ),
+          ).toEqual({ stability: "stable", evidence: [] });
+        }
+      },
+    );
+
+    it.each([
+      [
+        "function body",
+        'export declare function load(): string { return "private"; }',
+        "export declare function load(): string;",
+      ],
+      [
+        "disallowed initializer",
+        'export declare const version: string = "private";',
+        "export declare const version: string;",
+      ],
+    ])(
+      "does not compare a prior declaration containing a %s",
+      (_label, invalid, valid) => {
+        for (const extension of ["d.ts", "d.mts", "d.cts"]) {
+          expect(
+            analyzer.analyze(
+              episode(
+                invalid,
+                valid,
+                "typescript",
+                `file:///types.${extension}`,
+              ),
+            ),
+          ).toEqual({ stability: "stable", evidence: [] });
+        }
+      },
+    );
+
     it("keeps invalid declaration files unstable or skips their surface", () => {
       const unstable = analyzer.analyze(
         episode(

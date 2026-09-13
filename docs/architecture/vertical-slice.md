@@ -75,9 +75,10 @@ The semantic analyzer is intentionally narrow.
 - best-effort, per-document public API changes for TypeScript and JavaScript:
   the official TypeScript declaration-only emitter produces the previous and
   current `.d.ts` surfaces in memory; existing `.d.ts`, `.d.mts`, and `.d.cts`
-  documents are canonicalized directly because they are already public
-  declaration surfaces; both paths compare trivia-free TypeScript scanner
-  token streams
+  documents receive TypeScript syntactic and semantic diagnostics in the same
+  restricted host because they are already public declaration surfaces; valid
+  surfaces are normalized through the comment-free TypeScript printer before
+  both paths compare trivia-free token streams
 - at most one generic `public-api-change` item per edit; its detail identifies
   an added, removed, or changed surface without embedding declarations
 - substantial complexity growth
@@ -85,8 +86,9 @@ The semantic analyzer is intentionally narrow.
 Declaration programs can read only the installed TypeScript standard-library
 files through the containment-checked host. Project files are never read,
 external modules and re-exports remain unresolved, and failed or otherwise
-unreliable declaration emits suppress public API evidence rather than falling
-back to hand-written export or type-surface heuristics.
+unreliable declaration emits and invalid declaration-file inputs suppress
+public API evidence rather than falling back to hand-written export or
+type-surface heuristics.
 
 ### Supported language boundary
 

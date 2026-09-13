@@ -55,10 +55,10 @@ Unrelated schemes remain ignored.
   signal when the previous and current public declaration surfaces differ.
   TypeScript and JavaScript implementation files use TypeScript's official
   declaration-only emitter; existing `.d.ts`, `.d.mts`, and `.d.cts` files
-  are already public surfaces, so their source token streams are canonicalized
-  directly. Formatting and comments are ignored. External modules are
-  deliberately left unresolved, and invalid or unreliable surfaces are
-  skipped.
+  are first checked with TypeScript's syntactic and semantic diagnostics, then
+  normalized with its comment-free printer. Formatting, comments, and optional
+  member semicolon/comma choices are ignored. External modules are deliberately
+  left unresolved, and invalid or unreliable surfaces are skipped.
 - **Complexity growth** — a function or method whose branch count grows
   substantially
 - **Editor diagnostic** — an error or warning already surfaced by VS Code

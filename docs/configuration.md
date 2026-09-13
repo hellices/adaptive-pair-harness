@@ -26,12 +26,14 @@ Public API evidence is best-effort and per document. For each stable
 TypeScript or JavaScript edit, Adaptive Pair asks TypeScript's official
 declaration-only emitter for the previous and current public declaration
 surfaces. Existing `.d.ts`, `.d.mts`, and `.d.cts` documents are already
-public declaration surfaces, so their source token streams are canonicalized
-directly instead. Both paths ignore formatting and comments and emit at most
-one generic added, removed, or changed `public-api-change` item. External
-modules are left unresolved, and invalid or unreliable surfaces are skipped
-rather than replaced with custom heuristics. There is no setting that expands
-this analysis to the project filesystem or to cross-document type resolution.
+public declaration surfaces, so TypeScript checks their syntactic and semantic
+diagnostics before its comment-free printer canonicalizes them. Both paths
+ignore formatting and comments, including optional member semicolon/comma
+choices, and emit at most one generic added, removed, or changed
+`public-api-change` item. External modules are left unresolved, and invalid or
+unreliable surfaces are skipped rather than replaced with custom heuristics.
+There is no setting that expands this analysis to the project filesystem or to
+cross-document type resolution.
 
 ## Secret storage behavior
 

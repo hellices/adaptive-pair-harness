@@ -2693,3 +2693,64 @@
   External modules are unresolved, and syntactically invalid declaration
   surfaces are skipped rather than guessed. A live VS Code extension host was
   not exercised in this non-interactive run.
+
+---
+
+## Declaration diagnostics and printer canonicalization follow-up (2026-09-14)
+
+### Corrections implemented
+
+- `.d.ts`, `.d.mts`, and `.d.cts` inputs now run TypeScript program syntactic
+  and semantic diagnostics inside the existing containment-checked in-memory
+  compiler host. Semantic declaration errors such as ambient function bodies
+  and disallowed initializers suppress fingerprinting and public API evidence;
+  analysis remains explicitly stable with no unsupported evidence or
+  diagnostic text exposed.
+- Valid declarations are normalized with the TypeScript Printer configured to
+  remove comments before scanner token fingerprinting. Equivalent optional
+  interface member semicolon/comma choices now compare equal, while modifiers,
+  optionality, member types, and exports remain represented.
+- Regression coverage exercises both invalid-current and invalid-previous
+  function bodies and initializers across all three declaration extensions,
+  optional delimiter equivalence across all three extensions, and real member
+  type changes across all three extensions.
+- README, configuration, and architecture documentation now describe
+  diagnostic gating and printer-based canonicalization.
+
+### TDD evidence
+
+- RED: the focused semantic suite reported **7 expected failures and 52
+  passes**. All three optional semicolon/comma cases produced false public API
+  evidence, and invalid current/prior function-body and initializer cases
+  produced evidence instead of remaining unsupported.
+- GREEN: the focused semantic suite passed **59 tests**, including every new
+  declaration-extension regression.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 493 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 89.76%, branches 83.04%, functions 93.00%, lines 89.91%
+- `npm run package`: **PASS — 158 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX exclusion and compiled declaration diagnostic/printer marker scans:
+  **PASS**
+- Production and packaged credential-value scans: **PASS**
+- Production and packaged runtime URL scans: **PASS — loopback default only**
+- Source placeholder URL and packaged repository metadata scans: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- The changed code and tests were reviewed for restricted-host preservation,
+  declaration diagnostic gating, diagnostic privacy, printer normalization,
+  meaningful syntax retention, evidence cardinality, documentation accuracy,
+  and package contents. No high-confidence defect was found.
+- Declaration files that depend on unresolved external modules remain
+  intentionally unsupported by the per-document restricted host and therefore
+  produce no public API evidence. A live VS Code extension host was not
+  exercised in this non-interactive run.

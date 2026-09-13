@@ -153,7 +153,7 @@ const createSemanticSource = (
     emitDeclarationOnly: true,
     module: ts.ModuleKind.CommonJS,
     noResolve: true,
-    skipLibCheck: true,
+    skipLibCheck: !sourceFile.isDeclarationFile,
     strictNullChecks: true,
     target: ts.ScriptTarget.Latest,
   };
@@ -426,19 +426,38 @@ const collectPublicApiChangeEvidence = (
 const emitDeclarationSurface = (
   source: SemanticSource,
 ): CanonicalDeclarationSurface | undefined => {
+  if (source.sourceFile.isDeclarationFile) {
+    const diagnostics = [
+      ...source.program.getSyntacticDiagnostics(source.sourceFile),
+      ...source.program.getSemanticDiagnostics(source.sourceFile),
+    ];
+    if (
+      diagnostics.some(
+        (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
+      )
+    ) {
+      return undefined;
+    }
+    return canonicalizeDeclaration(source.sourceFile);
+  }
   if (hasParseDiagnostics(source.sourceFile)) {
     return undefined;
   }
-  if (source.sourceFile.isDeclarationFile) {
-    return canonicalizeDeclaration(source.sourceFile.text);
-  }
 
-  const declarations: string[] = [];
+  const declarations: ts.SourceFile[] = [];
   const emitResult = source.program.emit(
     source.sourceFile,
     (fileName, text) => {
       if (/\.d\.[cm]?ts$/u.test(fileName)) {
-        declarations.push(text);
+        declarations.push(
+          ts.createSourceFile(
+            fileName,
+            text,
+            ts.ScriptTarget.Latest,
+            true,
+            ts.ScriptKind.TS,
+          ),
+        );
       }
     },
     undefined,
@@ -454,12 +473,21 @@ const emitDeclarationSurface = (
     return undefined;
   }
 
-  return canonicalizeDeclaration(declarations[0] ?? "");
+  return canonicalizeDeclaration(declarations[0]);
 };
 
 const canonicalizeDeclaration = (
-  declaration: string,
+  sourceFile: ts.SourceFile | undefined,
 ): CanonicalDeclarationSurface | undefined => {
+  if (sourceFile === undefined || hasParseDiagnostics(sourceFile)) {
+    return undefined;
+  }
+  const declaration = ts
+    .createPrinter({
+      newLine: ts.NewLineKind.LineFeed,
+      removeComments: true,
+    })
+    .printFile(sourceFile);
   let scannerFailed = false;
   const scanner = ts.createScanner(
     ts.ScriptTarget.Latest,
