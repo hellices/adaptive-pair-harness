@@ -3389,3 +3389,57 @@
   unavailable in this non-interactive environment. Inline regressions exercise
   the production helper through captured `appendText` values and
   `linkify-it`; deferred mocked storage verifies the full runtime ordering.
+
+---
+
+## Dismissed in-flight Chat context fence (2026-09-14)
+
+### Correction implemented
+
+- Dismissal now uses `PairSharedContext.clearEvidence` before persistence
+  instead of a target-only withdrawal path.
+- Clearing the current `latest` evidence advances both its URI fence and the
+  opaque shared-context revision, immediately making every previously captured
+  `PairContextRevisionFence` stale.
+- Clearing a non-latest URI leaves the observable context revision unchanged.
+  Repeating a clear after `latest` is already absent likewise avoids shared
+  revision churn while still retaining URI-fence invalidation semantics.
+- Removed the weaker withdrawal API so future dismissal paths cannot clear
+  visible context without invalidating in-flight context consumers.
+
+### TDD evidence
+
+- RED: the focused dismissal regression failed because a context fence
+  captured before dismissal remained current after `latest` was removed.
+- GREEN: routing dismissal through `clearEvidence` made the captured fence
+  stale before deferred persistence completed.
+- The deferred remote Chat regression resolves its provider response after the
+  request signal is cancelled and verifies that no text, Markdown, or status
+  update is published.
+- Shared-context assertions cover multiple captured fences, non-latest URI
+  clears, and repeated clears without unnecessary shared revision increments.
+- The focused shared-context/Chat/runtime run passed **3 files, 164 tests**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **20 files, 542 tests passed**
+- `npm run test:coverage`: **PASS — 20 files, 542 tests**
+  - statements 90.54%, branches 83.72%, functions 93.89%, lines 90.67%
+- `npm run package`: **PASS — 161 files, 4.37 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX exclusion, compiled/package byte-integrity, credential-pattern, runtime
+  URL, repository metadata, and `git diff --check` scans: **PASS**
+
+### Self-review and residual concerns
+
+- Reviewed the shared revision and URI revision transitions, stale runtime
+  rejection, dismissal ordering, ignored-cancellation provider completion,
+  output/status sinks, changed tests, compiled output, and packaged artifact.
+  No high-confidence issue remains in the changed scope.
+- A live VS Code host and live remote provider were unavailable. The deferred
+  provider integration test exercises the production runtime/participant
+  boundary and mocked persistence ordering.

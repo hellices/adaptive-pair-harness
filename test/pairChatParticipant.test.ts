@@ -464,7 +464,7 @@ describe("pair chat planning", () => {
     });
   });
 
-  it("clears latest evidence only when its document closes", () => {
+  it("invalidates captured context fences only when clearing latest evidence", () => {
     const context = new PairSharedContext({
       enabled: true,
       active: true,
@@ -481,15 +481,26 @@ describe("pair chat planning", () => {
       evidence,
       question: "Did you intend this dependency?",
     });
-    const clearEvidence = (
-      context as PairSharedContext & { clearEvidence(uri: string): void }
-    ).clearEvidence;
-    expect(clearEvidence).toBeTypeOf("function");
+    const originalRevision = context.snapshot().revision;
+    const firstFence = context.captureRevisionFence();
+    const secondFence = context.captureRevisionFence();
 
-    clearEvidence.call(context, "file:///workspace/other.ts");
+    context.clearEvidence("file:///workspace/other.ts");
     expect(context.snapshot().latest).toBeDefined();
-    clearEvidence.call(context, "file:///workspace/pair.ts");
+    expect(context.snapshot().revision).toBe(originalRevision);
+    expect(context.isRevisionFenceCurrent(firstFence)).toBe(true);
+    expect(context.isRevisionFenceCurrent(secondFence)).toBe(true);
+
+    context.clearEvidence("file:///workspace/pair.ts");
     expect(context.snapshot().latest).toBeUndefined();
+    expect(context.snapshot().revision).toBe(originalRevision + 1);
+    expect(context.isRevisionFenceCurrent(firstFence)).toBe(false);
+    expect(context.isRevisionFenceCurrent(secondFence)).toBe(false);
+
+    const clearedFence = context.captureRevisionFence();
+    context.clearEvidence("file:///workspace/pair.ts");
+    expect(context.snapshot().revision).toBe(originalRevision + 1);
+    expect(context.isRevisionFenceCurrent(clearedFence)).toBe(true);
   });
 
   it("clears all latest evidence when the runtime session is disposed", () => {

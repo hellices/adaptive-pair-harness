@@ -1227,6 +1227,7 @@ describe("PairRuntime lifecycle ownership", () => {
     );
     let handler: PairChatRequestHandler | undefined;
     const markdown = vi.fn();
+    const text = vi.fn();
     registerPairChatParticipant(
       (_id, registeredHandler) => {
         handler = registeredHandler;
@@ -1245,7 +1246,7 @@ describe("PairRuntime lifecycle ownership", () => {
     const pendingResponse = handler!(
       { command: "why", prompt: "" } as vscode.ChatRequest,
       {} as vscode.ChatContext,
-      { markdown, text: () => undefined },
+      { markdown, text },
       {
         isCancellationRequested: false,
         onCancellationRequested: () => ({ dispose: () => undefined }),
@@ -1254,6 +1255,8 @@ describe("PairRuntime lifecycle ownership", () => {
     await vi.waitFor(() => {
       expect(fetch).toHaveBeenCalledOnce();
     });
+    const requestFence = shared.captureRevisionFence();
+    const statusBeforeDismissal = vscodeState.statusItems[0]?.text;
     const pendingDismissal = runtime.dismissCurrentEvidence();
     await vi.waitFor(() => {
       expect(persistenceStarted).toBe(true);
@@ -1266,12 +1269,15 @@ describe("PairRuntime lifecycle ownership", () => {
     await pendingDismissal;
 
     expect(cancelledBeforePersistence).toBe(true);
+    expect(shared.isRevisionFenceCurrent(requestFence)).toBe(false);
     expect(markdown).not.toHaveBeenCalled();
+    expect(text).not.toHaveBeenCalled();
+    expect(vscodeState.statusItems[0]?.text).toBe(statusBeforeDismissal);
     expect(shared.snapshot().latest).toBeUndefined();
     runtime.dispose();
   });
 
-  it("preserves a pending independent URI intervention while dismissal persists", async () => {
+  it("rejects a pending independent URI intervention after observable dismissal", async () => {
     const persistence = deferred<void>();
     let persistenceStarted = false;
     const memoryContext = {
@@ -1356,14 +1362,9 @@ describe("PairRuntime lifecycle ownership", () => {
     persistence.resolve();
     await pendingDismissal;
 
-    expect(shared.snapshot().latest).toMatchObject({
-      uri: independentUri,
-      evidence: { id: "dependency:independent" },
-      question: "Independent response",
-    });
-    expect(vscodeState.commentThreads).toHaveLength(2);
+    expect(shared.snapshot().latest).toBeUndefined();
+    expect(vscodeState.commentThreads).toHaveLength(1);
     expect(vscodeState.commentThreads[0]?.disposed).toBe(true);
-    expect(vscodeState.commentThreads[1]?.disposed).toBe(false);
     runtime.dispose();
   });
 

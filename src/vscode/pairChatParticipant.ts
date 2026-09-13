@@ -175,23 +175,6 @@ export class PairSharedContext {
     }
   }
 
-  public withdrawEvidence(
-    uri: string,
-    runtimeRevision?: PairRuntimeRevision,
-  ): void {
-    if (
-      this.invalidateEvidenceFenceForUri(uri, runtimeRevision) ===
-      undefined
-    ) {
-      return;
-    }
-    // The URI fence retires dismissed work without invalidating requests for
-    // other documents, which remain eligible to publish replacement evidence.
-    if (this.latest?.uri === uri) {
-      this.latest = undefined;
-    }
-  }
-
   public releaseEvidenceUri(
     uri: string,
     runtimeRevision?: PairRuntimeRevision,

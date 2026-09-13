@@ -1461,7 +1461,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     this.cancelRequest(latest.uri);
     this.chatRequests.cancelUri(latest.uri);
     this.documentState.invalidateEvidence(latest.uri);
-    this.options.sharedContext.withdrawEvidence(
+    this.options.sharedContext.clearEvidence(
       latest.uri,
       this.runtimeRevision,
     );
