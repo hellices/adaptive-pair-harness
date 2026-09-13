@@ -624,6 +624,23 @@ const collectComplexityRecords = (
     });
   };
 
+  const recordMethod = (
+    identity: SubjectIdentity,
+    node: ts.MethodDeclaration,
+  ): void => {
+    const baseKey = `method:${identity.key}`;
+    const occurrence = occurrencesByBaseKey.get(baseKey) ?? 0;
+    occurrencesByBaseKey.set(baseKey, occurrence + 1);
+    records.push({
+      key: `${baseKey}/occurrence:${occurrence}`,
+      baseKey,
+      displayName: identity.displayName,
+      branchCount: countBranches(node),
+      fingerprint: node.getText(sourceFile),
+      range: rangeForNameNode(sourceFile, node.name, node),
+    });
+  };
+
   const visit = (node: ts.Node): void => {
     if (ts.isFunctionDeclaration(node)) {
       const identity = functionIdentity(node, false);
@@ -631,17 +648,9 @@ const collectComplexityRecords = (
         recordFunction(identity, node, node.name);
       }
     } else if (ts.isMethodDeclaration(node)) {
-      const identity = methodIdentity(node);
+      const identity = methodIdentity(node, false);
       if (identity !== undefined) {
-        const key = `method:${identity.key}`;
-        records.push({
-          baseKey: key,
-          key: `method:${identity.key}`,
-          displayName: identity.displayName,
-          branchCount: countBranches(node),
-          fingerprint: node.getText(sourceFile),
-          range: rangeForNameNode(sourceFile, node.name, node),
-        });
+        recordMethod(identity, node);
       }
     } else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
       const initializer = unwrapFunctionExpression(node.initializer);

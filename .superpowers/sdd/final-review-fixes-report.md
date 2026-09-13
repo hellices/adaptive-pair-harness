@@ -3513,3 +3513,65 @@
 - A live VS Code extension host and live remote provider were unavailable.
   Deterministic compiler inputs, injected disposal/construction failures, and
   deferred provider responses cover the changed boundaries.
+
+---
+
+## Final internal review follow-ups (2026-09-14)
+
+### Corrections implemented
+
+- Named class-method complexity records now use lexical-block-independent base
+  identities and deterministic same-base occurrences, matching the existing
+  function/arrow strategy. Class and enclosing accessor ownership plus
+  static/instance member identity remain distinct.
+- Missing-URI evidence fences now register their unique revision, pin it, and
+  only then run idle LRU eviction. When every cached entry is pinned, the cache
+  may temporarily exceed 256 entries by active concurrency; releasing a pin
+  immediately re-applies the bounded idle policy.
+- Runtime replacement publication now re-checks extension disposal and runtime
+  slot ownership after awaited construction. An unowned replacement is
+  disposed instead of installed, and its cleanup error is reported alone or
+  aggregated with prior-runtime cleanup errors while the live slot stays empty.
+
+### TDD evidence
+
+- Method identity RED: the new sibling-block regression failed with no
+  complexity evidence after an unrelated preceding block shifted the lexical
+  ordinal. GREEN: the semantic suite passed **63 tests**, then **65 tests**
+  after owner, static/instance, accessor, and occurrence coverage was added.
+- URI fence RED: **3 expected failures** showed the 257th capture immediately
+  stale, release unable to evict the intended idle entry, and the target
+  revision missing before invalidation. GREEN: the shared-context suite passed
+  **59 tests**.
+- Extension disposal RED: **2 expected failures** showed a replacement
+  installed after ownership loss and cleanup failures not aggregated. GREEN:
+  the runtime-support suite passed **21 tests**.
+- Focused semantic, shared-context, runtime-support, extension-symbol, and
+  runtime-lifecycle verification passed **5 files and 243 tests**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **20 files, 558 tests passed**
+- `npm run test:coverage`: **PASS — 20 files, 558 tests**
+  - statements 90.48%, branches 82.99%, functions 93.34%, lines 90.61%
+- `npm run package`: **PASS — 161 files, 4.37 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX exclusion and compiled JavaScript byte-integrity scans: **PASS — 22
+  compiled files**
+- Compiled behavior-marker, production credential-value, runtime URL,
+  repository metadata, conflict-marker, and `git diff --check` scans:
+  **PASS**
+
+### Self-review and residual concerns
+
+- Reviewed method grouping/alignment and evidence identity, pin reference
+  counting and over-limit release behavior, target invalidation, replacement
+  ownership timing, cleanup error ordering, extension runtime assignment, and
+  packaged output. No high-confidence defect remains in the changed scope.
+- A live VS Code extension host was unavailable. Deterministic deferred
+  replacement construction and production-helper tests exercise the
+  deactivation race and cleanup-failure paths.

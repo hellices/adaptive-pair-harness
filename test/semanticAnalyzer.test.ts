@@ -1425,6 +1425,156 @@ describe("TypeScriptSemanticAnalyzer", () => {
     });
   });
 
+  it("matches same-named class methods after an unrelated sibling block is inserted", () => {
+    const workerBlock = (complex: boolean): readonly string[] => [
+      "{",
+      "  class Worker {",
+      "    decide(input: number): number {",
+      ...(complex
+        ? [
+            "      if (input > 10) return 10;",
+            "      if (input > 0 && input < 10) return input;",
+            "      for (const item of [input]) {",
+            "        if (item === 0) return 0;",
+            "      }",
+            "      return input < 0 ? -input : input;",
+          ]
+        : [
+            "      if (input > 0) return input;",
+            "      if (input < 0) return -input;",
+            "      return 0;",
+          ]),
+      "    }",
+      "  }",
+      "}",
+    ];
+    const previous = [
+      ...workerBlock(false),
+      ...workerBlock(true),
+    ].join("\n");
+    const current = [
+      "{",
+      "  const unrelated = true;",
+      "}",
+      ...workerBlock(true),
+      ...workerBlock(true),
+    ].join("\n");
+
+    const evidence = analyzeEvidence(
+      episode(previous, current),
+    ).filter((item) => item.kind === "complexity-growth");
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]).toMatchObject({
+      detail: "Worker#decide now has 6 branches, up from 2.",
+      references: ["Worker#decide"],
+      range: {
+        start: { line: 5, character: 4 },
+      },
+    });
+  });
+
+  it("retains accessor ownership while ignoring lexical blocks for method matching", () => {
+    const workerBlock = (complex: boolean): readonly string[] => [
+      "    {",
+      "      class Worker {",
+      "        decide(input: number): number {",
+      ...(complex
+        ? [
+            "          if (input > 10) return 10;",
+            "          if (input > 0 && input < 10) return input;",
+            "          for (const item of [input]) {",
+            "            if (item === 0) return 0;",
+            "          }",
+            "          return input < 0 ? -input : input;",
+          ]
+        : [
+            "          if (input > 0) return input;",
+            "          if (input < 0) return -input;",
+            "          return 0;",
+          ]),
+      "        }",
+      "      }",
+      "      return new Worker().decide(input);",
+      "    }",
+    ];
+    const source = (
+      getterWorker: readonly string[],
+      leadingGetterBlock: readonly string[] = [],
+    ): string =>
+      [
+        "class Container {",
+        "  get value(): number {",
+        "    const input = 1;",
+        ...leadingGetterBlock,
+        ...getterWorker,
+        "  }",
+        "  set value(input: number) {",
+        ...workerBlock(false),
+        "  }",
+        "}",
+      ].join("\n");
+    const previous = source(workerBlock(false));
+    const current = source(workerBlock(true), [
+      "    {",
+      "      const unrelated = true;",
+      "    }",
+    ]);
+
+    const evidence = analyzeEvidence(
+      episode(previous, current),
+    ).filter((item) => item.kind === "complexity-growth");
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]).toMatchObject({
+      detail:
+        "Container#get value.Worker#decide now has 6 branches, up from 2.",
+      references: ["Container#get value.Worker#decide"],
+    });
+  });
+
+  it("keeps method owners and static and instance members distinct", () => {
+    const method = (
+      name: string,
+      isStatic: boolean,
+      complex: boolean,
+    ): readonly string[] => [
+      `  ${isStatic ? "static " : ""}${name}(input: number): number {`,
+      ...(complex
+        ? [
+            "    if (input > 10) return 10;",
+            "    if (input > 0 && input < 10) return input;",
+            "    for (const item of [input]) {",
+            "      if (item === 0) return 0;",
+            "    }",
+            "    return input < 0 ? -input : input;",
+          ]
+        : [
+            "    if (input > 0) return input;",
+            "    if (input < 0) return -input;",
+            "    return 0;",
+          ]),
+      "  }",
+    ];
+    const source = (alphaInstanceComplex: boolean): string =>
+      [
+        "class Alpha {",
+        ...method("decide", false, alphaInstanceComplex),
+        ...method("decide", true, false),
+        "}",
+        "class Beta {",
+        ...method("decide", false, false),
+        "}",
+      ].join("\n");
+
+    const evidence = analyzeEvidence(
+      episode(source(false), source(true)),
+    ).filter((item) => item.kind === "complexity-growth");
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]?.references).toEqual(["Alpha#decide"]);
+  });
+
   it("compares the next stable edit with the last stable source", () => {
     const lastStable =
       "export function load(id: string): string { return id; }";

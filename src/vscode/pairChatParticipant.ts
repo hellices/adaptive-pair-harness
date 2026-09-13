@@ -221,11 +221,16 @@ export class PairSharedContext {
   public captureEvidenceRevisionFenceForUri(
     uri: string,
   ): PairEvidenceRevisionFence {
-    const revision = this.captureEvidenceRevisionForUri(uri);
+    let revision = this.evidenceRevisionForUri(uri);
+    if (revision === undefined) {
+      revision = this.nextEvidenceRevision();
+      this.evidenceRevisionByUri.set(uri, revision);
+    }
     this.activeEvidencePinsByUri.set(
       uri,
       (this.activeEvidencePinsByUri.get(uri) ?? 0) + 1,
     );
+    this.evictIdleEvidenceRevisions();
     let active = true;
     return {
       isCurrent: () =>

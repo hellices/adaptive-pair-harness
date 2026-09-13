@@ -99,6 +99,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       (next) => {
         runtime = next;
       },
+      () => !extensionDisposed && runtime === undefined,
     );
   };
 

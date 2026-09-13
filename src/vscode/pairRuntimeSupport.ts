@@ -49,6 +49,7 @@ export const rebuildRuntimeAfterDisposal = async <
   previous: TRuntime | undefined,
   createReplacement: () => PromiseLike<TRuntime | undefined>,
   install: (runtime: TRuntime | undefined) => void,
+  canInstallReplacement: () => boolean = () => true,
 ): Promise<void> => {
   install(undefined);
   const cleanupErrors: unknown[] = [];
@@ -68,6 +69,18 @@ export const rebuildRuntimeAfterDisposal = async <
       [...cleanupErrors, error],
     );
     throw error;
+  }
+
+  if (!canInstallReplacement()) {
+    const abandonedReplacement = replacement;
+    runCleanupSteps(
+      abandonedReplacement === undefined
+        ? []
+        : [() => abandonedReplacement.dispose()],
+      "Failed to clean up an unowned Adaptive Pair runtime replacement.",
+      cleanupErrors,
+    );
+    return;
   }
 
   install(replacement);

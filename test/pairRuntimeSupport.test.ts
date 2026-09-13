@@ -50,6 +50,101 @@ describe("Pair runtime support", () => {
     expect(createRuntime).not.toHaveBeenCalled();
   });
 
+  it("disposes a replacement completed after extension ownership is lost", async () => {
+    const { rebuildRuntimeAfterDisposal } = await import(
+      "../src/vscode/pairRuntimeSupport"
+    );
+    const rebuild = rebuildRuntimeAfterDisposal as <
+      TRuntime extends { dispose(): void },
+    >(
+      previous: TRuntime | undefined,
+      createReplacement: () => PromiseLike<TRuntime | undefined>,
+      install: (runtime: TRuntime | undefined) => void,
+      canInstallReplacement: () => boolean,
+    ) => Promise<void>;
+    const replacementCompletion = deferred<{ dispose(): void }>();
+    const previousDispose = vi.fn();
+    const replacementDispose = vi.fn();
+    const previous: { dispose(): void } = { dispose: previousDispose };
+    const replacement: { dispose(): void } = {
+      dispose: replacementDispose,
+    };
+    let runtime: { dispose(): void } | undefined = previous;
+    let extensionDisposed = false;
+
+    const pending = rebuild(
+      previous,
+      () => replacementCompletion.promise,
+      (next) => {
+        runtime = next;
+      },
+      () => !extensionDisposed && runtime === undefined,
+    );
+    extensionDisposed = true;
+    replacementCompletion.resolve(replacement);
+
+    await expect(pending).resolves.toBeUndefined();
+    expect(previousDispose).toHaveBeenCalledOnce();
+    expect(replacementDispose).toHaveBeenCalledOnce();
+    expect(runtime).toBeUndefined();
+  });
+
+  it("aggregates rejected replacement cleanup after extension disposal without restoring state", async () => {
+    const { rebuildRuntimeAfterDisposal } = await import(
+      "../src/vscode/pairRuntimeSupport"
+    );
+    const rebuild = rebuildRuntimeAfterDisposal as <
+      TRuntime extends { dispose(): void },
+    >(
+      previous: TRuntime | undefined,
+      createReplacement: () => PromiseLike<TRuntime | undefined>,
+      install: (runtime: TRuntime | undefined) => void,
+      canInstallReplacement: () => boolean,
+    ) => Promise<void>;
+    const replacementCompletion = deferred<{ dispose(): void }>();
+    const previousFailure = new Error("previous runtime cleanup failed");
+    const replacementFailure = new Error(
+      "disposed replacement cleanup failed",
+    );
+    const previous = {
+      dispose: () => {
+        throw previousFailure;
+      },
+    };
+    const replacement = {
+      dispose: () => {
+        throw replacementFailure;
+      },
+    };
+    let runtime: { dispose(): void } | undefined = previous;
+    let extensionDisposed = false;
+
+    const pending = rebuild(
+      previous,
+      () => replacementCompletion.promise,
+      (next) => {
+        runtime = next;
+      },
+      () => !extensionDisposed && runtime === undefined,
+    );
+    extensionDisposed = true;
+    replacementCompletion.resolve(replacement);
+
+    let failure: unknown;
+    try {
+      await pending;
+    } catch (error: unknown) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).toEqual([
+      previousFailure,
+      replacementFailure,
+    ]);
+    expect(runtime).toBeUndefined();
+  });
+
   it("installs a replacement after disposal fails and permits a later rebuild", async () => {
     const module = (await import(
       "../src/vscode/pairRuntimeSupport"

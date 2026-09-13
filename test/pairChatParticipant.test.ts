@@ -647,6 +647,111 @@ describe("pair chat planning", () => {
     );
   });
 
+  it("keeps a 257th captured URI current while 256 existing revisions are pinned", () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "local-template",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    const existingFences = Array.from(
+      { length: PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT },
+      (_, index) =>
+        context.captureEvidenceRevisionFenceForUri(
+          `file:///workspace/pinned-${index}.ts`,
+        ),
+    );
+
+    const overflowFence = context.captureEvidenceRevisionFenceForUri(
+      "file:///workspace/pinned-overflow.ts",
+    );
+
+    expect(overflowFence.isCurrent()).toBe(true);
+
+    overflowFence.dispose();
+    for (const fence of existingFences) {
+      fence.dispose();
+    }
+  });
+
+  it("evicts a released idle revision without invalidating the overflow capture", () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "local-template",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    const firstUri = "file:///workspace/pinned-0.ts";
+    const existingFences = Array.from(
+      { length: PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT },
+      (_, index) =>
+        context.captureEvidenceRevisionFenceForUri(
+          `file:///workspace/pinned-${index}.ts`,
+        ),
+    );
+    const overflowFence = context.captureEvidenceRevisionFenceForUri(
+      "file:///workspace/pinned-overflow.ts",
+    );
+
+    existingFences[0]!.dispose();
+
+    expect(context.evidenceRevisionForUri(firstUri)).toBeUndefined();
+    expect(overflowFence.isCurrent()).toBe(true);
+
+    overflowFence.dispose();
+    for (const fence of existingFences.slice(1)) {
+      fence.dispose();
+    }
+  });
+
+  it("invalidates a pinned overflow capture when its target revision changes", () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "local-template",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    const existingFences = Array.from(
+      { length: PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT },
+      (_, index) =>
+        context.captureEvidenceRevisionFenceForUri(
+          `file:///workspace/pinned-${index}.ts`,
+        ),
+    );
+    const targetUri = "file:///workspace/pinned-overflow.ts";
+    const targetFence =
+      context.captureEvidenceRevisionFenceForUri(targetUri);
+    const capturedRevision =
+      context.evidenceRevisionForUri(targetUri);
+
+    const invalidatedRevision =
+      context.invalidateEvidenceFenceForUri(targetUri);
+
+    expect(capturedRevision).toBeTypeOf("number");
+    expect(invalidatedRevision).toBeGreaterThan(capturedRevision!);
+    expect(targetFence.isCurrent()).toBe(false);
+
+    targetFence.dispose();
+    for (const fence of existingFences) {
+      fence.dispose();
+    }
+  });
+
   it("reports configuration warnings in shared session output", () => {
     const context = new PairSharedContext({
       enabled: true,
