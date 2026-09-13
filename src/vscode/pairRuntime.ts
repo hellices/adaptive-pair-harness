@@ -365,14 +365,21 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     > => {
       while (context.isCurrent()) {
         const revision = this.memoryStore.revision;
-        const recoveredByRepository = await Promise.all(
-          workspaceRoots.repositoryIds.map(async (repositoryId) => ({
-            repositoryId,
-            recovered: await this.memoryStore
-              .forRepository(repositoryId)
-              .loadOrDefault(),
-          })),
-        );
+        const recoveredByRepository: Array<{
+          readonly repositoryId: string;
+          readonly recovered: Awaited<
+            ReturnType<PairMemoryStore["loadOrDefault"]>
+          >;
+        }> = [];
+        for (const repositoryId of workspaceRoots.repositoryIds) {
+          const recovered = await this.memoryStore
+            .forRepository(repositoryId)
+            .loadOrDefault();
+          if (!context.isCurrent()) {
+            return undefined;
+          }
+          recoveredByRepository.push({ repositoryId, recovered });
+        }
         if (revision === this.memoryStore.revision) {
           return { revision, recoveredByRepository };
         }
@@ -380,13 +387,16 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       return undefined;
     };
     let memorySnapshot = await loadMemorySnapshot();
-    if (memorySnapshot === undefined) {
+    if (!context.isCurrent() || memorySnapshot === undefined) {
       return undefined;
     }
     const controlNotice = await this.discoverCoexistence();
+    if (!context.isCurrent()) {
+      return undefined;
+    }
     if (memorySnapshot.revision !== this.memoryStore.revision) {
       memorySnapshot = await loadMemorySnapshot();
-      if (memorySnapshot === undefined) {
+      if (!context.isCurrent() || memorySnapshot === undefined) {
         return undefined;
       }
     }
@@ -699,6 +709,9 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
 
   private onWorkspaceFoldersChanged(): void {
     if (this.disposed || !this.sessionLifecycle.active) {
+      return;
+    }
+    if (!this.sessionLifecycle.ready) {
       return;
     }
 

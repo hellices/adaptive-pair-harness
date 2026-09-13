@@ -481,25 +481,25 @@ describe("explicit pair session lifecycle", () => {
     expect(listener.dispose).not.toHaveBeenCalled();
   });
 
-  it("allows only the latest overlapping active-session refresh to commit", async () => {
-    const firstRefresh = deferred<void>();
-    const secondRefresh = deferred<void>();
-    const committed: string[] = [];
+  it("coalesces overlapping active-session refreshes without replacing the in-flight generation", async () => {
+    const refreshPreparation = deferred<void>();
+    let refreshContext: PreparationContext | undefined;
+    let committed = 0;
     let preparationCount = 0;
     const ports = {
       prepare: vi.fn(async (context: PreparationContext) => {
         preparationCount += 1;
         if (preparationCount === 1) {
-          committed.push("initial");
           return;
         }
-        const label = preparationCount === 2 ? "first" : "second";
-        await (label === "first"
-          ? firstRefresh.promise
-          : secondRefresh.promise);
-        if (context.isCurrent()) {
-          committed.push(label);
-        }
+        refreshContext = context;
+        await refreshPreparation.promise;
+        return {
+          commit: () => {
+            committed += 1;
+            return true;
+          },
+        };
       }),
       registerDocumentListeners: vi.fn(() => ({ dispose: vi.fn() })),
       cancelPendingWork: vi.fn(),
@@ -508,18 +508,79 @@ describe("explicit pair session lifecycle", () => {
     const lifecycle = new PairSessionLifecycle(() => true, ports);
     await lifecycle.start();
 
-    const staleRefresh = lifecycle.refresh();
-    const currentRefresh = lifecycle.refresh();
-    secondRefresh.resolve();
+    const generation = lifecycle.sessionGeneration;
+    const firstRefresh = lifecycle.refresh();
+    const secondRefresh = lifecycle.refresh();
 
-    await expect(currentRefresh).resolves.toBe(true);
-    expect(committed).toEqual(["initial", "second"]);
+    expect(secondRefresh).toBe(firstRefresh);
+    expect(lifecycle.sessionGeneration).toBe(generation + 1);
+    expect(ports.prepare).toHaveBeenCalledTimes(2);
+    expect(refreshContext?.signal.aborted).toBe(false);
+    expect(ports.cancelPendingWork).toHaveBeenCalledOnce();
+    expect(ports.clearTransientState).toHaveBeenCalledOnce();
 
-    firstRefresh.resolve();
+    refreshPreparation.resolve();
 
-    await expect(staleRefresh).resolves.toBe(false);
-    expect(committed).toEqual(["initial", "second"]);
+    await expect(firstRefresh).resolves.toBe(true);
+    await expect(secondRefresh).resolves.toBe(true);
+    expect(committed).toBe(1);
     expect(lifecycle.active).toBe(true);
+  });
+
+  it("shares one bounded refresh attempt budget, stops on churn, and lets a later start retry", async () => {
+    let failRefresh = true;
+    let preparationCount = 0;
+    const listeners: Array<{ dispose: ReturnType<typeof vi.fn> }> = [];
+    const ports = {
+      prepare: vi.fn(async () => {
+        preparationCount += 1;
+        return {
+          commit: () => preparationCount === 1 || !failRefresh,
+        };
+      }),
+      registerDocumentListeners: vi.fn(() => {
+        const listener = { dispose: vi.fn() };
+        listeners.push(listener);
+        return listener;
+      }),
+      cancelPendingWork: vi.fn(),
+      clearTransientState: vi.fn(),
+    };
+    const lifecycle = new PairSessionLifecycle(() => true, ports);
+    await lifecycle.start();
+
+    const refreshes = Array.from({ length: 4 }, () =>
+      lifecycle.refresh(),
+    );
+    const results = await Promise.allSettled(refreshes);
+
+    expect(new Set(refreshes)).toHaveLength(1);
+    expect(results).toEqual(
+      Array.from({ length: refreshes.length }, () =>
+        expect.objectContaining({
+          status: "rejected",
+          reason: expect.objectContaining({
+            message: expect.stringContaining(
+              "workspace state kept changing",
+            ),
+          }),
+        }),
+      ),
+    );
+    expect(ports.prepare).toHaveBeenCalledTimes(4);
+    expect(lifecycle.active).toBe(false);
+    expect(lifecycle.ready).toBe(false);
+    expect(listeners[0]?.dispose).toHaveBeenCalledOnce();
+
+    failRefresh = false;
+    await expect(lifecycle.start()).resolves.toMatchObject({
+      kind: "started",
+      active: true,
+    });
+    expect(ports.prepare).toHaveBeenCalledTimes(5);
+    expect(ports.registerDocumentListeners).toHaveBeenCalledTimes(2);
+    expect(lifecycle.active).toBe(true);
+    lifecycle.dispose();
   });
 
   it("does not let a deferred refresh affect a rapidly stopped and restarted session", async () => {

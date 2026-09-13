@@ -160,6 +160,12 @@ session. Pair pauses document and model work, cancels pending requests, clears
 transient evidence, reloads dismissal memory for the current set of workspace
 roots, and then resumes the same explicit session. Removed roots are discarded,
 and a newly added root's dismissals load before its documents are reviewed.
+Folder events received while that refresh is in flight are coalesced into the
+same serialized coordinator and share its limit of three preparation attempts.
+If the roots do not stabilize within those three attempts, Pair cancels pending
+work, clears transient state, stops the session, and reports the failure. A
+later explicit start creates a fresh session generation with a fresh attempt
+budget.
 
 The configured intervention style remains authoritative until the style picker
 records an explicit user selection in VS Code global state. Dismiss and approve

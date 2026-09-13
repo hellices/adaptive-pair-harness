@@ -2892,3 +2892,71 @@
   failed snapshots and reports the refresh/start failure. A live VS Code
   extension host was not exercised; deterministic adapter tests cover the
   affected event-ordering boundaries.
+
+---
+
+## Remaining preparation-race closure (2026-09-14)
+
+### Corrections implemented
+
+- Overlapping workspace-folder events now join one session-owned refresh
+  promise. They no longer abort and replace the in-flight generation, repeat
+  cancellation/clearing, or reset its three-attempt preparation budget.
+- The refresh coordinator remains non-ready while serialized attempts run. If
+  all three snapshots lose their root fence, it aborts pending work, clears
+  transient state, disposes the session listeners, publishes Pair as stopped,
+  and displays one workspace-refresh failure. A later explicit start creates a
+  fresh generation and receives a fresh three-attempt budget.
+- Root-memory loads are sequentially cancellation-fenced. Preparation checks
+  its session immediately after every awaited repository load, before
+  coexistence discovery, after discovery, and after any revision-triggered
+  reload, so a stopped or disposed generation cannot advance to a later stage.
+- The listener-registration first-edit regression now depends exclusively on
+  production open-listener and preparation reconciliation; it no longer
+  manually invokes the open listener after startup.
+- Atomic listener rollback and repository-scoped root-memory replacement remain
+  covered by the focused and full lifecycle suites.
+
+### TDD evidence
+
+- RED: the lifecycle suite reported **2 expected failures and 18 passes**:
+  overlapping refresh calls returned four distinct promises, replaced the
+  in-flight generation, and did not share one bounded coordinator.
+- RED: after the lifecycle coordinator was introduced, the targeted runtime
+  suite reported **1 expected failure and 1 pass** because four coalesced folder
+  events attached four rejection handlers and displayed the same failure four
+  times.
+- RED: the deferred-memory-stop regression reported **1 expected failure**:
+  preparation launched two root-memory reads instead of stopping after the
+  first awaited read.
+- GREEN: focused lifecycle/runtime/support verification passed **3 files and
+  125 tests**. The production-only first-edit regression also passed after its
+  manual post-start listener calls were removed.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 512 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 90.40%, branches 83.82%, functions 93.92%, lines 90.54%
+- `npm run package`: **PASS — 158 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX exclusion and compiled preparation-marker scans: **PASS**
+- Production and packaged credential-value scans: **PASS**
+- Production and packaged runtime URL scans: **PASS — loopback default only**
+- Source and packaged repository metadata scans: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review covered shared attempt ownership, promise coalescing,
+  generation and abort fencing, one-time visible failure, failure cleanup,
+  explicit restart, per-root memory cancellation, listener rollback, root
+  replacement, and first-edit baseline ownership. No remaining
+  high-confidence correctness or security defect was found.
+- A live VS Code extension host was not exercised in this non-interactive
+  environment. Deterministic runtime/lifecycle tests cover the affected event
+  ordering and cancellation boundaries.

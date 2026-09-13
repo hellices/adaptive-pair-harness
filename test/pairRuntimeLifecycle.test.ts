@@ -2068,6 +2068,53 @@ describe("PairRuntime lifecycle ownership", () => {
     },
   );
 
+  it("does not continue memory loading or start coexistence discovery after a deferred start is stopped", async () => {
+    const memoryRead = deferred<unknown | undefined>();
+    let memoryReadCount = 0;
+    const memoryBackend = {
+      get: async <T,>(key: string): Promise<T | undefined> => {
+        expect(key).toBe("adaptive-pair.memory");
+        memoryReadCount += 1;
+        return (await memoryRead.promise) as T | undefined;
+      },
+      update: async <T,>(key: string, value: T): Promise<void> => {
+        expect(key).toBe("adaptive-pair.memory");
+        expect(value).toBeDefined();
+      },
+    };
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext: {
+        globalState: memoryBackend,
+      } as unknown as vscode.ExtensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+      memoryStore: new PairMemoryStore({
+        repositoryId: "file:///workspace",
+        store: memoryBackend,
+      }),
+    });
+
+    const pendingStart = runtime.startSession();
+    await vi.waitFor(() => {
+      expect(memoryReadCount).toBeGreaterThan(0);
+    });
+    runtime.stopSession();
+    memoryRead.resolve(undefined);
+
+    await expect(pendingStart).resolves.toMatchObject({
+      kind: "already-stopped",
+      active: false,
+    });
+    expect(memoryReadCount).toBe(1);
+    expect(vscodeState.findFiles).not.toHaveBeenCalled();
+    expect(vscodeState.openListeners).toHaveLength(0);
+    expect(vscodeState.workspaceFolderListeners).toHaveLength(0);
+    expect(runtime.isSessionActive()).toBe(false);
+    runtime.dispose();
+  });
+
   it("keeps a style update made during deferred session preparation", async () => {
     const discovery = deferred<
       ReadonlyArray<{ relativePath: string; toString(): string }>
@@ -4424,7 +4471,7 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
-  it("allows only the latest workspace-folder event to commit refreshed roots", async () => {
+  it("coalesces workspace-folder events behind the in-flight refresh attempt", async () => {
     const firstRefresh = deferred<
       ReadonlyArray<{ relativePath: string; toString(): string }>
     >();
@@ -4478,10 +4525,16 @@ describe("PairRuntime lifecycle ownership", () => {
       added: [secondRoot],
       removed: [firstRoot],
     });
+
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+    expect(vscodeState.findFiles).toHaveBeenCalledTimes(2);
+
+    firstRefresh.resolve([]);
     await vi.waitFor(() => {
       expect(vscodeState.findFiles).toHaveBeenCalledTimes(3);
     });
-
     secondRefresh.resolve([]);
     const state = (
       runtime as unknown as {
@@ -4495,10 +4548,6 @@ describe("PairRuntime lifecycle ownership", () => {
         "export const second = true;",
       );
     });
-    firstRefresh.resolve([]);
-    await new Promise<void>((resolve) => {
-      setImmediate(resolve);
-    });
 
     expect(state.previousText(firstDocument.uri.toString())).toBeUndefined();
     expect(state.previousText(secondDocument.uri.toString())).toBe(
@@ -4506,6 +4555,73 @@ describe("PairRuntime lifecycle ownership", () => {
     );
     expect(runtime.isSessionActive()).toBe(true);
     runtime.dispose();
+  });
+
+  it("stops visibly after sustained refresh churn and lets an explicit restart use a fresh budget", async () => {
+    const discoveries = [
+      deferred<ReadonlyArray<{ relativePath: string; toString(): string }>>(),
+      deferred<ReadonlyArray<{ relativePath: string; toString(): string }>>(),
+      deferred<ReadonlyArray<{ relativePath: string; toString(): string }>>(),
+    ];
+    const roots = Array.from({ length: 4 }, (_value, index) => ({
+      uri: {
+        toString: () => `file:///workspace/refresh-churn-${index}`,
+      },
+    }));
+    vscodeState.workspaceFolders = [roots[0]!];
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    vscodeState.findFiles.mockClear();
+    for (const discovery of discoveries) {
+      vscodeState.findFiles.mockImplementationOnce(
+        () => discovery.promise,
+      );
+    }
+    const folderListener = vscodeState.workspaceFolderListeners[0]!;
+
+    try {
+      folderListener({ added: [], removed: [] });
+      for (const [index, discovery] of discoveries.entries()) {
+        await vi.waitFor(() => {
+          expect(vscodeState.findFiles.mock.calls.length).toBeGreaterThanOrEqual(
+            index + 1,
+          );
+        });
+        vscodeState.workspaceFolders = [roots[index + 1]!];
+        folderListener({ added: [roots[index + 1]!], removed: [] });
+        discovery.resolve([]);
+      }
+
+      await vi.waitFor(() => {
+        expect(vscodeState.errorMessages).toEqual([
+          expect.stringContaining("workspace state kept changing"),
+        ]);
+      });
+      expect(vscodeState.findFiles).toHaveBeenCalledTimes(3);
+      expect(runtime.isSessionActive()).toBe(false);
+      expect(shared.snapshot().session.active).toBe(false);
+      expect(vscodeState.statusItems[0]?.text).toContain("Pair: off");
+      expect(vscodeState.openListeners).toHaveLength(0);
+      expect(vscodeState.closeListeners).toHaveLength(0);
+      expect(vscodeState.changeListeners).toHaveLength(0);
+      expect(vscodeState.workspaceFolderListeners).toHaveLength(0);
+
+      await expect(runtime.startSession()).resolves.toMatchObject({
+        kind: "started",
+        active: true,
+      });
+      expect(vscodeState.findFiles).toHaveBeenCalledTimes(4);
+      expect(runtime.isSessionActive()).toBe(true);
+    } finally {
+      runtime.dispose();
+    }
   });
 
   it("does not let a deferred workspace refresh overwrite a rapid stop and restart", async () => {
@@ -4974,9 +5090,6 @@ describe("PairRuntime lifecycle ownership", () => {
     await pendingStart;
     vi.useFakeTimers();
     try {
-      vscodeState.openListeners[0]!(openedDocument);
-      vscodeState.openListeners[0]!(openedDocument);
-
       const editedDocument = document(
         openedUri,
         "export const value = 2;",

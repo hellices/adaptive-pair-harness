@@ -34,20 +34,25 @@ project changes.
    memory, using the owning folder for each document in multi-root workspaces,
    seeds only stable open documents, and discovers coexistence signals. A
    memory revision fence reloads preparation state after a concurrent
-   style/dismiss/approve/reset action. Stop, replacement, disposal, and memory
-   reset invalidate pending preparation; rejection from stale preparation
-   returns the stopped result, while a current-generation failure still
-   surfaces.
+   style/dismiss/approve/reset action. Each asynchronous root-memory load is
+   followed by a generation check before another load or coexistence discovery
+   can begin. Stop, replacement, disposal, and memory reset invalidate pending
+   preparation; rejection from stale preparation returns the stopped result,
+   while a current-generation failure still surfaces.
 5. **Workspace-folder changes** keep the explicit session active but advance
    its lifecycle generation and block new document/model work. Pending edit,
    model, and Chat work is cancelled; transient evidence and threads are
    cleared; and preparation reloads the current root set, repository-scoped
    dismissals, open-document seeds, and coexistence signals. Removed roots are
    absent from the replacement snapshot, and added-root dismissals commit
-   before processing resumes. Stop, disposal, restart, or a newer folder event
-   invalidates an older refresh so stale asynchronous work cannot commit.
-   The workspace-folder listener is owned and disposed with the other active
-   session listeners.
+   before processing resumes. Folder events that arrive during preparation
+   coalesce into the session's serialized refresh instead of replacing it, and
+   all attempts share a three-attempt bound. If roots remain unstable for all
+   three attempts, the coordinator cancels and clears pending work, disposes
+   the session listeners, stops Pair, and surfaces the failure. A later
+   explicit start uses a fresh generation and attempt budget. Stop, disposal,
+   and restart invalidate stale asynchronous work. The workspace-folder
+   listener is owned and disposed with the other active session listeners.
 6. **Document changes** invalidate existing inline evidence for that file,
    cancel in-flight work, and queue an edit episode through the debounced
    aggregator.

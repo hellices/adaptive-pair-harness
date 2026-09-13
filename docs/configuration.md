@@ -360,10 +360,14 @@ revision. While a session is active, a public VS Code workspace-folder change
 event pauses processing, cancels pending edit/model/Chat work, clears transient
 evidence, and replaces the repository-memory snapshot from the current roots.
 Removed roots are dropped, and newly added roots load their dismissal sets
-before document processing resumes. Overlapping folder events and
-stop/restart/disposal invalidate stale refresh generations without turning a
-normal folder change into an explicit stop. If the persisted memory record is
-corrupt, Pair starts with in-memory defaults, preserves the stored corruption,
-and shows a warning. **Adaptive Pair: Reset Local Memory** is the only operation
-that replaces that record with defaults, and it invalidates any pending session
-preparation before writing or publishing reset state.
+before document processing resumes. Overlapping folder events coalesce behind
+one session-owned refresh and share its limit of three preparation attempts;
+they do not replace the in-flight refresh or reset that budget. Stop, restart,
+and disposal still invalidate stale generations. If roots cannot stabilize in
+three attempts, Pair cancels pending work, clears transient state, stops
+visibly, and requires a later explicit start, which receives a fresh generation
+and attempt budget. If the persisted memory record is corrupt, Pair starts with
+in-memory defaults, preserves the stored corruption, and shows a warning.
+**Adaptive Pair: Reset Local Memory** is the only operation that replaces that
+record with defaults, and it invalidates any pending session preparation before
+writing or publishing reset state.

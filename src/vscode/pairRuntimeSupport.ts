@@ -65,6 +65,12 @@ const MAX_SESSION_PREPARATION_ATTEMPTS = 3;
 const PREPARATION_CHURN_MESSAGE =
   "Adaptive Pair could not prepare the session because workspace state kept changing.";
 
+interface PendingSessionRefresh {
+  readonly generation: number;
+  readonly abortController: AbortController;
+  readonly promise: Promise<boolean>;
+}
+
 export interface PairLifecycleFence {
   readonly generation: number;
   isCurrent(): boolean;
@@ -91,12 +97,7 @@ export class PairSessionLifecycle {
         readonly abortController: AbortController;
       }
     | undefined;
-  private pendingRefresh:
-    | {
-        readonly generation: number;
-        readonly abortController: AbortController;
-      }
-    | undefined;
+  private pendingRefresh: PendingSessionRefresh | undefined;
   private isDisposed = false;
   private isActive = false;
   private isRefreshing = false;
@@ -198,31 +199,44 @@ export class PairSessionLifecycle {
     };
   }
 
-  public async refresh(): Promise<boolean> {
+  public refresh(): Promise<boolean> {
     if (this.isDisposed || !this.isActive) {
-      return false;
+      return Promise.resolve(false);
+    }
+    if (this.pendingRefresh?.generation === this.generation) {
+      return this.pendingRefresh.promise;
     }
 
-    const previousRefresh = this.pendingRefresh;
     const generation = ++this.generation;
     const abortController = new AbortController();
-    const refresh = { generation, abortController };
+    let resolveRefresh!: (refreshed: boolean) => void;
+    let rejectRefresh!: (error: unknown) => void;
+    const promise = new Promise<boolean>((resolve, reject) => {
+      resolveRefresh = resolve;
+      rejectRefresh = reject;
+    });
+    const refresh = { generation, abortController, promise };
     this.pendingRefresh = refresh;
     this.isRefreshing = true;
+    void this.runRefresh(refresh).then(resolveRefresh, rejectRefresh);
+    return promise;
+  }
 
+  private async runRefresh(
+    refresh: PendingSessionRefresh,
+  ): Promise<boolean> {
     let refreshed: boolean;
     try {
       runCleanupSteps(
         [
-          () => previousRefresh?.abortController.abort(),
           () => this.ports.cancelPendingWork(),
           () => this.ports.clearTransientState(),
         ],
         "Failed to prepare the Adaptive Pair session refresh.",
       );
       refreshed = await this.refreshOnce(
-        generation,
-        abortController,
+        refresh.generation,
+        refresh.abortController,
       );
     } catch (error: unknown) {
       if (this.pendingRefresh !== refresh) {
@@ -231,7 +245,7 @@ export class PairSessionLifecycle {
       this.pendingRefresh = undefined;
       this.isRefreshing = false;
       this.cleanupStoppedState(
-        [abortController],
+        [refresh.abortController],
         [error],
         "Adaptive Pair refresh and rollback both failed.",
       );
@@ -244,7 +258,7 @@ export class PairSessionLifecycle {
     this.isRefreshing = false;
     if (!refreshed) {
       this.cleanupStoppedState(
-        [abortController],
+        [refresh.abortController],
         [],
         "Failed to stop the disabled Adaptive Pair session after refresh.",
       );
