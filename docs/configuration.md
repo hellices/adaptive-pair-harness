@@ -165,6 +165,23 @@ normalization. A valid path prefix such as `/v1` is retained when
 bodies are capped at 64 KiB. Non-success and oversized responses are cancelled
 before rejection; cleanup failures are attached to the primary provider error.
 
+## Chat response display bound
+
+Every provider path uses the same non-configurable **16,384 Unicode
+code-point** limit immediately before dynamic text is displayed by `@pair`
+Chat. This includes local and remote successes, local fallback text, session
+result text, and dynamic error detail. CRLF and CR line endings are normalized
+to LF, unsafe control/format characters are replaced, and intentional Markdown,
+tabs, line breaks, and Unicode joiners are preserved. Truncated text reserves
+its final code point for an explicit `…`, so supplementary characters such as
+emoji are never split. Exact-boundary responses are unchanged.
+
+This display limit is independent of model limits. It does not increase or
+replace the 180-token remote output allowance, rolling token accounting, or
+provider billing behavior. It is also distinct from the OpenAI-compatible
+64 KiB HTTP response-body limit, which bounds transport data including JSON
+overhead rather than displayed Unicode code points.
+
 ## Exact data sent for a remote request
 
 Adaptive Pair does **not** send full source buffers, edit histories, or project

@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  PAIR_CHAT_RESPONSE_DISPLAY_LIMIT,
+  formatChatResponseForDisplay,
+} from "../src/vscode/chatResponseDisplay";
+import {
   PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT,
   PairSharedContext,
   buildPairChatPlan,
@@ -740,6 +744,115 @@ describe("pair chat planning", () => {
     expect(markdown).toEqual(["session started", "session stopped"]);
   });
 
+  it("bounds a dynamic session-control response before display", async () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: false,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "local-template",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    const message =
+      `Session started.\r\n${"😀".repeat(PAIR_CHAT_RESPONSE_DISPLAY_LIMIT)}`;
+    let handler: vscode.ChatRequestHandler | undefined;
+    const markdown = vi.fn();
+    registerPairChatParticipant(
+      (_id, registeredHandler) => {
+        handler = registeredHandler;
+        return { dispose: () => undefined } as vscode.ChatParticipant;
+      },
+      context,
+      {
+        generate: async () => ({
+          text: "unused",
+          inputTokens: 1,
+          outputTokens: 1,
+        }),
+      },
+      {
+        sessionControl: {
+          isSessionActive: () => false,
+          startSession: async () => ({
+            kind: "started",
+            active: true,
+            message,
+          }),
+          stopSession: () => ({
+            kind: "stopped",
+            active: false,
+            message: "unused",
+          }),
+        },
+      },
+    );
+
+    await handler!(
+      { command: "start", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      { markdown } as unknown as vscode.ChatResponseStream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      } as vscode.CancellationToken,
+    );
+
+    expect(markdown).toHaveBeenCalledWith(
+      formatChatResponseForDisplay(message),
+    );
+  });
+
+  it("bounds dynamic session-plan fields while preserving fixed Markdown", async () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      goal: `Review\r\n${"界".repeat(PAIR_CHAT_RESPONSE_DISPLAY_LIMIT)}`,
+      role: "navigator",
+      provider: "local-template",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    let handler: vscode.ChatRequestHandler | undefined;
+    const markdown = vi.fn();
+    registerPairChatParticipant(
+      (_id, registeredHandler) => {
+        handler = registeredHandler;
+        return { dispose: () => undefined } as vscode.ChatParticipant;
+      },
+      context,
+      {
+        generate: async () => ({
+          text: "unused",
+          inputTokens: 1,
+          outputTokens: 1,
+        }),
+      },
+    );
+
+    await handler!(
+      { command: "session", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      { markdown } as unknown as vscode.ChatResponseStream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      } as vscode.CancellationToken,
+    );
+
+    const plan = buildPairChatPlan("session", context.snapshot());
+    if (plan.kind !== "message") {
+      throw new Error("Expected session message plan.");
+    }
+    expect(markdown).toHaveBeenCalledWith(
+      formatChatResponseForDisplay(plan.markdown),
+    );
+  });
+
   it("resolves trace context from the latest evidence URI and range", async () => {
     const context = new PairSharedContext({
       enabled: true,
@@ -955,6 +1068,76 @@ describe("pair chat planning", () => {
 
     expect(markdown).toHaveBeenCalledWith("current sanitized response");
   });
+
+  it.each([
+    [
+      "local fallback",
+      "local-template" as const,
+      `**Local fallback**\r\n${"l".repeat(
+        PAIR_CHAT_RESPONSE_DISPLAY_LIMIT,
+      )}`,
+    ],
+    [
+      "OpenAI-compatible",
+      "openai-compatible" as const,
+      "o".repeat(64 * 1_024),
+    ],
+    [
+      "Copilot CJK and emoji",
+      "vscode-copilot" as const,
+      `## 분석\r\n\r\n${"界😀".repeat(PAIR_CHAT_RESPONSE_DISPLAY_LIMIT)}`,
+    ],
+  ])(
+    "bounds and normalizes a successful %s Chat response immediately before display",
+    async (_label, provider, generatedText) => {
+      const context = new PairSharedContext({
+        enabled: true,
+        active: true,
+        goal: "Navigate with evidence-backed questions.",
+        role: "navigator",
+        provider,
+        remainingCalls: 4,
+        remainingInputTokens: 6_000,
+        controlNotice: undefined,
+        configurationWarning: undefined,
+      });
+      context.publishEvidence({
+        uri: "file:///workspace/evidence.ts",
+        evidence,
+        question: "Did you intend this dependency?",
+      });
+      let handler: vscode.ChatRequestHandler | undefined;
+      const markdown = vi.fn();
+      registerPairChatParticipant(
+        (_id, registeredHandler) => {
+          handler = registeredHandler;
+          return { dispose: () => undefined } as vscode.ChatParticipant;
+        },
+        context,
+        {
+          generate: async () => ({
+            text: generatedText,
+            inputTokens: 1,
+            outputTokens: 1,
+          }),
+        },
+      );
+
+      await handler!(
+        { command: "why", prompt: "" } as vscode.ChatRequest,
+        {} as vscode.ChatContext,
+        { markdown } as unknown as vscode.ChatResponseStream,
+        {
+          isCancellationRequested: false,
+          onCancellationRequested: () => ({ dispose: () => undefined }),
+        } as vscode.CancellationToken,
+      );
+
+      expect(markdown).toHaveBeenCalledWith(
+        formatChatResponseForDisplay(generatedText),
+      );
+    },
+  );
 
   it.each(deferredResponseMutations)(
     "rejects deferred model output after a $label session update",
@@ -1385,4 +1568,56 @@ describe("pair chat planning", () => {
       });
     },
   );
+
+  it("bounds and normalizes dynamic provider error detail", async () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "vscode-copilot",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    context.publishEvidence({
+      uri: "file:///workspace/pair.ts",
+      evidence,
+      question: "Did you intend this dependency?",
+    });
+    const errorMessage =
+      `provider\r\nfailed\u0000${"x".repeat(PAIR_CHAT_RESPONSE_DISPLAY_LIMIT)}`;
+    let handler: vscode.ChatRequestHandler | undefined;
+    registerPairChatParticipant(
+      (_id, registeredHandler) => {
+        handler = registeredHandler;
+        return { dispose: () => undefined } as vscode.ChatParticipant;
+      },
+      context,
+      {
+        generate: async () => {
+          throw new Error(errorMessage);
+        },
+      },
+    );
+
+    const result = await handler!(
+      { command: "why", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      { markdown: () => undefined } as unknown as vscode.ChatResponseStream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      } as vscode.CancellationToken,
+    );
+
+    expect(result).toEqual({
+      errorDetails: {
+        message: formatChatResponseForDisplay(
+          `Adaptive Pair could not answer: ${errorMessage}`,
+        ),
+      },
+    });
+  });
 });

@@ -10,6 +10,7 @@ import type {
   PairDisposable,
   PairSessionControlPort,
 } from "./pairRuntimeSupport";
+import { formatChatResponseForDisplay } from "./chatResponseDisplay";
 
 export interface PairSessionSnapshot {
   readonly enabled: boolean;
@@ -498,7 +499,7 @@ export const registerPairChatParticipant = (
             ? await sessionControl.startSession()
             : sessionControl.stopSession();
         if (!abortController.signal.aborted) {
-          response.markdown(result.message);
+          response.markdown(formatChatResponseForDisplay(result.message));
         }
         return;
       }
@@ -566,7 +567,7 @@ export const registerPairChatParticipant = (
         ...(symbol === undefined ? {} : { symbol }),
       });
       if (plan.kind === "message") {
-        response.markdown(plan.markdown);
+        response.markdown(formatChatResponseForDisplay(plan.markdown));
         return;
       }
 
@@ -590,7 +591,7 @@ export const registerPairChatParticipant = (
       ) {
         return;
       }
-      response.markdown(generated.text);
+      response.markdown(formatChatResponseForDisplay(generated.text));
     } catch (error: unknown) {
       if (
         abortController.signal.aborted ||
@@ -605,7 +606,9 @@ export const registerPairChatParticipant = (
       }
       return {
         errorDetails: {
-          message: `Adaptive Pair could not answer: ${error.message}`,
+          message: formatChatResponseForDisplay(
+            `Adaptive Pair could not answer: ${error.message}`,
+          ),
         },
       };
     } finally {

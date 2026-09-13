@@ -2960,3 +2960,69 @@
 - A live VS Code extension host was not exercised in this non-interactive
   environment. Deterministic runtime/lifecycle tests cover the affected event
   ordering and cancellation boundaries.
+
+---
+
+## Copilot Chat response display bound (2026-09-14)
+
+### Corrections implemented
+
+- Added one non-configurable **16,384 Unicode code-point** Chat response
+  display limit shared by local-template, Copilot, and OpenAI-compatible
+  successes and fallbacks.
+- Added a single formatter immediately before every `ChatResponseStream.markdown`
+  call that can contain provider or dynamic text. Dynamic session-control and
+  session-plan text use the same boundary; the fixed short unavailable-status
+  message remains untouched.
+- Applied the formatter to dynamic provider error detail as well as successful
+  Markdown output.
+- Normalized CRLF, CR, and Unicode line separators to LF. Unsafe control and
+  format characters become spaces, while tabs, intentional Markdown/newlines,
+  and Unicode joiners are preserved.
+- Truncation counts Unicode code points, reserves the last displayed code point
+  for an explicit `…`, and cannot split a UTF-16 surrogate pair.
+- Documented the display cap in README and configuration guidance, explicitly
+  distinguishing it from the 180-token remote output allowance and the
+  OpenAI-compatible 64 KiB HTTP response-body cap.
+
+### TDD evidence
+
+- Initial RED: both focused suites failed to load because the wished-for
+  display-boundary module did not exist.
+- Integration RED: the Chat suite reported **3 expected failures** for
+  unbounded session-control text, session-plan fields, and provider error
+  detail.
+- GREEN: focused formatter/Chat verification passed **2 files, 52 tests**.
+- Required regressions cover a 64 KiB ASCII OpenAI-compatible response,
+  long Copilot Markdown with CJK and emoji, local fallback output, CRLF/CR and
+  control normalization, the exact 16,384-code-point boundary, and
+  no-dangling-surrogate truncation.
+
+### Verification
+
+- Focused Chat/provider/runtime tests: **PASS — 5 files, 208 tests**
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **19 files, 522 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 90.44%, branches 83.90%, functions 93.94%, lines 90.58%
+- `npm run package`: **PASS — 159 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX exclusion and compiled display-limit marker scans: **PASS**
+- Production and packaged credential-pattern scans: **PASS**
+- Production and packaged runtime URL scans: **PASS — loopback default only**
+- Source and packaged repository metadata scans: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review covered all Chat Markdown calls, local/remote/fallback
+  routing, error detail, lifecycle fences, Markdown preservation, line-ending
+  and control normalization, code-point boundaries, documentation, and package
+  contents. No high-confidence correctness, security, lifecycle, or packaging
+  issue was found.
+- Live VS Code Chat rendering and remote providers were unavailable in this
+  non-interactive environment. Deterministic response-stream and provider
+  adapter tests cover the changed display boundary.

@@ -209,6 +209,12 @@ How it works today:
 - With `local-template`, `/why` and `/explain` return distinct bounded local
   summaries. `/trace` reports only the symbol and range resolved by VS Code and
   says that deeper control/data-flow analysis requires a model.
+- Every dynamic `@pair` Chat response—local success, remote success, fallback,
+  and dynamic error detail—passes through one **16,384 Unicode code-point**
+  display limit. CRLF/CR line endings and unsafe control characters are
+  normalized, intentional Markdown and LF newlines are preserved, and
+  truncated output ends with an explicit `…` without splitting a surrogate
+  pair. Fixed short status guidance remains unchanged.
 
 ## Provider selection
 
@@ -317,6 +323,10 @@ See the repository documentation for the full configuration reference:
   primary provider error; a cancellation failure is retained as its cause.
 - If a remote request would exceed the budget, Adaptive Pair falls back to the
   local template for that intervention.
+- The 16,384-code-point Chat display cap is a UI safety boundary, not a model
+  generation, token-budget, or billing limit. The separate 180-token per-call
+  allowance governs remote admission/accounting, and the OpenAI-compatible
+  64 KiB limit bounds the complete HTTP response body.
 
 ## Coexistence
 
