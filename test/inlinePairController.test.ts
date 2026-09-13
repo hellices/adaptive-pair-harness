@@ -1,10 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
+import LinkifyIt from "linkify-it";
 import {
   InlinePairController,
   buildInlineCommentMarkdown,
 } from "../src/vscode/inlinePairController";
 import type { Evidence } from "../src/core/types";
 import type * as vscode from "vscode";
+
+const WORD_JOINER = "\u2060";
+const HAIR_SPACE = "\u200a";
 
 const evidence: Evidence = {
   id: "dependency:repository",
@@ -119,12 +123,81 @@ describe("inline pair comment", () => {
       maliciousEvidence.title,
       maliciousEvidence.detail,
       maliciousEvidence.source,
+      "confidence 94%",
       ...maliciousEvidence.references,
     ]);
     expect(appendedMarkdown.join("")).not.toContain(
       "command:workbench.action",
     );
     expect(appendedMarkdown.join("")).not.toContain("<img");
+  });
+
+  it("neutralizes autolinks in every dynamic field while preserving trusted formatting and readable Unicode", () => {
+    const appendedText: string[] = [];
+    const appendedMarkdown: string[] = [];
+    const markdown = {
+      appendText: vi.fn((value: string) => {
+        appendedText.push(value);
+        return markdown;
+      }),
+      appendMarkdown: vi.fn((value: string) => {
+        appendedMarkdown.push(value);
+        return markdown;
+      }),
+    } as unknown as vscode.MarkdownString;
+    const dynamicEvidence: Evidence = {
+      ...evidence,
+      title: "제목 file://workspace/readme.md",
+      detail: "세부 vscode-remote://ssh-remote+pair/workspace",
+      source: "CUSTOM+SSH://provider",
+      references: ["www.example.com", "사용자@예시.한국"],
+    };
+
+    buildInlineCommentMarkdown(
+      () => markdown,
+      "질문 😀 https://example.com @pair",
+      dynamicEvidence,
+    );
+
+    expect(appendedText).toEqual([
+      `질문 😀 https:${WORD_JOINER}//example.com ${WORD_JOINER}@${WORD_JOINER}pair`,
+      `제목 file:${WORD_JOINER}//workspace/readme.md`,
+      `세부 vscode-remote:${WORD_JOINER}//ssh-remote+pair/workspace`,
+      `CUSTOM+SSH:${WORD_JOINER}//provider`,
+      "confidence 94%",
+      `www${HAIR_SPACE}.example.com`,
+      `사용자${WORD_JOINER}@${WORD_JOINER}예시.한국`,
+    ]);
+    const linkify = new LinkifyIt();
+    for (const value of appendedText) {
+      expect(linkify.match(value)).toBeNull();
+    }
+    expect(
+      appendedText
+        .join("|")
+        .replaceAll(WORD_JOINER, "")
+        .replaceAll(HAIR_SPACE, ""),
+    ).toBe(
+      [
+        "질문 😀 https://example.com @pair",
+        dynamicEvidence.title,
+        dynamicEvidence.detail,
+        dynamicEvidence.source,
+        "confidence 94%",
+        ...dynamicEvidence.references,
+      ].join("|"),
+    );
+    expect(appendedMarkdown).toEqual([
+      "\n\n**Finding:** ",
+      "\n\n",
+      "\n\n**Evidence:** ",
+      " · ",
+      "\n\n**References:**\n",
+      "- ",
+      "\n",
+      "- ",
+      "\n\n_Adaptive Pair has not changed code. Use **Adaptive Pair: Review Current Block** or `@pair` for deeper discussion._",
+    ]);
   });
 
   it("normalizes and bounds every dynamic inline field with an ellipsis", () => {
@@ -153,16 +226,20 @@ describe("inline pair comment", () => {
       },
     );
 
-    expect(appendedText).toHaveLength(12);
+    expect(appendedText).toHaveLength(13);
     expect(appendedText[0]?.length).toBeLessThanOrEqual(1_000);
     expect(appendedText[1]?.length).toBeLessThanOrEqual(120);
     expect(appendedText[2]?.length).toBeLessThanOrEqual(500);
     expect(appendedText[3]?.length).toBeLessThanOrEqual(120);
-    for (const field of appendedText) {
+    expect(appendedText[4]).toBe("confidence 94%");
+    for (const field of [
+      ...appendedText.slice(0, 4),
+      ...appendedText.slice(5),
+    ]) {
       expect(field).not.toMatch(/[\r\n]/u);
       expect(field.endsWith("…")).toBe(true);
     }
-    for (const reference of appendedText.slice(4)) {
+    for (const reference of appendedText.slice(5)) {
       expect(reference.length).toBeLessThanOrEqual(240);
     }
   });

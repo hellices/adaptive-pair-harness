@@ -3308,3 +3308,84 @@
 - A live VS Code Chat renderer was unavailable. The production-adapter contract
   test verifies ordering at `appendText`, while the `linkify-it` assertion
   supplies a rendering-oriented check for the required URL and email forms.
+
+---
+
+## Inline autolinks and dismissal persistence window (2026-09-14)
+
+### Corrections implemented
+
+- Extracted Chat's idempotent plain-text automatic-link neutralizer into a
+  shared VS Code utility and retained the existing Chat export.
+- Every dynamic inline Comment value now passes through that same neutralizer
+  immediately before `MarkdownString.appendText`: question, title, detail,
+  source, confidence status, and each reference.
+- Fixed extension-owned labels, list layout, and navigator notice remain
+  trusted Markdown. URI `://`, bare `www.`, email, and mention triggers become
+  inert while marker removal reconstructs the original readable Unicode.
+- Dismissal now cancels target runtime and Chat requests, invalidates cached
+  evidence, retires the target URI fence, withdraws shared evidence, and
+  disposes the inline thread synchronously before awaiting repository-scoped
+  memory persistence.
+- A repository-keyed pending-dismissal set blocks diagnostic/manual
+  reselection during the write. Reference counts keep overlapping dismissals
+  isolated.
+- Successful persistence promotes the hashed evidence identity to the
+  repository's durable in-memory dismissal set without any post-write UI
+  cleanup. Evidence published during persistence therefore remains intact.
+- Failed persistence removes only the pending suppression, displays a storage
+  error, and leaves stale shared/inline evidence withdrawn. Later analysis can
+  publish fresh evidence naturally.
+- Target withdrawal advances only the target URI fence; unrelated URI
+  interventions remain eligible to complete, and monotonic URI epochs still
+  prevent revision reuse after close, runtime replacement, or LRU eviction.
+- Updated README, configuration, and architecture documentation for both
+  boundaries.
+
+### TDD evidence
+
+- Inline RED: **3 expected failures** showed unneutralized dynamic values and
+  confidence still interpolated into trusted Markdown.
+- Inline GREEN: focused Inline/Chat suites passed **2 files, 15 tests**.
+- Dismissal RED: **3 expected failures** reproduced visible evidence during a
+  deferred write, a new `/why`/manual dispatch window, and stale UI revival
+  after failed storage.
+- Dismissal GREEN: the three focused deferred-persistence regressions passed.
+- The first full runtime run exposed one independent-URI regression caused by
+  advancing the global context fence during synchronous withdrawal. The
+  target-only URI withdrawal preserved unrelated work; the full runtime suite
+  then passed **91 tests**.
+- Final focused Inline/runtime/Chat run: **5 files, 166 tests passed**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **20 files, 542 tests passed**
+- `npm run test:coverage`: **PASS — 20 files, 542 tests**
+  - statements 90.59%, branches 83.83%, functions 94.08%, lines 90.73%
+- `npm run package`: **PASS — 161 files, 4.37 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- Source, compiled-output, and packaged Inline/Chat/runtime sink scans:
+  **PASS — 4 packaged modules byte-match compiled output**
+- VSIX exclusion scan: **PASS — 161 entries; source, tests, coverage,
+  Superpowers material, source maps, and development linkifier absent**
+- Credential-shaped value scan: **PASS — 49 working-tree files and 26
+  packaged files**
+- Compiled runtime URL scan: **PASS — documented loopback default only**
+- Source and packaged repository metadata assertions and `git diff --check`:
+  **PASS**
+
+### Self-review and residual concerns
+
+- Reviewed the complete changed-file diff, all inline `appendText` and
+  `appendMarkdown` sinks, cancellation/withdrawal/persistence ordering,
+  repository isolation, pending suppression cleanup, URI epoch behavior,
+  replacement publication, failure recovery, documentation, compiled output,
+  and VSIX contents. No remaining high-confidence defect was found.
+- A live VS Code Markdown renderer and a failing real global-state backend were
+  unavailable in this non-interactive environment. Inline regressions exercise
+  the production helper through captured `appendText` values and
+  `linkify-it`; deferred mocked storage verifies the full runtime ordering.

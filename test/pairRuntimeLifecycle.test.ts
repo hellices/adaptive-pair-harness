@@ -760,7 +760,7 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
-  it("cleans up a dismissed URI when unrelated URI evidence arrives during persistence", async () => {
+  it("clears dismissed evidence before persistence and preserves a replacement published during the write", async () => {
     const persistence = deferred<void>();
     let persistenceStarted = false;
     let stored: unknown;
@@ -810,6 +810,9 @@ describe("PairRuntime lifecycle ownership", () => {
     await vi.waitFor(() => {
       expect(persistenceStarted).toBe(true);
     });
+    const latestBeforeReplacement = shared.snapshot().latest;
+    const dismissedThreadDisposedBeforeReplacement =
+      vscodeState.commentThreads[0]?.disposed;
     renderIntervention(
       unrelatedDocument as unknown as vscode.TextDocument,
       { ...evidence, id: "dependency:unrelated" },
@@ -818,6 +821,8 @@ describe("PairRuntime lifecycle ownership", () => {
     persistence.resolve();
     await pendingDismiss;
 
+    expect(latestBeforeReplacement).toBeUndefined();
+    expect(dismissedThreadDisposedBeforeReplacement).toBe(true);
     expect(vscodeState.commentThreads[0]?.disposed).toBe(true);
     expect(vscodeState.commentThreads[1]?.disposed).toBe(false);
     expect(shared.snapshot().latest?.uri).toBe(unrelatedUri);
@@ -837,6 +842,244 @@ describe("PairRuntime lifecycle ownership", () => {
     await expect(runtime.dismissCurrentEvidence()).resolves.toEqual({
       kind: "no-evidence",
       message: "Adaptive Pair has no current evidence to dismiss.",
+    });
+    runtime.dispose();
+  });
+
+  it("blocks new /why and manual requests from dismissed evidence while persistence is pending", async () => {
+    const persistence = deferred<void>();
+    let persistenceStarted = false;
+    const memoryContext = {
+      globalState: {
+        get: () => undefined,
+        update: async () => {
+          persistenceStarted = true;
+          await persistence.promise;
+        },
+      },
+    } as unknown as vscode.ExtensionContext;
+    const fetchMock = vi.fn(async () =>
+      providerResponse("dismissed evidence response"),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const uri = "file:///workspace/src/dismiss-new-request.ts";
+    const currentDocument = document(uri, "export const value = 1;");
+    const dismissedDiagnostic: Evidence = {
+      ...evidence,
+      id: stableDiagnosticEvidenceId(
+        uri,
+        {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 6 },
+        },
+        "typescript",
+        ["TS2322"],
+        "Type mismatch",
+      ),
+      kind: "diagnostic",
+      title: "Editor diagnostic",
+      detail: "Type mismatch",
+      source: "typescript",
+      references: ["TS2322"],
+      range: {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 6 },
+      },
+    };
+    vscodeState.textDocuments = [currentDocument];
+    vscodeState.activeTextEditor = {
+      document: currentDocument,
+      selection: {
+        isEmpty: false,
+        active: dismissedDiagnostic.range.start,
+        start: dismissedDiagnostic.range.start,
+        end: dismissedDiagnostic.range.end,
+      },
+    };
+    vscodeState.diagnostics.push({
+      range: dismissedDiagnostic.range,
+      message: dismissedDiagnostic.detail,
+      severity: 1,
+      source: dismissedDiagnostic.source,
+      code: dismissedDiagnostic.references[0]!,
+    });
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "openai-compatible",
+        baseUrl: new URL("https://model.example/v1"),
+      }),
+      extensionContext: memoryContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    (
+      runtime as unknown as {
+        renderIntervention(
+          document: vscode.TextDocument,
+          evidence: Evidence,
+          question: string,
+        ): void;
+      }
+    ).renderIntervention(
+      currentDocument as unknown as vscode.TextDocument,
+      dismissedDiagnostic,
+      "Current diagnostic",
+    );
+    let handler: PairChatRequestHandler | undefined;
+    const markdown = vi.fn();
+    const text = vi.fn();
+    registerPairChatParticipant(
+      (_id, registeredHandler) => {
+        handler = registeredHandler;
+        return { dispose: () => undefined } as vscode.ChatParticipant;
+      },
+      shared,
+      runtime,
+      {
+        requestLifecycle: {
+          register: (requestUri, request) =>
+            runtime.registerChatRequest(requestUri, request),
+        },
+      },
+    );
+
+    const pendingDismissal = runtime.dismissCurrentEvidence();
+    await vi.waitFor(() => {
+      expect(persistenceStarted).toBe(true);
+    });
+    const latestDuringPersistence = shared.snapshot().latest;
+    const threadDisposedDuringPersistence =
+      vscodeState.commentThreads[0]?.disposed;
+    await runtime.reviewCurrentBlock();
+    await handler!(
+      { command: "why", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      { markdown, text },
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      } as vscode.CancellationToken,
+    );
+    const fetchCallsDuringPersistence = fetchMock.mock.calls.length;
+    const threadCountDuringPersistence = vscodeState.commentThreads.length;
+    persistence.resolve();
+    await pendingDismissal;
+
+    expect(latestDuringPersistence).toBeUndefined();
+    expect(threadDisposedDuringPersistence).toBe(true);
+    expect(fetchCallsDuringPersistence).toBe(0);
+    expect(threadCountDuringPersistence).toBe(1);
+    expect(markdown).toHaveBeenCalledWith(
+      "No active evidence yet. Select code or run **Adaptive Pair: Review Current Block**.",
+    );
+    expect(text).not.toHaveBeenCalled();
+    expect(shared.snapshot().latest).toBeUndefined();
+    runtime.dispose();
+  });
+
+  it("keeps stale evidence cleared, surfaces failed persistence, and permits later fresh analysis", async () => {
+    const persistence = deferred<void>();
+    const storageFailure = new Error("storage unavailable");
+    let persistenceStarted = false;
+    const memoryContext = {
+      globalState: {
+        get: () => undefined,
+        update: async () => {
+          persistenceStarted = true;
+          await persistence.promise;
+          throw storageFailure;
+        },
+      },
+    } as unknown as vscode.ExtensionContext;
+    const uri = "file:///workspace/src/dismiss-storage-failure.ts";
+    const currentDocument = document(uri, "export const value = 1;");
+    const dismissedDiagnostic: Evidence = {
+      ...evidence,
+      id: stableDiagnosticEvidenceId(
+        uri,
+        {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 6 },
+        },
+        "typescript",
+        ["TS2322"],
+        "Type mismatch",
+      ),
+      kind: "diagnostic",
+      title: "Editor diagnostic",
+      detail: "Type mismatch",
+      source: "typescript",
+      references: ["TS2322"],
+      range: {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 6 },
+      },
+    };
+    vscodeState.textDocuments = [currentDocument];
+    vscodeState.activeTextEditor = {
+      document: currentDocument,
+      selection: {
+        isEmpty: false,
+        active: dismissedDiagnostic.range.start,
+        start: dismissedDiagnostic.range.start,
+        end: dismissedDiagnostic.range.end,
+      },
+    };
+    vscodeState.diagnostics.push({
+      range: dismissedDiagnostic.range,
+      message: dismissedDiagnostic.detail,
+      severity: 1,
+      source: dismissedDiagnostic.source,
+      code: dismissedDiagnostic.references[0]!,
+    });
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext: memoryContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    (
+      runtime as unknown as {
+        renderIntervention(
+          document: vscode.TextDocument,
+          evidence: Evidence,
+          question: string,
+        ): void;
+      }
+    ).renderIntervention(
+      currentDocument as unknown as vscode.TextDocument,
+      dismissedDiagnostic,
+      "Current diagnostic",
+    );
+
+    const pendingDismissal = runtime.dismissCurrentEvidence();
+    await vi.waitFor(() => {
+      expect(persistenceStarted).toBe(true);
+    });
+    persistence.resolve();
+    await expect(pendingDismissal).rejects.toBe(storageFailure);
+    const latestAfterFailure = shared.snapshot().latest;
+    const staleThreadDisposedAfterFailure =
+      vscodeState.commentThreads[0]?.disposed;
+
+    await runtime.reviewCurrentBlock();
+
+    expect(latestAfterFailure).toBeUndefined();
+    expect(staleThreadDisposedAfterFailure).toBe(true);
+    expect(vscodeState.errorMessages).toEqual([
+      "Adaptive Pair could not persist the evidence dismissal: storage unavailable",
+    ]);
+    expect(vscodeState.commentThreads).toHaveLength(2);
+    expect(vscodeState.commentThreads[1]?.disposed).toBe(false);
+    expect(shared.snapshot().latest).toMatchObject({
+      uri,
+      evidence: { id: dismissedDiagnostic.id },
     });
     runtime.dispose();
   });

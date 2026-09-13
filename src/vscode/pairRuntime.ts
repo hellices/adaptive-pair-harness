@@ -182,6 +182,10 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     string,
     ReadonlySet<string>
   >();
+  private readonly pendingDismissedEvidenceIdsByRepository = new Map<
+    string,
+    Map<string, number>
+  >();
   private controlNotice: string | undefined;
   private statusDetail: string | undefined;
   private memoryWarning: string | undefined;
@@ -1452,36 +1456,38 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     }
 
     const uri = vscode.Uri.parse(latest.uri);
+    const repositoryId = this.repositoryIdForUri(uri);
+    const persistedEvidenceId = hashEvidenceIdentity(latest.evidence.id);
     this.cancelRequest(latest.uri);
     this.chatRequests.cancelUri(latest.uri);
-    const evidenceRevision =
-      this.options.sharedContext.invalidateEvidenceFenceForUri(
-        latest.uri,
-        this.runtimeRevision,
-      );
-    const repositoryId = this.repositoryIdForUri(uri);
-    await this.memoryStoreForRepository(repositoryId).dismissEvidence(
-      latest.evidence.id,
+    this.documentState.invalidateEvidence(latest.uri);
+    this.options.sharedContext.withdrawEvidence(
+      latest.uri,
+      this.runtimeRevision,
     );
+    this.inlineController.disposeUri(uri);
+    this.beginPendingDismissal(repositoryId, persistedEvidenceId);
+    try {
+      await this.memoryStoreForRepository(repositoryId).dismissEvidence(
+        latest.evidence.id,
+      );
+    } catch (error: unknown) {
+      this.endPendingDismissal(repositoryId, persistedEvidenceId);
+      const message =
+        error instanceof Error ? error.message : String(error);
+      await vscode.window.showErrorMessage(
+        `Adaptive Pair could not persist the evidence dismissal: ${message}`,
+      );
+      throw error;
+    }
     if (!this.disposed) {
       const dismissed = new Set(
         this.dismissedEvidenceIdsByRepository.get(repositoryId) ?? [],
       );
-      dismissed.add(hashEvidenceIdentity(latest.evidence.id));
+      dismissed.add(persistedEvidenceId);
       this.dismissedEvidenceIdsByRepository.set(repositoryId, dismissed);
-      if (
-        evidenceRevision !== undefined &&
-        this.options.sharedContext.evidenceRevisionForUri(latest.uri) ===
-        evidenceRevision
-      ) {
-        this.documentState.invalidateEvidence(latest.uri);
-        this.options.sharedContext.clearEvidence(
-          latest.uri,
-          this.runtimeRevision,
-        );
-        this.inlineController.disposeUri(uri);
-      }
     }
+    this.endPendingDismissal(repositoryId, persistedEvidenceId);
     return {
       kind: "dismissed",
       message: "Adaptive Pair dismissed the current evidence for this repository.",
@@ -1557,11 +1563,52 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   private dismissedEvidenceIdsForUri(
     uri: vscode.Uri,
   ): ReadonlySet<string> {
-    return (
-      this.dismissedEvidenceIdsByRepository.get(
-        this.repositoryIdForUri(uri),
-      ) ?? new Set()
+    const repositoryId = this.repositoryIdForUri(uri);
+    const dismissed =
+      this.dismissedEvidenceIdsByRepository.get(repositoryId);
+    const pending =
+      this.pendingDismissedEvidenceIdsByRepository.get(repositoryId);
+    if (pending === undefined || pending.size === 0) {
+      return dismissed ?? new Set();
+    }
+    return new Set([
+      ...(dismissed ?? []),
+      ...pending.keys(),
+    ]);
+  }
+
+  private beginPendingDismissal(
+    repositoryId: string,
+    persistedEvidenceId: string,
+  ): void {
+    const pending =
+      this.pendingDismissedEvidenceIdsByRepository.get(repositoryId) ??
+      new Map<string, number>();
+    pending.set(
+      persistedEvidenceId,
+      (pending.get(persistedEvidenceId) ?? 0) + 1,
     );
+    this.pendingDismissedEvidenceIdsByRepository.set(repositoryId, pending);
+  }
+
+  private endPendingDismissal(
+    repositoryId: string,
+    persistedEvidenceId: string,
+  ): void {
+    const pending =
+      this.pendingDismissedEvidenceIdsByRepository.get(repositoryId);
+    if (pending === undefined) {
+      return;
+    }
+    const remaining = (pending.get(persistedEvidenceId) ?? 0) - 1;
+    if (remaining > 0) {
+      pending.set(persistedEvidenceId, remaining);
+      return;
+    }
+    pending.delete(persistedEvidenceId);
+    if (pending.size === 0) {
+      this.pendingDismissedEvidenceIdsByRepository.delete(repositoryId);
+    }
   }
 
   private async discoverCoexistence(): Promise<string | undefined> {

@@ -5,6 +5,7 @@ import {
 } from "../core/evidencePresentation";
 import type { Evidence } from "../core/types";
 import { runCleanupSteps } from "./pairRuntimeSupport";
+import { neutralizePlainTextAutolinks } from "./plainTextAutolinks";
 
 export const buildInlineCommentMarkdown = (
   createMarkdown: (value: string) => vscode.MarkdownString,
@@ -17,14 +18,18 @@ export const buildInlineCommentMarkdown = (
     Math.min(1, Math.max(0, boundedEvidence.confidence)) * 100,
   );
   const markdown = createMarkdown("");
-  markdown.appendText(boundedQuestion);
+  const appendDynamicText = (value: string): void => {
+    markdown.appendText(neutralizePlainTextAutolinks(value));
+  };
+  appendDynamicText(boundedQuestion);
   markdown.appendMarkdown("\n\n**Finding:** ");
-  markdown.appendText(boundedEvidence.title);
+  appendDynamicText(boundedEvidence.title);
   markdown.appendMarkdown("\n\n");
-  markdown.appendText(boundedEvidence.detail);
+  appendDynamicText(boundedEvidence.detail);
   markdown.appendMarkdown("\n\n**Evidence:** ");
-  markdown.appendText(boundedEvidence.source);
-  markdown.appendMarkdown(` · confidence ${confidence}%`);
+  appendDynamicText(boundedEvidence.source);
+  markdown.appendMarkdown(" · ");
+  appendDynamicText(`confidence ${confidence}%`);
   markdown.appendMarkdown("\n\n**References:**\n");
   if (boundedEvidence.references.length === 0) {
     markdown.appendMarkdown("- None");
@@ -34,7 +39,7 @@ export const buildInlineCommentMarkdown = (
         markdown.appendMarkdown("\n");
       }
       markdown.appendMarkdown("- ");
-      markdown.appendText(reference);
+      appendDynamicText(reference);
     }
   }
   markdown.appendMarkdown(

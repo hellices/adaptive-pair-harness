@@ -229,7 +229,9 @@ Adaptive Pair owns one preview comment thread per file URI.
 - cooldown begins only after thread creation succeeds;
 - threads are preview-only (`canReply = false`) and direct follow-up to `@pair`.
 - dynamic question, title, detail, source, and reference values use
-  `MarkdownString.appendText`; only fixed extension copy is Markdown.
+  the same idempotent automatic-link neutralizer as Chat before
+  `MarkdownString.appendText`; confidence text follows the same path, and only
+  fixed extension copy is Markdown.
 - those dynamic values are normalized to one line and bounded centrally to
   1,000 characters for questions/local responses, 120 for titles, 500 for
   details, 120 for sources, and 240 for each of at most eight references;
@@ -324,10 +326,12 @@ repository files.
   intervention style without converting default values into user intent;
 - persisted evidence identities are SHA-256 hashes, and approved titles are
   stripped of paths and secrets and bounded to 120 characters;
-- dismissal completion compares a globally allocated per-URI evidence
-  revision, so unrelated document activity does not block cleanup and newer
-  same-URI evidence is not removed; tracked URIs use the bounded 256-entry LRU
-  described above;
+- dismissal synchronously retires a globally allocated per-URI evidence
+  revision, invalidates cached evidence, and withdraws the target's shared and
+  inline state before persistence; unrelated in-flight work remains valid,
+  replacement evidence has no post-write cleanup race, and a failed write does
+  not restore stale state; tracked URIs use the bounded 256-entry LRU described
+  above;
 - corrupt memory is preserved while in-memory defaults keep Pair usable, until
   the user invokes the explicit reset command; reset stops active and pending
   session work before storage mutation, and completion remains fenced so a

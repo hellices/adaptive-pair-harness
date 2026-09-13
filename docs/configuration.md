@@ -390,14 +390,17 @@ symbol/range while stating that deeper analysis requires a model.
 ## Memory recovery and multi-root identity
 
 Repository dismissals use the workspace folder that owns each document, rather
-than always using the first folder. Evidence cleanup is fenced per URI, so
-activity in another document cannot leave a completed dismissal visible, while
-newer evidence for the same URI is preserved. One extension-scoped memory
-adapter serializes mutations across configuration-driven runtime rebuilds, and
-session preparation reloads when a concurrent memory action changes its
-revision. While a session is active, a public VS Code workspace-folder change
-event pauses processing, cancels pending edit/model/Chat work, clears transient
-evidence, and replaces the repository-memory snapshot from the current roots.
+than always using the first folder. Dismissal retires the target URI fence and
+withdraws its shared evidence and inline thread before awaiting persistence, so
+new Chat or manual requests cannot reuse it during the write. Unrelated pending
+work and replacement evidence remain valid. A failed write is reported while
+the stale evidence remains withdrawn; later fresh analysis may publish it
+again. One extension-scoped memory adapter serializes mutations across
+configuration-driven runtime rebuilds, and session preparation reloads when a
+concurrent memory action changes its revision. While a session is active, a
+public VS Code workspace-folder change event pauses processing, cancels pending
+edit/model/Chat work, clears transient evidence, and replaces the
+repository-memory snapshot from the current roots.
 Removed roots are dropped, and newly added roots load their dismissal sets
 before document processing resumes. Overlapping folder events coalesce behind
 one session-owned refresh and share its limit of three preparation attempts;

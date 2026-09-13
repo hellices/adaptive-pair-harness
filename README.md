@@ -172,6 +172,11 @@ records an explicit user selection in VS Code global state. Dismiss and approve
 actions do not convert the materialized `balanced` default into a selection.
 Reset clears the selection and immediately returns to the configured style.
 Dismissals are stored only under the workspace root that owns the evidence.
+The current shared evidence and inline thread are withdrawn synchronously
+before that repository-scoped write. New Chat or manual requests cannot reuse
+the dismissed evidence while the write is pending, and evidence published
+during the write is not cleared afterward. A failed write is reported without
+restoring the stale evidence; a later analysis may publish fresh evidence.
 Persisted evidence identities are SHA-256 hashes; approvals retain only the
 kind, approval time, and a sanitized title bounded to 120 characters, never a
 raw evidence URI, source buffer, reference, or secret.
@@ -199,8 +204,9 @@ How it works today:
 - Inline guidance is rendered as a **preview Comment Thread** in the editor.
 - The thread is navigator-only and does **not** include a reply box.
 - Questions and evidence metadata are appended through
-  `MarkdownString.appendText`; only extension-owned labels and the
-  navigator-only notice are interpreted as Markdown.
+  `MarkdownString.appendText` after the same idempotent automatic-link
+  neutralizer used by Chat; only extension-owned labels and the navigator-only
+  notice are interpreted as Markdown.
 - `@pair` reads the same shared session/evidence state as the inline question;
   it does not create a separate hidden chat-specific session.
 - Use `@pair /why` to expand the latest inline question.
