@@ -1954,3 +1954,68 @@
 - Live VS Code hosts and remote services were unavailable in this
   non-interactive environment. VS Code test doubles and injected provider
   boundaries cover the changed behavior.
+
+---
+
+## Double-eviction dismissal fence (2026-09-13)
+
+### Correction implemented
+
+- URI revision lookup now represents eviction or absence as `undefined`
+  instead of the reusable numeric sentinel `0`.
+- `captureEvidenceRevisionForUri` returns the URI's current fence or allocates
+  a new globally monotonic fence and inserts it into the same bounded 256-entry
+  LRU. Allocation continues from the shared-context epoch, so released and
+  evicted values are never reused.
+- Delayed dismissal captures through the allocating API and validates through
+  the non-allocating current lookup. If either the captured fence or its
+  replacement is evicted, current validation is absent and cannot equal the
+  captured numeric fence.
+- Existing close, runtime replacement, and disposal assertions now treat
+  absence distinctly. Ordinary dismissal with no current evidence still
+  returns `no-evidence` without entering persistence or fence handling.
+
+### TDD evidence
+
+- Initial RED: **6 expected failures** exposed every remaining `0` absence
+  assertion and the missing capture API.
+- Isolated RED after making absence explicit: the capture API test failed
+  because the method did not exist, and the exact double-eviction regression
+  failed because delayed dismissal cleared the replacement (`latest` became
+  `undefined`).
+- GREEN: focused shared-context/runtime suites passed **2 files, 93 tests**.
+  The regression evicts the original URI revision before dismissal capture,
+  publishes replacement evidence while persistence is delayed, evicts the
+  replacement revision, then verifies the stale completion preserves the
+  replacement evidence and inline thread.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 479 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 90.37%, branches 83.37%, functions 93.35%, lines 90.50%
+- `npm run package`: **PASS - 158 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS - 0 vulnerabilities**
+- Runtime dependency root scan: **PASS - `typescript@5.9.3` only**
+- VSIX inclusion/exclusion scan: **PASS**
+  - compiled shared-context runtime and both public docs are present;
+  - source, tests, coverage, private review material, and source maps are
+    absent.
+- Production and packaged secret-pattern scans: **PASS**
+- Production URL scan: **PASS - only the documented loopback default**
+- Source and packaged repository/bugs/homepage metadata scans: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review covered capture/current API separation, monotonic
+  allocation, LRU insertion and eviction, close/rebuild/disposal behavior,
+  delayed persistence ordering, no-evidence handling, and package contents.
+  No remaining high-confidence correctness, lifecycle, retention, security,
+  or packaging concern was found.
+- The exact race is deterministic under deferred persistence and VS Code test
+  doubles; a live VS Code host was not exercised in this non-interactive
+  environment.

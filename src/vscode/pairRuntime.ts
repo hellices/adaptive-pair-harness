@@ -1231,7 +1231,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
 
     const uri = vscode.Uri.parse(latest.uri);
     const evidenceRevision =
-      this.options.sharedContext.evidenceRevisionForUri(latest.uri);
+      this.options.sharedContext.captureEvidenceRevisionForUri(latest.uri);
     const repositoryId = this.repositoryIdForUri(uri);
     await this.memoryStoreForRepository(repositoryId).dismissEvidence(
       latest.evidence.id,

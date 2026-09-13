@@ -287,6 +287,7 @@ vi.mock("vscode", () => {
 });
 
 import {
+  PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT,
   PairSharedContext,
   registerPairChatParticipant,
 } from "../src/vscode/pairChatParticipant";
@@ -799,6 +800,101 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
+  it("returns no-evidence when dismissal has no current evidence", async () => {
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+
+    await expect(runtime.dismissCurrentEvidence()).resolves.toEqual({
+      kind: "no-evidence",
+      message: "Adaptive Pair has no current evidence to dismiss.",
+    });
+    runtime.dispose();
+  });
+
+  it("does not clear replacement evidence after both URI fences are evicted during dismissal", async () => {
+    const persistence = deferred<void>();
+    let persistenceStarted = false;
+    const memoryContext = {
+      globalState: {
+        get: () => undefined,
+        update: async () => {
+          persistenceStarted = true;
+          await persistence.promise;
+        },
+      },
+    } as unknown as vscode.ExtensionContext;
+    const uri = "file:///workspace/src/double-evicted.ts";
+    const currentDocument = document(uri, "export const value = 1;");
+    vscodeState.textDocuments = [currentDocument];
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext: memoryContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    const renderIntervention = (
+      runtime as unknown as {
+        renderIntervention(
+          document: vscode.TextDocument,
+          evidence: Evidence,
+          question: string,
+        ): void;
+      }
+    ).renderIntervention.bind(runtime);
+    renderIntervention(
+      currentDocument as unknown as vscode.TextDocument,
+      evidence,
+      "Original question",
+    );
+    for (
+      let index = 0;
+      index < PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT;
+      index += 1
+    ) {
+      shared.clearEvidence(`file:///workspace/before-dismiss-${index}.ts`);
+    }
+    expect(shared.evidenceRevisionForUri(uri)).toBeUndefined();
+
+    const pendingDismiss = runtime.dismissCurrentEvidence();
+    await vi.waitFor(() => {
+      expect(persistenceStarted).toBe(true);
+    });
+    renderIntervention(
+      currentDocument as unknown as vscode.TextDocument,
+      { ...evidence, id: "dependency:replacement-after-eviction" },
+      "Replacement question",
+    );
+    for (
+      let index = 0;
+      index < PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT;
+      index += 1
+    ) {
+      shared.clearEvidence(`file:///workspace/during-dismiss-${index}.ts`);
+    }
+    expect(shared.evidenceRevisionForUri(uri)).toBeUndefined();
+
+    persistence.resolve();
+    await pendingDismiss;
+
+    expect(shared.snapshot().latest).toMatchObject({
+      uri,
+      evidence: { id: "dependency:replacement-after-eviction" },
+      question: "Replacement question",
+    });
+    expect(vscodeState.commentThreads[0]?.disposed).toBe(true);
+    expect(vscodeState.commentThreads[1]?.disposed).toBe(false);
+    runtime.dispose();
+  });
+
   it("does not clear same-URI evidence published after a close while dismissal persists", async () => {
     const persistence = deferred<void>();
     let persistenceStarted = false;
@@ -837,20 +933,20 @@ describe("PairRuntime lifecycle ownership", () => {
       evidence,
       "Original question",
     );
-    const originalRevision = shared.evidenceRevisionForUri(uri);
+    const originalRevision = shared.captureEvidenceRevisionForUri(uri);
 
     const pendingDismiss = runtime.dismissCurrentEvidence();
     await vi.waitFor(() => {
       expect(persistenceStarted).toBe(true);
     });
     vscodeState.closeListeners[0]?.(currentDocument);
-    expect(shared.evidenceRevisionForUri(uri)).toBe(0);
+    expect(shared.evidenceRevisionForUri(uri)).toBeUndefined();
     renderIntervention(
       currentDocument as unknown as vscode.TextDocument,
       { ...evidence, id: "dependency:reused-after-close" },
       "Reused URI question",
     );
-    const reusedRevision = shared.evidenceRevisionForUri(uri);
+    const reusedRevision = shared.captureEvidenceRevisionForUri(uri);
     expect(reusedRevision).toBeGreaterThan(originalRevision);
 
     persistence.resolve();
@@ -892,7 +988,7 @@ describe("PairRuntime lifecycle ownership", () => {
       evidence,
       "First runtime question",
     );
-    const firstRevision = shared.evidenceRevisionForUri(uri);
+    const firstRevision = shared.captureEvidenceRevisionForUri(uri);
 
     const secondRuntime = new PairRuntime({
       config: config(),
@@ -902,7 +998,7 @@ describe("PairRuntime lifecycle ownership", () => {
       apiKey: undefined,
     });
 
-    expect(shared.evidenceRevisionForUri(uri)).toBe(0);
+    expect(shared.evidenceRevisionForUri(uri)).toBeUndefined();
 
     const renderSecond = (
       secondRuntime as unknown as {
@@ -918,7 +1014,7 @@ describe("PairRuntime lifecycle ownership", () => {
       { ...evidence, id: "dependency:second-runtime" },
       "Second runtime question",
     );
-    const secondRevision = shared.evidenceRevisionForUri(uri);
+    const secondRevision = shared.captureEvidenceRevisionForUri(uri);
     expect(secondRevision).toBeGreaterThan(firstRevision);
 
     firstRuntime.dispose();
@@ -930,7 +1026,7 @@ describe("PairRuntime lifecycle ownership", () => {
 
     secondRuntime.dispose();
 
-    expect(shared.evidenceRevisionForUri(uri)).toBe(0);
+    expect(shared.evidenceRevisionForUri(uri)).toBeUndefined();
     expect(shared.snapshot().latest).toBeUndefined();
   });
 

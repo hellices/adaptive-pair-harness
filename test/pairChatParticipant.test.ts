@@ -378,11 +378,12 @@ describe("pair chat planning", () => {
       evidence,
       question: "Original evidence",
     });
-    const originalRevision = context.evidenceRevisionForUri(uri);
+    const originalRevision =
+      context.captureEvidenceRevisionForUri(uri);
 
     context.releaseEvidenceUri(uri);
 
-    expect(context.evidenceRevisionForUri(uri)).toBe(0);
+    expect(context.evidenceRevisionForUri(uri)).toBeUndefined();
     expect(context.snapshot().latest).toBeUndefined();
 
     context.publishEvidence({
@@ -394,6 +395,30 @@ describe("pair chat planning", () => {
     expect(context.evidenceRevisionForUri(uri)).toBeGreaterThan(
       originalRevision,
     );
+  });
+
+  it("captures a unique monotonic fence when a URI has no evidence revision", () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "local-template",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    const firstUri = "file:///workspace/absent-first.ts";
+    const secondUri = "file:///workspace/absent-second.ts";
+
+    expect(context.evidenceRevisionForUri(firstUri)).toBeUndefined();
+    const firstFence = context.captureEvidenceRevisionForUri(firstUri);
+    const secondFence = context.captureEvidenceRevisionForUri(secondUri);
+
+    expect(context.evidenceRevisionForUri(firstUri)).toBe(firstFence);
+    expect(context.evidenceRevisionForUri(secondUri)).toBe(secondFence);
+    expect(secondFence).toBeGreaterThan(firstFence);
   });
 
   it("bounds URI revisions with least-recently-used eviction", () => {
@@ -422,7 +447,10 @@ describe("pair chat planning", () => {
         evidence: { ...evidence, id: `dependency:${index}` },
         question: `Evidence ${index}`,
       });
-      revisions.set(uri, context.evidenceRevisionForUri(uri));
+      revisions.set(
+        uri,
+        context.captureEvidenceRevisionForUri(uri),
+      );
     }
 
     expect(context.evidenceRevisionForUri(firstUri)).toBe(
@@ -437,7 +465,7 @@ describe("pair chat planning", () => {
     expect(context.evidenceRevisionForUri(firstUri)).toBe(
       revisions.get(firstUri),
     );
-    expect(context.evidenceRevisionForUri(secondUri)).toBe(0);
+    expect(context.evidenceRevisionForUri(secondUri)).toBeUndefined();
 
     context.publishEvidence({
       uri: secondUri,

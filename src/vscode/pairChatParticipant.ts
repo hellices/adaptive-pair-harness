@@ -162,14 +162,22 @@ export class PairSharedContext {
     }
   }
 
-  public evidenceRevisionForUri(uri: string): number {
+  public evidenceRevisionForUri(uri: string): number | undefined {
     const revision = this.evidenceRevisionByUri.get(uri);
     if (revision === undefined) {
-      return 0;
+      return undefined;
     }
     this.evidenceRevisionByUri.delete(uri);
     this.evidenceRevisionByUri.set(uri, revision);
     return revision;
+  }
+
+  public captureEvidenceRevisionForUri(uri: string): number {
+    const revision = this.evidenceRevisionForUri(uri);
+    if (revision !== undefined) {
+      return revision;
+    }
+    return this.storeEvidenceRevision(uri, this.nextEvidenceRevision());
   }
 
   public snapshot(): PairContextSnapshot {
@@ -181,7 +189,10 @@ export class PairSharedContext {
   }
 
   private bumpEvidenceRevision(uri: string): void {
-    const revision = this.nextEvidenceRevision();
+    this.storeEvidenceRevision(uri, this.nextEvidenceRevision());
+  }
+
+  private storeEvidenceRevision(uri: string, revision: number): number {
     this.evidenceRevisionByUri.delete(uri);
     this.evidenceRevisionByUri.set(uri, revision);
     if (
@@ -194,6 +205,7 @@ export class PairSharedContext {
         this.evidenceRevisionByUri.delete(leastRecentlyUsedUri);
       }
     }
+    return revision;
   }
 
   private releaseAllEvidenceUris(): void {
