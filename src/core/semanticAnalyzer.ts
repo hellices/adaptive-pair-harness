@@ -51,6 +51,8 @@ interface TypeScriptLibraryFileSystem {
 const ANALYZER_SOURCE = "typescript-semantic-analyzer";
 const DEFAULT_EXPORT_KEY = "default-export";
 const DEFAULT_EXPORT_DISPLAY = "default export";
+const EXPORT_EQUALS_KEY = "export-equals";
+const EXPORT_EQUALS_DISPLAY = "export =";
 const TYPESCRIPT_LIBRARY_FILE_SYSTEM: TypeScriptLibraryFileSystem = {
   fileExists: (path) => ts.sys.fileExists(path),
   getDefaultLibFilePath: (options) => ts.getDefaultLibFilePath(options),
@@ -639,6 +641,34 @@ const collectExportedSignatures = (
     }
   };
 
+  const appendCallableExpression = (
+    identity: ExportIdentity,
+    expression: ts.Expression,
+    rangeNode?: ts.Node,
+  ): void => {
+    const key = `function:${identity.key}`;
+    for (const signature of checker
+      .getTypeAtLocation(expression)
+      .getCallSignatures()) {
+      appendSignatureRecord(
+        signatureTarget,
+        key,
+        identity.displayName,
+        checker.signatureToString(
+          signature,
+          expression,
+          ts.TypeFormatFlags.NoTruncation |
+            ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope,
+          ts.SignatureKind.Call,
+        ),
+        rangeForNode(sourceFile, rangeNode ?? expression),
+      );
+    }
+    if (identity.commonJsPath !== undefined) {
+      commonJsPathsBySignatureKey.set(key, identity.commonJsPath);
+    }
+  };
+
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement) && hasExportModifier(statement)) {
       const externalName = externalDeclarationName(statement);
@@ -706,14 +736,17 @@ const collectExportedSignatures = (
       continue;
     }
 
-    if (ts.isExportAssignment(statement) && !statement.isExportEquals) {
+    if (ts.isExportAssignment(statement)) {
       appendExpressionExport(
         statement.expression,
-        exportIdentity("default"),
+        statement.isExportEquals
+          ? exportEqualsIdentity()
+          : exportIdentity("default"),
         statement.expression,
         appendFunction,
         appendClass,
         appendLocalExport,
+        appendCallableExpression,
       );
       continue;
     }
@@ -744,6 +777,7 @@ const collectExportedSignatures = (
       appendFunction,
       appendClass,
       appendLocalExport,
+      appendCallableExpression,
     );
   }
   signatureTarget = signatures;
@@ -781,6 +815,12 @@ type AppendLocalExport = (
   isTypeOnly?: boolean,
 ) => void;
 
+type AppendCallableExpressionExport = (
+  identity: ExportIdentity,
+  expression: ts.Expression,
+  rangeNode?: ts.Node,
+) => void;
+
 interface CommonJsExportAssignment {
   readonly expression: ts.BinaryExpression;
   readonly path: CommonJsExportPath;
@@ -791,6 +831,11 @@ const exportIdentity = (externalName: string): ExportIdentity => ({
   key: externalName,
   displayName:
     externalName === "default" ? DEFAULT_EXPORT_DISPLAY : externalName,
+});
+
+const exportEqualsIdentity = (): ExportIdentity => ({
+  key: EXPORT_EQUALS_KEY,
+  displayName: EXPORT_EQUALS_DISPLAY,
 });
 
 const externalDeclarationName = (
@@ -845,6 +890,7 @@ const appendExpressionExport = (
   appendFunction: AppendFunctionExport,
   appendClass: AppendClassExport,
   appendLocalExport: AppendLocalExport,
+  appendCallableExpression: AppendCallableExpressionExport,
 ): void => {
   const unwrapped = unwrapExpression(expression);
   if (unwrapped === undefined) {
@@ -860,7 +906,9 @@ const appendExpressionExport = (
   }
   if (ts.isIdentifier(unwrapped)) {
     appendLocalExport(unwrapped.text, identity, rangeNode);
+    return;
   }
+  appendCallableExpression(identity, unwrapped, rangeNode);
 };
 
 const collectCommonJsExport = (
@@ -868,6 +916,7 @@ const collectCommonJsExport = (
   appendFunction: AppendFunctionExport,
   appendClass: AppendClassExport,
   appendLocalExport: AppendLocalExport,
+  appendCallableExpression: AppendCallableExpressionExport,
 ): void => {
   collectCommonJsExportValue(
     assignment.expression.right,
@@ -876,6 +925,7 @@ const collectCommonJsExport = (
     appendFunction,
     appendClass,
     appendLocalExport,
+    appendCallableExpression,
   );
 };
 
@@ -886,6 +936,7 @@ const collectCommonJsExportValue = (
   appendFunction: AppendFunctionExport,
   appendClass: AppendClassExport,
   appendLocalExport: AppendLocalExport,
+  appendCallableExpression: AppendCallableExpressionExport,
 ): void => {
   const unwrapped = unwrapExpression(expression);
   if (unwrapped !== undefined && ts.isObjectLiteralExpression(unwrapped)) {
@@ -906,6 +957,7 @@ const collectCommonJsExportValue = (
             appendFunction,
             appendClass,
             appendLocalExport,
+            appendCallableExpression,
           );
         }
       } else if (ts.isMethodDeclaration(property)) {
@@ -929,6 +981,7 @@ const collectCommonJsExportValue = (
     appendFunction,
     appendClass,
     appendLocalExport,
+    appendCallableExpression,
   );
 };
 

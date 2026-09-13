@@ -37,6 +37,12 @@ export interface PairContextSnapshot {
   readonly latest: PairPublishedEvidence | undefined;
 }
 
+declare const pairContextRevisionFenceBrand: unique symbol;
+export type PairContextRevisionFence = {
+  readonly revision: number;
+  readonly [pairContextRevisionFenceBrand]: true;
+};
+
 declare const pairRuntimeRevisionBrand: unique symbol;
 export type PairRuntimeRevision = number & {
   readonly [pairRuntimeRevisionBrand]: true;
@@ -84,6 +90,7 @@ export class PairSharedContext {
   public updateSession(
     session: PairSessionSnapshot,
     runtimeRevision?: PairRuntimeRevision,
+    revisionFence?: PairContextRevisionFence,
   ): void {
     if (
       runtimeRevision !== undefined &&
@@ -91,14 +98,21 @@ export class PairSharedContext {
     ) {
       return;
     }
-    if (
-      session.enabled !== this.session.enabled ||
-      session.active !== this.session.active ||
-      session.generation !== this.session.generation
-    ) {
+    const previousRevision = this.revision;
+    if (!sameSessionSnapshot(session, this.session)) {
       this.revision += 1;
     }
     this.session = session;
+    if (
+      revisionFence !== undefined &&
+      revisionFence.revision === previousRevision
+    ) {
+      (
+        revisionFence as {
+          revision: number;
+        }
+      ).revision = this.revision;
+    }
   }
 
   public publishEvidence(
@@ -188,6 +202,12 @@ export class PairSharedContext {
     };
   }
 
+  public captureRevisionFence(): PairContextRevisionFence {
+    return {
+      revision: this.revision,
+    } as PairContextRevisionFence;
+  }
+
   private bumpEvidenceRevision(uri: string): void {
     this.storeEvidenceRevision(uri, this.nextEvidenceRevision());
   }
@@ -224,6 +244,22 @@ export class PairSharedContext {
     return this.evidenceEpoch;
   }
 }
+
+const sameSessionSnapshot = (
+  left: PairSessionSnapshot,
+  right: PairSessionSnapshot,
+): boolean =>
+  left.enabled === right.enabled &&
+  left.active === right.active &&
+  left.generation === right.generation &&
+  left.goal === right.goal &&
+  left.role === right.role &&
+  left.provider === right.provider &&
+  left.remainingCalls === right.remainingCalls &&
+  left.remainingInputTokens === right.remainingInputTokens &&
+  left.remainingOutputTokens === right.remainingOutputTokens &&
+  left.controlNotice === right.controlNotice &&
+  left.configurationWarning === right.configurationWarning;
 
 export type PairChatPlan =
   | { readonly kind: "message"; readonly markdown: string }
@@ -356,10 +392,12 @@ export interface PairChatGenerator {
     signal: AbortSignal,
     context: ModelRequestContext,
     purpose?: "why" | "explain" | "trace",
+    revisionFence?: PairContextRevisionFence,
   ): Promise<ModelResponse>;
 }
 
 export interface PairChatContextSource {
+  captureRevisionFence(): PairContextRevisionFence;
   snapshot(): PairContextSnapshot;
 }
 
@@ -403,7 +441,7 @@ export const registerPairChatParticipant = (
   ) => {
     const abortController = new AbortController();
     let requestRegistration: PairDisposable | undefined;
-    let requestRevision: number | undefined;
+    let requestRevisionFence: PairContextRevisionFence | undefined;
     if (token.isCancellationRequested) {
       abortController.abort();
     }
@@ -433,7 +471,7 @@ export const registerPairChatParticipant = (
       }
 
       let snapshot = context.snapshot();
-      requestRevision = snapshot.revision;
+      requestRevisionFence = context.captureRevisionFence();
       if (
         snapshot.session.enabled &&
         snapshot.session.active &&
@@ -455,7 +493,6 @@ export const registerPairChatParticipant = (
       const symbol =
         traceLookupStarted
           ? await (async (): Promise<ModelSymbolContext | undefined> => {
-              const traceRevision = snapshot.revision;
               const traceUri = snapshot.latest!.uri;
               const traceRange = snapshot.latest!.evidence.range;
               const resolved = await symbolContextProvider.forEvidence(
@@ -470,7 +507,7 @@ export const registerPairChatParticipant = (
               if (
                 !current.session.enabled ||
                 !current.session.active ||
-                current.revision !== traceRevision
+                current.revision !== requestRevisionFence.revision
               ) {
                 return undefined;
               }
@@ -486,7 +523,7 @@ export const registerPairChatParticipant = (
         if (
           !current.session.enabled ||
           !current.session.active ||
-          current.revision !== snapshot.revision
+          current.revision !== requestRevisionFence.revision
         ) {
           return;
         }
@@ -507,11 +544,12 @@ export const registerPairChatParticipant = (
         abortController.signal,
         plan.context,
         plan.purpose,
+        requestRevisionFence,
       );
       const current = context.snapshot();
       if (
         abortController.signal.aborted ||
-        !isCurrentGeneratedResponse(current, snapshot)
+        !isCurrentGeneratedResponse(current, requestRevisionFence)
       ) {
         return;
       }
@@ -520,8 +558,8 @@ export const registerPairChatParticipant = (
       if (
         abortController.signal.aborted ||
         options.isOfficialCancellationError?.(error) === true ||
-        (requestRevision !== undefined &&
-          context.snapshot().revision !== requestRevision)
+        (requestRevisionFence !== undefined &&
+          context.snapshot().revision !== requestRevisionFence.revision)
       ) {
         return;
       }
@@ -544,8 +582,8 @@ export const registerPairChatParticipant = (
 
 const isCurrentGeneratedResponse = (
   current: PairContextSnapshot,
-  started: PairContextSnapshot,
+  revisionFence: PairContextRevisionFence,
 ): boolean =>
   current.session.enabled &&
   current.session.active &&
-  current.revision === started.revision;
+  current.revision === revisionFence.revision;

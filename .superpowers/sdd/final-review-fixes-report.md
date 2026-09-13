@@ -2019,3 +2019,79 @@
 - The exact race is deterministic under deferred persistence and VS Code test
   doubles; a live VS Code host was not exercised in this non-interactive
   environment.
+
+---
+
+## Export-equals, session-revision, and selected-diagnostic findings (2026-09-13)
+
+### Corrections implemented
+
+- TypeScript `export =` assignments now participate in public API analysis under
+  a stable `export-equals` identity displayed as `export =`, distinct from both
+  ESM default exports and CommonJS root assignments. Identifier, inline
+  function, inline class, and checker-resolved callable expressions contribute
+  signatures, so signature changes and removal produce `public-api-change`
+  evidence while local renames with unchanged signatures remain quiet.
+- `PairSharedContext` now advances its session revision for every exposed
+  snapshot field: enabled/active/generation, goal/role/provider, all remaining
+  budget counters, coexistence notice, and configuration warning. Complete
+  semantically identical snapshots do not advance it.
+- Chat trace, success, and error fences use that revision. A request-scoped
+  revision fence advances only across session publications owned by that same
+  runtime request, preserving valid responses after their own budget accounting
+  while still rejecting any response crossed by an unrelated session update.
+- Manual **Review Current Block** now intersects diagnostics with the selected
+  range before taking the 20-item diagnostic bound. Automatic collection still
+  takes only the first 20 diagnostics, and selected diagnostics continue through
+  the existing normalization and stable-ID path.
+
+### TDD evidence
+
+- Export-equals RED: **7 expected failures** covered identifier/function/class/
+  checker-callable signature changes, removal, and identity separation; the
+  no-change characterization already passed. GREEN: **8 focused tests passed**.
+- Session revision RED: **13 expected failures** covered all newly tracked
+  fields and deferred provider/budget/notice/warning updates; unchanged and
+  already tracked fields passed. GREEN: **18 focused tests passed**.
+- Diagnostic ordering RED: the selected diagnostic after **21 earlier
+  diagnostics** was omitted while the automatic 20-item guard passed. GREEN:
+  both focused runtime regressions passed.
+- Self-review RED/GREEN: a real runtime Chat response was initially suppressed
+  by its own newly visible budget update; the request-owned revision fence made
+  that regression pass without weakening unrelated-update rejection.
+- Final focused semantic/Chat/runtime run: **3 files, 187 tests passed**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 507 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 90.44%, branches 83.55%, functions 93.41%, lines 90.57%
+- `npm run package`: **PASS - 158 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS - 0 vulnerabilities**
+- Runtime dependency root scan: **PASS - `typescript@5.9.3` only**
+- VSIX inclusion/exclusion scan: **PASS**
+  - compiled extension, semantic analyzer, Chat/runtime code, and public docs
+    are present;
+  - source, tests, coverage, private review material, editor/CI files, and
+    source maps are absent.
+- Production and packaged secret-pattern scans: **PASS**
+- Production URL scan: **PASS - only the documented loopback default**
+- Source and packaged repository/bugs/homepage metadata scans: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review covered export identity collisions among supported module
+  forms, checker-backed callable resolution, signature removal, every session
+  snapshot field, stale trace/success/error paths, request-owned budget updates,
+  diagnostic filtering order, normalization, automatic bounds, and package
+  contents.
+- Self-review found and corrected the request self-invalidation described above.
+  No remaining high-confidence correctness, lifecycle, privacy, or packaging
+  concern was found.
+- A live VS Code host was unavailable in this non-interactive environment;
+  deterministic VS Code test doubles and the packaged artifact cover the
+  changed boundaries.

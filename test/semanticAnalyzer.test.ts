@@ -406,6 +406,140 @@ describe("TypeScriptSemanticAnalyzer", () => {
     );
   });
 
+  it.each([
+    [
+      "identifier",
+      [
+        "function handler(value: string): string { return value; }",
+        "export = handler;",
+      ].join("\n"),
+      [
+        "function handler(value: number): string { return String(value); }",
+        "export = handler;",
+      ].join("\n"),
+      "export =",
+    ],
+    [
+      "function expression",
+      "export = function (value: string): string { return value; };",
+      "export = function (value: number): string { return String(value); };",
+      "export =",
+    ],
+    [
+      "class expression",
+      "export = class { handle(value: string): string { return value; } };",
+      "export = class { handle(value: number): string { return String(value); } };",
+      "export =#handle",
+    ],
+    [
+      "checker-resolved callable expression",
+      [
+        "declare function createHandler(): (value: string) => string;",
+        "export = createHandler();",
+      ].join("\n"),
+      [
+        "declare function createHandler(): (value: number) => string;",
+        "export = createHandler();",
+      ].join("\n"),
+      "export =",
+    ],
+  ])(
+    "reports a changed export-equals %s signature",
+    (_label, previous, current, reference) => {
+      const evidence = analyzeEvidence(episode(previous, current));
+
+      expect(evidence).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "public-api-change",
+            title: "Exported API signature changed",
+            references: [reference],
+          }),
+        ]),
+      );
+    },
+  );
+
+  it("reports removal of a callable export-equals assignment", () => {
+    const declaration =
+      "function handler(value: string): string { return value; }";
+    const evidence = analyzeEvidence(
+      episode([declaration, "export = handler;"].join("\n"), declaration),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API removed",
+          references: ["export ="],
+        }),
+      ]),
+    );
+  });
+
+  it("keeps a callable export-equals identity stable across local renames", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        [
+          "function before(value: string): string { return value; }",
+          "export = before;",
+        ].join("\n"),
+        [
+          "function after(value: string): string { return value; }",
+          "export = after;",
+        ].join("\n"),
+      ),
+    );
+
+    expect(
+      evidence.filter((item) => item.kind === "public-api-change"),
+    ).toEqual([]);
+  });
+
+  it.each([
+    [
+      "default export",
+      [
+        "function handler(value: string): string { return value; }",
+        "export default handler;",
+      ].join("\n"),
+      "default export",
+    ],
+    [
+      "CommonJS root",
+      [
+        "function handler(value: string): string { return value; }",
+        "module.exports = handler;",
+      ].join("\n"),
+      "default export",
+    ],
+  ])(
+    "keeps export-equals distinct from the %s identity",
+    (_label, previous, otherReference) => {
+      const current = [
+        "function handler(value: string): string { return value; }",
+        "export = handler;",
+      ].join("\n");
+      const evidence = analyzeEvidence(episode(previous, current)).filter(
+        (item) => item.kind === "public-api-change",
+      );
+
+      expect(evidence).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            title: "Exported API added",
+            references: ["export ="],
+          }),
+          expect.objectContaining({
+            title: "Exported API removed",
+            references: [otherReference],
+          }),
+        ]),
+      );
+    },
+  );
+
   it("reports inferred signature changes for exported function-valued variables", () => {
     const evidence = analyzeEvidence(
       episode(

@@ -39,6 +39,7 @@ import type {
 import { InlinePairController } from "./inlinePairController";
 import type {
   PairChatGenerator,
+  PairContextRevisionFence,
   PairRuntimeRevision,
   PairSessionSnapshot,
   PairSharedContext,
@@ -59,6 +60,7 @@ import {
   PairSessionLifecycle,
   buildDiagnosticEvidence,
   buildPairStatusText,
+  pairRangesOverlap,
   selectManualEvidence,
   repositoryIdentityForDocument,
   runCleanupSteps,
@@ -553,7 +555,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     const evidence = selectManualEvidence({
       selection,
       diagnostics: excludeDismissed(
-        diagnosticEvidenceForDocument(editor.document),
+        diagnosticEvidenceForDocument(editor.document, selection),
       ),
       latest: excludeDismissed(this.documentState.latestEvidence(key)),
       analyzed: excludeDismissed(analysis.evidence),
@@ -580,6 +582,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     signal: AbortSignal,
     context: ModelRequestContext = {},
     purpose?: "why" | "explain" | "trace",
+    revisionFence?: PairContextRevisionFence,
   ): Promise<ModelResponse> {
     const requestController = new AbortController();
     const cancelRequest = (): void => {
@@ -602,6 +605,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
         },
         requestController.signal,
         "chat",
+        revisionFence,
       );
     } finally {
       signal.removeEventListener("abort", cancelRequest);
@@ -822,6 +826,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     request: ModelRequest,
     signal: AbortSignal,
     source: PairInvocationSource,
+    revisionFence?: PairContextRevisionFence,
   ): Promise<ModelResponse> {
     const lifecycleFence = this.sessionLifecycle.captureFence(true);
     if (!lifecycleFence.isCurrent()) {
@@ -833,6 +838,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
         signal,
         source,
         lifecycleFence,
+        revisionFence,
       ),
     );
     if (result.kind === "disabled") {
@@ -849,6 +855,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     signal: AbortSignal,
     source: PairInvocationSource,
     lifecycleFence: PairLifecycleFence,
+    revisionFence?: PairContextRevisionFence,
   ): Promise<ModelResponse> {
     const provider = this.options.config.provider;
     if (provider === "local-template") {
@@ -862,7 +869,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
         source === "chat"
           ? "sensitive Chat content kept local; local-template fallback"
           : "sensitive request content kept local; local-template fallback";
-      this.publishSession();
+      this.publishSession(Date.now(), revisionFence);
       this.renderStatus();
       return this.router.generate("local-template", request, signal);
     }
@@ -883,6 +890,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
         unavailableCapacity,
         request,
         signal,
+        revisionFence,
       );
     }
 
@@ -898,6 +906,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
         source,
         lifecycleFence,
         maxOutputTokens,
+        revisionFence,
       );
     }
 
@@ -912,7 +921,11 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       if (!lifecycleFence.isCurrent() || signal.aborted) {
         throw error;
       }
-      return this.fallbackForUnavailableOpenAI(request, signal);
+      return this.fallbackForUnavailableOpenAI(
+        request,
+        signal,
+        revisionFence,
+      );
     }
     if (signal.aborted) {
       dispatch.dispose();
@@ -926,10 +939,15 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     );
     if (!admission.allowed) {
       dispatch.dispose();
-      return this.fallbackForBudget(admission.reason, request, signal);
+      return this.fallbackForBudget(
+        admission.reason,
+        request,
+        signal,
+        revisionFence,
+      );
     }
 
-    this.publishSession();
+    this.publishSession(Date.now(), revisionFence);
 
     try {
       const response = await dispatch.send();
@@ -941,7 +959,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       if (lifecycleFence.isCurrent() && !signal.aborted) {
         this.effectiveProvider = provider;
         this.statusDetail = this.configurationWarning();
-        this.publishSession();
+        this.publishSession(Date.now(), revisionFence);
         this.renderStatus();
       }
       return response;
@@ -957,7 +975,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
           this.budget.release(admission.reservationId);
         }
         if (lifecycleFence.isCurrent() && !signal.aborted) {
-          this.publishSession();
+          this.publishSession(Date.now(), revisionFence);
         }
       }
       releaseUnusedCopilotReservation(
@@ -971,7 +989,11 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       if (error instanceof ModelOutputLimitError) {
         throw error;
       }
-      return this.fallbackForUnavailableOpenAI(request, signal);
+      return this.fallbackForUnavailableOpenAI(
+        request,
+        signal,
+        revisionFence,
+      );
     } finally {
       dispatch.dispose();
     }
@@ -984,6 +1006,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     source: PairInvocationSource,
     lifecycleFence: PairLifecycleFence,
     maxOutputTokens: number,
+    revisionFence?: PairContextRevisionFence,
   ): Promise<ModelResponse> {
     let candidates;
     try {
@@ -1001,6 +1024,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
         localRequest,
         signal,
         lifecycleFence,
+        revisionFence,
       );
     }
 
@@ -1020,6 +1044,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
             localRequest,
             signal,
             lifecycleFence,
+            revisionFence,
           );
         }
 
@@ -1036,9 +1061,14 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
         );
         if (!admission.allowed) {
           dispatch.dispose();
-          return this.fallbackForBudget(admission.reason, localRequest, signal);
+          return this.fallbackForBudget(
+            admission.reason,
+            localRequest,
+            signal,
+            revisionFence,
+          );
         }
-        this.publishSession();
+        this.publishSession(Date.now(), revisionFence);
 
         if (!lifecycleFence.isCurrent() || signal.aborted) {
           this.budget.release(admission.reservationId);
@@ -1057,7 +1087,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
           if (lifecycleFence.isCurrent() && !signal.aborted) {
             this.effectiveProvider = "vscode-copilot";
             this.statusDetail = this.configurationWarning();
-            this.publishSession();
+            this.publishSession(Date.now(), revisionFence);
             this.renderStatus();
           }
           return response;
@@ -1073,7 +1103,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
               this.budget.release(admission.reservationId);
             }
             if (lifecycleFence.isCurrent() && !signal.aborted) {
-              this.publishSession();
+              this.publishSession(Date.now(), revisionFence);
             }
           }
           releaseUnusedCopilotReservation(
@@ -1101,10 +1131,11 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     reason: BudgetDenialReason,
     request: ModelRequest,
     signal: AbortSignal,
+    revisionFence?: PairContextRevisionFence,
   ): Promise<ModelResponse> {
     this.effectiveProvider = "local-template";
     this.statusDetail = `remote ${reason}; local-template fallback`;
-    this.publishSession();
+    this.publishSession(Date.now(), revisionFence);
     this.renderStatus();
     return this.router.generate("local-template", request, signal);
   }
@@ -1114,6 +1145,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     request: ModelRequest,
     signal: AbortSignal,
     lifecycleFence: PairLifecycleFence,
+    revisionFence?: PairContextRevisionFence,
   ): Promise<ModelResponse> {
     if (!(error instanceof CopilotModelUnavailableError)) {
       throw error;
@@ -1123,7 +1155,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     }
     this.effectiveProvider = "local-template";
     this.statusDetail = `Copilot unavailable (${error.reason}); local-template fallback`;
-    this.publishSession();
+    this.publishSession(Date.now(), revisionFence);
     this.renderStatus();
     return this.router.generate("local-template", request, signal);
   }
@@ -1131,11 +1163,12 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
   private fallbackForUnavailableOpenAI(
     request: ModelRequest,
     signal: AbortSignal,
+    revisionFence?: PairContextRevisionFence,
   ): Promise<ModelResponse> {
     this.effectiveProvider = "local-template";
     this.statusDetail =
       "OpenAI-compatible provider unavailable; local-template fallback";
-    this.publishSession();
+    this.publishSession(Date.now(), revisionFence);
     this.renderStatus();
     return this.router.generate("local-template", request, signal);
   }
@@ -1359,7 +1392,10 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     this.publishSession(now);
   }
 
-  private publishSession(now = Date.now()): void {
+  private publishSession(
+    now = Date.now(),
+    revisionFence?: PairContextRevisionFence,
+  ): void {
     const remainingBudget = this.budget.snapshot(now);
     const session: PairSessionSnapshot = {
       enabled: this.invocationGate.enabled,
@@ -1374,7 +1410,11 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       controlNotice: this.controlNotice,
       configurationWarning: this.configurationWarning(),
     };
-    this.options.sharedContext.updateSession(session, this.runtimeRevision);
+    this.options.sharedContext.updateSession(
+      session,
+      this.runtimeRevision,
+      revisionFence,
+    );
   }
 
   private renderStatus(): void {
@@ -1430,9 +1470,16 @@ const normalizedSelectionRange = (editor: vscode.TextEditor): vscode.Range => {
 
 const diagnosticEvidenceForDocument = (
   document: vscode.TextDocument,
-): readonly Evidence[] =>
-  vscode.languages
-    .getDiagnostics(document.uri)
+  selectedRange?: PairRange,
+): readonly Evidence[] => {
+  const diagnostics = vscode.languages.getDiagnostics(document.uri);
+  const relevantDiagnostics =
+    selectedRange === undefined
+      ? diagnostics
+      : diagnostics.filter((diagnostic) =>
+          pairRangesOverlap(toPairRange(diagnostic.range), selectedRange),
+        );
+  return relevantDiagnostics
     .slice(0, 20)
     .map((diagnostic) => {
       const range = toPairRange(diagnostic.range);
@@ -1450,6 +1497,7 @@ const diagnosticEvidenceForDocument = (
             : 0.82,
       });
     });
+};
 
 const diagnosticSeverity = (
   severity: vscode.DiagnosticSeverity,

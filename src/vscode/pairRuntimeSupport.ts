@@ -727,7 +727,10 @@ export const repositoryIdentityForDocument = <TUri extends RepositoryUri>(
 ): string =>
   getWorkspaceFolder?.(documentUri)?.uri.toString() ?? "no-workspace";
 
-const pairRangesOverlap = (left: PairRange, right: PairRange): boolean => {
+export const pairRangesOverlap = (
+  left: PairRange,
+  right: PairRange,
+): boolean => {
   const leftStartsBeforeRightEnds =
     left.start.line < right.end.line ||
     (left.start.line === right.end.line &&

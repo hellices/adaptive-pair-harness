@@ -121,6 +121,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const participant = registerPairChatParticipant(
     (id, handler) => vscode.chat.createChatParticipant(id, handler),
     {
+      captureRevisionFence: () => sharedContext.captureRevisionFence(),
       snapshot: () => {
         runtime?.refreshSession();
         return sharedContext.snapshot();
@@ -134,6 +135,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         signal,
         requestContext,
         purpose,
+        revisionFence,
       ) => {
         const activeRuntime = runtime;
         if (activeRuntime === undefined) {
@@ -146,6 +148,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           signal,
           requestContext,
           purpose,
+          revisionFence,
         );
       },
     },

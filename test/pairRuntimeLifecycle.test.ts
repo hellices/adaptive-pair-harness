@@ -1154,6 +1154,143 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
+  it("reviews a selected diagnostic after 21 earlier diagnostics", async () => {
+    const uri = "file:///workspace/src/many-diagnostics.ts";
+    const currentDocument = document(
+      uri,
+      Array.from(
+        { length: 22 },
+        (_, index) => `export const value${index} = ${index};`,
+      ).join("\n"),
+      1,
+    );
+    const selectedRange = {
+      start: { line: 21, character: 0 },
+      end: { line: 21, character: 6 },
+    };
+    const selectedMessage = `Selected diagnostic\n${"message".repeat(100)}`;
+    const selectedSource = `typescript\n${"source".repeat(100)}`;
+    const selectedCode = `TS9001\n${"code".repeat(100)}`;
+    vscodeState.textDocuments = [currentDocument];
+    vscodeState.activeTextEditor = {
+      document: currentDocument,
+      selection: {
+        isEmpty: false,
+        active: selectedRange.start,
+        start: selectedRange.start,
+        end: selectedRange.end,
+      },
+    };
+    vscodeState.diagnostics.push(
+      ...Array.from({ length: 21 }, (_, index) => ({
+        range: {
+          start: { line: index, character: 0 },
+          end: { line: index, character: 6 },
+        },
+        message: `Earlier diagnostic ${index}`,
+        severity: 1,
+        source: "typescript",
+        code: `TS${index}`,
+      })),
+      {
+        range: selectedRange,
+        message: selectedMessage,
+        severity: 0,
+        source: selectedSource,
+        code: selectedCode,
+      },
+    );
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+
+    await runtime.reviewCurrentBlock();
+
+    const published = shared.snapshot().latest?.evidence;
+    expect(published?.id).toBe(
+      stableDiagnosticEvidenceId(
+        uri,
+        selectedRange,
+        selectedSource,
+        [selectedCode],
+        selectedMessage,
+      ),
+    );
+    expect(published).toMatchObject({
+      kind: "diagnostic",
+      severity: "error",
+      title: "Editor diagnostic",
+    });
+    expect(published?.detail).not.toMatch(/[\r\n]/u);
+    expect(published?.source).not.toMatch(/[\r\n]/u);
+    expect(published?.references[0]).not.toMatch(/[\r\n]/u);
+    expect(vscodeState.commentThreads).toHaveLength(1);
+    runtime.dispose();
+  });
+
+  it("keeps automatic diagnostic evidence bounded to the first 20 items", async () => {
+    const uri = "file:///workspace/src/automatic-diagnostics.ts";
+    const currentDocument = document(uri, "export const value = 1;", 2);
+    vscodeState.textDocuments = [currentDocument];
+    vscodeState.diagnostics.push(
+      ...Array.from({ length: 25 }, (_, index) => ({
+        range: {
+          start: { line: 0, character: index },
+          end: { line: 0, character: index + 1 },
+        },
+        message: `Diagnostic ${index}`,
+        severity: 1,
+        source: "typescript",
+        code: `TS${index}`,
+      })),
+    );
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+
+    await (
+      runtime as unknown as {
+        handleEpisode(episode: {
+          uri: string;
+          languageId: string;
+          previousText: string;
+          currentText: string;
+          version: number;
+          observedAt: number;
+        }): Promise<void>;
+      }
+    ).handleEpisode({
+      uri,
+      languageId: "typescript",
+      previousText: currentDocument.getText(),
+      currentText: currentDocument.getText(),
+      version: currentDocument.version,
+      observedAt: 1,
+    });
+    const state = (
+      runtime as unknown as {
+        documentState: {
+          latestEvidence(uri: string): readonly Evidence[];
+        };
+      }
+    ).documentState;
+
+    expect(state.latestEvidence(uri)).toHaveLength(20);
+    expect(state.latestEvidence(uri).at(-1)?.detail).toBe("Diagnostic 19");
+    runtime.dispose();
+  });
+
   it("keeps a dismissed diagnostic suppressed when unrelated diagnostics reorder", async () => {
     const uri = "file:///Users/private/workspace/src/pair.ts";
     const currentDocument = document(uri, "export const value = 1;", 1);
@@ -3264,6 +3401,65 @@ describe("PairRuntime lifecycle ownership", () => {
         references: ["./repository"],
       }),
     ]);
+    runtime.dispose();
+  });
+
+  it("publishes current Chat output after its own budget snapshot updates", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "current provider response" } }],
+            usage: { prompt_tokens: 10, completion_tokens: 3 },
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      ),
+    );
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "openai-compatible",
+        baseUrl: new URL("https://model.example/v1"),
+      }),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    shared.publishEvidence({
+      uri: "file:///workspace/pair.ts",
+      evidence,
+      question: "Current question",
+    });
+    let handler: vscode.ChatRequestHandler | undefined;
+    const markdown = vi.fn();
+    registerPairChatParticipant(
+      (_id, registeredHandler) => {
+        handler = registeredHandler;
+        return { dispose: () => undefined } as vscode.ChatParticipant;
+      },
+      shared,
+      runtime,
+    );
+
+    await handler!(
+      { command: "why", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      { markdown } as unknown as vscode.ChatResponseStream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      } as vscode.CancellationToken,
+    );
+
+    expect(markdown).toHaveBeenCalledWith("current provider response");
+    expect(shared.snapshot().session.remainingCalls).toBe(3);
     runtime.dispose();
   });
 

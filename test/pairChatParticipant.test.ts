@@ -5,6 +5,7 @@ import {
   buildPairChatPlan,
   registerPairChatParticipant,
 } from "../src/vscode/pairChatParticipant";
+import type { PairSessionSnapshot } from "../src/vscode/pairChatParticipant";
 import type { Evidence } from "../src/core/types";
 import type * as vscode from "vscode";
 
@@ -30,6 +31,77 @@ const evidence: Evidence = {
   },
   references: ["./repository"],
 };
+
+const sessionFieldMutations: ReadonlyArray<{
+  readonly label: string;
+  readonly mutate: (session: PairSessionSnapshot) => PairSessionSnapshot;
+}> = [
+  {
+    label: "enabled",
+    mutate: (session) => ({ ...session, enabled: false }),
+  },
+  {
+    label: "active",
+    mutate: (session) => ({ ...session, active: false }),
+  },
+  {
+    label: "generation",
+    mutate: (session) => ({ ...session, generation: session.generation + 1 }),
+  },
+  {
+    label: "goal",
+    mutate: (session) => ({ ...session, goal: `${session.goal} Updated.` }),
+  },
+  {
+    label: "provider",
+    mutate: (session) => ({ ...session, provider: "local-template" }),
+  },
+  {
+    label: "remaining calls",
+    mutate: (session) => ({
+      ...session,
+      remainingCalls: session.remainingCalls - 1,
+    }),
+  },
+  {
+    label: "remaining input budget",
+    mutate: (session) => ({
+      ...session,
+      remainingInputTokens: session.remainingInputTokens - 1,
+    }),
+  },
+  {
+    label: "remaining output budget",
+    mutate: (session) => ({
+      ...session,
+      remainingOutputTokens: (session.remainingOutputTokens ?? 1) - 1,
+    }),
+  },
+  {
+    label: "control notice",
+    mutate: (session) => ({
+      ...session,
+      controlNotice: "Another agent is active.",
+    }),
+  },
+  {
+    label: "configuration warning",
+    mutate: (session) => ({
+      ...session,
+      configurationWarning: "Provider configuration changed.",
+    }),
+  },
+];
+
+const deferredResponseMutations = sessionFieldMutations.filter(
+  ({ label }) =>
+    label === "provider" ||
+    label === "remaining calls" ||
+    label === "remaining input budget" ||
+    label === "remaining output budget" ||
+    label === "control notice" ||
+    label === "configuration warning",
+);
 
 describe("pair chat planning", () => {
   it("asks for active code when no evidence is shared", () => {
@@ -81,6 +153,51 @@ describe("pair chat planning", () => {
         "**Coexistence:** Cline detected; observing only.",
       ].join("\n\n"),
     });
+  });
+
+  it.each(sessionFieldMutations)(
+    "advances the shared revision when the $label session field changes",
+    ({ mutate }) => {
+      const context = new PairSharedContext({
+        enabled: true,
+        active: true,
+        generation: 1,
+        goal: "Navigate with evidence-backed questions.",
+        role: "navigator",
+        provider: "vscode-copilot",
+        remainingCalls: 4,
+        remainingInputTokens: 6_000,
+        remainingOutputTokens: 700,
+        controlNotice: undefined,
+        configurationWarning: undefined,
+      });
+      const before = context.snapshot().revision;
+
+      context.updateSession(mutate(context.snapshot().session));
+
+      expect(context.snapshot().revision).toBe(before + 1);
+    },
+  );
+
+  it("keeps the shared revision stable for a semantically identical complete session snapshot", () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      generation: 1,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "vscode-copilot",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      remainingOutputTokens: 700,
+      controlNotice: "Another agent is active.",
+      configurationWarning: "Provider configuration changed.",
+    });
+    const before = context.snapshot().revision;
+
+    context.updateSession({ ...context.snapshot().session });
+
+    expect(context.snapshot().revision).toBe(before);
   });
 
   it("expands the most recent inline question from the same evidence", () => {
@@ -838,6 +955,71 @@ describe("pair chat planning", () => {
 
     expect(markdown).toHaveBeenCalledWith("current sanitized response");
   });
+
+  it.each(deferredResponseMutations)(
+    "rejects deferred model output after a $label session update",
+    async ({ mutate }) => {
+      const context = new PairSharedContext({
+        enabled: true,
+        active: true,
+        generation: 1,
+        goal: "Navigate with evidence-backed questions.",
+        role: "navigator",
+        provider: "vscode-copilot",
+        remainingCalls: 4,
+        remainingInputTokens: 6_000,
+        remainingOutputTokens: 700,
+        controlNotice: undefined,
+        configurationWarning: undefined,
+      });
+      context.publishEvidence({
+        uri: "file:///workspace/evidence.ts",
+        evidence,
+        question: "Did you intend this dependency?",
+      });
+      const modelStarted = deferred<void>();
+      const modelCompletion = deferred<{
+        text: string;
+        inputTokens: number;
+        outputTokens: number;
+      }>();
+      let handler: vscode.ChatRequestHandler | undefined;
+      const markdown = vi.fn();
+      registerPairChatParticipant(
+        (_id, registeredHandler) => {
+          handler = registeredHandler;
+          return { dispose: () => undefined } as vscode.ChatParticipant;
+        },
+        context,
+        {
+          generate: () => {
+            modelStarted.resolve();
+            return modelCompletion.promise;
+          },
+        },
+      );
+
+      const pendingResponse = handler!(
+        { command: "why", prompt: "" } as vscode.ChatRequest,
+        {} as vscode.ChatContext,
+        { markdown } as unknown as vscode.ChatResponseStream,
+        {
+          isCancellationRequested: false,
+          onCancellationRequested: () => ({ dispose: () => undefined }),
+        } as vscode.CancellationToken,
+      );
+      await modelStarted.promise;
+      context.updateSession(mutate(context.snapshot().session));
+      modelCompletion.resolve({
+        text: "stale session output",
+        inputTokens: 1,
+        outputTokens: 1,
+      });
+      await pendingResponse;
+
+      expect(markdown).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects stale model output across a runtime rebuild with identical visible state", async () => {
     const context = new PairSharedContext({
