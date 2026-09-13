@@ -3575,3 +3575,61 @@
 - A live VS Code extension host was unavailable. Deterministic deferred
   replacement construction and production-helper tests exercise the
   deactivation race and cleanup-failure paths.
+
+---
+
+## Template-literal declaration canonicalization follow-up (2026-09-14)
+
+### Correction implemented
+
+- Declaration fingerprints now use the trimmed output of the TypeScript
+  Printer configured with comment removal and LF line endings.
+- Removed the second scanner pass entirely. This avoids treating template
+  continuation text as ordinary tokens and eliminates scanner errors for
+  interpolated, nested, and multi-interpolation template literal types.
+- Printer normalization continues to make comments, formatting, and optional
+  interface-member punctuation insensitive.
+- Added direct declaration regressions for `.d.ts`, `.d.mts`, and `.d.cts`,
+  interpolation type changes, nested and multiple interpolations, and
+  formatting/comment-only changes.
+
+### TDD evidence
+
+- RED: the focused template-literal run produced **5 expected failures**:
+  interpolation changes were skipped for all three declaration extensions,
+  plus nested and multiple interpolation changes.
+- GREEN: the same focused run passed **8 tests**; the complete semantic
+  analyzer suite then passed **73 tests**.
+
+### False-positive review
+
+- The `chatResponseDisplay` NUL regression is correct and was not modified.
+  Its source string literals contain `\u0000` escapes, which create actual NUL
+  code points at runtime, and its assertions verify those code points are
+  removed. The review request to change that test was a false positive.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **20 files, 566 tests passed**
+- `npm run test:coverage`: **PASS — 20 files, 566 tests**
+  - statements 90.52%, branches 83.03%, functions 93.50%, lines 90.65%
+- `npm run package`: **PASS — 161 files, 4.37 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX exclusions and byte integrity: **PASS — 161 entries and 22 compiled
+  modules byte-match**
+- Compiled canonicalization marker, credential-shaped value, repository
+  metadata, conflict-marker, whitespace, and NUL-test integrity scans:
+  **PASS**
+
+### Self-review and residual concerns
+
+- Reviewed declaration validity gating, emitted and direct declaration paths,
+  empty-surface classification, fingerprint privacy, canonical formatting,
+  template nesting, declaration extensions, and packaged output. No
+  high-confidence defect remains in the changed scope.
+- No live VS Code extension-host test was run; the behavior is isolated to
+  TypeScript AST printing and is covered through the real compiler API.

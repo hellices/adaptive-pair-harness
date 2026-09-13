@@ -455,6 +455,75 @@ describe("TypeScriptSemanticAnalyzer", () => {
       },
     );
 
+    it.each(["d.ts", "d.mts", "d.cts"])(
+      "reports an interpolated template literal type change in %s",
+      (extension) => {
+        const evidence = publicApiEvidence(
+          episode(
+            "export type Route = `/users/${string}`;",
+            "export type Route = `/users/${number}`;",
+            "typescript",
+            `file:///types.${extension}`,
+          ),
+        );
+
+        expect(evidence).toHaveLength(1);
+        expect(evidence[0]).toMatchObject({
+          kind: "public-api-change",
+          detail: "Changed public declaration surface in this document.",
+        });
+      },
+    );
+
+    it.each([
+      [
+        "nested interpolation",
+        "export type Route = `${`segment-${string}`}-${number}`;",
+        "export type Route = `${`segment-${string}`}-${bigint}`;",
+      ],
+      [
+        "multiple interpolations",
+        "export type Route = `/${string}/${number}/${boolean}`;",
+        "export type Route = `/${string}/${bigint}/${boolean}`;",
+      ],
+    ])(
+      "reports a template literal type change with %s",
+      (_label, previous, current) => {
+        expect(
+          publicApiEvidence(
+            episode(
+              previous,
+              current,
+              "typescript",
+              "file:///types.d.ts",
+            ),
+          ),
+        ).toHaveLength(1);
+      },
+    );
+
+    it.each(["d.ts", "d.mts", "d.cts"])(
+      "ignores formatting and comments around template literal types in %s",
+      (extension) => {
+        const evidence = publicApiEvidence(
+          episode(
+            "export type Route = `/users/${string}/${number}`;",
+            [
+              "// route declaration",
+              "export type Route =",
+              "  `/users/${",
+              "    string",
+              "  }/${number}`;",
+            ].join("\n"),
+            "typescript",
+            `file:///types.${extension}`,
+          ),
+        );
+
+        expect(evidence).toEqual([]);
+      },
+    );
+
     it.each([
       [
         "function body",

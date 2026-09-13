@@ -489,33 +489,12 @@ const canonicalizeDeclaration = (
       newLine: ts.NewLineKind.LineFeed,
       removeComments: true,
     })
-    .printFile(sourceFile);
-  let scannerFailed = false;
-  const scanner = ts.createScanner(
-    ts.ScriptTarget.Latest,
-    true,
-    ts.LanguageVariant.Standard,
-    declaration,
-    () => {
-      scannerFailed = true;
-    },
-  );
-  const tokens: Array<readonly [number, string]> = [];
+    .printFile(sourceFile)
+    .trim();
 
-  for (
-    let token = scanner.scan();
-    token !== ts.SyntaxKind.EndOfFileToken;
-    token = scanner.scan()
-  ) {
-    tokens.push([token, scanner.getTokenText()]);
-  }
-
-  if (scannerFailed) {
-    return undefined;
-  }
   return {
-    fingerprint: JSON.stringify(tokens),
-    isEmpty: tokens.length === 0,
+    fingerprint: declaration,
+    isEmpty: declaration.length === 0,
   };
 };
 
