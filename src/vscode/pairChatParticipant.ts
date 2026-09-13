@@ -39,8 +39,7 @@ export interface PairContextSnapshot {
 
 declare const pairContextRevisionFenceBrand: unique symbol;
 export type PairContextRevisionFence = {
-  readonly revision: number;
-  readonly [pairContextRevisionFenceBrand]: true;
+  readonly [pairContextRevisionFenceBrand]: never;
 };
 
 declare const pairRuntimeRevisionBrand: unique symbol;
@@ -56,6 +55,10 @@ export class PairSharedContext {
   private revision = 0;
   private evidenceEpoch = 0;
   private readonly evidenceRevisionByUri = new Map<string, number>();
+  private readonly contextRevisionByFence = new WeakMap<
+    PairContextRevisionFence,
+    number
+  >();
   private currentRuntimeRevision = 0;
 
   public constructor(
@@ -91,43 +94,53 @@ export class PairSharedContext {
     session: PairSessionSnapshot,
     runtimeRevision?: PairRuntimeRevision,
     revisionFence?: PairContextRevisionFence,
-  ): void {
+  ): boolean {
     if (
       runtimeRevision !== undefined &&
       runtimeRevision !== this.currentRuntimeRevision
     ) {
-      return;
+      return false;
     }
-    const previousRevision = this.revision;
+    if (
+      revisionFence !== undefined &&
+      !this.isRevisionFenceCurrent(revisionFence)
+    ) {
+      return false;
+    }
     if (!sameSessionSnapshot(session, this.session)) {
       this.revision += 1;
     }
     this.session = session;
-    if (
-      revisionFence !== undefined &&
-      revisionFence.revision === previousRevision
-    ) {
-      (
-        revisionFence as {
-          revision: number;
-        }
-      ).revision = this.revision;
+    if (revisionFence !== undefined) {
+      this.contextRevisionByFence.set(revisionFence, this.revision);
     }
+    return true;
   }
 
   public publishEvidence(
     latest: PairPublishedEvidence,
     runtimeRevision?: PairRuntimeRevision,
-  ): void {
+    revisionFence?: PairContextRevisionFence,
+  ): boolean {
     if (
       runtimeRevision !== undefined &&
       runtimeRevision !== this.currentRuntimeRevision
     ) {
-      return;
+      return false;
+    }
+    if (
+      revisionFence !== undefined &&
+      !this.isRevisionFenceCurrent(revisionFence)
+    ) {
+      return false;
     }
     this.revision += 1;
     this.bumpEvidenceRevision(latest.uri);
     this.latest = latest;
+    if (revisionFence !== undefined) {
+      this.contextRevisionByFence.set(revisionFence, this.revision);
+    }
+    return true;
   }
 
   public clearEvidence(
@@ -194,6 +207,19 @@ export class PairSharedContext {
     return this.storeEvidenceRevision(uri, this.nextEvidenceRevision());
   }
 
+  public invalidateEvidenceFenceForUri(
+    uri: string,
+    runtimeRevision?: PairRuntimeRevision,
+  ): number | undefined {
+    if (
+      runtimeRevision !== undefined &&
+      runtimeRevision !== this.currentRuntimeRevision
+    ) {
+      return undefined;
+    }
+    return this.storeEvidenceRevision(uri, this.nextEvidenceRevision());
+  }
+
   public snapshot(): PairContextSnapshot {
     return {
       revision: this.revision,
@@ -203,9 +229,15 @@ export class PairSharedContext {
   }
 
   public captureRevisionFence(): PairContextRevisionFence {
-    return {
-      revision: this.revision,
-    } as PairContextRevisionFence;
+    const fence = {} as PairContextRevisionFence;
+    this.contextRevisionByFence.set(fence, this.revision);
+    return fence;
+  }
+
+  public isRevisionFenceCurrent(
+    fence: PairContextRevisionFence,
+  ): boolean {
+    return this.contextRevisionByFence.get(fence) === this.revision;
   }
 
   private bumpEvidenceRevision(uri: string): void {
@@ -398,6 +430,7 @@ export interface PairChatGenerator {
 
 export interface PairChatContextSource {
   captureRevisionFence(): PairContextRevisionFence;
+  isRevisionFenceCurrent(fence: PairContextRevisionFence): boolean;
   snapshot(): PairContextSnapshot;
 }
 
@@ -507,7 +540,7 @@ export const registerPairChatParticipant = (
               if (
                 !current.session.enabled ||
                 !current.session.active ||
-                current.revision !== requestRevisionFence.revision
+                !context.isRevisionFenceCurrent(requestRevisionFence)
               ) {
                 return undefined;
               }
@@ -523,7 +556,7 @@ export const registerPairChatParticipant = (
         if (
           !current.session.enabled ||
           !current.session.active ||
-          current.revision !== requestRevisionFence.revision
+          !context.isRevisionFenceCurrent(requestRevisionFence)
         ) {
           return;
         }
@@ -549,7 +582,11 @@ export const registerPairChatParticipant = (
       const current = context.snapshot();
       if (
         abortController.signal.aborted ||
-        !isCurrentGeneratedResponse(current, requestRevisionFence)
+        !isCurrentGeneratedResponse(
+          current,
+          requestRevisionFence,
+          context,
+        )
       ) {
         return;
       }
@@ -559,7 +596,7 @@ export const registerPairChatParticipant = (
         abortController.signal.aborted ||
         options.isOfficialCancellationError?.(error) === true ||
         (requestRevisionFence !== undefined &&
-          context.snapshot().revision !== requestRevisionFence.revision)
+          !context.isRevisionFenceCurrent(requestRevisionFence))
       ) {
         return;
       }
@@ -583,7 +620,8 @@ export const registerPairChatParticipant = (
 const isCurrentGeneratedResponse = (
   current: PairContextSnapshot,
   revisionFence: PairContextRevisionFence,
+  context: PairChatContextSource,
 ): boolean =>
   current.session.enabled &&
   current.session.active &&
-  current.revision === revisionFence.revision;
+  context.isRevisionFenceCurrent(revisionFence);

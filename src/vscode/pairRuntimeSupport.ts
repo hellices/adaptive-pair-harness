@@ -572,6 +572,10 @@ export class PairRequestRegistry {
     }
   }
 
+  public has(uri: string, request: AbortController): boolean {
+    return this.requestsByUri.get(uri)?.has(request) === true;
+  }
+
   public cancelUri(uri: string): void {
     const existing = this.requestsByUri.get(uri);
     if (existing === undefined) {

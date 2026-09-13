@@ -93,6 +93,7 @@ const vscodeState = vi.hoisted(() => ({
     readonly code?: string | number;
   }>,
   activeTextEditor: undefined as unknown,
+  errorMessages: [] as string[],
   warningMessages: [] as string[],
 }));
 
@@ -249,7 +250,9 @@ vi.mock("vscode", () => {
         vscodeState.statusItems.push(status);
         return status;
       },
-      showErrorMessage: async () => undefined,
+      showErrorMessage: async (message: string) => {
+        vscodeState.errorMessages.push(message);
+      },
       showInformationMessage: async () => undefined,
       showWarningMessage: async (message: string) => {
         vscodeState.warningMessages.push(message);
@@ -414,6 +417,21 @@ const document = (
   },
 });
 
+const providerResponse = (
+  text: string,
+  completionTokens = 3,
+): Response =>
+  new Response(
+    JSON.stringify({
+      choices: [{ message: { content: text } }],
+      usage: { prompt_tokens: 10, completion_tokens: completionTokens },
+    }),
+    {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    },
+  );
+
 beforeEach(() => {
   vscodeState.textDocuments = [];
   vscodeState.workspaceFolders = [
@@ -447,6 +465,7 @@ beforeEach(() => {
   vscodeState.commentThreads.length = 0;
   vscodeState.diagnostics.length = 0;
   vscodeState.activeTextEditor = undefined;
+  vscodeState.errorMessages.length = 0;
   vscodeState.warningMessages.length = 0;
   vi.unstubAllGlobals();
 });
@@ -814,6 +833,289 @@ describe("PairRuntime lifecycle ownership", () => {
       kind: "no-evidence",
       message: "Adaptive Pair has no current evidence to dismiss.",
     });
+    runtime.dispose();
+  });
+
+  it.each(["manual", "automatic"] as const)(
+    "cancels a pending %s intervention before dismissal persistence and blocks an ignored-cancellation completion",
+    async (source) => {
+      const persistence = deferred<void>();
+      let persistenceStarted = false;
+      const memoryContext = {
+        globalState: {
+          get: () => undefined,
+          update: async () => {
+            persistenceStarted = true;
+            await persistence.promise;
+          },
+        },
+      } as unknown as vscode.ExtensionContext;
+      const providerCompletion = deferred<Response>();
+      let providerSignal: AbortSignal | undefined;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+          providerSignal = init?.signal ?? undefined;
+          return providerCompletion.promise;
+        }),
+      );
+      const uri = `file:///workspace/src/dismiss-${source}.ts`;
+      const currentDocument = document(uri, "export const value = 1;");
+      vscodeState.textDocuments = [currentDocument];
+      const shared = sharedContext();
+      const runtime = new PairRuntime({
+        config: config({
+          provider: "openai-compatible",
+          baseUrl: new URL("https://model.example/v1"),
+        }),
+        extensionContext: memoryContext,
+        sharedContext: shared,
+        languageModelApi: languageModelApi(),
+        apiKey: undefined,
+      });
+      await runtime.startSession();
+      const runtimeInternals = runtime as unknown as {
+        intervene(
+          document: vscode.TextDocument,
+          evidence: Evidence,
+          source: "automatic" | "manual",
+          goal: string,
+        ): Promise<void>;
+        renderIntervention(
+          document: vscode.TextDocument,
+          evidence: Evidence,
+          question: string,
+        ): void;
+      };
+      runtimeInternals.renderIntervention(
+        currentDocument as unknown as vscode.TextDocument,
+        evidence,
+        "Original question",
+      );
+      const originalEvidenceFence =
+        shared.captureEvidenceRevisionForUri(uri);
+
+      const pendingIntervention = runtimeInternals.intervene(
+        currentDocument as unknown as vscode.TextDocument,
+        evidence,
+        source,
+        "Review the current evidence.",
+      );
+      await vi.waitFor(() => {
+        expect(fetch).toHaveBeenCalledOnce();
+      });
+      const pendingDismissal = runtime.dismissCurrentEvidence();
+      await vi.waitFor(() => {
+        expect(persistenceStarted).toBe(true);
+      });
+      const cancelledBeforePersistence = providerSignal?.aborted === true;
+      const dismissalEvidenceFence =
+        shared.evidenceRevisionForUri(uri);
+
+      providerCompletion.resolve(providerResponse("stale intervention"));
+      await pendingIntervention;
+      persistence.resolve();
+      await pendingDismissal;
+
+      expect(cancelledBeforePersistence).toBe(true);
+      expect(dismissalEvidenceFence).toBeGreaterThan(
+        originalEvidenceFence,
+      );
+      expect(shared.snapshot().latest).toBeUndefined();
+      expect(vscodeState.commentThreads).toHaveLength(1);
+      expect(vscodeState.commentThreads[0]?.disposed).toBe(true);
+      runtime.dispose();
+    },
+  );
+
+  it("cancels target-URI Chat before dismissal persistence and rejects an ignored-cancellation response", async () => {
+    const persistence = deferred<void>();
+    let persistenceStarted = false;
+    const memoryContext = {
+      globalState: {
+        get: () => undefined,
+        update: async () => {
+          persistenceStarted = true;
+          await persistence.promise;
+        },
+      },
+    } as unknown as vscode.ExtensionContext;
+    const providerCompletion = deferred<Response>();
+    let providerSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        providerSignal = init?.signal ?? undefined;
+        return providerCompletion.promise;
+      }),
+    );
+    const uri = "file:///workspace/src/dismiss-chat.ts";
+    const currentDocument = document(uri, "export const value = 1;");
+    vscodeState.textDocuments = [currentDocument];
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "openai-compatible",
+        baseUrl: new URL("https://model.example/v1"),
+      }),
+      extensionContext: memoryContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    (
+      runtime as unknown as {
+        renderIntervention(
+          document: vscode.TextDocument,
+          evidence: Evidence,
+          question: string,
+        ): void;
+      }
+    ).renderIntervention(
+      currentDocument as unknown as vscode.TextDocument,
+      evidence,
+      "Original question",
+    );
+    let handler: vscode.ChatRequestHandler | undefined;
+    const markdown = vi.fn();
+    registerPairChatParticipant(
+      (_id, registeredHandler) => {
+        handler = registeredHandler;
+        return { dispose: () => undefined } as vscode.ChatParticipant;
+      },
+      shared,
+      runtime,
+      {
+        requestLifecycle: {
+          register: (requestUri, request) =>
+            runtime.registerChatRequest(requestUri, request),
+        },
+      },
+    );
+
+    const pendingResponse = handler!(
+      { command: "why", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      { markdown } as unknown as vscode.ChatResponseStream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      } as vscode.CancellationToken,
+    );
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalledOnce();
+    });
+    const pendingDismissal = runtime.dismissCurrentEvidence();
+    await vi.waitFor(() => {
+      expect(persistenceStarted).toBe(true);
+    });
+    const cancelledBeforePersistence = providerSignal?.aborted === true;
+
+    providerCompletion.resolve(providerResponse("stale Chat response"));
+    await pendingResponse;
+    persistence.resolve();
+    await pendingDismissal;
+
+    expect(cancelledBeforePersistence).toBe(true);
+    expect(markdown).not.toHaveBeenCalled();
+    expect(shared.snapshot().latest).toBeUndefined();
+    runtime.dispose();
+  });
+
+  it("preserves a pending independent URI intervention while dismissal persists", async () => {
+    const persistence = deferred<void>();
+    let persistenceStarted = false;
+    const memoryContext = {
+      globalState: {
+        get: () => undefined,
+        update: async () => {
+          persistenceStarted = true;
+          await persistence.promise;
+        },
+      },
+    } as unknown as vscode.ExtensionContext;
+    const providerCompletion = deferred<Response>();
+    let providerSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        providerSignal = init?.signal ?? undefined;
+        return providerCompletion.promise;
+      }),
+    );
+    const dismissedUri = "file:///workspace/src/dismiss-target.ts";
+    const independentUri = "file:///workspace/src/independent.ts";
+    const dismissedDocument = document(
+      dismissedUri,
+      "export const dismissed = 1;",
+    );
+    const independentDocument = document(
+      independentUri,
+      "export const independent = 1;",
+    );
+    vscodeState.textDocuments = [
+      dismissedDocument,
+      independentDocument,
+    ];
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "openai-compatible",
+        baseUrl: new URL("https://model.example/v1"),
+      }),
+      extensionContext: memoryContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    const runtimeInternals = runtime as unknown as {
+      intervene(
+        document: vscode.TextDocument,
+        evidence: Evidence,
+        source: "automatic" | "manual",
+        goal: string,
+      ): Promise<void>;
+      renderIntervention(
+        document: vscode.TextDocument,
+        evidence: Evidence,
+        question: string,
+      ): void;
+    };
+    runtimeInternals.renderIntervention(
+      dismissedDocument as unknown as vscode.TextDocument,
+      evidence,
+      "Dismissed question",
+    );
+    const pendingIndependent = runtimeInternals.intervene(
+      independentDocument as unknown as vscode.TextDocument,
+      { ...evidence, id: "dependency:independent" },
+      "automatic",
+      "Review independent evidence.",
+    );
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalledOnce();
+    });
+
+    const pendingDismissal = runtime.dismissCurrentEvidence();
+    await vi.waitFor(() => {
+      expect(persistenceStarted).toBe(true);
+    });
+    expect(providerSignal?.aborted).toBe(false);
+    providerCompletion.resolve(providerResponse("Independent response"));
+    await pendingIndependent;
+    persistence.resolve();
+    await pendingDismissal;
+
+    expect(shared.snapshot().latest).toMatchObject({
+      uri: independentUri,
+      evidence: { id: "dependency:independent" },
+      question: "Independent response",
+    });
+    expect(vscodeState.commentThreads).toHaveLength(2);
+    expect(vscodeState.commentThreads[0]?.disposed).toBe(true);
+    expect(vscodeState.commentThreads[1]?.disposed).toBe(false);
     runtime.dispose();
   });
 
@@ -2569,7 +2871,7 @@ describe("PairRuntime lifecycle ownership", () => {
       remainingCalls: 0,
       remainingOutputTokens: 40,
     });
-    expect(shared.snapshot().session.remainingOutputTokens).toBe(40);
+    expect(shared.snapshot().session.remainingOutputTokens).toBe(360);
 
     concurrentCompletion.resolve(
       new Response(
@@ -2591,6 +2893,7 @@ describe("PairRuntime lifecycle ownership", () => {
       budgetConfig.maxOutputTokens - settled.remainingOutputTokens,
     ).toBe(504);
     expect(settled.remainingCalls).toBe(0);
+    expect(shared.snapshot().session.remainingOutputTokens).toBe(216);
     runtime.dispose();
   });
 
@@ -3561,6 +3864,229 @@ describe("PairRuntime lifecycle ownership", () => {
 
     expect(markdown).toHaveBeenCalledWith("current provider response");
     expect(shared.snapshot().session.remainingCalls).toBe(3);
+    runtime.dispose();
+  });
+
+  it("does not let a slower URI success overwrite a newer URI publication", async () => {
+    const firstCompletion = deferred<Response>();
+    const secondCompletion = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockImplementationOnce(() => firstCompletion.promise)
+        .mockImplementationOnce(() => secondCompletion.promise),
+    );
+    const firstUri = "file:///workspace/first.ts";
+    const secondUri = "file:///workspace/second.ts";
+    const firstDocument = document(firstUri, "export const first = 1;");
+    const secondDocument = document(secondUri, "export const second = 2;");
+    vscodeState.textDocuments = [firstDocument, secondDocument];
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "openai-compatible",
+        baseUrl: new URL("https://model.example/v1"),
+      }),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    const intervene = (
+      runtime as unknown as {
+        intervene(
+          document: vscode.TextDocument,
+          evidence: Evidence,
+          source: "automatic" | "manual",
+          goal: string,
+        ): Promise<void>;
+      }
+    ).intervene.bind(runtime);
+
+    const first = intervene(
+      firstDocument as unknown as vscode.TextDocument,
+      { ...evidence, id: "dependency:first" },
+      "automatic",
+      "Review first.",
+    );
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalledOnce();
+    });
+    const second = intervene(
+      secondDocument as unknown as vscode.TextDocument,
+      { ...evidence, id: "dependency:second" },
+      "manual",
+      "Review second.",
+    );
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalledTimes(2);
+    });
+    secondCompletion.resolve(providerResponse("Current second response"));
+    await second;
+    const contextAfterSecond = shared.snapshot();
+    const statusAfterSecond = vscodeState.statusItems[0]?.text;
+
+    firstCompletion.resolve(providerResponse("Stale first response"));
+    await first;
+
+    expect(shared.snapshot()).toEqual(contextAfterSecond);
+    expect(shared.snapshot().latest).toMatchObject({
+      uri: secondUri,
+      evidence: { id: "dependency:second" },
+      question: "Current second response",
+    });
+    expect(vscodeState.statusItems[0]?.text).toBe(statusAfterSecond);
+    expect(vscodeState.commentThreads).toHaveLength(1);
+    expect(vscodeState.commentThreads[0]?.uri).toBe(secondUri);
+    runtime.dispose();
+  });
+
+  it("does not publish a slower URI error after a newer URI publication", async () => {
+    const firstCompletion = deferred<Response>();
+    const secondCompletion = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockImplementationOnce(() => firstCompletion.promise)
+        .mockImplementationOnce(() => secondCompletion.promise),
+    );
+    const firstUri = "file:///workspace/first-error.ts";
+    const secondUri = "file:///workspace/second-current.ts";
+    const firstDocument = document(firstUri, "export const first = 1;");
+    const secondDocument = document(secondUri, "export const second = 2;");
+    vscodeState.textDocuments = [firstDocument, secondDocument];
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "openai-compatible",
+        baseUrl: new URL("https://model.example/v1"),
+      }),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    const intervene = (
+      runtime as unknown as {
+        intervene(
+          document: vscode.TextDocument,
+          evidence: Evidence,
+          source: "automatic" | "manual",
+          goal: string,
+        ): Promise<void>;
+      }
+    ).intervene.bind(runtime);
+
+    const first = intervene(
+      firstDocument as unknown as vscode.TextDocument,
+      { ...evidence, id: "dependency:first-error" },
+      "automatic",
+      "Review first.",
+    );
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalledOnce();
+    });
+    const second = intervene(
+      secondDocument as unknown as vscode.TextDocument,
+      { ...evidence, id: "dependency:second-current" },
+      "manual",
+      "Review second.",
+    );
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalledTimes(2);
+    });
+    secondCompletion.resolve(providerResponse("Current second response"));
+    await second;
+    const contextAfterSecond = shared.snapshot();
+    const statusAfterSecond = vscodeState.statusItems[0]?.text;
+
+    firstCompletion.resolve(
+      providerResponse("x".repeat(181), 181),
+    );
+    await first;
+
+    expect(shared.snapshot()).toEqual(contextAfterSecond);
+    expect(vscodeState.statusItems[0]?.text).toBe(statusAfterSecond);
+    expect(vscodeState.statusItems[0]?.text).not.toContain("model error");
+    expect(vscodeState.errorMessages).toEqual([]);
+    runtime.dispose();
+  });
+
+  it("does not run a slower URI local fallback after a newer URI publication", async () => {
+    const firstCompletion = deferred<Response>();
+    const secondCompletion = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockImplementationOnce(() => firstCompletion.promise)
+        .mockImplementationOnce(() => secondCompletion.promise),
+    );
+    const firstUri = "file:///workspace/first-fallback.ts";
+    const secondUri = "file:///workspace/second-current.ts";
+    const firstDocument = document(firstUri, "export const first = 1;");
+    const secondDocument = document(secondUri, "export const second = 2;");
+    vscodeState.textDocuments = [firstDocument, secondDocument];
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "openai-compatible",
+        baseUrl: new URL("https://model.example/v1"),
+      }),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    const intervene = (
+      runtime as unknown as {
+        intervene(
+          document: vscode.TextDocument,
+          evidence: Evidence,
+          source: "automatic" | "manual",
+          goal: string,
+        ): Promise<void>;
+      }
+    ).intervene.bind(runtime);
+
+    const first = intervene(
+      firstDocument as unknown as vscode.TextDocument,
+      { ...evidence, id: "dependency:first-fallback" },
+      "automatic",
+      "Review first.",
+    );
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalledOnce();
+    });
+    const second = intervene(
+      secondDocument as unknown as vscode.TextDocument,
+      { ...evidence, id: "dependency:second-current" },
+      "manual",
+      "Review second.",
+    );
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalledTimes(2);
+    });
+    secondCompletion.resolve(providerResponse("Current second response"));
+    await second;
+    const contextAfterSecond = shared.snapshot();
+    const statusAfterSecond = vscodeState.statusItems[0]?.text;
+
+    firstCompletion.reject(new TypeError("stale endpoint failure"));
+    await first;
+
+    expect(shared.snapshot()).toEqual(contextAfterSecond);
+    expect(vscodeState.statusItems[0]?.text).toBe(statusAfterSecond);
+    expect(vscodeState.statusItems[0]?.text).not.toContain(
+      "local-template fallback",
+    );
+    expect(vscodeState.commentThreads).toHaveLength(1);
+    expect(vscodeState.commentThreads[0]?.uri).toBe(secondUri);
     runtime.dispose();
   });
 

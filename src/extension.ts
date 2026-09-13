@@ -122,6 +122,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     (id, handler) => vscode.chat.createChatParticipant(id, handler),
     {
       captureRevisionFence: () => sharedContext.captureRevisionFence(),
+      isRevisionFenceCurrent: (fence) =>
+        sharedContext.isRevisionFenceCurrent(fence),
       snapshot: () => {
         runtime?.refreshSession();
         return sharedContext.snapshot();

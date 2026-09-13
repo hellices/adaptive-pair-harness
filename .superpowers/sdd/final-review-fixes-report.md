@@ -2754,3 +2754,76 @@
   intentionally unsupported by the per-document restricted host and therefore
   produce no public API evidence. A live VS Code extension host was not
   exercised in this non-interactive run.
+
+---
+
+## Runtime context and dismissal race follow-up (2026-09-14)
+
+### Corrections implemented
+
+- `PairContextRevisionFence` is now an opaque, context-owned token. Shared
+  session and evidence publications reject stale or foreign fences while
+  allowing the owning request's accepted session updates to advance that same
+  token.
+- Manual, automatic, and Chat generation capture one request fence before
+  provider work. The fence composes shared-context revision, session
+  generation, cancellation, document version, and exact per-URI request
+  ownership.
+- Local-template, Copilot, and OpenAI-compatible paths carry the same fence
+  through preparation, reservation, completion, status publication, error
+  handling, and local fallback. Stale work may still settle budget actually
+  consumed by a provider, but it cannot publish that stale snapshot, change the
+  visible provider/status, fall back locally, render inline, or replace shared
+  latest evidence.
+- Dismissal now cancels the target URI's runtime intervention and every Chat
+  request and advances its unique evidence fence before awaiting
+  persistence. Post-persistence cleanup still compares the unique URI revision,
+  so evidence legitimately replaced during persistence is retained. The
+  target-scoped invalidation does not cancel or stale an otherwise-current
+  request for another URI.
+- Added ignored-cancellation dismissal regressions for manual, automatic, and
+  Chat requests, plus deferred cross-URI success, output-limit error, and local
+  fallback regressions.
+
+### TDD evidence
+
+- RED: the focused runtime suite first reported **6 expected failures and 71
+  passes**, followed by one focused independent-URI failure. The failures
+  showed no pre-persistence cancellation or fence
+  advance, stale manual/automatic/Chat completion, a slower success replacing
+  newer URI evidence, a slower error replacing current status, and a slower
+  failure running local fallback and rendering stale evidence; the follow-up
+  exposed over-broad dismissal invalidation of unrelated work.
+- GREEN: the focused runtime/Chat suites passed **121 tests**. The existing
+  concurrent over-limit test now also verifies that stale budget publication
+  is withheld until the current request owner publishes the settled aggregate.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 500 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 89.54%, branches 83.44%, functions 93.32%, lines 89.68%
+- `npm run package`: **PASS — 158 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX exclusion and compiled lifecycle-fence marker scans: **PASS**
+- Production and packaged credential-value scans: **PASS**
+- Production and packaged runtime URL scans: **PASS — loopback default only**
+- Source placeholder URL and source/packaged repository metadata scans:
+  **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review covered fence opacity/ownership, session and evidence
+  publication ordering, budget settlement, per-URI independence, dismissal
+  rollback/replacement behavior, cancellation-ignoring providers, Chat
+  suppression, cleanup, and package output. No remaining high-confidence
+  correctness or security defect was found.
+- A live VS Code extension host and live GitHub Copilot service were not
+  exercised in this non-interactive environment. Deterministic VS Code adapter,
+  OpenAI-compatible ignored-cancellation, local fallback, and lifecycle tests
+  cover the changed boundaries.
