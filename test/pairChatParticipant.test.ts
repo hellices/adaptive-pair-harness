@@ -3,14 +3,17 @@ import {
   PAIR_CHAT_RESPONSE_DISPLAY_LIMIT,
   formatChatResponseForDisplay,
 } from "../src/vscode/chatResponseDisplay";
-import { escapeMarkdownText } from "../src/core/chatMarkdownSafety";
 import {
   PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT,
   PairSharedContext,
   buildPairChatPlan,
   registerPairChatParticipant,
 } from "../src/vscode/pairChatParticipant";
-import type { PairSessionSnapshot } from "../src/vscode/pairChatParticipant";
+import type {
+  PairChatRequestHandler,
+  PairSessionSnapshot,
+} from "../src/vscode/pairChatParticipant";
+import type { PairChatResponse } from "../src/vscode/vsCodeChatResponse";
 import type { Evidence } from "../src/core/types";
 import type * as vscode from "vscode";
 
@@ -21,6 +24,19 @@ const deferred = <T>() => {
   });
   return { promise, resolve };
 };
+
+class RecordingChatResponse implements PairChatResponse {
+  public readonly markdownValues: string[] = [];
+  public readonly textValues: string[] = [];
+
+  public markdown(value: string): void {
+    this.markdownValues.push(value);
+  }
+
+  public text(value: string): void {
+    this.textValues.push(value);
+  }
+}
 
 const evidence: Evidence = {
   id: "dependency:repository",
@@ -124,8 +140,13 @@ describe("pair chat planning", () => {
 
     expect(buildPairChatPlan("why", context.snapshot())).toEqual({
       kind: "message",
-      markdown:
-        "No active evidence yet. Select code or run **Adaptive Pair: Review Current Block**.",
+      parts: [
+        {
+          kind: "markdown",
+          value:
+            "No active evidence yet. Select code or run **Adaptive Pair: Review Current Block**.",
+        },
+      ],
     });
   });
 
@@ -150,13 +171,24 @@ describe("pair chat planning", () => {
 
     expect(buildPairChatPlan("session", context.snapshot())).toEqual({
       kind: "message",
-      markdown: [
-        "**Goal:** Navigate with evidence\\-backed questions\\.",
-        "**Role:** navigator (you remain the driver)",
-        "**Provider:** vscode\\-copilot",
-        "**Remaining budget:** 3 calls / 5700 input tokens / 690 output tokens",
-        "**Coexistence:** Cline detected\\; observing only\\.",
-      ].join("\n\n"),
+      parts: [
+        { kind: "markdown", value: "**Goal:** " },
+        { kind: "text", value: "Navigate with evidence-backed questions." },
+        { kind: "markdown", value: "\n\n**Role:** " },
+        { kind: "text", value: "navigator" },
+        {
+          kind: "markdown",
+          value: " (you remain the driver)\n\n**Provider:** ",
+        },
+        { kind: "text", value: "vscode-copilot" },
+        { kind: "markdown", value: "\n\n**Remaining budget:** " },
+        {
+          kind: "text",
+          value: "3 calls / 5700 input tokens / 690 output tokens",
+        },
+        { kind: "markdown", value: "\n\n**Coexistence:** " },
+        { kind: "text", value: "Cline detected; observing only." },
+      ],
     });
   });
 
@@ -249,7 +281,7 @@ describe("pair chat planning", () => {
       evidence,
       question: "Did you intend this dependency?",
     });
-    let handler: vscode.ChatRequestHandler | undefined;
+    let handler: PairChatRequestHandler | undefined;
     let generateCalls = 0;
     const markdown: string[] = [];
     registerPairChatParticipant(
@@ -274,7 +306,7 @@ describe("pair chat planning", () => {
         markdown: (value: string) => {
           markdown.push(value);
         },
-      } as unknown as vscode.ChatResponseStream,
+      } as PairChatResponse,
       {
         isCancellationRequested: false,
         onCancellationRequested: () => ({ dispose: () => undefined }),
@@ -314,7 +346,7 @@ describe("pair chat planning", () => {
         outputTokens: 1,
       }));
       const markdown: string[] = [];
-      let handler: vscode.ChatRequestHandler | undefined;
+      let handler: PairChatRequestHandler | undefined;
       registerPairChatParticipant(
         (_id, registeredHandler) => {
           handler = registeredHandler;
@@ -334,7 +366,7 @@ describe("pair chat planning", () => {
           markdown: (value: string) => {
             markdown.push(value);
           },
-        } as unknown as vscode.ChatResponseStream,
+        } as PairChatResponse,
         {
           isCancellationRequested: false,
           onCancellationRequested: () => ({ dispose: () => undefined }),
@@ -422,8 +454,13 @@ describe("pair chat planning", () => {
       }),
     ).toEqual({
       kind: "message",
-      markdown:
-        "No current symbol could be resolved through VS Code's document symbol providers.",
+      parts: [
+        {
+          kind: "markdown",
+          value:
+            "No current symbol could be resolved through VS Code's document symbol providers.",
+        },
+      ],
     });
   });
 
@@ -614,13 +651,17 @@ describe("pair chat planning", () => {
 
     expect(buildPairChatPlan("session", context.snapshot())).toMatchObject({
       kind: "message",
-      markdown: expect.stringContaining(
-        "**Configuration:** Invalid provider\\; using local\\-template\\.",
-      ),
+      parts: expect.arrayContaining([
+        { kind: "markdown", value: "\n\n**Configuration:** " },
+        {
+          kind: "text",
+          value: "Invalid provider; using local-template.",
+        },
+      ]),
     });
   });
 
-  it("keeps trusted session Markdown while escaping workspace and configuration text", () => {
+  it("keeps trusted session Markdown separate from workspace and configuration text", () => {
     const context = new PairSharedContext({
       enabled: true,
       active: true,
@@ -641,17 +682,91 @@ describe("pair chat planning", () => {
     if (plan.kind !== "message") {
       throw new Error("Expected session message plan.");
     }
-    expect(plan.markdown).toContain(
-      String.raw`**Goal:** \# \[close\]\(command：adaptivePair\.stop\) 목표 😀`,
+    expect(plan.parts).toEqual([
+      { kind: "markdown", value: "**Goal:** " },
+      {
+        kind: "text",
+        value: "# [close](command:adaptivePair.stop) 목표 😀",
+      },
+      { kind: "markdown", value: "\n\n**Role:** " },
+      { kind: "text", value: "navigator" },
+      {
+        kind: "markdown",
+        value: " (you remain the driver)\n\n**Provider:** ",
+      },
+      { kind: "text", value: "local-template" },
+      { kind: "markdown", value: "\n\n**Remaining budget:** " },
+      { kind: "text", value: "4 calls / 6000 input tokens" },
+      { kind: "markdown", value: "\n\n**Coexistence:** " },
+      {
+        kind: "text",
+        value:
+          "![workspace](vscode://file/workspace/secret.ts) **observing**",
+      },
+      { kind: "markdown", value: "\n\n**Configuration:** " },
+      {
+        kind: "text",
+        value:
+          "<img src=x onerror=alert(1)> `unsafe` [start](command:adaptivePair.start)",
+      },
+    ]);
+  });
+
+  it("separates trusted session formatting from dynamic text at the response boundary", async () => {
+    const goal = "# [stop](command:adaptivePair.stop) 목표 😀";
+    const controlNotice =
+      "![workspace](vscode://file/workspace/secret.ts) **observing**";
+    const configurationWarning =
+      "<img src=x onerror=alert(1)> `unsafe` [start](command:adaptivePair.start)";
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      goal,
+      role: "navigator",
+      provider: "local-template",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice,
+      configurationWarning,
+    });
+    let handler: PairChatRequestHandler | undefined;
+    const response = new RecordingChatResponse();
+    registerPairChatParticipant(
+      (_id, registeredHandler) => {
+        handler = registeredHandler;
+        return { dispose: () => undefined } as vscode.ChatParticipant;
+      },
+      context,
+      {
+        generate: async () => ({
+          text: "unused",
+          inputTokens: 1,
+          outputTokens: 1,
+        }),
+      },
     );
-    expect(plan.markdown).toContain(
-      String.raw`**Coexistence:** \!\[workspace\]\(vscode：\/\/file\/workspace\/secret\.ts\) \*\*observing\*\*`,
+
+    await handler!(
+      { command: "session", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      response,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      } as vscode.CancellationToken,
     );
-    expect(plan.markdown).toContain(
-      String.raw`**Configuration:** \<img src\=x onerror\=alert\(1\)\> \`unsafe\` \[start\]\(command：adaptivePair\.start\)`,
+
+    expect(response.markdownValues.join("")).toContain("**Goal:**");
+    expect(response.markdownValues.join("")).toContain("**Configuration:**");
+    expect(response.markdownValues.join("")).not.toContain(goal);
+    expect(response.markdownValues.join("")).not.toContain(controlNotice);
+    expect(response.markdownValues.join("")).not.toContain(
+      configurationWarning,
     );
-    expect(plan.markdown).toContain("**Provider:** local\\-template");
-    expect(plan.markdown).not.toMatch(/(?:command|vscode):/iu);
+    expect(response.textValues).toContain(goal);
+    expect(response.textValues).toContain("local-template");
+    expect(response.textValues).toContain(controlNotice);
+    expect(response.textValues).toContain(configurationWarning);
   });
 
   it("blocks ordinary Chat generation while permission is enabled but the session is inactive", async () => {
@@ -671,7 +786,7 @@ describe("pair chat planning", () => {
       evidence,
       question: "Did you intend this dependency?",
     });
-    let handler: vscode.ChatRequestHandler | undefined;
+    let handler: PairChatRequestHandler | undefined;
     const generate = vi.fn(async () => ({
       text: "remote",
       inputTokens: 1,
@@ -694,7 +809,7 @@ describe("pair chat planning", () => {
         markdown: (value: string) => {
           markdown.push(value);
         },
-      } as unknown as vscode.ChatResponseStream,
+      } as PairChatResponse,
       {
         isCancellationRequested: false,
         onCancellationRequested: () => ({ dispose: () => undefined }),
@@ -718,7 +833,7 @@ describe("pair chat planning", () => {
       controlNotice: undefined,
       configurationWarning: undefined,
     });
-    let handler: vscode.ChatRequestHandler | undefined;
+    let handler: PairChatRequestHandler | undefined;
     const generate = vi.fn(async () => ({
       text: "remote",
       inputTokens: 1,
@@ -750,11 +865,15 @@ describe("pair chat planning", () => {
       },
     );
     const markdown: string[] = [];
+    const text: string[] = [];
     const response = {
       markdown: (value: string) => {
         markdown.push(value);
       },
-    } as unknown as vscode.ChatResponseStream;
+      text: (value: string) => {
+        text.push(value);
+      },
+    } as PairChatResponse;
     const token = {
       isCancellationRequested: false,
       onCancellationRequested: () => ({ dispose: () => undefined }),
@@ -776,10 +895,11 @@ describe("pair chat planning", () => {
     expect(startSession).toHaveBeenCalledOnce();
     expect(stopSession).toHaveBeenCalledOnce();
     expect(generate).not.toHaveBeenCalled();
-    expect(markdown).toEqual(["session started", "session stopped"]);
+    expect(markdown).toEqual([]);
+    expect(text).toEqual(["session started", "session stopped"]);
   });
 
-  it("escapes an untrusted session-control result before rendering it", async () => {
+  it("renders an untrusted session-control result through the text sink", async () => {
     const context = new PairSharedContext({
       enabled: true,
       active: false,
@@ -797,8 +917,8 @@ describe("pair chat planning", () => {
       "<img src=x onerror=alert(1)>",
       "``` **상태 😀**",
     ].join("\n");
-    let handler: vscode.ChatRequestHandler | undefined;
-    const markdown = vi.fn();
+    let handler: PairChatRequestHandler | undefined;
+    const response = new RecordingChatResponse();
     registerPairChatParticipant(
       (_id, registeredHandler) => {
         handler = registeredHandler;
@@ -832,21 +952,15 @@ describe("pair chat planning", () => {
     await handler!(
       { command: "start", prompt: "" } as vscode.ChatRequest,
       {} as vscode.ChatContext,
-      { markdown } as unknown as vscode.ChatResponseStream,
+      response,
       {
         isCancellationRequested: false,
         onCancellationRequested: () => ({ dispose: () => undefined }),
       } as vscode.CancellationToken,
     );
 
-    expect(markdown).toHaveBeenCalledWith(
-      [
-        String.raw`\[close\]\(command：adaptivePair\.stop\)`,
-        String.raw`\!\[open\]\(vscode：\/\/file\/workspace\/secret\.ts\)`,
-        String.raw`\<img src\=x onerror\=alert\(1\)\>`,
-        String.raw`\`\`\` \*\*상태 😀\*\*`,
-      ].join("\n"),
-    );
+    expect(response.textValues).toEqual([message]);
+    expect(response.markdownValues).toEqual([]);
   });
 
   it("bounds a dynamic session-control response before display", async () => {
@@ -863,8 +977,8 @@ describe("pair chat planning", () => {
     });
     const message =
       `Session started.\r\n${"😀".repeat(PAIR_CHAT_RESPONSE_DISPLAY_LIMIT)}`;
-    let handler: vscode.ChatRequestHandler | undefined;
-    const markdown = vi.fn();
+    let handler: PairChatRequestHandler | undefined;
+    const response = new RecordingChatResponse();
     registerPairChatParticipant(
       (_id, registeredHandler) => {
         handler = registeredHandler;
@@ -898,16 +1012,17 @@ describe("pair chat planning", () => {
     await handler!(
       { command: "start", prompt: "" } as vscode.ChatRequest,
       {} as vscode.ChatContext,
-      { markdown } as unknown as vscode.ChatResponseStream,
+      response,
       {
         isCancellationRequested: false,
         onCancellationRequested: () => ({ dispose: () => undefined }),
       } as vscode.CancellationToken,
     );
 
-    expect(markdown).toHaveBeenCalledWith(
-      formatChatResponseForDisplay(escapeMarkdownText(message)),
-    );
+    expect(response.textValues).toEqual([
+      formatChatResponseForDisplay(message),
+    ]);
+    expect(response.markdownValues).toEqual([]);
   });
 
   it("bounds dynamic session-plan fields while preserving fixed Markdown", async () => {
@@ -922,8 +1037,9 @@ describe("pair chat planning", () => {
       controlNotice: undefined,
       configurationWarning: undefined,
     });
-    let handler: vscode.ChatRequestHandler | undefined;
-    const markdown = vi.fn();
+    let handler: PairChatRequestHandler | undefined;
+    const writes: Array<{ readonly kind: "markdown" | "text"; value: string }> =
+      [];
     registerPairChatParticipant(
       (_id, registeredHandler) => {
         handler = registeredHandler;
@@ -942,20 +1058,25 @@ describe("pair chat planning", () => {
     await handler!(
       { command: "session", prompt: "" } as vscode.ChatRequest,
       {} as vscode.ChatContext,
-      { markdown } as unknown as vscode.ChatResponseStream,
+      {
+        markdown: (value) => writes.push({ kind: "markdown", value }),
+        text: (value) => writes.push({ kind: "text", value }),
+      },
       {
         isCancellationRequested: false,
         onCancellationRequested: () => ({ dispose: () => undefined }),
       } as vscode.CancellationToken,
     );
 
-    const plan = buildPairChatPlan("session", context.snapshot());
-    if (plan.kind !== "message") {
-      throw new Error("Expected session message plan.");
-    }
-    expect(markdown).toHaveBeenCalledWith(
-      formatChatResponseForDisplay(plan.markdown),
-    );
+    expect(writes[0]).toEqual({ kind: "markdown", value: "**Goal:** " });
+    expect(writes[1]).toMatchObject({
+      kind: "text",
+      value: expect.stringMatching(/^Review\n界+$/u),
+    });
+    expect(writes.at(-1)).toEqual({ kind: "text", value: "…" });
+    const displayed = writes.map(({ value }) => value).join("");
+    expect([...displayed]).toHaveLength(PAIR_CHAT_RESPONSE_DISPLAY_LIMIT);
+    expect(displayed).not.toContain("\r");
   });
 
   it("resolves trace context from the latest evidence URI and range", async () => {
@@ -975,7 +1096,7 @@ describe("pair chat planning", () => {
       evidence,
       question: "Did you intend this dependency?",
     });
-    let handler: vscode.ChatRequestHandler | undefined;
+    let handler: PairChatRequestHandler | undefined;
     const forEvidence = vi.fn(async () => ({
       name: "loadRepository",
       kind: "Function",
@@ -1001,7 +1122,10 @@ describe("pair chat planning", () => {
     await handler!(
       { command: "trace", prompt: "" } as vscode.ChatRequest,
       {} as vscode.ChatContext,
-      { markdown: () => undefined } as unknown as vscode.ChatResponseStream,
+      {
+        markdown: () => undefined,
+        text: () => undefined,
+      },
       {
         isCancellationRequested: false,
         onCancellationRequested: () => ({ dispose: () => undefined }),
@@ -1050,7 +1174,7 @@ describe("pair chat planning", () => {
         },
       };
     });
-    let handler: vscode.ChatRequestHandler | undefined;
+    let handler: PairChatRequestHandler | undefined;
     const generate = vi.fn(async () => ({
       text: "stale trace",
       inputTokens: 1,
@@ -1074,7 +1198,10 @@ describe("pair chat planning", () => {
     const pendingTrace = handler!(
       { command: "trace", prompt: "" } as vscode.ChatRequest,
       {} as vscode.ChatContext,
-      { markdown: () => undefined } as unknown as vscode.ChatResponseStream,
+      {
+        markdown: () => undefined,
+        text: () => undefined,
+      },
       {
         isCancellationRequested: false,
         onCancellationRequested: () => ({ dispose: () => undefined }),
@@ -1144,8 +1271,9 @@ describe("pair chat planning", () => {
     }
     expect(plan.evidence.id).toBe(sensitiveIdEvidence.id);
 
-    let handler: vscode.ChatRequestHandler | undefined;
+    let handler: PairChatRequestHandler | undefined;
     const markdown = vi.fn();
+    const text = vi.fn();
     registerPairChatParticipant(
       (_id, registeredHandler) => {
         handler = registeredHandler;
@@ -1164,14 +1292,15 @@ describe("pair chat planning", () => {
     await handler!(
       { command: "why", prompt: "" } as vscode.ChatRequest,
       {} as vscode.ChatContext,
-      { markdown } as unknown as vscode.ChatResponseStream,
+      { markdown, text },
       {
         isCancellationRequested: false,
         onCancellationRequested: () => ({ dispose: () => undefined }),
       } as vscode.CancellationToken,
     );
 
-    expect(markdown).toHaveBeenCalledWith("current sanitized response");
+    expect(text).toHaveBeenCalledWith("current sanitized response");
+    expect(markdown).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -1211,8 +1340,8 @@ describe("pair chat planning", () => {
         evidence,
         question: "Did you intend this dependency?",
       });
-      let handler: vscode.ChatRequestHandler | undefined;
-      const markdown = vi.fn();
+      let handler: PairChatRequestHandler | undefined;
+      const response = new RecordingChatResponse();
       registerPairChatParticipant(
         (_id, registeredHandler) => {
           handler = registeredHandler;
@@ -1231,21 +1360,22 @@ describe("pair chat planning", () => {
       await handler!(
         { command: "why", prompt: "" } as vscode.ChatRequest,
         {} as vscode.ChatContext,
-        { markdown } as unknown as vscode.ChatResponseStream,
+        response,
         {
           isCancellationRequested: false,
           onCancellationRequested: () => ({ dispose: () => undefined }),
         } as vscode.CancellationToken,
       );
 
-      expect(markdown).toHaveBeenCalledWith(
+      expect(response.textValues).toEqual([
         formatChatResponseForDisplay(generatedText),
-      );
+      ]);
+      expect(response.markdownValues).toEqual([]);
     },
   );
 
   it.each(["why", "explain", "trace"] as const)(
-    "sanitizes remote /%s Markdown actions and HTML while preserving ordinary formatting and Unicode",
+    "renders remote /%s output only through the inert text sink",
     async (command) => {
       const context = new PairSharedContext({
         enabled: true,
@@ -1264,16 +1394,22 @@ describe("pair chat planning", () => {
         question: "Did you intend this dependency?",
       });
       const generatedText = [
-        "## 분석 **강조 😀**",
+        "ordinary Unicode: 분석 😀",
+        "nested URL: https://example.test/a(https://nested.example/path?q=1)",
+        "Unicode email: 사용자@예시.한국",
+        "`inline [link](https://inline.example)`",
         "```ts",
-        "const value = 1;",
+        "const value = '[code](https://code.example)';",
         "```",
         "[close](command:adaptivePair.stop)",
         "![open](vscode://file/workspace/secret.ts)",
+        "[payload](data:text/html,<svg/onload=alert(1)>)",
+        "[local](file:///workspace/secret.ts)",
+        "[one](https://one.example) and [two](https://two.example)",
         "<img src=x onerror=alert(1)>",
       ].join("\n");
-      let handler: vscode.ChatRequestHandler | undefined;
-      const markdown = vi.fn();
+      let handler: PairChatRequestHandler | undefined;
+      const response = new RecordingChatResponse();
       registerPairChatParticipant(
         (_id, registeredHandler) => {
           handler = registeredHandler;
@@ -1301,24 +1437,15 @@ describe("pair chat planning", () => {
       await handler!(
         { command, prompt: "" } as vscode.ChatRequest,
         {} as vscode.ChatContext,
-        { markdown } as unknown as vscode.ChatResponseStream,
+        response,
         {
           isCancellationRequested: false,
           onCancellationRequested: () => ({ dispose: () => undefined }),
         } as vscode.CancellationToken,
       );
 
-      expect(markdown).toHaveBeenCalledWith(
-        [
-          "## 분석 **강조 😀**",
-          "```ts",
-          "const value = 1;",
-          "```",
-          String.raw`\[close\](command：adaptivePair.stop)`,
-          String.raw`!\[open\](vscode：//file/workspace/secret.ts)`,
-          String.raw`\<img src=x onerror=alert(1)\>`,
-        ].join("\n"),
-      );
+      expect(response.textValues).toEqual([generatedText]);
+      expect(response.markdownValues).toEqual([]);
     },
   );
 
@@ -1349,7 +1476,7 @@ describe("pair chat planning", () => {
         inputTokens: number;
         outputTokens: number;
       }>();
-      let handler: vscode.ChatRequestHandler | undefined;
+      let handler: PairChatRequestHandler | undefined;
       const markdown = vi.fn();
       registerPairChatParticipant(
         (_id, registeredHandler) => {
@@ -1368,7 +1495,7 @@ describe("pair chat planning", () => {
       const pendingResponse = handler!(
         { command: "why", prompt: "" } as vscode.ChatRequest,
         {} as vscode.ChatContext,
-        { markdown } as unknown as vscode.ChatResponseStream,
+        { markdown } as unknown as PairChatResponse,
         {
           isCancellationRequested: false,
           onCancellationRequested: () => ({ dispose: () => undefined }),
@@ -1411,7 +1538,7 @@ describe("pair chat planning", () => {
       inputTokens: number;
       outputTokens: number;
     }>();
-    let handler: vscode.ChatRequestHandler | undefined;
+    let handler: PairChatRequestHandler | undefined;
     const markdown = vi.fn();
     registerPairChatParticipant(
       (_id, registeredHandler) => {
@@ -1427,7 +1554,7 @@ describe("pair chat planning", () => {
     const pendingResponse = handler!(
       { command: "why", prompt: "" } as vscode.ChatRequest,
       {} as vscode.ChatContext,
-      { markdown } as unknown as vscode.ChatResponseStream,
+      { markdown } as unknown as PairChatResponse,
       {
         isCancellationRequested: false,
         onCancellationRequested: () => ({ dispose: () => undefined }),
@@ -1470,7 +1597,7 @@ describe("pair chat planning", () => {
       kind: string;
       range: Evidence["range"];
     }>();
-    let handler: vscode.ChatRequestHandler | undefined;
+    let handler: PairChatRequestHandler | undefined;
     const generate = vi.fn(async () => ({
       text: "stale trace",
       inputTokens: 1,
@@ -1493,7 +1620,7 @@ describe("pair chat planning", () => {
     const pendingTrace = handler!(
       { command: "trace", prompt: "" } as vscode.ChatRequest,
       {} as vscode.ChatContext,
-      { markdown: vi.fn() } as unknown as vscode.ChatResponseStream,
+      { markdown: vi.fn() } as unknown as PairChatResponse,
       {
         isCancellationRequested: false,
         onCancellationRequested: () => ({ dispose: () => undefined }),
@@ -1535,7 +1662,7 @@ describe("pair chat planning", () => {
       inputTokens: number;
       outputTokens: number;
     }>();
-    let handler: vscode.ChatRequestHandler | undefined;
+    let handler: PairChatRequestHandler | undefined;
     const markdown = vi.fn();
     const registered = new Set<AbortController>();
     let providerSignal: AbortSignal | undefined;
@@ -1575,7 +1702,7 @@ describe("pair chat planning", () => {
     const pendingResponse = handler!(
       { command: "why", prompt: "" } as vscode.ChatRequest,
       {} as vscode.ChatContext,
-      { markdown } as unknown as vscode.ChatResponseStream,
+      { markdown } as unknown as PairChatResponse,
       {
         isCancellationRequested: false,
         onCancellationRequested: () => ({ dispose: () => undefined }),
@@ -1626,7 +1753,7 @@ describe("pair chat planning", () => {
       inputTokens: number;
       outputTokens: number;
     }>();
-    let handler: vscode.ChatRequestHandler | undefined;
+    let handler: PairChatRequestHandler | undefined;
     const markdown = vi.fn();
     const registered = new Set<AbortController>();
     let providerSignal: AbortSignal | undefined;
@@ -1666,7 +1793,7 @@ describe("pair chat planning", () => {
     const pendingResponse = handler!(
       { command: "why", prompt: "" } as vscode.ChatRequest,
       {} as vscode.ChatContext,
-      { markdown } as unknown as vscode.ChatResponseStream,
+      { markdown } as unknown as PairChatResponse,
       {
         isCancellationRequested: false,
         onCancellationRequested: () => ({ dispose: () => undefined }),
@@ -1718,9 +1845,10 @@ describe("pair chat planning", () => {
         evidence,
         question: "Did you intend this dependency?",
       });
-      let handler: vscode.ChatRequestHandler | undefined;
+      let handler: PairChatRequestHandler | undefined;
       const failure = new Error("must surface");
       failure.name = name;
+      const text = vi.fn();
       registerPairChatParticipant(
         (_id, registeredHandler) => {
           handler = registeredHandler;
@@ -1737,7 +1865,7 @@ describe("pair chat planning", () => {
       const result = await handler!(
         { command: "why", prompt: "" } as vscode.ChatRequest,
         {} as vscode.ChatContext,
-        { markdown: () => undefined } as unknown as vscode.ChatResponseStream,
+        { markdown: () => undefined, text },
         {
           isCancellationRequested: false,
           onCancellationRequested: () => ({ dispose: () => undefined }),
@@ -1746,9 +1874,12 @@ describe("pair chat planning", () => {
 
       expect(result).toEqual({
         errorDetails: {
-          message: "Adaptive Pair could not answer: must surface",
+          message: "Adaptive Pair could not answer.",
         },
       });
+      expect(text).toHaveBeenCalledWith(
+        "Adaptive Pair could not answer: must surface",
+      );
     },
   );
 
@@ -1771,7 +1902,8 @@ describe("pair chat planning", () => {
     });
     const errorMessage =
       `provider\r\nfailed\u0000${"x".repeat(PAIR_CHAT_RESPONSE_DISPLAY_LIMIT)}`;
-    let handler: vscode.ChatRequestHandler | undefined;
+    let handler: PairChatRequestHandler | undefined;
+    const text = vi.fn();
     registerPairChatParticipant(
       (_id, registeredHandler) => {
         handler = registeredHandler;
@@ -1788,7 +1920,7 @@ describe("pair chat planning", () => {
     const result = await handler!(
       { command: "why", prompt: "" } as vscode.ChatRequest,
       {} as vscode.ChatContext,
-      { markdown: () => undefined } as unknown as vscode.ChatResponseStream,
+      { markdown: () => undefined, text },
       {
         isCancellationRequested: false,
         onCancellationRequested: () => ({ dispose: () => undefined }),
@@ -1797,14 +1929,17 @@ describe("pair chat planning", () => {
 
     expect(result).toEqual({
       errorDetails: {
-        message: formatChatResponseForDisplay(
-          `Adaptive Pair could not answer: ${errorMessage}`,
-        ),
+        message: "Adaptive Pair could not answer.",
       },
     });
+    expect(text).toHaveBeenCalledWith(
+      formatChatResponseForDisplay(
+        `Adaptive Pair could not answer: ${errorMessage}`,
+      ),
+    );
   });
 
-  it("escapes malicious provider error detail without escaping the fixed error template", async () => {
+  it("renders malicious provider error detail through text and returns a fixed error result", async () => {
     const context = new PairSharedContext({
       enabled: true,
       active: true,
@@ -1827,7 +1962,9 @@ describe("pair chat planning", () => {
       "<script>alert(1)</script>",
       "``` **오류 😀**",
     ].join("\n");
-    let handler: vscode.ChatRequestHandler | undefined;
+    let handler: PairChatRequestHandler | undefined;
+    const markdown = vi.fn();
+    const text = vi.fn();
     registerPairChatParticipant(
       (_id, registeredHandler) => {
         handler = registeredHandler;
@@ -1844,7 +1981,7 @@ describe("pair chat planning", () => {
     const result = await handler!(
       { command: "why", prompt: "" } as vscode.ChatRequest,
       {} as vscode.ChatContext,
-      { markdown: () => undefined } as unknown as vscode.ChatResponseStream,
+      { markdown, text } as PairChatResponse,
       {
         isCancellationRequested: false,
         onCancellationRequested: () => ({ dispose: () => undefined }),
@@ -1853,13 +1990,12 @@ describe("pair chat planning", () => {
 
     expect(result).toEqual({
       errorDetails: {
-        message: [
-          String.raw`Adaptive Pair could not answer: \[retry\]\(command：adaptivePair\.start\)`,
-          String.raw`\!\[open\]\(vscode：\/\/file\/workspace\/secret\.ts\)`,
-          String.raw`\<script\>alert\(1\)\<\/script\>`,
-          String.raw`\`\`\` \*\*오류 😀\*\*`,
-        ].join("\n"),
+        message: "Adaptive Pair could not answer.",
       },
     });
+    expect(text).toHaveBeenCalledWith(
+      `Adaptive Pair could not answer: ${errorMessage}`,
+    );
+    expect(markdown).not.toHaveBeenCalled();
   });
 });

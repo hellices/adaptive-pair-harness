@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as vscode from "vscode";
 import type { PairConfig } from "../src/config/pairConfig";
-import { escapeMarkdownText } from "../src/core/chatMarkdownSafety";
 import {
   hashEvidenceIdentity,
   PairMemoryStore,
@@ -298,6 +297,7 @@ import {
   PairSharedContext,
   registerPairChatParticipant,
 } from "../src/vscode/pairChatParticipant";
+import type { PairChatRequestHandler } from "../src/vscode/pairChatParticipant";
 import { PairRuntime } from "../src/vscode/pairRuntime";
 import type {
   CopilotModelReference,
@@ -982,7 +982,7 @@ describe("PairRuntime lifecycle ownership", () => {
       evidence,
       "Original question",
     );
-    let handler: vscode.ChatRequestHandler | undefined;
+    let handler: PairChatRequestHandler | undefined;
     const markdown = vi.fn();
     registerPairChatParticipant(
       (_id, registeredHandler) => {
@@ -1002,7 +1002,7 @@ describe("PairRuntime lifecycle ownership", () => {
     const pendingResponse = handler!(
       { command: "why", prompt: "" } as vscode.ChatRequest,
       {} as vscode.ChatContext,
-      { markdown } as unknown as vscode.ChatResponseStream,
+      { markdown, text: () => undefined },
       {
         isCancellationRequested: false,
         onCancellationRequested: () => ({ dispose: () => undefined }),
@@ -2546,7 +2546,7 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
-  it("keeps malicious evidence inert in an unavailable Copilot local fallback", async () => {
+  it("returns unavailable Copilot fallback content as plain text for the Chat sink", async () => {
     const rawEvidence: Evidence = {
       ...evidence,
       id: "malicious-copilot-fallback",
@@ -2575,13 +2575,15 @@ describe("PairRuntime lifecycle ownership", () => {
     );
 
     expect(response.text).toContain(
-      String.raw`\!\[open\]\(command：adaptivePair\.stop\) \*\*제목 😀\*\*`,
+      "![open](command:adaptivePair.stop) **제목 😀**",
     );
     expect(response.text).toContain(
-      String.raw`\<script\>alert\(\'fallback\'\)\<\/script\>`,
+      "<script>alert('fallback')</script>",
     );
-    expect(response.text).not.toMatch(/(?:command|vscode):/iu);
-    expect(response.text).not.toMatch(/(?<!\\)<(?!!--)[a-z/]/iu);
+    expect(response.text).toContain(
+      "[open](vscode://file/workspace/secret.ts)",
+    );
+    expect(response.text).toContain("[start](command:adaptivePair.start)");
     expect(vscodeState.statusItems[0]?.text).toContain(
       "local-template fallback",
     );
@@ -3329,7 +3331,7 @@ describe("PairRuntime lifecycle ownership", () => {
         evidence,
         question: "Current question",
       });
-      let handler: vscode.ChatRequestHandler | undefined;
+      let handler: PairChatRequestHandler | undefined;
       registerPairChatParticipant(
         (_id, registeredHandler) => {
           handler = registeredHandler;
@@ -3342,7 +3344,7 @@ describe("PairRuntime lifecycle ownership", () => {
       const result = await handler!(
         { command: "why", prompt: "" } as vscode.ChatRequest,
         {} as vscode.ChatContext,
-        { markdown: () => undefined } as unknown as vscode.ChatResponseStream,
+        { markdown: () => undefined, text: () => undefined },
         {
           isCancellationRequested: false,
           onCancellationRequested: () => ({ dispose: () => undefined }),
@@ -3362,9 +3364,7 @@ describe("PairRuntime lifecycle ownership", () => {
       });
       expect(result).toEqual({
         errorDetails: {
-          message: `Adaptive Pair could not answer: ${escapeMarkdownText(
-            "vscode-copilot provider request timed out.",
-          )}`,
+          message: "Adaptive Pair could not answer.",
         },
       });
     } finally {
@@ -3936,8 +3936,9 @@ describe("PairRuntime lifecycle ownership", () => {
       evidence,
       question: "Current question",
     });
-    let handler: vscode.ChatRequestHandler | undefined;
+    let handler: PairChatRequestHandler | undefined;
     const markdown = vi.fn();
+    const text = vi.fn();
     registerPairChatParticipant(
       (_id, registeredHandler) => {
         handler = registeredHandler;
@@ -3950,14 +3951,15 @@ describe("PairRuntime lifecycle ownership", () => {
     await handler!(
       { command: "why", prompt: "" } as vscode.ChatRequest,
       {} as vscode.ChatContext,
-      { markdown } as unknown as vscode.ChatResponseStream,
+      { markdown, text },
       {
         isCancellationRequested: false,
         onCancellationRequested: () => ({ dispose: () => undefined }),
       } as vscode.CancellationToken,
     );
 
-    expect(markdown).toHaveBeenCalledWith("current provider response");
+    expect(text).toHaveBeenCalledWith("current provider response");
+    expect(markdown).not.toHaveBeenCalled();
     expect(shared.snapshot().session.remainingCalls).toBe(3);
     runtime.dispose();
   });
@@ -4253,7 +4255,7 @@ describe("PairRuntime lifecycle ownership", () => {
       evidence,
       question: "Stale question",
     });
-    let handler: vscode.ChatRequestHandler | undefined;
+    let handler: PairChatRequestHandler | undefined;
     const markdown = vi.fn();
     registerPairChatParticipant(
       (_id, registeredHandler) => {
@@ -4273,7 +4275,7 @@ describe("PairRuntime lifecycle ownership", () => {
     const pendingResponse = handler!(
       { command: "why", prompt: "" } as vscode.ChatRequest,
       {} as vscode.ChatContext,
-      { markdown } as unknown as vscode.ChatResponseStream,
+      { markdown, text: () => undefined },
       {
         isCancellationRequested: false,
         onCancellationRequested: () => ({ dispose: () => undefined }),

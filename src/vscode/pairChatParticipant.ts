@@ -5,16 +5,17 @@ import type {
   ModelResponse,
   ModelSymbolContext,
 } from "../core/modelRouter";
-import {
-  escapeMarkdownText,
-  sanitizeModelMarkdown,
-} from "../core/chatMarkdownSafety";
 import type { Evidence, PairRange } from "../core/types";
 import type {
   PairDisposable,
   PairSessionControlPort,
 } from "./pairRuntimeSupport";
-import { formatChatResponseForDisplay } from "./chatResponseDisplay";
+import {
+  formatChatResponseForDisplay,
+  formatChatResponsePartsForDisplay,
+} from "./chatResponseDisplay";
+import type { ChatResponseDisplayPart } from "./chatResponseDisplay";
+import type { PairChatResponse } from "./vsCodeChatResponse";
 
 export interface PairSessionSnapshot {
   readonly enabled: boolean;
@@ -299,7 +300,10 @@ const sameSessionSnapshot = (
   left.configurationWarning === right.configurationWarning;
 
 export type PairChatPlan =
-  | { readonly kind: "message"; readonly markdown: string }
+  | {
+      readonly kind: "message";
+      readonly parts: readonly ChatResponseDisplayPart[];
+    }
   | {
       readonly kind: "generate";
       readonly uri: string;
@@ -322,43 +326,65 @@ export const buildPairChatPlan = (
   if (!context.session.enabled) {
     return {
       kind: "message",
-      markdown:
-        "Adaptive Pair is disabled. Enable it before requesting navigator guidance.",
+      parts: [
+        {
+          kind: "markdown",
+          value:
+            "Adaptive Pair is disabled. Enable it before requesting navigator guidance.",
+        },
+      ],
     };
   }
 
   if (!context.session.active) {
     return {
       kind: "message",
-      markdown:
-        "Adaptive Pair is off. Run `@pair /start` or **Adaptive Pair: Start Pairing Session** first.",
+      parts: [
+        {
+          kind: "markdown",
+          value:
+            "Adaptive Pair is off. Run `@pair /start` or **Adaptive Pair: Start Pairing Session** first.",
+        },
+      ],
     };
   }
 
   if (command === "session") {
-    const sessionLines = [
-      `**Goal:** ${escapeMarkdownText(context.session.goal)}`,
-      `**Role:** ${escapeMarkdownText(context.session.role)} (you remain the driver)`,
-      `**Provider:** ${escapeMarkdownText(context.session.provider)}`,
-      `**Remaining budget:** ${context.session.remainingCalls} calls / ${context.session.remainingInputTokens} input tokens${
-        context.session.remainingOutputTokens === undefined
-          ? ""
-          : ` / ${context.session.remainingOutputTokens} output tokens`
-      }`,
+    const parts: ChatResponseDisplayPart[] = [
+      { kind: "markdown", value: "**Goal:** " },
+      { kind: "text", value: context.session.goal },
+      { kind: "markdown", value: "\n\n**Role:** " },
+      { kind: "text", value: context.session.role },
+      {
+        kind: "markdown",
+        value: " (you remain the driver)\n\n**Provider:** ",
+      },
+      { kind: "text", value: context.session.provider },
+      { kind: "markdown", value: "\n\n**Remaining budget:** " },
+      {
+        kind: "text",
+        value: `${context.session.remainingCalls} calls / ${context.session.remainingInputTokens} input tokens${
+          context.session.remainingOutputTokens === undefined
+            ? ""
+            : ` / ${context.session.remainingOutputTokens} output tokens`
+        }`,
+      },
     ];
     if (context.session.controlNotice !== undefined) {
-      sessionLines.push(
-        `**Coexistence:** ${escapeMarkdownText(context.session.controlNotice)}`,
+      parts.push(
+        { kind: "markdown", value: "\n\n**Coexistence:** " },
+        { kind: "text", value: context.session.controlNotice },
       );
     }
     if (context.session.configurationWarning !== undefined) {
-      sessionLines.push(
-        `**Configuration:** ${escapeMarkdownText(context.session.configurationWarning)}`,
+      parts.push(
+        { kind: "markdown", value: "\n\n**Configuration:** " },
+        { kind: "text", value: context.session.configurationWarning },
       );
     }
     return {
       kind: "message",
-      markdown: sessionLines.join("\n\n"),
+      parts,
     };
   }
 
@@ -366,15 +392,25 @@ export const buildPairChatPlan = (
   if (latest === undefined) {
     return {
       kind: "message",
-      markdown:
-        "No active evidence yet. Select code or run **Adaptive Pair: Review Current Block**.",
+      parts: [
+        {
+          kind: "markdown",
+          value:
+            "No active evidence yet. Select code or run **Adaptive Pair: Review Current Block**.",
+        },
+      ],
     };
   }
   if (command === "trace" && requestContext.symbol === undefined) {
     return {
       kind: "message",
-      markdown:
-        "No current symbol could be resolved through VS Code's document symbol providers.",
+      parts: [
+        {
+          kind: "markdown",
+          value:
+            "No current symbol could be resolved through VS Code's document symbol providers.",
+        },
+      ],
     };
   }
 
@@ -462,10 +498,17 @@ export interface PairChatParticipantOptions {
   readonly isOfficialCancellationError?: (error: unknown) => boolean;
 }
 
+export type PairChatRequestHandler = (
+  request: vscode.ChatRequest,
+  context: vscode.ChatContext,
+  response: PairChatResponse,
+  token: vscode.CancellationToken,
+) => vscode.ProviderResult<vscode.ChatResult>;
+
 export const registerPairChatParticipant = (
   register: (
     id: string,
-    handler: vscode.ChatRequestHandler,
+    handler: PairChatRequestHandler,
   ) => vscode.ChatParticipant,
   context: PairChatContextSource,
   generator: PairChatGenerator,
@@ -473,7 +516,7 @@ export const registerPairChatParticipant = (
 ): vscode.ChatParticipant => {
   const symbolContextProvider =
     options.symbolContextProvider ?? NO_SYMBOL_CONTEXT;
-  const handler: vscode.ChatRequestHandler = async (
+  const handler: PairChatRequestHandler = async (
     request,
     _chatContext,
     response,
@@ -505,11 +548,7 @@ export const registerPairChatParticipant = (
             ? await sessionControl.startSession()
             : sessionControl.stopSession();
         if (!abortController.signal.aborted) {
-          response.markdown(
-            formatChatResponseForDisplay(
-              escapeMarkdownText(result.message),
-            ),
-          );
+          response.text(formatChatResponseForDisplay(result.message));
         }
         return;
       }
@@ -577,7 +616,9 @@ export const registerPairChatParticipant = (
         ...(symbol === undefined ? {} : { symbol }),
       });
       if (plan.kind === "message") {
-        response.markdown(formatChatResponseForDisplay(plan.markdown));
+        for (const part of formatChatResponsePartsForDisplay(plan.parts)) {
+          response[part.kind](part.value);
+        }
         return;
       }
 
@@ -601,11 +642,7 @@ export const registerPairChatParticipant = (
       ) {
         return;
       }
-      response.markdown(
-        formatChatResponseForDisplay(
-          sanitizeModelMarkdown(generated.text),
-        ),
-      );
+      response.text(formatChatResponseForDisplay(generated.text));
     } catch (error: unknown) {
       if (
         abortController.signal.aborted ||
@@ -618,11 +655,14 @@ export const registerPairChatParticipant = (
       if (!(error instanceof Error)) {
         throw error;
       }
+      response.text(
+        formatChatResponseForDisplay(
+          `Adaptive Pair could not answer: ${error.message}`,
+        ),
+      );
       return {
         errorDetails: {
-          message: formatChatResponseForDisplay(
-            `Adaptive Pair could not answer: ${escapeMarkdownText(error.message)}`,
-          ),
+          message: "Adaptive Pair could not answer.",
         },
       };
     } finally {

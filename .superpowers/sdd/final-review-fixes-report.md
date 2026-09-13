@@ -3174,3 +3174,71 @@
 - A live VS Code Chat renderer was unavailable in this non-interactive
   environment. The exact sanitizer tests plus a Markdown-it linkify rendering
   check exercise the same documented backslash-escape behavior.
+
+---
+
+## Chat safe-text rendering architecture (2026-09-14)
+
+### Corrections implemented
+
+- Replaced direct `ChatResponseStream` use with an internal response abstraction
+  that has separate `markdown` and `text` methods.
+- The production adapter forwards only fixed extension-owned formatting through
+  `markdown`. Its `text` method creates a VS Code `MarkdownString`, calls
+  `appendText(value)`, and passes that object to `ChatResponseStream.markdown`.
+- Every provider response—including local template output, Copilot,
+  OpenAI-compatible output, and local fallback—now uses the text method.
+  Provider output is no longer parsed or transformed as Markdown.
+- Session-control results and dynamic provider-error details use the text
+  method. Error result metadata is fixed extension copy. Session status is
+  represented as typed parts so fixed labels remain Markdown while goal,
+  role, provider, budget, coexistence, and configuration values remain text.
+- Multi-part status output retains the shared 16,384-Unicode-code-point bound,
+  line-ending/control normalization, Unicode safety, and explicit truncation
+  ellipsis.
+- Removed `chatMarkdownSafety` and its URL/email/action-URI sanitizer. No
+  provider output path depends on Markdown pattern matching.
+- Updated README, configuration, and architecture documentation to describe
+  inert provider text and trusted extension formatting.
+
+### TDD evidence
+
+- RED: focused participant/model tests reported **9 expected failures** because
+  provider output, session results, and error details still used Markdown and
+  local template fields were pre-escaped.
+- RED: the production-adapter test failed because the safe VS Code adapter did
+  not exist.
+- GREEN: focused Chat/model/runtime tests passed **5 files, 175 tests**.
+- The regressions distinguish Markdown and text writes and cover nested URLs,
+  Unicode email addresses, inline and fenced code, images, `command:`,
+  `vscode:`, `data:`, and `file:` links, multiple links, ordinary Unicode,
+  normalized line breaks, code-point bounds, and local fallback output.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **20 files, 533 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 90.59%, branches 84.06%, functions 94.02%, lines 90.73%
+- `npm run package`: **PASS — 160 files, 4.37 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- Source, compiled-output, and VSIX sink scans: **PASS**
+  - generated output reaches the text abstraction;
+  - the packaged adapter contains `new MarkdownString().appendText(value)`;
+  - the retired sanitizer is absent from source, compiled output, and VSIX.
+- VSIX exclusion, production/public-doc and packaged-runtime secret scans,
+  runtime URL scan, repository metadata assertions, and `git diff --check`:
+  **PASS**
+
+### Self-review and residual concerns
+
+- Reviewed every Chat Markdown/text sink, provider and fallback route, dynamic
+  status/error field, multipart bound, adapter boundary, documentation change,
+  and packaged artifact. No remaining high-confidence security, correctness,
+  lifecycle, or packaging issue was found.
+- Live VS Code Chat rendering and live remote providers were unavailable in
+  this non-interactive environment. The adapter contract test verifies that raw
+  provider text reaches VS Code only through `MarkdownString.appendText`.

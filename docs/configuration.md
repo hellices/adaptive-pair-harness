@@ -176,24 +176,20 @@ and Unicode joiners are preserved. Truncated text reserves its final code point
 for an explicit `…`, so supplementary characters such as emoji are never
 split. Exact-boundary responses are unchanged.
 
-Extension-owned labels and layout remain trusted Markdown. Dynamic local
-template fields—including evidence metadata and references, symbol data,
-workspace/coexistence notices, configuration warnings, provider failures, and
-session results—are escaped as text before composition. Markdown punctuation,
-backslashes, inline/block HTML, links, images, and `command:`/`vscode:` action
-URI forms therefore cannot become active markup.
+Extension-owned guidance, labels, and layout remain trusted Markdown. Dynamic
+evidence, symbol, workspace/coexistence, configuration, provider-error, and
+session-result fields use a distinct text response method and are never
+interpolated into trusted Markdown.
 
-Remote model Markdown is supported with a narrower policy: headings, emphasis,
-fenced code, paragraphs, and line breaks remain available, while link/image
-delimiters and raw HTML are escaped and `command:`/`vscode:` action schemes are
-made non-actionable before rendering. This policy also applies when a provider
-response is displayed after routing; already escaped local fallback fields are
-not escaped a second time. GFM bare `http://`, `https://`, `www.`, and email
-autolinks are also made inert, including URL text that remains in an escaped
-link or image destination. The sanitizer backslash-escapes the URL colon,
-`www.` dot, or email `@`: CommonMark/GFM renders the escaped ASCII punctuation
-as its original readable character, but the source no longer contains the
-contiguous token required by the autolink scanner. The operation is idempotent.
+All provider output is untrusted plain text, including `local-template`,
+GitHub Copilot, OpenAI-compatible output, and local fallback. The production
+VS Code adapter creates a `MarkdownString`, calls `appendText(value)`, and only
+then passes that object to `ChatResponseStream.markdown`. The extension does not
+parse or selectively sanitize model Markdown. Headings, emphasis, inline and
+fenced code, images, nested or multiple links, Unicode email addresses, raw
+HTML, and `command:`, `vscode:`, `data:`, or `file:` link forms remain literal
+text and cannot become active markup. `appendText` retains readable Unicode and
+line breaks while applying VS Code's official text escaping.
 
 This display limit is independent of model limits. It does not increase or
 replace the 180-token remote output allowance, rolling token accounting, or

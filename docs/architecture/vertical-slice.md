@@ -261,6 +261,14 @@ and explicitly declines to fabricate deeper flow analysis. When symbol
 providers return nested or flat results in arbitrary order, the smallest range
 containing the evidence position is selected.
 
+The Chat boundary has separate trusted-Markdown and untrusted-text methods.
+Fixed extension guidance and layout use the former. Every provider response
+and each dynamic error, session, workspace, configuration, evidence, or symbol
+field uses the latter. The production adapter implements text writes with
+`new MarkdownString().appendText(value)` before calling the VS Code
+`ChatResponseStream.markdown` API, so model Markdown syntax is displayed as
+inert text rather than interpreted.
+
 Every runtime claim and evidence publication advances an opaque monotonic
 shared-context revision. Chat captures that revision before asynchronous symbol
 resolution or generation and verifies it afterward. The fence does not depend

@@ -25,6 +25,7 @@ import type {
   VsCodeLanguageModelApi,
   VsCodeRequestCancellation,
 } from "./vscode/vsCodeLanguageModelProvider";
+import { createVsCodeChatResponse } from "./vscode/vsCodeChatResponse";
 import { findCurrentSymbol } from "./vscode/symbolContext";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -119,7 +120,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
 
   const participant = registerPairChatParticipant(
-    (id, handler) => vscode.chat.createChatParticipant(id, handler),
+    (id, handler) =>
+      vscode.chat.createChatParticipant(
+        id,
+        (request, chatContext, response, token) =>
+          handler(
+            request,
+            chatContext,
+            createVsCodeChatResponse(response),
+            token,
+          ),
+      ),
     {
       captureRevisionFence: () => sharedContext.captureRevisionFence(),
       isRevisionFenceCurrent: (fence) =>

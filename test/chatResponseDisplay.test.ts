@@ -16,7 +16,7 @@ describe("Chat response display boundary", () => {
     );
   });
 
-  it("preserves Copilot Markdown and newlines while normalizing line endings and controls", () => {
+  it("preserves plain Unicode text and newlines while normalizing line endings and controls", () => {
     const response =
       `## 분석\r\n\u0000\r${"界😀".repeat(
         PAIR_CHAT_RESPONSE_DISPLAY_LIMIT,

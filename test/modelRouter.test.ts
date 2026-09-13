@@ -158,14 +158,14 @@ describe("model routing", () => {
     expect(why.text).toContain("Why it matters");
     expect(explain.text).toContain("Local explanation");
     expect(trace.text).toContain("loadRepository");
-    expect(trace.text).toContain(String.raw`4\:2\-8\:1`);
+    expect(trace.text).toContain("4:2-8:1");
     expect(trace.text).toContain("requires a model");
     expect(trace.text).not.toMatch(/flows? (?:to|through)/iu);
     expect(Math.max(why.text.length, explain.text.length, trace.text.length))
       .toBeLessThanOrEqual(1_000);
   });
 
-  it("renders malicious local /why, /explain, and /trace fields as inert Unicode text", async () => {
+  it("leaves local /why, /explain, and /trace responses as plain Unicode text for the Chat sink", async () => {
     const provider = new LocalTemplateProvider();
     const signal = new AbortController().signal;
     const maliciousEvidence: Evidence = {
@@ -208,28 +208,24 @@ describe("model routing", () => {
 
     expect(why.text).toContain("Why it matters:");
     expect(why.text).toContain(
-      String.raw`\# \[close\]\(command：adaptivePair\.stop\) \*\*제목 😀\*\*`,
+      "# [close](command:adaptivePair.stop) **제목 😀**",
     );
-    expect(why.text).toContain(String.raw`\`\`\`ts`);
+    expect(why.text).toContain("```ts");
     expect(explain.text).toContain("Local explanation:");
     expect(explain.text).toContain(
-      String.raw`\<script\>alert\(\'source\'\)\<\/script\>`,
+      "<script>alert('source')</script>",
     );
     expect(explain.text).toContain(
-      String.raw`References: \[reference\]\(command：adaptivePair\.start\), \!\[reference\]\(vscode：\/\/file\/workspace\/reference\.ts\)`,
+      "References: [reference](command:adaptivePair.start), ![reference](vscode://file/workspace/reference.ts)",
     );
     expect(trace.text).toContain("Local trace scope:");
     expect(trace.text).toContain(
-      String.raw`\[run\]\(command：adaptivePair\.stop\) 함수😀`,
+      "[run](command:adaptivePair.stop) 함수😀",
     );
     expect(trace.text).toContain(
-      String.raw`\*\*Function\*\*\<img src\=x\>`,
+      "**Function**<img src=x>",
     );
-    expect(trace.text).toContain(String.raw`4\:2\-8\:1`);
-    for (const response of [why.text, explain.text, trace.text]) {
-      expect(response).not.toMatch(/(?:command|vscode):/iu);
-      expect(response).not.toMatch(/(?<!\\)<(?!!--)[a-z/]/iu);
-    }
+    expect(trace.text).toContain("4:2-8:1");
   });
 
   it("router invokes the selected provider and forwards the abort signal", async () => {
