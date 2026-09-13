@@ -47,13 +47,36 @@ Unrelated schemes remain ignored.
 
 ### Evidence types
 
-- **New import dependency** — a newly introduced module import
+- **New static dependency** — a newly introduced ESM import, literal
+  `require("...")`, literal dynamic `import("...")`, named re-export, or star
+  re-export. Computed/non-literal calls are ignored, and repeated specifiers
+  are reported once at their first occurrence.
 - **Exported signature change** — a changed, added, or removed ESM/CommonJS
   function, function-valued variable, alias, default export, or exported class
   method signature
 - **Complexity growth** — a function or method whose branch count grows
   substantially
 - **Editor diagnostic** — an error or warning already surfaced by VS Code
+
+### Local evidence display bounds
+
+Before evidence is shared with `@pair` or rendered inline, dynamic UI text is
+collapsed to one line and truncated with `…`:
+
+| Field | Maximum |
+| --- | ---: |
+| Question or local response | 1,000 characters |
+| Title | 120 characters |
+| Detail | 500 characters |
+| Source | 120 characters |
+| Each reference | 240 characters |
+| References per evidence item | 8 |
+
+New-dependency identity and deduplication use the complete module specifier
+privately, while local detail/reference fields contain only its bounded useful
+prefix. Diagnostic identity hashes the complete URI, message, source, and code
+inputs; only bounded single-line message, source, and code prefixes enter
+`Evidence` or inline Markdown.
 
 ## Prerequisites
 
@@ -232,6 +255,9 @@ See the repository documentation for the full configuration reference:
   and local-resource detection. If any field contains known credential
   material or a local resource, the entire request stays local and that field
   becomes a fixed local-only notice rather than a partial redaction.
+- Normalized `cookie` and `setcookie` keys (including `Cookie` and
+  `Set-Cookie` headers) are credential material, so explicit text containing
+  them always takes the local-only path.
 - Local-resource detection covers exact `file://` and `vscode-remote://`
   schemes (including directory URIs), recognized or multi-segment POSIX
   paths, Windows drive paths, and UNC paths. It does not treat custom schemes,
@@ -338,7 +364,7 @@ This release is intentionally narrow:
 - navigator-only; no code edits or command execution
 - TypeScript/JavaScript only
 - one active inline preview thread per file URI
-- evidence is limited to import changes, exported signature changes,
+- evidence is limited to static dependency changes, exported signature changes,
   complexity growth, and editor diagnostics
 - remote prompts are sanitized, bounded summaries rather than full-code review
 - coexistence detection is informational only

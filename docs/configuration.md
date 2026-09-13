@@ -179,11 +179,34 @@ availability, budget, or sensitive content. Explicit Chat text is checked
 before bounding for HTTP
 and non-HTTP DSN userinfo, sensitive query parameters, bearer/JWT and common
 token formats, complete Basic authorization payloads, credential assignments,
-and long secret-like values. It is also checked for exact `file://` and
+normalized `cookie`/`setcookie` keys and headers, and long secret-like values.
+Thus explicit `Cookie` or `Set-Cookie` text always stays local and never enters
+a remote payload. Explicit text is also checked for exact `file://` and
 `vscode-remote://` schemes, recognized or multi-segment POSIX paths, Windows
 drive paths, and UNC paths. If any checked field is unsafe, the complete request
 stays local and the unsafe field is replaced with a fixed local-only notice;
 partially redacted content is never sent.
+
+### Local evidence presentation bounds
+
+All dynamic evidence UI values are normalized to one line and use an ellipsis
+when truncated. The centralized limits are:
+
+| Field | Maximum |
+| --- | ---: |
+| Question or local response | 1,000 characters |
+| Title | 120 characters |
+| Detail | 500 characters |
+| Source | 120 characters |
+| Each reference | 240 characters |
+| References per evidence item | 8 |
+
+Static dependency evidence recognizes ESM imports, literal
+`require("...")`, literal dynamic `import("...")`, named re-exports, and star
+re-exports. Computed/non-literal expressions are ignored. Identical complete
+specifiers are deduplicated in source order. The complete specifier remains
+private to comparison and hashed identity; only bounded single-line prefixes
+appear in local detail/reference fields.
 
 ### Diagnostic projection
 
@@ -193,6 +216,10 @@ Diagnostics use fixed extension-owned metadata before remote use:
 - detail becomes `VS Code reported a diagnostic at the evidence range.`;
 - source becomes `vscode-diagnostics`;
 - raw diagnostic messages, sources, codes, and references are omitted.
+
+Locally, the complete raw diagnostic inputs feed stable hashes, while only the
+bounded single-line message, source, and code prefixes enter `Evidence` and
+inline Markdown.
 
 ### Data intentionally not sent
 

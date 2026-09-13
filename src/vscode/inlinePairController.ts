@@ -1,4 +1,8 @@
 import type * as vscode from "vscode";
+import {
+  boundEvidenceMessage,
+  normalizeEvidenceForUi,
+} from "../core/evidencePresentation";
 import type { Evidence } from "../core/types";
 import { runCleanupSteps } from "./pairRuntimeSupport";
 
@@ -7,23 +11,25 @@ export const buildInlineCommentMarkdown = (
   question: string,
   evidence: Evidence,
 ): vscode.MarkdownString => {
+  const boundedQuestion = boundEvidenceMessage(question);
+  const boundedEvidence = normalizeEvidenceForUi(evidence);
   const confidence = Math.round(
-    Math.min(1, Math.max(0, evidence.confidence)) * 100,
+    Math.min(1, Math.max(0, boundedEvidence.confidence)) * 100,
   );
   const markdown = createMarkdown("");
-  markdown.appendText(question);
+  markdown.appendText(boundedQuestion);
   markdown.appendMarkdown("\n\n**Finding:** ");
-  markdown.appendText(evidence.title);
+  markdown.appendText(boundedEvidence.title);
   markdown.appendMarkdown("\n\n");
-  markdown.appendText(evidence.detail);
+  markdown.appendText(boundedEvidence.detail);
   markdown.appendMarkdown("\n\n**Evidence:** ");
-  markdown.appendText(evidence.source);
+  markdown.appendText(boundedEvidence.source);
   markdown.appendMarkdown(` · confidence ${confidence}%`);
   markdown.appendMarkdown("\n\n**References:**\n");
-  if (evidence.references.length === 0) {
+  if (boundedEvidence.references.length === 0) {
     markdown.appendMarkdown("- None");
   } else {
-    for (const [index, reference] of evidence.references.entries()) {
+    for (const [index, reference] of boundedEvidence.references.entries()) {
       if (index > 0) {
         markdown.appendMarkdown("\n");
       }

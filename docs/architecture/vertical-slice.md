@@ -69,7 +69,9 @@ The semantic analyzer is intentionally narrow.
 
 ### Supported evidence kinds
 
-- new dependency imports
+- new static dependencies from ESM imports, literal `require("...")`, literal
+  dynamic `import("...")`, and named/star re-exports; computed expressions are
+  ignored and complete specifiers are deduplicated in source order
 - ESM and CommonJS exported API additions, signature changes, and removals,
   including aliases, default exports, function-valued variables, and
   TypeScript-checker-resolved call signatures for callable identifier chains
@@ -105,8 +107,8 @@ The analyzer does not currently:
    - `active`: 0.55
 2. **Cooldown**: the same privacy-safe, module-qualified evidence ID is not
    resurfaced for 30 seconds after a successful render. Stop clears cooldown.
-   Diagnostic identities use a URI hash, complete range, source/code hash, and
-   bounded message hash, so list reordering does not bypass cooldown or a
+   Diagnostic identities use a URI hash, complete range, full source/code hash,
+   and full message hash, so list reordering does not bypass cooldown or a
    persisted dismissal.
 3. **Budget**: remote-capable styles reserve input and output capacity inside a
    rolling 10-minute window. Budget state is hoisted across runtime rebuilds,
@@ -157,7 +159,9 @@ or an exact `file://`/`vscode-remote://` URI, recognized or multi-segment POSIX
 path, Windows drive path, or UNC path keeps the complete request local. The
 unsafe field is replaced with a fixed local-only notice rather than partially
 redacted for remote use. Custom schemes, closing markup, package names, and
-ordinary prose are not classified as local resources.
+ordinary prose are not classified as local resources. Normalized `cookie` and
+`setcookie` keys and headers are credential material and force the local-only
+path.
 
 ### Provider behavior
 
@@ -199,6 +203,14 @@ Adaptive Pair owns one preview comment thread per file URI.
 - threads are preview-only (`canReply = false`) and direct follow-up to `@pair`.
 - dynamic question, title, detail, source, and reference values use
   `MarkdownString.appendText`; only fixed extension copy is Markdown.
+- those dynamic values are normalized to one line and bounded centrally to
+  1,000 characters for questions/local responses, 120 for titles, 500 for
+  details, 120 for sources, and 240 for each of at most eight references;
+  truncation uses `…`.
+
+New-dependency evidence keeps complete specifiers only for private
+deduplication and hashed identity. Diagnostic evidence likewise hashes complete
+raw URI/message/source/code inputs before bounded display fields are created.
 
 The inline message always reminds the user that Adaptive Pair has **not changed
 code**.

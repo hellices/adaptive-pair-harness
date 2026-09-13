@@ -1802,3 +1802,82 @@
 - No high-confidence correctness, security, or packaging concerns remain.
   Unresolvable accessor names intentionally inherit the nearest resolvable
   enclosing scope rather than inventing an unstable accessor identity.
+
+---
+
+## Latest Copilot evidence-boundary fixes (2026-09-13)
+
+### Corrections implemented
+
+- Added normalized `cookie` and `setcookie` sensitive-key roots. Explicit
+  `Cookie` and `Set-Cookie` text now marks the complete request local-only;
+  OpenAI-compatible and Copilot payload builders cannot contain that text.
+- Centralized local evidence presentation limits and single-line ellipsis
+  normalization: 1,000 characters for questions/local responses, 120 for
+  titles, 500 for details, 120 for sources, 240 per reference, and eight
+  references per evidence item.
+- Kept complete dependency specifiers only as private comparison/hash inputs.
+  New-dependency detail and reference values expose bounded useful prefixes.
+- Expanded dependency discovery to ESM imports, literal `require("...")`,
+  literal dynamic `import("...")`, and named/star re-exports. Non-literal
+  expressions are ignored, and repeated complete specifiers use the first
+  source occurrence deterministically.
+- Added a diagnostic evidence builder that hashes the complete URI, range,
+  source, code, and message while putting only bounded single-line message,
+  source, and code prefixes into local evidence.
+- Applied the same centralized bounds at inline and shared-context publication
+  boundaries without changing evidence identity or the fixed remote whitelist
+  projection.
+- Documented supported dependency forms, local display limits, full-input
+  identity behavior, and cookie handling in the README, configuration
+  reference, and architecture guide.
+
+### TDD evidence
+
+- Privacy RED/GREEN covered exact `Cookie`/`Set-Cookie` headers, normalized
+  cookie key variants, both remote prompt builders, and runtime no-dispatch
+  fallback.
+- Semantic RED/GREEN covered four new literal dependency forms, deterministic
+  cross-form deduplication, huge/multiline specifiers, and distinct full-input
+  hashes. Computed `require` and dynamic-import expressions remain ignored.
+- Diagnostic/runtime RED/GREEN covered huge multiline messages, sources, and
+  codes; bounded local evidence; full-input stable IDs; and omission of
+  diagnostic targets.
+- Inline RED/GREEN covered every dynamic Markdown field plus the reference
+  count boundary.
+- Self-review found that inline normalization alone left a generic raw
+  evidence/question pair in shared context. A focused regression failed at
+  2,116 question characters, then passed after the publication boundary reused
+  the centralized normalizer.
+- Final focused semantic/privacy/runtime/inline run: **5 files, 272 tests
+  passed**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 464 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 89.73%, branches 82.98%, functions 92.88%, lines 89.85%
+- `npm run package`: **PASS — 158 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX inclusion/exclusion scan: **PASS**
+  - compiled evidence presentation module and public docs are present;
+  - source, tests, coverage, private review material, source maps, workspace,
+    and CI files are absent.
+- Production and packaged fixture-secret scans: **PASS**
+- Production URL and packaged metadata scans: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review covered privacy classification, remote projection,
+  source-order traversal, non-literal exclusions, full-input identity,
+  truncation, shared context, inline escaping, documentation, and packaging.
+  No remaining high-confidence correctness, privacy, or payload-size concern
+  was found.
+- Live VS Code diagnostics and remote model services were unavailable in this
+  non-interactive environment. Pure diagnostic builders, VS Code test doubles,
+  and injected OpenAI-compatible/Copilot boundaries cover the changed paths.

@@ -5,6 +5,10 @@ import {
 } from "../config/pairConfig";
 import { discoverHarnessSignals } from "../core/coexistence";
 import { EditEpisodeAggregator } from "../core/editEpisodeAggregator";
+import {
+  boundEvidenceMessage,
+  normalizeEvidenceForUi,
+} from "../core/evidencePresentation";
 import { InterventionPolicy } from "../core/interventionPolicy";
 import {
   hashEvidenceIdentity,
@@ -53,12 +57,11 @@ import {
   PairLifecycleFence,
   PairRequestRegistry,
   PairSessionLifecycle,
+  buildDiagnosticEvidence,
   buildPairStatusText,
-  diagnosticCodeReference,
   selectManualEvidence,
   repositoryIdentityForDocument,
   runCleanupSteps,
-  stableDiagnosticEvidenceId,
   shouldSuppressCancellation,
 } from "./pairRuntimeSupport";
 import type {
@@ -1142,17 +1145,19 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     evidence: Evidence,
     question: string,
   ): void {
+    const boundedEvidence = normalizeEvidenceForUi(evidence);
+    const boundedQuestion = boundEvidenceMessage(question);
     this.inlineController.render(
       document.uri,
-      safeRange(document, evidence.range),
-      question,
-      evidence,
+      safeRange(document, boundedEvidence.range),
+      boundedQuestion,
+      boundedEvidence,
     );
-    this.policy.markRendered(evidence.id, Date.now());
+    this.policy.markRendered(boundedEvidence.id, Date.now());
     this.options.sharedContext.publishEvidence({
       uri: document.uri.toString(),
-      evidence,
-      question,
+      evidence: boundedEvidence,
+      question: boundedQuestion,
     }, this.runtimeRevision);
   }
 
@@ -1427,28 +1432,19 @@ const diagnosticEvidenceForDocument = (
     .slice(0, 20)
     .map((diagnostic) => {
       const range = toPairRange(diagnostic.range);
-      const source = diagnostic.source ?? "vscode-diagnostics";
-      const references = diagnosticCodeReference(diagnostic.code);
-      return {
-        id: stableDiagnosticEvidenceId(
-          document.uri.toString(),
-          range,
-          source,
-          references,
-          diagnostic.message,
-        ),
-        kind: "diagnostic",
-        severity: diagnosticSeverity(diagnostic.severity),
-        title: "Editor diagnostic",
-        detail: diagnostic.message,
-        source,
+      const severity = diagnosticSeverity(diagnostic.severity);
+      return buildDiagnosticEvidence({
+        uri: document.uri.toString(),
+        range,
+        message: diagnostic.message,
+        source: diagnostic.source,
+        code: diagnostic.code,
+        severity,
         confidence:
           diagnostic.severity === vscode.DiagnosticSeverity.Error
             ? 0.97
             : 0.82,
-        range,
-        references,
-      };
+      });
     });
 
 const diagnosticSeverity = (

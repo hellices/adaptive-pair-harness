@@ -238,6 +238,89 @@ describe("Pair runtime support", () => {
     expect(diagnosticCodeReference(undefined)).toEqual([]);
   });
 
+  it("builds bounded single-line diagnostic evidence while hashing full inputs", async () => {
+    const module = (await import("../src/vscode/pairRuntimeSupport")) as Record<
+      string,
+      unknown
+    >;
+    expect(module.buildDiagnosticEvidence).toBeTypeOf("function");
+    const buildDiagnosticEvidence = module.buildDiagnosticEvidence as (input: {
+      readonly uri: string;
+      readonly range: PairRange;
+      readonly message: string;
+      readonly severity: Evidence["severity"];
+      readonly confidence: number;
+      readonly source?: string;
+      readonly code?:
+        | string
+        | number
+        | { readonly value: string | number; readonly target: unknown };
+    }) => Evidence;
+    const stableDiagnosticEvidenceId =
+      module.stableDiagnosticEvidenceId as (
+        uri: string,
+        range: PairRange,
+        source: string,
+        codeReferences: readonly string[],
+        message: string,
+      ) => string;
+    const range = {
+      start: { line: 1, character: 2 },
+      end: { line: 3, character: 4 },
+    };
+    const message = `Useful diagnostic prefix\n${"message".repeat(200)}`;
+    const source = `typescript\n${"source".repeat(100)}`;
+    const code = `TS2322\n${"code".repeat(100)}`;
+
+    const bounded = buildDiagnosticEvidence({
+      uri: "file:///workspace/private.ts",
+      range,
+      message,
+      severity: "error",
+      confidence: 0.97,
+      source,
+      code: {
+        value: code,
+        target: "https://third-party.example/full-diagnostic",
+      },
+    });
+
+    expect(bounded.id).toBe(
+      stableDiagnosticEvidenceId(
+        "file:///workspace/private.ts",
+        range,
+        source,
+        [code],
+        message,
+      ),
+    );
+    expect(bounded.detail).toMatch(/^Useful diagnostic prefix /u);
+    expect(bounded.detail.length).toBeLessThanOrEqual(500);
+    expect(bounded.source.length).toBeLessThanOrEqual(120);
+    expect(bounded.references[0]?.length).toBeLessThanOrEqual(240);
+    for (const field of [
+      bounded.detail,
+      bounded.source,
+      ...bounded.references,
+    ]) {
+      expect(field).not.toMatch(/[\r\n]/u);
+      expect(field.endsWith("…")).toBe(true);
+    }
+    expect(JSON.stringify(bounded)).not.toContain("third-party.example");
+
+    const differentSuffix = buildDiagnosticEvidence({
+      uri: "file:///workspace/private.ts",
+      range,
+      message: `${message}different-private-suffix`,
+      severity: "error",
+      confidence: 0.97,
+      source,
+      code,
+    });
+    expect(differentSuffix.detail).toBe(bounded.detail);
+    expect(differentSuffix.id).not.toBe(bounded.id);
+  });
+
   it("uses the workspace folder that owns each document as repository identity", async () => {
     const { repositoryIdentityForDocument } = await import(
       "../src/vscode/pairRuntimeSupport"

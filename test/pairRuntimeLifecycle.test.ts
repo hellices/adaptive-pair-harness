@@ -799,6 +799,66 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
+  it("bounds dynamic evidence before publishing shared UI context", async () => {
+    const uri = "file:///workspace/src/bounded.ts";
+    const currentDocument = document(uri, "export const value = 1;", 1);
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    const huge = (prefix: string): string =>
+      `${prefix}\n${"payload".repeat(300)}`;
+    const rawEvidence: Evidence = {
+      ...evidence,
+      id: "external:private-full-identity",
+      kind: "external-harness",
+      title: huge("Title prefix"),
+      detail: huge("Detail prefix"),
+      source: huge("Source prefix"),
+      references: Array.from({ length: 12 }, (_, index) =>
+        huge(`Reference ${index}`),
+      ),
+    };
+
+    (
+      runtime as unknown as {
+        renderIntervention(
+          document: vscode.TextDocument,
+          evidence: Evidence,
+          question: string,
+        ): void;
+      }
+    ).renderIntervention(
+      currentDocument as unknown as vscode.TextDocument,
+      rawEvidence,
+      huge("Question prefix"),
+    );
+
+    const latest = shared.snapshot().latest;
+    expect(latest?.evidence.id).toBe(rawEvidence.id);
+    expect(latest?.question.length).toBeLessThanOrEqual(1_000);
+    expect(latest?.evidence.title.length).toBeLessThanOrEqual(120);
+    expect(latest?.evidence.detail.length).toBeLessThanOrEqual(500);
+    expect(latest?.evidence.source.length).toBeLessThanOrEqual(120);
+    expect(latest?.evidence.references).toHaveLength(8);
+    for (const field of [
+      latest?.question,
+      latest?.evidence.title,
+      latest?.evidence.detail,
+      latest?.evidence.source,
+      ...(latest?.evidence.references ?? []),
+    ]) {
+      expect(field).not.toMatch(/[\r\n]/u);
+      expect(field?.endsWith("…")).toBe(true);
+    }
+    runtime.dispose();
+  });
+
   it("keeps dismissed diagnostic evidence out of manual review", async () => {
     const uri = "file:///workspace/src/pair.ts";
     const currentDocument = document(uri, "export const value = 1;", 1);
@@ -918,6 +978,65 @@ describe("PairRuntime lifecycle ownership", () => {
 
     expect(vscodeState.commentThreads).toHaveLength(1);
     expect(shared.snapshot().latest).toBeUndefined();
+    runtime.dispose();
+  });
+
+  it("publishes bounded multiline diagnostic evidence with a full-input identity", async () => {
+    const uri = "file:///workspace/src/diagnostic.ts";
+    const currentDocument = document(uri, "export const value = 1;", 1);
+    const range = {
+      start: { line: 0, character: 0 },
+      end: { line: 0, character: 6 },
+    };
+    const message = `Useful diagnostic prefix\n${"message".repeat(200)}`;
+    const source = `typescript\n${"source".repeat(100)}`;
+    const code = `TS2322\n${"code".repeat(100)}`;
+    vscodeState.textDocuments = [currentDocument];
+    vscodeState.activeTextEditor = {
+      document: currentDocument,
+      selection: {
+        isEmpty: false,
+        active: range.start,
+        start: range.start,
+        end: range.end,
+      },
+    };
+    vscodeState.diagnostics.push({
+      range,
+      message,
+      severity: 0,
+      source,
+      code,
+    });
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+
+    await runtime.reviewCurrentBlock();
+
+    const published = shared.snapshot().latest?.evidence;
+    expect(published).toBeDefined();
+    expect(published?.id).toBe(
+      stableDiagnosticEvidenceId(uri, range, source, [code], message),
+    );
+    expect(published?.detail.length).toBeLessThanOrEqual(500);
+    expect(published?.source.length).toBeLessThanOrEqual(120);
+    expect(published?.references[0]?.length).toBeLessThanOrEqual(240);
+    for (const field of [
+      published?.detail,
+      published?.source,
+      published?.references[0],
+    ]) {
+      expect(field).not.toMatch(/[\r\n]/u);
+      expect(field?.endsWith("…")).toBe(true);
+    }
+    expect(vscodeState.commentThreads).toHaveLength(1);
     runtime.dispose();
   });
 
@@ -1471,6 +1590,11 @@ describe("PairRuntime lifecycle ownership", () => {
       "Explain password='correct horse battery staple' without sharing it.",
     ],
     ["local resource", "Explain file:///Users/alice/private/notes/"],
+    ["Cookie header", "Cookie: session=exact-cookie-value"],
+    [
+      "Set-Cookie header",
+      "Set-Cookie: session=exact-set-cookie-value; HttpOnly",
+    ],
   ])("keeps an explicit Chat prompt containing a %s local", async (_label, userPrompt) => {
     const fetchImplementation = vi.fn(async () =>
       new Response(

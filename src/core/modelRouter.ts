@@ -1,5 +1,6 @@
 import type { Evidence, PairRange } from "./types";
 import { requireSafeRemoteEndpoint } from "./remoteEndpoint";
+import { boundEvidenceMessage } from "./evidencePresentation";
 
 export interface ModelSymbolContext {
   readonly name: string;
@@ -294,22 +295,19 @@ export class OpenAICompatibleProvider implements ModelProvider {
 }
 
 export const createLocalInterventionQuestion = (evidence: Evidence): string =>
-  boundSingleLine(
+  boundEvidenceMessage(
     `${evidence.title}: ${evidence.detail} Did you intend this change?`,
-    1_000,
   );
 
 const createLocalResponse = (request: ModelRequest): string => {
   switch (request.purpose ?? "intervention") {
     case "why":
-      return boundSingleLine(
+      return boundEvidenceMessage(
         `Why it matters: ${request.evidence.title}. ${request.evidence.detail} Check whether this ${request.evidence.severity} change matches the intended contract and dependency boundary.`,
-        1_000,
       );
     case "explain":
-      return boundSingleLine(
+      return boundEvidenceMessage(
         `Local explanation: ${request.evidence.title}. ${request.evidence.detail} This summary is based on ${request.evidence.source} evidence at ${formatRange(request.evidence.range)}; no deeper model analysis was performed.`,
-        1_000,
       );
     case "trace": {
       const symbol = request.context?.symbol;
@@ -317,9 +315,8 @@ const createLocalResponse = (request: ModelRequest): string => {
         symbol === undefined
           ? `the evidence range ${formatRange(request.evidence.range)}`
           : `${symbol.name} (${symbol.kind}) at ${formatRange(symbol.range)}`;
-      return boundSingleLine(
+      return boundEvidenceMessage(
         `Local trace scope: ${scope}. Adaptive Pair resolved only this symbol and range. A deeper control/data-flow trace requires a model; local mode has not performed that analysis.`,
-        1_000,
       );
     }
     case "intervention":
@@ -581,6 +578,8 @@ const SENSITIVE_KEY_ROOTS = [
   "password",
   "passwd",
   "privatekey",
+  "setcookie",
+  "cookie",
   "secret",
   "sig",
 ] as const;

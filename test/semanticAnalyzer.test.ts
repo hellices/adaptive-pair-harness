@@ -239,6 +239,93 @@ describe("TypeScriptSemanticAnalyzer", () => {
     );
   });
 
+  it.each([
+    ["CommonJS require", 'const dependency = require("./required");', "./required"],
+    [
+      "dynamic import",
+      'const dependency = import("./dynamic");',
+      "./dynamic",
+    ],
+    [
+      "named re-export",
+      'export { dependency } from "./named-export";',
+      "./named-export",
+    ],
+    ["star re-export", 'export * from "./star-export";', "./star-export"],
+  ])(
+    "reports a newly introduced literal %s dependency",
+    (_label, declaration, specifier) => {
+      const evidence = analyzeEvidence(
+        episode("export const value = 1;", `${declaration}\nexport const value = 1;`),
+      );
+      const dependencies = evidence.filter(
+        (item) => item.kind === "new-dependency",
+      );
+
+      expect(dependencies).toEqual([
+        expect.objectContaining({
+          kind: "new-dependency",
+          references: [specifier],
+        }),
+      ]);
+    },
+  );
+
+  it("ignores computed require and dynamic import expressions", () => {
+    const current = [
+      'const moduleName = "./computed";',
+      "const required = require(moduleName);",
+      "const imported = import(`./${moduleName}`);",
+      "export const value = [required, imported];",
+    ].join("\n");
+
+    expect(analyzeEvidence(episode("export const value = 1;", current))).toEqual(
+      [],
+    );
+  });
+
+  it("deduplicates repeated dependency forms by full specifier in source order", () => {
+    const current = [
+      'const required = require("./shared");',
+      'const imported = import("./shared");',
+      'export * from "./shared";',
+    ].join("\n");
+    const evidence = analyzeEvidence(episode("", current));
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]).toMatchObject({
+      kind: "new-dependency",
+      references: ["./shared"],
+      range: {
+        start: { line: 0 },
+        end: { line: 0 },
+      },
+    });
+  });
+
+  it("bounds huge multiline dependency evidence while hashing the full specifier", () => {
+    const sharedPrefix = `@scope/${"segment".repeat(100)}`;
+    const firstSpecifier = `${sharedPrefix}\nfirst-private-suffix`;
+    const secondSpecifier = `${sharedPrefix}\nsecond-private-suffix`;
+    const first = analyzeEvidence(
+      episode("", `import ${JSON.stringify(firstSpecifier)};`),
+    )[0];
+    const second = analyzeEvidence(
+      episode("", `import ${JSON.stringify(secondSpecifier)};`),
+    )[0];
+
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    expect(first?.id).not.toBe(second?.id);
+    expect(first?.detail.length).toBeLessThanOrEqual(500);
+    expect(first?.references[0]?.length).toBeLessThanOrEqual(240);
+    expect(first?.detail).not.toMatch(/[\r\n]/u);
+    expect(first?.references[0]).not.toMatch(/[\r\n]/u);
+    expect(first?.detail.endsWith("…")).toBe(true);
+    expect(first?.references[0]?.endsWith("…")).toBe(true);
+    expect(JSON.stringify(first)).not.toContain("first-private-suffix");
+  });
+
   it("reports a changed exported function signature", () => {
     const evidence = analyzeEvidence(
       episode(

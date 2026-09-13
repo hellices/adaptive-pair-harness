@@ -1,4 +1,9 @@
 import { createHash } from "node:crypto";
+import {
+  boundEvidenceDetail,
+  boundEvidenceReference,
+  boundEvidenceSource,
+} from "../core/evidencePresentation";
 import type { Evidence, PairRange } from "../core/types";
 import type { SemanticAnalysisResult } from "../core/semanticAnalyzer";
 
@@ -640,6 +645,44 @@ export const diagnosticCodeReference = (
     return [];
   }
   return [String(typeof code === "object" ? code.value : code)];
+};
+
+export interface DiagnosticEvidenceInput {
+  readonly uri: string;
+  readonly range: PairRange;
+  readonly message: string;
+  readonly severity: Evidence["severity"];
+  readonly confidence: number;
+  readonly source?: string | undefined;
+  readonly code?:
+    | string
+    | number
+    | { readonly value: string | number; readonly target: unknown }
+    | undefined;
+}
+
+export const buildDiagnosticEvidence = (
+  input: DiagnosticEvidenceInput,
+): Evidence => {
+  const source = input.source ?? "vscode-diagnostics";
+  const codeReferences = diagnosticCodeReference(input.code);
+  return {
+    id: stableDiagnosticEvidenceId(
+      input.uri,
+      input.range,
+      source,
+      codeReferences,
+      input.message,
+    ),
+    kind: "diagnostic",
+    severity: input.severity,
+    title: "Editor diagnostic",
+    detail: boundEvidenceDetail(input.message),
+    source: boundEvidenceSource(source),
+    confidence: input.confidence,
+    range: input.range,
+    references: codeReferences.map(boundEvidenceReference),
+  };
 };
 
 export const stableDiagnosticEvidenceId = (

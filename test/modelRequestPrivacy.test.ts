@@ -54,6 +54,9 @@ const sensitiveKeyVariants = [
   "userPasswd",
   "auth_token",
   "signingSecret",
+  "cookie",
+  "set_cookie",
+  "setCookie",
 ] as const;
 
 const localOnlyNotice = "[REDACTED] Sensitive content kept local.";
@@ -750,6 +753,26 @@ describe("remote model request privacy", () => {
     expect(prepared.sensitiveDataDetected).toBe(true);
     expect(prepared.request.goal).toBe(localOnlyNotice);
   });
+
+  it.each([
+    ["Cookie", "Cookie: session=exact-cookie-value"],
+    ["Set-Cookie", "Set-Cookie: session=exact-set-cookie-value; HttpOnly"],
+  ])(
+    "keeps an explicit %s header local and out of every remote payload",
+    (_label, header) => {
+      const prepared = prepareRemoteModelRequest(requestContaining(header));
+      const openAiPayload = JSON.stringify(
+        buildOpenAICompatiblePromptPayload(requestContaining(header)),
+      );
+      const copilotPrompt = buildCopilotPrompt(requestContaining(header));
+
+      expect(prepared.sensitiveDataDetected).toBe(true);
+      expect(prepared.request.goal).toBe(localOnlyNotice);
+      expect(JSON.stringify(prepared.request)).not.toContain(header);
+      expect(openAiPayload).not.toContain(header);
+      expect(copilotPrompt).not.toContain(header);
+    },
+  );
 
   it("finds a sensitive header after a benign colon before redacting to end-of-line", () => {
     const prepared = prepareRemoteModelRequest(

@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import ts from "typescript";
+import {
+  boundEvidenceDetail,
+  boundEvidenceReference,
+} from "./evidencePresentation";
 import type { EditEpisode, Evidence, PairRange } from "./types";
 
 interface ImportRecord {
-  readonly specifier: string;
   readonly range: PairRange;
 }
 
@@ -320,8 +323,8 @@ const collectNewDependencyEvidence = (
   previousSource: ts.SourceFile,
   currentSource: ts.SourceFile,
 ): Evidence[] => {
-  const previousImports = collectImportRecords(previousSource);
-  const currentImports = collectImportRecords(currentSource);
+  const previousImports = collectDependencyRecords(previousSource);
+  const currentImports = collectDependencyRecords(currentSource);
   const evidence: Evidence[] = [];
 
   for (const [specifier, record] of currentImports.entries()) {
@@ -334,42 +337,53 @@ const collectNewDependencyEvidence = (
       kind: "new-dependency",
       severity: "warning",
       title: "New dependency introduced",
-      detail: `Imported a new module dependency: ${specifier}.`,
+      detail: boundEvidenceDetail(
+        `Imported a new module dependency: ${specifier}.`,
+      ),
       source: ANALYZER_SOURCE,
       confidence: 0.94,
       range: record.range,
-      references: [record.specifier],
+      references: [boundEvidenceReference(specifier)],
     });
   }
 
   return evidence;
 };
 
-const collectImportRecords = (sourceFile: ts.SourceFile): ReadonlyMap<string, ImportRecord> => {
-  const imports = new Map<string, ImportRecord>();
-
-  for (const statement of sourceFile.statements) {
-    if (!ts.isImportDeclaration(statement)) {
-      continue;
+const collectDependencyRecords = (
+  sourceFile: ts.SourceFile,
+): ReadonlyMap<string, ImportRecord> => {
+  const dependencies = new Map<string, ImportRecord>();
+  const record = (moduleSpecifier: ts.Expression | undefined): void => {
+    if (
+      moduleSpecifier === undefined ||
+      !ts.isStringLiteralLike(moduleSpecifier) ||
+      dependencies.has(moduleSpecifier.text)
+    ) {
+      return;
     }
-
-    const moduleSpecifier = statement.moduleSpecifier;
-    if (!ts.isStringLiteral(moduleSpecifier)) {
-      continue;
-    }
-
-    const specifier = moduleSpecifier.text;
-    if (imports.has(specifier)) {
-      continue;
-    }
-
-    imports.set(specifier, {
-      specifier,
+    dependencies.set(moduleSpecifier.text, {
       range: rangeForNode(sourceFile, moduleSpecifier),
     });
-  }
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      record(node.moduleSpecifier);
+    } else if (ts.isCallExpression(node)) {
+      const isRequireCall =
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "require";
+      const isDynamicImport =
+        node.expression.kind === ts.SyntaxKind.ImportKeyword;
+      if (isRequireCall || isDynamicImport) {
+        record(node.arguments[0]);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
 
-  return imports;
+  visit(sourceFile);
+  return dependencies;
 };
 
 const collectPublicApiChangeEvidence = (

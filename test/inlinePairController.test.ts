@@ -127,6 +127,46 @@ describe("inline pair comment", () => {
     expect(appendedMarkdown.join("")).not.toContain("<img");
   });
 
+  it("normalizes and bounds every dynamic inline field with an ellipsis", () => {
+    const appendedText: string[] = [];
+    const markdown = {
+      appendText: vi.fn((value: string) => {
+        appendedText.push(value);
+        return markdown;
+      }),
+      appendMarkdown: vi.fn(() => markdown),
+    } as unknown as vscode.MarkdownString;
+    const huge = (prefix: string): string =>
+      `${prefix}\n${"payload".repeat(300)}`;
+
+    buildInlineCommentMarkdown(
+      () => markdown,
+      huge("Question prefix"),
+      {
+        ...evidence,
+        title: huge("Title prefix"),
+        detail: huge("Detail prefix"),
+        source: huge("Source prefix"),
+        references: Array.from({ length: 12 }, (_, index) =>
+          huge(`Reference ${index}`),
+        ),
+      },
+    );
+
+    expect(appendedText).toHaveLength(12);
+    expect(appendedText[0]?.length).toBeLessThanOrEqual(1_000);
+    expect(appendedText[1]?.length).toBeLessThanOrEqual(120);
+    expect(appendedText[2]?.length).toBeLessThanOrEqual(500);
+    expect(appendedText[3]?.length).toBeLessThanOrEqual(120);
+    for (const field of appendedText) {
+      expect(field).not.toMatch(/[\r\n]/u);
+      expect(field.endsWith("…")).toBe(true);
+    }
+    for (const reference of appendedText.slice(4)) {
+      expect(reference.length).toBeLessThanOrEqual(240);
+    }
+  });
+
   it("disposes only the closed URI's active Comment Thread", () => {
     const disposed: string[] = [];
     const controller = {
