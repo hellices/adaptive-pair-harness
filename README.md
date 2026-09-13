@@ -52,11 +52,13 @@ Unrelated schemes remain ignored.
   re-export. Computed/non-literal calls are ignored, and repeated specifiers
   are reported once at their first occurrence.
 - **Public API surface change (best effort)** — one generic, per-document
-  signal when TypeScript's official declaration-only emitter produces a
-  different public declaration surface for the previous and current text.
-  TypeScript and JavaScript ESM/CommonJS forms are supported by the compiler;
-  external modules are deliberately left unresolved. If either declaration
-  surface cannot be emitted reliably, this evidence is skipped.
+  signal when the previous and current public declaration surfaces differ.
+  TypeScript and JavaScript implementation files use TypeScript's official
+  declaration-only emitter; existing `.d.ts`, `.d.mts`, and `.d.cts` files
+  are already public surfaces, so their source token streams are canonicalized
+  directly. Formatting and comments are ignored. External modules are
+  deliberately left unresolved, and invalid or unreliable surfaces are
+  skipped.
 - **Complexity growth** — a function or method whose branch count grows
   substantially
 - **Editor diagnostic** — an error or warning already surfaced by VS Code
@@ -250,7 +252,9 @@ See the repository documentation for the full configuration reference:
 - Remote requests send **fixed kind-level evidence summaries**, not cleaned
   analyzer/editor text or full source buffers. Evidence IDs and raw titles,
   details, sources, references, specifiers, diagnostics, URIs, and paths are
-  omitted from remote prompts.
+  omitted from remote prompts. The public-API summary generically covers
+  declaration/API surface additions, removals, and changes involving types,
+  interfaces, and values; raw declarations are never transmitted.
 - Before that fixed projection is built, every raw automatic-evidence ID,
   title, detail, source, and reference is inspected by the same credential and
   local-resource detector used for explicit Chat fields. Any match routes the

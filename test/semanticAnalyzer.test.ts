@@ -336,6 +336,103 @@ describe("TypeScriptSemanticAnalyzer", () => {
   describe("declaration-emitter public API evidence", () => {
     it.each([
       [
+        "d.ts",
+        "export interface Model { value: string; }",
+        "export interface Model { value: number; }",
+        "Changed public declaration surface in this document.",
+      ],
+      [
+        "d.mts",
+        "",
+        "export type Identifier = string;",
+        "Added public declaration surface in this document.",
+      ],
+      [
+        "d.cts",
+        "export declare const version: string;",
+        "",
+        "Removed public declaration surface from this document.",
+      ],
+    ])(
+      "compares an existing %s declaration surface directly",
+      (extension, previous, current, detail) => {
+        const evidence = publicApiEvidence(
+          episode(
+            previous,
+            current,
+            "typescript",
+            `file:///types.${extension}`,
+          ),
+        );
+
+        expect(evidence).toHaveLength(1);
+        expect(evidence[0]).toMatchObject({
+          kind: "public-api-change",
+          detail,
+        });
+        expect(JSON.stringify(evidence[0])).not.toMatch(
+          /Model|Identifier|version/u,
+        );
+      },
+    );
+
+    it("does not report an unchanged declaration file", () => {
+      const declaration = "export declare const version: string;";
+
+      expect(
+        publicApiEvidence(
+          episode(
+            declaration,
+            declaration,
+            "typescript",
+            "file:///types.d.ts",
+          ),
+        ),
+      ).toEqual([]);
+    });
+
+    it("ignores declaration-file formatting and comment-only changes", () => {
+      const evidence = publicApiEvidence(
+        episode(
+          "export interface Model { value: string; }",
+          [
+            "// public declaration documentation",
+            "export interface Model {",
+            "  value: string;",
+            "}",
+          ].join("\n"),
+          "typescript",
+          "vscode-remote://ssh-remote+host/workspace/types.d.mts",
+        ),
+      );
+
+      expect(evidence).toEqual([]);
+    });
+
+    it("keeps invalid declaration files unstable or skips their surface", () => {
+      const unstable = analyzer.analyze(
+        episode(
+          "export interface Model { value: string; }",
+          "export interface Model { value:",
+          "typescript",
+          "file:///types.d.cts",
+        ),
+      );
+      const skipped = publicApiEvidence(
+        episode(
+          "export interface Model { value:",
+          "export interface Model { value: string; }",
+          "typescript",
+          "file:///types.d.cts",
+        ),
+      );
+
+      expect(unstable).toMatchObject({ stability: "unstable", evidence: [] });
+      expect(skipped).toEqual([]);
+    });
+
+    it.each([
+      [
         "functions",
         "export function load(value: string): string { return value; }",
         "export function load(value: number): string { return String(value); }",

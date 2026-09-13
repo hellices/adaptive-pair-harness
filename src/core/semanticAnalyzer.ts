@@ -429,6 +429,9 @@ const emitDeclarationSurface = (
   if (hasParseDiagnostics(source.sourceFile)) {
     return undefined;
   }
+  if (source.sourceFile.isDeclarationFile) {
+    return canonicalizeDeclaration(source.sourceFile.text);
+  }
 
   const declarations: string[] = [];
   const emitResult = source.program.emit(

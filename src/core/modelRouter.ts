@@ -518,7 +518,8 @@ const REMOTE_EVIDENCE_SUMMARIES: Readonly<
   },
   "public-api-change": {
     title: "Public API change detected",
-    detail: "A public API signature change was detected at the evidence range.",
+    detail:
+      "A public declaration/API surface addition, removal, or change involving types, interfaces, or values was detected at the evidence range.",
     source: "adaptive-pair-semantic-analysis",
   },
   "complexity-growth": {

@@ -72,7 +72,7 @@ const automaticEvidenceSummaries = [
   [
     "public-api-change",
     "Public API change detected",
-    "A public API signature change was detected at the evidence range.",
+    "A public declaration/API surface addition, removal, or change involving types, interfaces, or values was detected at the evidence range.",
     "adaptive-pair-semantic-analysis",
   ],
   [

@@ -25,10 +25,12 @@ warning. This prevents a repository from redirecting credentials or evidence.
 Public API evidence is best-effort and per document. For each stable
 TypeScript or JavaScript edit, Adaptive Pair asks TypeScript's official
 declaration-only emitter for the previous and current public declaration
-surfaces, canonicalizes their token streams without trivia, and emits at most
-one generic `public-api-change` item when they differ. External modules are
-left unresolved, and an unreliable declaration emit is skipped rather than
-replaced with custom signature heuristics. There is no setting that expands
+surfaces. Existing `.d.ts`, `.d.mts`, and `.d.cts` documents are already
+public declaration surfaces, so their source token streams are canonicalized
+directly instead. Both paths ignore formatting and comments and emit at most
+one generic added, removed, or changed `public-api-change` item. External
+modules are left unresolved, and invalid or unreliable surfaces are skipped
+rather than replaced with custom heuristics. There is no setting that expands
 this analysis to the project filesystem or to cross-document type resolution.
 
 ## Secret storage behavior
@@ -184,6 +186,9 @@ Every remote request is reduced to a bounded structured prompt containing:
 Automatic evidence is whitelist-projected: no analyzer/editor title, detail,
 source, reference, module specifier, diagnostic text, URI, or path is copied
 into a remote request, and evidence IDs are omitted from remote prompts.
+The fixed projection for `public-api-change` says that a public
+declaration/API surface addition, removal, or change involving types,
+interfaces, or values was detected. It does not transmit raw declaration text.
 Before projection, the raw automatic-evidence ID, title, detail, source, and
 every reference are inspected by the existing credential and local-resource
 detector. If any field matches, the request is routed directly to

@@ -2633,3 +2633,63 @@
   resolved, and declaration-emission failure suppresses API evidence rather
   than guessing. A live VS Code extension host was not exercised in this
   non-interactive run.
+
+---
+
+## Declaration-file and remote-projection follow-up (2026-09-14)
+
+### Corrections implemented
+
+- Existing `.d.ts`, `.d.mts`, and `.d.cts` documents are recognized through
+  TypeScript's declaration-file classification and canonicalized directly
+  from their trivia-free source token streams instead of requiring declaration
+  output that the compiler does not emit for an input declaration file.
+- Direct declaration comparison preserves the existing single bounded,
+  privacy-safe `public-api-change` item and its added, removed, or changed
+  classification. Equal surfaces and formatting/comment-only edits remain
+  silent; invalid current declarations remain unstable, while invalid prior
+  declarations suppress public API evidence.
+- The fixed remote `public-api-change` projection now describes a public
+  declaration/API surface addition, removal, or change involving types,
+  interfaces, or values. Analyzer details and raw declaration text remain
+  excluded from remote requests.
+- README, configuration, and architecture documentation now describe both the
+  direct declaration-file path and the generic remote projection.
+
+### TDD evidence
+
+- RED: the focused semantic/privacy run reported **4 expected failures and 172
+  passes**: `.d.ts`, `.d.mts`, and `.d.cts` changes produced no evidence, and
+  the privacy projection retained the obsolete signature-only wording.
+- GREEN: the same two focused suites passed **176 tests**, including all three
+  declaration extensions, added/removed/changed classifications, unchanged
+  input, formatting/comment-only edits, invalid input, fixed projection text,
+  and raw-text omission.
+
+### Verification
+
+- Focused semantic/privacy suites: **PASS — 2 files, 176 tests**
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 483 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 89.78%, branches 83.00%, functions 92.99%, lines 89.92%
+- `npm run package`: **PASS — 158 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX exclusion and compiled review-fix marker scans: **PASS**
+- Production and packaged credential-value scans: **PASS**
+- Production and packaged runtime URL scans: **PASS — loopback default only**
+- Source and packaged repository/bugs/homepage and fake-URL scans: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review found no remaining high-confidence declaration
+  classification, canonicalization, privacy-projection, documentation, or
+  packaging issue.
+- Analysis remains intentionally per-document and trivia-insensitive.
+  External modules are unresolved, and syntactically invalid declaration
+  surfaces are skipped rather than guessed. A live VS Code extension host was
+  not exercised in this non-interactive run.

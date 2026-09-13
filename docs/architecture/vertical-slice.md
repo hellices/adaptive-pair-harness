@@ -74,8 +74,10 @@ The semantic analyzer is intentionally narrow.
   ignored and complete specifiers are deduplicated in source order
 - best-effort, per-document public API changes for TypeScript and JavaScript:
   the official TypeScript declaration-only emitter produces the previous and
-  current `.d.ts` surfaces in memory, and a trivia-free TypeScript scanner
-  token stream is compared
+  current `.d.ts` surfaces in memory; existing `.d.ts`, `.d.mts`, and `.d.cts`
+  documents are canonicalized directly because they are already public
+  declaration surfaces; both paths compare trivia-free TypeScript scanner
+  token streams
 - at most one generic `public-api-change` item per edit; its detail identifies
   an added, removed, or changed surface without embedding declarations
 - substantial complexity growth
@@ -161,7 +163,10 @@ Automatic evidence crosses the remote boundary only through a whitelist keyed
 by `Evidence.kind`. Each kind has fixed extension-owned title, detail, and
 source strings; the evidence identity is omitted from prompts, the numeric
 range is retained, and raw analyzer/editor titles, details, sources,
-references, specifiers, diagnostics, URIs, and paths are omitted. Before
+references, specifiers, diagnostics, URIs, and paths are omitted. For
+`public-api-change`, the fixed detail generically identifies a public
+declaration/API surface addition, removal, or change involving types,
+interfaces, or values; no raw declaration text is transmitted. Before
 projection, the raw evidence ID, title, detail, source, and every reference are
 inspected by the existing credential/local-resource detector. A match selects
 the local provider before any remote dispatch; raw values are not copied into
