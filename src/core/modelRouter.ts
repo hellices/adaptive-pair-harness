@@ -542,6 +542,13 @@ const projectAutomaticEvidence = (
   evidence: Evidence,
 ): SanitizedValue<Evidence> => {
   const summary = REMOTE_EVIDENCE_SUMMARIES[evidence.kind];
+  const sensitiveDataDetected = [
+    evidence.id,
+    evidence.title,
+    evidence.detail,
+    evidence.source,
+    ...evidence.references,
+  ].some((value) => sanitizeRemoteText(value, 0).sensitiveDataDetected);
 
   return {
     value: {
@@ -555,7 +562,7 @@ const projectAutomaticEvidence = (
       range: evidence.range,
       references: [],
     },
-    sensitiveDataDetected: false,
+    sensitiveDataDetected,
   };
 };
 

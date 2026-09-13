@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT,
   PairSharedContext,
   buildPairChatPlan,
   registerPairChatParticipant,
@@ -357,6 +358,95 @@ describe("pair chat planning", () => {
     ).clearEvidence();
 
     expect(context.snapshot().latest).toBeUndefined();
+  });
+
+  it("retires a closed URI revision and assigns a newer revision when reused", () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "local-template",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    const uri = "file:///workspace/reused.ts";
+    context.publishEvidence({
+      uri,
+      evidence,
+      question: "Original evidence",
+    });
+    const originalRevision = context.evidenceRevisionForUri(uri);
+
+    context.releaseEvidenceUri(uri);
+
+    expect(context.evidenceRevisionForUri(uri)).toBe(0);
+    expect(context.snapshot().latest).toBeUndefined();
+
+    context.publishEvidence({
+      uri,
+      evidence: { ...evidence, id: "dependency:reused" },
+      question: "Reused URI evidence",
+    });
+
+    expect(context.evidenceRevisionForUri(uri)).toBeGreaterThan(
+      originalRevision,
+    );
+  });
+
+  it("bounds URI revisions with least-recently-used eviction", () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "local-template",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    const firstUri = "file:///workspace/revision-0.ts";
+    const secondUri = "file:///workspace/revision-1.ts";
+    const revisions = new Map<string, number>();
+    for (
+      let index = 0;
+      index < PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT;
+      index += 1
+    ) {
+      const uri = `file:///workspace/revision-${index}.ts`;
+      context.publishEvidence({
+        uri,
+        evidence: { ...evidence, id: `dependency:${index}` },
+        question: `Evidence ${index}`,
+      });
+      revisions.set(uri, context.evidenceRevisionForUri(uri));
+    }
+
+    expect(context.evidenceRevisionForUri(firstUri)).toBe(
+      revisions.get(firstUri),
+    );
+    context.publishEvidence({
+      uri: "file:///workspace/revision-overflow.ts",
+      evidence: { ...evidence, id: "dependency:overflow" },
+      question: "Overflow evidence",
+    });
+
+    expect(context.evidenceRevisionForUri(firstUri)).toBe(
+      revisions.get(firstUri),
+    );
+    expect(context.evidenceRevisionForUri(secondUri)).toBe(0);
+
+    context.publishEvidence({
+      uri: secondUri,
+      evidence: { ...evidence, id: "dependency:reused-after-eviction" },
+      question: "Reused evicted URI evidence",
+    });
+    expect(context.evidenceRevisionForUri(secondUri)).toBeGreaterThan(
+      revisions.get(secondUri)!,
+    );
   });
 
   it("reports configuration warnings in shared session output", () => {

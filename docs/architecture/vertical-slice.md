@@ -150,9 +150,13 @@ Automatic evidence crosses the remote boundary only through a whitelist keyed
 by `Evidence.kind`. Each kind has fixed extension-owned title, detail, and
 source strings; the evidence identity is omitted from prompts, the numeric
 range is retained, and raw analyzer/editor titles, details, sources,
-references, specifiers, diagnostics, URIs, and paths are omitted. A separate
-raw structured request stays local so any availability, budget, or
-sensitive-content fallback can render the bounded original evidence.
+references, specifiers, diagnostics, URIs, and paths are omitted. Before
+projection, the raw evidence ID, title, detail, source, and every reference are
+inspected by the existing credential/local-resource detector. A match selects
+the local provider before any remote dispatch; raw values are not copied into
+the projection, status, or error text. A separate raw structured request stays
+local so any availability, budget, or sensitive-content fallback can render
+the bounded original evidence.
 
 Explicit Chat fields are inspected before bounding. Known credential material
 or an exact `file://`/`vscode-remote://` URI, recognized or multi-segment POSIX
@@ -241,6 +245,16 @@ on projected evidence IDs and therefore rejects responses from replaced
 runtimes even when their visible generation, URI, range, and sanitized evidence
 appear identical.
 
+Dismissal cleanup also uses per-URI revisions allocated from one monotonic
+shared-context-wide evidence epoch. The epoch survives document-close removal,
+runtime replacement/disposal, and LRU eviction, so a later publication for the
+same URI cannot reuse a stale revision. The per-URI table is capped at 256
+entries; lookup and publication refresh LRU order, and the oldest entry is
+evicted when close events do not arrive. Closing a document releases its entry,
+while session stop and current-runtime disposal release all entries. Runtime
+tokens prevent an older runtime's late disposal from clearing a replacement
+runtime's state.
+
 ## Coexistence discovery
 
 On session start, the runtime checks for:
@@ -274,9 +288,10 @@ repository files.
   intervention style without converting default values into user intent;
 - persisted evidence identities are SHA-256 hashes, and approved titles are
   stripped of paths and secrets and bounded to 120 characters;
-- dismissal completion compares a per-URI evidence revision, so unrelated
-  document activity does not block cleanup and newer same-URI evidence is not
-  removed;
+- dismissal completion compares a globally allocated per-URI evidence
+  revision, so unrelated document activity does not block cleanup and newer
+  same-URI evidence is not removed; tracked URIs use the bounded 256-entry LRU
+  described above;
 - corrupt memory is preserved while in-memory defaults keep Pair usable, until
   the user invokes the explicit reset command; reset stops active and pending
   session work before storage mutation, and completion remains fenced so a

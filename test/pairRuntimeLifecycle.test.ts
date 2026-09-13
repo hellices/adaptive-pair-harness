@@ -799,6 +799,141 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
+  it("does not clear same-URI evidence published after a close while dismissal persists", async () => {
+    const persistence = deferred<void>();
+    let persistenceStarted = false;
+    const memoryContext = {
+      globalState: {
+        get: () => undefined,
+        update: async () => {
+          persistenceStarted = true;
+          await persistence.promise;
+        },
+      },
+    } as unknown as vscode.ExtensionContext;
+    const uri = "file:///workspace/src/reused.ts";
+    const currentDocument = document(uri, "export const value = 1;");
+    vscodeState.textDocuments = [currentDocument];
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext: memoryContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    const renderIntervention = (
+      runtime as unknown as {
+        renderIntervention(
+          document: vscode.TextDocument,
+          evidence: Evidence,
+          question: string,
+        ): void;
+      }
+    ).renderIntervention.bind(runtime);
+    renderIntervention(
+      currentDocument as unknown as vscode.TextDocument,
+      evidence,
+      "Original question",
+    );
+    const originalRevision = shared.evidenceRevisionForUri(uri);
+
+    const pendingDismiss = runtime.dismissCurrentEvidence();
+    await vi.waitFor(() => {
+      expect(persistenceStarted).toBe(true);
+    });
+    vscodeState.closeListeners[0]?.(currentDocument);
+    expect(shared.evidenceRevisionForUri(uri)).toBe(0);
+    renderIntervention(
+      currentDocument as unknown as vscode.TextDocument,
+      { ...evidence, id: "dependency:reused-after-close" },
+      "Reused URI question",
+    );
+    const reusedRevision = shared.evidenceRevisionForUri(uri);
+    expect(reusedRevision).toBeGreaterThan(originalRevision);
+
+    persistence.resolve();
+    await pendingDismiss;
+
+    expect(shared.snapshot().latest).toMatchObject({
+      uri,
+      evidence: { id: "dependency:reused-after-close" },
+      question: "Reused URI question",
+    });
+    expect(shared.evidenceRevisionForUri(uri)).toBe(reusedRevision);
+    expect(vscodeState.commentThreads[0]?.disposed).toBe(true);
+    expect(vscodeState.commentThreads[1]?.disposed).toBe(false);
+    runtime.dispose();
+  });
+
+  it("retires URI revisions across runtime replacement and current-runtime disposal", () => {
+    const uri = "file:///workspace/src/runtime-reuse.ts";
+    const currentDocument = document(uri, "export const value = 1;");
+    const shared = sharedContext();
+    const firstRuntime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    const renderFirst = (
+      firstRuntime as unknown as {
+        renderIntervention(
+          document: vscode.TextDocument,
+          evidence: Evidence,
+          question: string,
+        ): void;
+      }
+    ).renderIntervention.bind(firstRuntime);
+    renderFirst(
+      currentDocument as unknown as vscode.TextDocument,
+      evidence,
+      "First runtime question",
+    );
+    const firstRevision = shared.evidenceRevisionForUri(uri);
+
+    const secondRuntime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+
+    expect(shared.evidenceRevisionForUri(uri)).toBe(0);
+
+    const renderSecond = (
+      secondRuntime as unknown as {
+        renderIntervention(
+          document: vscode.TextDocument,
+          evidence: Evidence,
+          question: string,
+        ): void;
+      }
+    ).renderIntervention.bind(secondRuntime);
+    renderSecond(
+      currentDocument as unknown as vscode.TextDocument,
+      { ...evidence, id: "dependency:second-runtime" },
+      "Second runtime question",
+    );
+    const secondRevision = shared.evidenceRevisionForUri(uri);
+    expect(secondRevision).toBeGreaterThan(firstRevision);
+
+    firstRuntime.dispose();
+
+    expect(shared.evidenceRevisionForUri(uri)).toBe(secondRevision);
+    expect(shared.snapshot().latest?.evidence.id).toBe(
+      "dependency:second-runtime",
+    );
+
+    secondRuntime.dispose();
+
+    expect(shared.evidenceRevisionForUri(uri)).toBe(0);
+    expect(shared.snapshot().latest).toBeUndefined();
+  });
+
   it("bounds dynamic evidence before publishing shared UI context", async () => {
     const uri = "file:///workspace/src/bounded.ts";
     const currentDocument = document(uri, "export const value = 1;", 1);
@@ -1640,7 +1775,83 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
-  it("sends only a fixed whitelist projection for credential-bearing automatic evidence", async () => {
+  it.each([
+    [
+      "new-dependency credential",
+      {
+        ...evidence,
+        detail: "Imported module?api_key=workspace-secret",
+      },
+      "workspace-secret",
+    ],
+    [
+      "diagnostic file URI",
+      {
+        ...evidence,
+        kind: "diagnostic" as const,
+        detail: "Failure in file:///Users/alice/private.ts",
+      },
+      "file:///Users/alice/private.ts",
+    ],
+    [
+      "external-harness vscode-remote URI",
+      {
+        ...evidence,
+        kind: "external-harness" as const,
+        references: [
+          "vscode-remote://ssh-remote+private-host/workspace/app.ts",
+        ],
+      },
+      "vscode-remote://ssh-remote+private-host/workspace/app.ts",
+    ],
+  ])("keeps %s automatic evidence on the local provider", async (
+    _label,
+    sensitiveEvidence,
+    rawValue,
+  ) => {
+    const fetchImplementation = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "remote" } }],
+          usage: { prompt_tokens: 10, completion_tokens: 1 },
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchImplementation);
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "openai-compatible",
+        baseUrl: new URL("https://models.example/v1"),
+      }),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+
+    await expect(
+      runtime.generate(
+        "file:///workspace/pair.ts",
+        "Explain the current evidence.",
+        sensitiveEvidence,
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+
+    expect(fetchImplementation).not.toHaveBeenCalled();
+    expect(vscodeState.statusItems[0]?.text).toContain(
+      "sensitive Chat content kept local",
+    );
+    expect(vscodeState.statusItems[0]?.text).not.toContain(rawValue);
+    runtime.dispose();
+  });
+
+  it("keeps analyzer-produced credential evidence local", async () => {
     let requestBody = "";
     const fetchImplementation = vi.fn(
       async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -1693,10 +1904,14 @@ describe("PairRuntime lifecycle ownership", () => {
       observedAt: 1,
     });
 
-    expect(fetchImplementation).toHaveBeenCalledOnce();
-    expect(requestBody).not.toContain("workspace-secret");
-    expect(requestBody).not.toContain("packages.example");
-    expect(requestBody).toContain("Dependency change detected");
+    expect(fetchImplementation).not.toHaveBeenCalled();
+    expect(requestBody).toBe("");
+    expect(vscodeState.statusItems[0]?.text).toContain(
+      "sensitive request content kept local",
+    );
+    expect(vscodeState.statusItems[0]?.text).not.toContain(
+      "workspace-secret",
+    );
     expect(vscodeState.commentThreads).toHaveLength(1);
     runtime.dispose();
   });

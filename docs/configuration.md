@@ -173,6 +173,11 @@ Every remote request is reduced to a bounded structured prompt containing:
 Automatic evidence is whitelist-projected: no analyzer/editor title, detail,
 source, reference, module specifier, diagnostic text, URI, or path is copied
 into a remote request, and evidence IDs are omitted from remote prompts.
+Before projection, the raw automatic-evidence ID, title, detail, source, and
+every reference are inspected by the existing credential and local-resource
+detector. If any field matches, the request is routed directly to
+`local-template` and no remote provider is invoked. Detection does not copy raw
+content into the fixed projection, runtime status, or provider error text.
 The raw structured request remains local and is used for bounded
 `local-template` rendering whenever remote generation falls back because of
 availability, budget, or sensitive content. Explicit Chat text is checked
@@ -220,6 +225,17 @@ Diagnostics use fixed extension-owned metadata before remote use:
 Locally, the complete raw diagnostic inputs feed stable hashes, while only the
 bounded single-line message, source, and code prefixes enter `Evidence` and
 inline Markdown.
+
+### Transient URI revision retention
+
+The shared Chat context retains at most 256 per-URI evidence revisions in
+least-recently-used order. Accessing or publishing a URI refreshes its
+position. Document close, session stop, runtime replacement, and runtime
+disposal remove the applicable entries. Revision values come from one
+shared-context-wide monotonic epoch that is not reset when an entry is removed
+or evicted, so publishing an evicted or reused URI cannot recreate an earlier
+revision. This preserves post-await dismissal and Chat lifecycle fences while
+bounding URI state when an editor host omits close events.
 
 ### Data intentionally not sent
 

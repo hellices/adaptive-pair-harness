@@ -9,6 +9,7 @@ import {
 } from "../src/vscode/pairChatParticipant";
 import { buildCopilotPrompt } from "../src/vscode/vsCodeLanguageModelProvider";
 import type { ModelRequest } from "../src/core/modelRouter";
+import type { Evidence } from "../src/core/types";
 
 const requestContaining = (text: string): ModelRequest => ({
   goal: text,
@@ -99,7 +100,7 @@ describe("remote model request privacy", () => {
     "projects %s evidence from a fixed whitelist and drops all analyzer text",
     (kind, title, detail, source) => {
       const malicious = {
-        id: `raw-id-${kind}-file:///Users/alice/private.ts`,
+        id: `raw-id-${kind}-opaque`,
         title: `arbitrary-title-${kind}-do-not-forward`,
         detail: `arbitrary-detail-${kind}-do-not-forward`,
         source: `arbitrary-source-${kind}-do-not-forward`,
@@ -614,7 +615,87 @@ describe("remote model request privacy", () => {
     expect(prepared.request.goal).toBe(benign);
   });
 
-  it("projects credential-bearing automatic evidence without inspecting raw text", () => {
+  it.each([
+    [
+      "id credential",
+      "new-dependency",
+      { id: "dependency:api_key=workspace-secret" },
+      "workspace-secret",
+    ],
+    [
+      "title file URI",
+      "diagnostic",
+      { title: "Failure in file:///Users/alice/private.ts" },
+      "file:///Users/alice/private.ts",
+    ],
+    [
+      "detail vscode-remote URI",
+      "external-harness",
+      {
+        detail:
+          "Inspect vscode-remote://ssh-remote+private-host/workspace/app.ts",
+      },
+      "vscode-remote://ssh-remote+private-host/workspace/app.ts",
+    ],
+    [
+      "source credential",
+      "diagnostic",
+      { source: "Authorization: Bearer source-secret-value" },
+      "source-secret-value",
+    ],
+    [
+      "reference file URI",
+      "new-dependency",
+      { references: ["file:///workspace/private/module.ts"] },
+      "file:///workspace/private/module.ts",
+    ],
+  ] satisfies ReadonlyArray<
+    readonly [
+      string,
+      Evidence["kind"],
+      Partial<
+        Pick<
+          Evidence,
+          "id" | "title" | "detail" | "source" | "references"
+        >
+      >,
+      string,
+    ]
+  >)(
+    "detects automatic evidence %s before applying the fixed projection",
+    (_label, kind, overrides, rawValue) => {
+      const rawEvidence: Evidence = {
+        id: `evidence:${kind}`,
+        kind,
+        severity: "warning",
+        title: "Automatic evidence",
+        detail: "A bounded local detail.",
+        source: "adaptive-pair",
+        confidence: 0.94,
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 10 },
+        },
+        references: [],
+        ...overrides,
+      };
+      const prepared = prepareRemoteModelRequest({
+        goal: "Ask about this edit.",
+        interactionStyle: "ask-first",
+        evidence: rawEvidence,
+      });
+
+      expect(prepared.sensitiveDataDetected).toBe(true);
+      expect(prepared.request.evidence).toMatchObject({
+        id: "remote-evidence",
+        kind,
+        references: [],
+      });
+      expect(JSON.stringify(prepared.request)).not.toContain(rawValue);
+    },
+  );
+
+  it("keeps the fixed projection for credential-bearing automatic evidence", () => {
     const prepared = prepareRemoteModelRequest({
       goal: "Ask about this edit.",
       interactionStyle: "ask-first",
@@ -637,7 +718,7 @@ describe("remote model request privacy", () => {
       },
     });
 
-    expect(prepared.sensitiveDataDetected).toBe(false);
+    expect(prepared.sensitiveDataDetected).toBe(true);
     expect(prepared.request.evidence).toMatchObject({
       title: "Dependency change detected",
       detail: "A new module dependency was detected at the evidence range.",
@@ -927,7 +1008,7 @@ describe("remote model request privacy", () => {
     });
     const serialized = JSON.stringify(prepared.request);
 
-    expect(prepared.sensitiveDataDetected).toBe(false);
+    expect(prepared.sensitiveDataDetected).toBe(true);
     expect(serialized).not.toContain(basicPayload);
     expect(serialized).not.toContain(`Basic ${basicPayload}`);
     expect(prepared.request.evidence.title).toBe(

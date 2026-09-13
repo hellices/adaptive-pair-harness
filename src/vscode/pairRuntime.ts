@@ -1300,7 +1300,10 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     this.aggregator.cancel(key);
     this.cancelRequest(key);
     this.chatRequests.cancelUri(key);
-    this.options.sharedContext.clearEvidence(key, this.runtimeRevision);
+    this.options.sharedContext.releaseEvidenceUri(
+      key,
+      this.runtimeRevision,
+    );
     this.inlineController.disposeUri(uri);
   }
 
@@ -1403,6 +1406,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       [
         () => this.sessionLifecycle.dispose(),
         () => this.publishSession(),
+        () => this.options.sharedContext.endRuntime(this.runtimeRevision),
         () => this.aggregator.dispose(),
         () => this.scheduler.dispose(),
         () => this.inlineController.dispose(),

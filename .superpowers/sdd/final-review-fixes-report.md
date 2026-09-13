@@ -1881,3 +1881,76 @@
 - Live VS Code diagnostics and remote model services were unavailable in this
   non-interactive environment. Pure diagnostic builders, VS Code test doubles,
   and injected OpenAI-compatible/Copilot boundaries cover the changed paths.
+
+---
+
+## Automatic-evidence routing and URI revision retention (2026-09-13)
+
+### Corrections implemented
+
+- Automatic evidence remains a fixed kind-level remote projection. Before
+  projection, the existing credential/local-resource detector now inspects the
+  raw ID, title, detail, source, and every reference. Any match sets
+  `sensitiveDataDetected`, selects `local-template`, and prevents remote
+  dispatch without copying the raw value into projection, status, or error
+  text.
+- `PairSharedContext` now allocates every per-URI evidence revision from one
+  shared-context-wide monotonic epoch. Removing or evicting a URI never resets
+  that epoch, so republishing the same URI cannot reuse an earlier revision.
+- The URI revision table is a documented 256-entry LRU. Reads and writes
+  refresh recency, overflow evicts the oldest URI, document close releases one
+  URI, and session stop/runtime replacement/current-runtime disposal release
+  all tracked URIs.
+- Runtime revision ownership remains authoritative: a replaced runtime's late
+  disposal cannot clear evidence published by its replacement.
+
+### TDD evidence
+
+- Sensitivity RED: **10 expected failures** across the privacy and runtime
+  suites demonstrated that credentials and `file://`/`vscode-remote://`
+  resources in raw automatic evidence did not set the sensitive flag and still
+  reached the injected remote provider.
+- Sensitivity GREEN: **2 files, 190 tests passed**, covering all five raw
+  evidence fields, `new-dependency`, `diagnostic`, and `external-harness`
+  evidence, benign controls, fixed projections, generic status text, and
+  analyzer-produced no-dispatch behavior.
+- Revision RED: **4 expected failures** demonstrated the missing close-release
+  API, retained revisions across close/replacement, and the unbounded URI map.
+- Revision GREEN: **2 files, 90 tests passed**, covering close, runtime
+  replacement, stale-runtime disposal, bounded LRU eviction, evicted/same-URI
+  reuse, and dismissal completion after an awaited write.
+- Final focused model/runtime/Chat/Copilot-adapter run: **5 files, 284 tests
+  passed**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 476 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 90.32%, branches 83.29%, functions 93.33%, lines 90.45%
+- `npm run package`: **PASS - 158 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS - 0 vulnerabilities**
+- Runtime dependency root scan: **PASS - `typescript@5.9.3` only**
+- VSIX inclusion/exclusion scan: **PASS**
+  - compiled model-router/shared-context code and public privacy/architecture
+    docs are present;
+  - source, tests, coverage, private review material, source maps, workspace,
+    and CI files are absent.
+- Production and packaged fixture-secret scans: **PASS**
+- Production URL scan: **PASS - only the documented loopback default**
+- Source and packaged repository/bugs/homepage metadata scans: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review covered detector ordering, fixed projections, both
+  remote-provider routing paths, monotonic allocation, close/rebuild/disposal
+  ownership, LRU recency, same-URI reuse, post-await cleanup, documentation,
+  and package contents.
+- Self-review corrected one documentation overstatement from process-wide to
+  shared-context-wide epoch lifetime. No remaining high-confidence
+  correctness, privacy, lifecycle, retention, or packaging concern was found.
+- Live VS Code hosts and remote services were unavailable in this
+  non-interactive environment. VS Code test doubles and injected provider
+  boundaries cover the changed behavior.

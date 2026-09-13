@@ -248,6 +248,11 @@ See the repository documentation for the full configuration reference:
   analyzer/editor text or full source buffers. Evidence IDs and raw titles,
   details, sources, references, specifiers, diagnostics, URIs, and paths are
   omitted from remote prompts.
+- Before that fixed projection is built, every raw automatic-evidence ID,
+  title, detail, source, and reference is inspected by the same credential and
+  local-resource detector used for explicit Chat fields. Any match routes the
+  complete request to `local-template`; no remote provider is invoked, and the
+  raw value is not copied into the projection, status, or error text.
 - Remote-provider fallback renders from the bounded original local evidence,
   not the reduced remote projection, so unavailable providers and denied
   budgets do not erase useful local context.
@@ -264,6 +269,11 @@ See the repository documentation for the full configuration reference:
   closing markup, package names, or ordinary prose as local paths.
 - The latest local inline question is **not** forwarded back to remote chat
   providers.
+- Transient per-URI evidence revisions use a shared-context-wide monotonic
+  epoch and a 256-entry least-recently-used table. Document close, session
+  stop, runtime replacement, and runtime disposal release URI entries; a later
+  publication for the same or an evicted URI always receives a newer revision,
+  so stale post-await actions cannot clear replacement evidence.
 - VS Code global-state memory retains at most 256 unique dismissal hashes per
   repository, 32 repository entries, and 256 unique approved summaries.
   Retention is deterministic: oldest entries are evicted so the newest survive,

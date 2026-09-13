@@ -42,11 +42,13 @@ export type PairRuntimeRevision = number & {
   readonly [pairRuntimeRevisionBrand]: true;
 };
 
+export const PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT = 256;
+
 export class PairSharedContext {
   private latest: PairPublishedEvidence | undefined;
   private session: PairSessionSnapshot;
   private revision = 0;
-  private evidenceRevision = 0;
+  private evidenceEpoch = 0;
   private readonly evidenceRevisionByUri = new Map<string, number>();
   private currentRuntimeRevision = 0;
 
@@ -64,11 +66,19 @@ export class PairSharedContext {
   public beginRuntime(): PairRuntimeRevision {
     this.currentRuntimeRevision += 1;
     this.revision += 1;
-    if (this.latest !== undefined) {
-      this.bumpEvidenceRevision(this.latest.uri);
-    }
+    this.releaseAllEvidenceUris();
     this.latest = undefined;
     return this.currentRuntimeRevision as PairRuntimeRevision;
+  }
+
+  public endRuntime(runtimeRevision: PairRuntimeRevision): void {
+    if (runtimeRevision !== this.currentRuntimeRevision) {
+      return;
+    }
+    this.currentRuntimeRevision += 1;
+    this.revision += 1;
+    this.releaseAllEvidenceUris();
+    this.latest = undefined;
   }
 
   public updateSession(
@@ -116,22 +126,50 @@ export class PairSharedContext {
     ) {
       return;
     }
-    if (uri !== undefined) {
-      this.bumpEvidenceRevision(uri);
-    }
-    if (uri === undefined || this.latest?.uri === uri) {
+    if (uri === undefined) {
+      this.releaseAllEvidenceUris();
       if (this.latest !== undefined) {
-        if (uri === undefined) {
-          this.bumpEvidenceRevision(this.latest.uri);
-        }
         this.revision += 1;
       }
+      this.latest = undefined;
+      return;
+    }
+
+    this.bumpEvidenceRevision(uri);
+    if (this.latest?.uri === uri) {
+      this.revision += 1;
+      this.latest = undefined;
+    }
+  }
+
+  public releaseEvidenceUri(
+    uri: string,
+    runtimeRevision?: PairRuntimeRevision,
+  ): void {
+    if (
+      runtimeRevision !== undefined &&
+      runtimeRevision !== this.currentRuntimeRevision
+    ) {
+      return;
+    }
+    if (this.evidenceRevisionByUri.has(uri)) {
+      this.nextEvidenceRevision();
+      this.evidenceRevisionByUri.delete(uri);
+    }
+    if (this.latest?.uri === uri) {
+      this.revision += 1;
       this.latest = undefined;
     }
   }
 
   public evidenceRevisionForUri(uri: string): number {
-    return this.evidenceRevisionByUri.get(uri) ?? 0;
+    const revision = this.evidenceRevisionByUri.get(uri);
+    if (revision === undefined) {
+      return 0;
+    }
+    this.evidenceRevisionByUri.delete(uri);
+    this.evidenceRevisionByUri.set(uri, revision);
+    return revision;
   }
 
   public snapshot(): PairContextSnapshot {
@@ -143,8 +181,35 @@ export class PairSharedContext {
   }
 
   private bumpEvidenceRevision(uri: string): void {
-    this.evidenceRevision += 1;
-    this.evidenceRevisionByUri.set(uri, this.evidenceRevision);
+    const revision = this.nextEvidenceRevision();
+    this.evidenceRevisionByUri.delete(uri);
+    this.evidenceRevisionByUri.set(uri, revision);
+    if (
+      this.evidenceRevisionByUri.size >
+      PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT
+    ) {
+      const leastRecentlyUsedUri =
+        this.evidenceRevisionByUri.keys().next().value;
+      if (leastRecentlyUsedUri !== undefined) {
+        this.evidenceRevisionByUri.delete(leastRecentlyUsedUri);
+      }
+    }
+  }
+
+  private releaseAllEvidenceUris(): void {
+    if (this.evidenceRevisionByUri.size === 0) {
+      return;
+    }
+    this.nextEvidenceRevision();
+    this.evidenceRevisionByUri.clear();
+  }
+
+  private nextEvidenceRevision(): number {
+    if (this.evidenceEpoch >= Number.MAX_SAFE_INTEGER) {
+      throw new Error("Pair shared-context evidence revision exhausted.");
+    }
+    this.evidenceEpoch += 1;
+    return this.evidenceEpoch;
   }
 }
 
