@@ -51,7 +51,6 @@ interface TypeScriptLibraryFileSystem {
 const ANALYZER_SOURCE = "typescript-semantic-analyzer";
 const DEFAULT_EXPORT_KEY = "default-export";
 const DEFAULT_EXPORT_DISPLAY = "default export";
-const EXPORT_EQUALS_KEY = "export-equals";
 const EXPORT_EQUALS_DISPLAY = "export =";
 const TYPESCRIPT_LIBRARY_FILE_SYSTEM: TypeScriptLibraryFileSystem = {
   fileExists: (path) => ts.sys.fileExists(path),
@@ -467,7 +466,7 @@ const collectExportedSignatures = (
     string,
     readonly ts.FunctionLikeDeclaration[]
   >();
-  const classesByName = new Map<string, ts.ClassDeclaration>();
+  const classesByName = new Map<string, ts.ClassLikeDeclarationBase>();
   const identifiersByName = new Map<string, ts.Identifier>();
   const variableNames = new Set<string>();
 
@@ -493,6 +492,13 @@ const collectExportedSignatures = (
           const initializer = unwrapFunctionExpression(declaration.initializer);
           if (initializer !== undefined) {
             functionsByName.set(declaration.name.text, [initializer]);
+          }
+          const classInitializer = unwrapExpression(declaration.initializer);
+          if (
+            classInitializer !== undefined &&
+            ts.isClassExpression(classInitializer)
+          ) {
+            classesByName.set(declaration.name.text, classInitializer);
           }
         }
       }
@@ -562,6 +568,124 @@ const collectExportedSignatures = (
     }
   };
 
+  const appendCheckerClass = (
+    identity: ExportIdentity,
+    identifier: ts.Identifier,
+    rangeNode?: ts.Node,
+  ): boolean => {
+    const classType = checker.getTypeAtLocation(identifier);
+    const constructSignatures = classType.getConstructSignatures();
+    if (constructSignatures.length === 0) {
+      return false;
+    }
+
+    const classDeclaration = constructSignatures
+      .flatMap((signature) => {
+        const signatureDeclaration = signature.getDeclaration();
+        const declarations = [
+          ...(signatureDeclaration !== undefined &&
+          ts.isConstructorDeclaration(signatureDeclaration) &&
+          (ts.isClassDeclaration(signatureDeclaration.parent) ||
+            ts.isClassExpression(signatureDeclaration.parent))
+            ? [signatureDeclaration.parent]
+            : []),
+          ...(signature.getReturnType().getSymbol()?.declarations ?? []).filter(
+            (
+              declaration,
+            ): declaration is ts.ClassLikeDeclarationBase =>
+              ts.isClassDeclaration(declaration) ||
+              ts.isClassExpression(declaration),
+          ),
+        ];
+        return declarations;
+      })
+      .at(0);
+    if (classDeclaration !== undefined) {
+      appendClass(identity, classDeclaration, rangeNode);
+      return true;
+    }
+
+    const appendCheckerMember = (
+      separator: "#" | ".",
+      memberName: string,
+      memberSignatures: readonly ts.Signature[],
+      location: ts.Node,
+      signatureKind: ts.SignatureKind,
+    ): void => {
+      const key = `method:${identity.key}${separator}${memberName}`;
+      for (const signature of memberSignatures) {
+        appendSignatureRecord(
+          signatureTarget,
+          key,
+          `${identity.displayName}${separator}${memberName}`,
+          checker.signatureToString(
+            signature,
+            location,
+            ts.TypeFormatFlags.NoTruncation |
+              ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope,
+            signatureKind,
+          ),
+          rangeForNode(sourceFile, rangeNode ?? location),
+        );
+      }
+      if (identity.commonJsPath !== undefined) {
+        commonJsPathsBySignatureKey.set(key, identity.commonJsPath);
+      }
+    };
+    const appendPublicCallableMembers = (
+      type: ts.Type,
+      separator: "#" | ".",
+    ): void => {
+      for (const member of checker.getPropertiesOfType(type)) {
+        if (member.name === "prototype") {
+          continue;
+        }
+        const declarations = member.getDeclarations() ?? [];
+        if (declarations.some(hasNonPublicModifier)) {
+          continue;
+        }
+        const location =
+          member.valueDeclaration ?? declarations[0] ?? identifier;
+        const memberSignatures = checker
+          .getTypeOfSymbolAtLocation(member, location)
+          .getCallSignatures();
+        if (memberSignatures.length > 0) {
+          appendCheckerMember(
+            separator,
+            member.name,
+            memberSignatures,
+            location,
+            ts.SignatureKind.Call,
+          );
+        }
+      }
+    };
+
+    const publicConstructSignatures = constructSignatures.filter(
+      (signature) => {
+        const declaration = signature.getDeclaration();
+        return declaration === undefined || !hasNonPublicModifier(declaration);
+      },
+    );
+    appendCheckerMember(
+      "#",
+      "constructor",
+      publicConstructSignatures,
+      identifier,
+      ts.SignatureKind.Construct,
+    );
+    const visitedInstanceTypes = new Set<ts.Type>();
+    for (const signature of publicConstructSignatures) {
+      const instanceType = signature.getReturnType();
+      if (!visitedInstanceTypes.has(instanceType)) {
+        visitedInstanceTypes.add(instanceType);
+        appendPublicCallableMembers(instanceType, "#");
+      }
+    }
+    appendPublicCallableMembers(classType, ".");
+    return true;
+  };
+
   const appendLocalExport = (
     localName: string,
     identity: ExportIdentity,
@@ -616,6 +740,9 @@ const collectExportedSignatures = (
       return;
     }
     if (identifier === undefined) {
+      return;
+    }
+    if (appendCheckerClass(identity, identifier, rangeNode)) {
       return;
     }
     const key = `function:${identity.key}`;
@@ -827,14 +954,19 @@ interface CommonJsExportAssignment {
   readonly replacesAll: boolean;
 }
 
+const structuredExportIdentityKey = (
+  category: "esm" | "typescript-export-equals" | "commonjs",
+  value: string | CommonJsExportPath | null,
+): string => JSON.stringify([category, value]);
+
 const exportIdentity = (externalName: string): ExportIdentity => ({
-  key: externalName,
+  key: structuredExportIdentityKey("esm", externalName),
   displayName:
     externalName === "default" ? DEFAULT_EXPORT_DISPLAY : externalName,
 });
 
 const exportEqualsIdentity = (): ExportIdentity => ({
-  key: EXPORT_EQUALS_KEY,
+  key: structuredExportIdentityKey("typescript-export-equals", null),
   displayName: EXPORT_EQUALS_DISPLAY,
 });
 
@@ -1029,7 +1161,7 @@ const commonJsExportIdentity = (
 ): ExportIdentity => {
   const externalName = path.length === 0 ? "default" : path.join(".");
   return {
-    key: `commonjs:${JSON.stringify(path)}`,
+    key: structuredExportIdentityKey("commonjs", path),
     displayName:
       externalName === "default" ? DEFAULT_EXPORT_DISPLAY : externalName,
     commonJsPath: path,

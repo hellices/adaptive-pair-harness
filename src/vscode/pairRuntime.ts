@@ -978,11 +978,18 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
           this.publishSession(Date.now(), revisionFence);
         }
       }
-      releaseUnusedCopilotReservation(
+      const reservationReleased = releaseUnusedCopilotReservation(
         this.budget,
         admission.reservationId,
         error,
       );
+      if (
+        reservationReleased &&
+        lifecycleFence.isCurrent() &&
+        !signal.aborted
+      ) {
+        this.publishSession(Date.now(), revisionFence);
+      }
       if (!lifecycleFence.isCurrent() || signal.aborted) {
         throw error;
       }
@@ -1106,11 +1113,18 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
               this.publishSession(Date.now(), revisionFence);
             }
           }
-          releaseUnusedCopilotReservation(
+          const reservationReleased = releaseUnusedCopilotReservation(
             this.budget,
             admission.reservationId,
             error,
           );
+          if (
+            reservationReleased &&
+            lifecycleFence.isCurrent() &&
+            !signal.aborted
+          ) {
+            this.publishSession(Date.now(), revisionFence);
+          }
           if (!lifecycleFence.isCurrent() || signal.aborted) {
             throw error;
           }

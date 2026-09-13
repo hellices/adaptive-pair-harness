@@ -2876,6 +2876,103 @@ describe("PairRuntime lifecycle ownership", () => {
     }
   });
 
+  it("publishes a restored pre-dispatch Copilot reservation without hiding its Chat timeout", async () => {
+    vi.useFakeTimers();
+    const budgetConfig = {
+      maxCalls: 1,
+      maxInputTokens: 500,
+      maxOutputTokens: 180,
+      maxOutputTokensPerCall: 180,
+      windowMs: 600_000,
+    };
+    const budget = new TokenBudget(budgetConfig);
+    const reserve = budget.tryReserve.bind(budget);
+    vi.spyOn(budget, "tryReserve").mockImplementation(
+      (inputTokens, outputTokens, now) => {
+        const admission = reserve(inputTokens, outputTokens, now);
+        if (admission.allowed) {
+          vi.advanceTimersByTime(15_000);
+        }
+        return admission;
+      },
+    );
+    const shared = sharedContext();
+    const sendRequest = vi.fn(
+      async () =>
+        (async function* (): AsyncIterable<string> {
+          yield "late response";
+        })(),
+    );
+    const runtime = new PairRuntime({
+      config: config({
+        provider: "vscode-copilot",
+        budget: budgetConfig,
+      }),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: {
+        ...languageModelApi([
+          {
+            id: "copilot-model",
+            name: "Copilot model",
+          },
+        ]),
+        sendRequest,
+      },
+      apiKey: undefined,
+      budget,
+    });
+
+    try {
+      await runtime.startSession();
+      shared.publishEvidence({
+        uri: "file:///workspace/pair.ts",
+        evidence,
+        question: "Current question",
+      });
+      let handler: vscode.ChatRequestHandler | undefined;
+      registerPairChatParticipant(
+        (_id, registeredHandler) => {
+          handler = registeredHandler;
+          return { dispose: () => undefined } as vscode.ChatParticipant;
+        },
+        shared,
+        runtime,
+      );
+
+      const result = await handler!(
+        { command: "why", prompt: "" } as vscode.ChatRequest,
+        {} as vscode.ChatContext,
+        { markdown: () => undefined } as unknown as vscode.ChatResponseStream,
+        {
+          isCancellationRequested: false,
+          onCancellationRequested: () => ({ dispose: () => undefined }),
+        } as vscode.CancellationToken,
+      );
+
+      expect(sendRequest).not.toHaveBeenCalled();
+      expect(budget.snapshot(Date.now())).toEqual({
+        remainingCalls: 1,
+        remainingInputTokens: 500,
+        remainingOutputTokens: 180,
+      });
+      expect(shared.snapshot().session).toMatchObject({
+        remainingCalls: 1,
+        remainingInputTokens: 500,
+        remainingOutputTokens: 180,
+      });
+      expect(result).toEqual({
+        errorDetails: {
+          message:
+            "Adaptive Pair could not answer: vscode-copilot provider request timed out.",
+        },
+      });
+    } finally {
+      runtime.dispose();
+      vi.useRealTimers();
+    }
+  });
+
   it("does not dispatch another Copilot candidate after its exact reservation is denied", async () => {
     const firstUnavailable = new Error("first model disappeared");
     const sentModelIds: string[] = [];

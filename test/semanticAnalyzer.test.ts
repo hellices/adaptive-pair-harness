@@ -540,6 +540,166 @@ describe("TypeScriptSemanticAnalyzer", () => {
     },
   );
 
+  it.each([
+    ["named alias to export-equals", "named" as const, "special" as const],
+    ["export-equals to named alias", "special" as const, "named" as const],
+  ])(
+    "keeps a user \"export-equals\" alias distinct during the %s transition",
+    (_label, previousKind, currentKind) => {
+      const declaration =
+        "function handler(value: string): string { return value; }";
+      const source = (kind: "named" | "special"): string =>
+        [
+          declaration,
+          kind === "named"
+            ? 'export { handler as "export-equals" };'
+            : "export = handler;",
+        ].join("\n");
+      const evidence = analyzeEvidence(
+        episode(source(previousKind), source(currentKind)),
+      ).filter((item) => item.kind === "public-api-change");
+
+      expect(evidence).toHaveLength(2);
+      expect(evidence).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            title: "Exported API added",
+            references: [
+              currentKind === "special" ? "export =" : "export-equals",
+            ],
+          }),
+          expect.objectContaining({
+            title: "Exported API removed",
+            references: [
+              previousKind === "special" ? "export =" : "export-equals",
+            ],
+          }),
+        ]),
+      );
+    },
+  );
+
+  it.each([
+    [
+      "export-equals",
+      "export = C;",
+      "export =#run",
+    ],
+    [
+      "default",
+      "export default C;",
+      "default export#run",
+    ],
+    [
+      "local alias",
+      "export { C as PublicC };",
+      "PublicC#run",
+    ],
+  ])(
+    "reports method signature changes for a %s class-valued identifier",
+    (_label, exportStatement, reference) => {
+      const source = (parameterType: string): string =>
+        [
+          "const C = class {",
+          `  run(value: ${parameterType}): string { return String(value); }`,
+          "};",
+          exportStatement,
+        ].join("\n");
+      const evidence = analyzeEvidence(
+        episode(source("string"), source("number")),
+      );
+
+      expect(evidence).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "public-api-change",
+            title: "Exported API signature changed",
+            references: [reference],
+          }),
+        ]),
+      );
+    },
+  );
+
+  it("reports constructor changes through a checker-resolved class-valued alias", () => {
+    const source = (parameterType: string): string =>
+      [
+        "const Implementation = class {",
+        `  constructor(value: ${parameterType}) { void value; }`,
+        "};",
+        "const C = Implementation;",
+        "export default C;",
+      ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(source("string"), source("number")),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["default export#constructor"],
+        }),
+      ]),
+    );
+  });
+
+  it("records checker-only constructor and class member signatures", () => {
+    const source = (parameterType: string): string =>
+      [
+        "declare const C: {",
+        `  new (value: ${parameterType}): {`,
+        `    run(input: ${parameterType}): string;`,
+        "  };",
+        "};",
+        "export = C;",
+      ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(source("string"), source("number")),
+    ).filter((item) => item.kind === "public-api-change");
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: "Exported API signature changed",
+          references: ["export =#constructor"],
+        }),
+        expect.objectContaining({
+          title: "Exported API signature changed",
+          references: ["export =#run"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports a removed method from a locally exported class-valued identifier", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        [
+          "const C = class {",
+          "  run(value: string): string { return value; }",
+          "};",
+          "export { C as PublicC };",
+        ].join("\n"),
+        [
+          "const C = class {};",
+          "export { C as PublicC };",
+        ].join("\n"),
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API removed",
+          references: ["PublicC#run"],
+        }),
+      ]),
+    );
+  });
+
   it("reports inferred signature changes for exported function-valued variables", () => {
     const evidence = analyzeEvidence(
       episode(

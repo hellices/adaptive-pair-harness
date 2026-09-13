@@ -2095,3 +2095,71 @@
 - A live VS Code host was unavailable in this non-interactive environment;
   deterministic VS Code test doubles and the packaged artifact cover the
   changed boundaries.
+
+---
+
+## Timeout-budget, class-export, and export-namespace findings (2026-09-13)
+
+### Corrections implemented
+
+- Exact unused reservation releases now republish the restored budget through
+  the current request's revision fence. A Copilot deadline that expires after
+  reservation but before provider dispatch therefore restores all capacity
+  without making Chat suppress the request's own timeout.
+- Variable declarations initialized with class expressions are resolved as
+  class values. Checker construct signatures also resolve aliased classes and
+  structural constructor types, including public constructor, instance-method,
+  and static-method signatures. `export =`, default, direct, and local-alias
+  exports now report class method/constructor changes and removals under their
+  public labels.
+- Export identities now use structured ESM, TypeScript export-equals, and
+  CommonJS categories. The user-defined string-literal alias `export-equals`
+  remains distinct from TypeScript `export =`, while existing default and
+  CommonJS identity relationships and all display labels remain unchanged.
+
+### TDD evidence
+
+- Pre-dispatch timeout RED: the budget object restored its reservation, but the
+  shared session still exposed zero capacity. GREEN: the integrated
+  Runtime/Chat regression observes restored capacity, no provider dispatch,
+  and the visible `ModelProviderTimeoutError`.
+- Class-valued export RED: **5 expected failures** covered `export =`, default,
+  and local-alias method changes, checker-resolved constructor changes, and
+  method removal. A separate checker-only constructor/member regression failed
+  before structural construct-member collection was added. GREEN: all **6**
+  regressions passed.
+- Export namespace RED: both directions of the string-literal
+  `export-equals`/TypeScript `export =` transition produced no evidence.
+  GREEN: each direction produces distinct added and removed API evidence.
+- Final focused semantic/runtime/provider run: **3 files, 197 tests passed**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 516 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 90.59%, branches 83.67%, functions 93.50%, lines 90.71%
+- `npm run package`: **PASS - 158 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS - 0 vulnerabilities**
+- Runtime dependency root scan: **PASS - `typescript@5.9.3` only**
+- VSIX inclusion/exclusion scan: **PASS**
+  - compiled runtime and public docs are present;
+  - source, tests, coverage, private review material, editor/CI files, and
+    source maps are absent.
+- Production and packaged credential-pattern scans: **PASS**
+- Production and packaged URL scans: **PASS - loopback default only**
+- Source and packaged repository/bugs/homepage metadata scans: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review covered release ownership, revision-fence advancement,
+  timeout surfacing, all requested class-valued export forms, public-member
+  filtering, export-family collisions, evidence labels, and packaged contents.
+  No remaining high-confidence correctness, lifecycle, privacy, or packaging
+  issue was found.
+- A live VS Code host was not exercised in this non-interactive environment.
+  The semantic analyzer remains intentionally per-document, so class values
+  imported from other modules are outside this slice.
