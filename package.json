@@ -179,11 +179,13 @@
   },
   "devDependencies": {
     "@eslint/js": "8.57.1",
+    "@types/linkify-it": "^5.0.0",
     "@types/node": "^26.4.1",
     "@types/vscode": "^1.136.0",
     "@vitest/coverage-v8": "^4.1.11",
     "@vscode/vsce": "^3.9.2",
     "eslint": "8.57.1",
+    "linkify-it": "^5.0.2",
     "typescript-eslint": "8.69.1-alpha.0",
     "vitest": "^4.1.11"
   }

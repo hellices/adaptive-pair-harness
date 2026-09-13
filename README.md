@@ -215,12 +215,15 @@ How it works today:
   never interpolated into that Markdown.
 - Every provider response—including `local-template`, GitHub Copilot,
   OpenAI-compatible output, and local fallback—is treated as untrusted plain
-  text. The production adapter passes it to
-  `new MarkdownString().appendText(value)` before writing the result to
-  `ChatResponseStream.markdown`. Markdown-looking headings, emphasis, inline or
-  fenced code, images, nested or multiple links, Unicode email addresses, raw
-  HTML, and `command:`, `vscode:`, `data:`, or `file:` links are therefore
-  displayed literally rather than activated.
+  text. Before calling `MarkdownString.appendText`, the production adapter
+  inserts Unicode separators into every `://`, bare `www.`, and `@` autolink
+  trigger. This includes repeated or nested URLs, arbitrary and uppercase
+  schemes, and ASCII, punycode, or Unicode-domain email addresses. The
+  separators are idempotent and keep the text readable while preventing bare
+  links from becoming active. `appendText` then applies VS Code's escaping for
+  Markdown delimiters and HTML before the adapter writes the result to
+  `ChatResponseStream.markdown`. Fixed extension-owned Markdown bypasses this
+  plain-text path unchanged.
 - Every dynamic `@pair` Chat response—local success, remote success, fallback,
   and dynamic error detail—passes through one **16,384 Unicode code-point**
   display limit. CRLF/CR line endings and unsafe control characters are

@@ -183,13 +183,20 @@ interpolated into trusted Markdown.
 
 All provider output is untrusted plain text, including `local-template`,
 GitHub Copilot, OpenAI-compatible output, and local fallback. The production
-VS Code adapter creates a `MarkdownString`, calls `appendText(value)`, and only
-then passes that object to `ChatResponseStream.markdown`. The extension does not
-parse or selectively sanitize model Markdown. Headings, emphasis, inline and
-fenced code, images, nested or multiple links, Unicode email addresses, raw
-HTML, and `command:`, `vscode:`, `data:`, or `file:` link forms remain literal
-text and cannot become active markup. `appendText` retains readable Unicode and
-line breaks while applying VS Code's official text escaping.
+VS Code adapter first neutralizes automatic-link triggers in that text. It
+inserts an invisible word-joining separator into every `://` and around every
+`@`; bare `www.` prefixes receive a hair-space separator before the dot. The
+operation is global, case-insensitive where applicable, idempotent, and covers
+nested URLs, arbitrary schemes, mentions, and ASCII, punycode, or
+Unicode-domain email addresses. It does not parse Markdown.
+
+The adapter then creates a `MarkdownString`, calls `appendText(value)`, and
+passes that object to `ChatResponseStream.markdown`. Thus `appendText` still
+handles headings, emphasis, inline and fenced code, images, explicit links, raw
+HTML, and `command:`, `vscode:`, `data:`, or `file:` link forms as literal
+text, while the preceding separators keep bare links inert. Ordinary Unicode
+and line breaks remain readable. Fixed extension-owned Markdown does not pass
+through this neutralizer or `appendText`.
 
 This display limit is independent of model limits. It does not increase or
 replace the 180-token remote output allowance, rolling token accounting, or

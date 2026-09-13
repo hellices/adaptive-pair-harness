@@ -265,9 +265,14 @@ The Chat boundary has separate trusted-Markdown and untrusted-text methods.
 Fixed extension guidance and layout use the former. Every provider response
 and each dynamic error, session, workspace, configuration, evidence, or symbol
 field uses the latter. The production adapter implements text writes with
+an idempotent autolink-neutralization pass followed by
 `new MarkdownString().appendText(value)` before calling the VS Code
-`ChatResponseStream.markdown` API, so model Markdown syntax is displayed as
-inert text rather than interpreted.
+`ChatResponseStream.markdown` API. Invisible Unicode separators break every
+URI `://` and email/mention `@` trigger, while a hair-space separator breaks
+bare `www.` prefixes. The pass covers repeated or nested URLs, arbitrary
+scheme casing, and ASCII, punycode, or Unicode domains. `appendText` remains
+responsible for Markdown-delimiter and HTML escaping, so untrusted Chat output
+is inert readable plain text; trusted extension Markdown is untouched.
 
 Every runtime claim and evidence publication advances an opaque monotonic
 shared-context revision. Chat captures that revision before asynchronous symbol

@@ -3242,3 +3242,69 @@
 - Live VS Code Chat rendering and live remote providers were unavailable in
   this non-interactive environment. The adapter contract test verifies that raw
   provider text reaches VS Code only through `MarkdownString.appendText`.
+
+---
+
+## Chat safe-text bare-autolink neutralization (2026-09-14)
+
+### Corrections implemented
+
+- Added one idempotent neutralization operation at the production Chat text
+  adapter boundary, immediately before `MarkdownString.appendText`.
+- Every `://` separator receives an invisible U+2060 WORD JOINER. Replacement
+  is global and therefore covers repeated, adjacent, nested, arbitrary, and
+  uppercase-scheme URLs without parsing Markdown.
+- Every email or mention `@` is surrounded with U+2060 WORD JOINER characters.
+  Bare `www.` receives U+200A HAIR SPACE before its dot because the rendering
+  linkifier ignores zero-width format characters inside domain names.
+- The trusted `markdown` adapter method remains a direct pass-through. Only
+  untrusted Chat `text` writes are neutralized, after which `appendText`
+  continues to escape Markdown delimiters and HTML.
+- Updated README, configuration, and architecture documentation to describe
+  inert readable plain-text rendering and automatic-link neutralization.
+- Added direct `linkify-it` as a development-only dependency so the regression
+  suite checks rendered-link discovery rather than only observing a mock call.
+
+### TDD evidence
+
+- RED: the focused adapter suite reported **7 expected failures**. The existing
+  adapter passed raw email text to `appendText`; the requested neutralizer did
+  not exist, so nested/adjacent schemes, arbitrary and uppercase schemes,
+  `www.`, ASCII/punycode/Unicode email, mention, escaped-link, code-string,
+  idempotence, Unicode, and linkifier assertions failed.
+- GREEN: the focused adapter suite passed **1 file, 7 tests** after the minimal
+  adapter-boundary implementation.
+- The rendering-oriented regression passes all neutralized samples through
+  `linkify-it` and asserts that it discovers no automatic links.
+
+### Verification
+
+- Focused Chat adapter:
+  `npx vitest run test/vsCodeChatResponse.test.ts --testTimeout=15000`:
+  **PASS — 1 file, 7 tests**
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **20 files, 539 tests passed**
+- `npm run test:coverage`: **PASS — 20 files, 539 tests**
+  - statements 90.63%, branches 84.06%, functions 94.04%, lines 90.77%
+- `npm run package`: **PASS — 160 files, 4.37 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- Source, compiled-output, and packaged adapter sink scans: **PASS**
+- VSIX exclusion scan: **PASS — 160 entries; development linkifier absent**
+- Production/public-doc and packaged-runtime credential-value scans:
+  **PASS — 24 source/doc files and 25 packaged files**
+- Compiled and packaged runtime URL scans, repository metadata assertions, and
+  `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Reviewed the complete changed-file diff, all Chat response sinks, the
+  trusted/untrusted boundary, marker placement and idempotence, Unicode
+  handling, dependencies, documentation, and packaged output. The first full
+  check caught a literal U+200A in a test expectation; that expectation now
+  constructs the marker from an escaped constant, and the full check passed.
+- A live VS Code Chat renderer was unavailable. The production-adapter contract
+  test verifies ordering at `appendText`, while the `linkify-it` assertion
+  supplies a rendering-oriented check for the required URL and email forms.
