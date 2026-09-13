@@ -1245,7 +1245,10 @@ const enclosingScopeIdentity = (node: ts.Node | undefined): SubjectIdentity | un
       ts.isGetAccessorDeclaration(current) ||
       ts.isSetAccessorDeclaration(current)
     ) {
-      return withLexicalBlockPath(accessorIdentity(current), lexicalBlockPath);
+      const identity = accessorIdentity(current);
+      if (identity !== undefined) {
+        return withLexicalBlockPath(identity, lexicalBlockPath);
+      }
     }
 
     if (ts.isMethodDeclaration(current)) {

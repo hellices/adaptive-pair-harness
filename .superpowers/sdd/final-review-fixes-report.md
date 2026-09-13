@@ -1754,3 +1754,51 @@
   remains.
 - No production memory behavior changed; the strengthened tests now detect
   any future in-place corruption before a rejected update or safe recovery.
+
+---
+
+## Accessor scope fallback regression (2026-09-13)
+
+### Correction implemented
+
+- `enclosingScopeIdentity` now returns an accessor-qualified identity only
+  when `accessorIdentity` resolves. Object-literal, class-expression, and
+  computed accessors otherwise continue to the nearest enclosing
+  function/variable/class/module/lexical identity.
+- Existing named class accessor handling is unchanged, including get/set and
+  static/instance identity dimensions.
+- Added first-only complexity-growth regressions for same-named helper arrows
+  in object-literal getters, class-expression setters, and computed static
+  getters under different outer functions.
+
+### TDD evidence
+
+- RED: all **3** new focused regressions failed with zero complexity evidence,
+  confirming that the unresolved accessor returned before reaching its outer
+  scope.
+- GREEN: all **3** regressions passed after the guarded accessor return.
+- Focused semantic suite: **59 tests passed**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 443 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 89.50%, branches 82.66%, functions 92.73%, lines 89.63%
+- `npm run package`: **PASS — 157 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Production credential-value scan: **PASS**
+- Package metadata URL scan: **PASS**
+- VSIX exclusion scan: **PASS**, allowing packaged TypeScript library
+  declarations.
+
+### Self-review and residual concerns
+
+- Reviewed the complete change against accessor, class, function, variable,
+  module, and lexical fallback order. The guarded return is the minimal fix
+  and leaves resolved named class accessor identities intact.
+- No high-confidence correctness, security, or packaging concerns remain.
+  Unresolvable accessor names intentionally inherit the nearest resolvable
+  enclosing scope rather than inventing an unstable accessor identity.

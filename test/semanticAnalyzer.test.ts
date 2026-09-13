@@ -1350,6 +1350,95 @@ describe("TypeScriptSemanticAnalyzer", () => {
     ]);
   });
 
+  it.each([
+    [
+      "object-literal getters",
+      (outerName: string, helper: readonly string[]) =>
+        [
+          `function ${outerName}(): number {`,
+          "  const target = {",
+          "    get value(): number {",
+          ...helper,
+          "      return helper(1);",
+          "    },",
+          "  };",
+          "  return target.value;",
+          "}",
+        ].join("\n"),
+      "outerOne.helper",
+    ],
+    [
+      "class-expression setters",
+      (outerName: string, helper: readonly string[]) =>
+        [
+          `function ${outerName}(input: number): void {`,
+          "  const Target = class {",
+          "    set value(next: number) {",
+          ...helper,
+          "      helper(next);",
+          "    }",
+          "  };",
+          "  new Target().value = input;",
+          "}",
+        ].join("\n"),
+      "outerOne.helper",
+    ],
+    [
+      "computed static getters",
+      (outerName: string, helper: readonly string[]) =>
+        [
+          `function ${outerName}(): number {`,
+          "  class Target {",
+          '    static get ["value"](): number {',
+          ...helper,
+          "      return helper(1);",
+          "    }",
+          "  }",
+          '  return Target["value"];',
+          "}",
+        ].join("\n"),
+      "outerOne.Target.helper",
+    ],
+  ] as const)(
+    "attributes first-only complexity growth inside %s to its outer scope",
+    (_caseName, accessorSource, expectedReference) => {
+      const simpleHelper = [
+        "      const helper = (input: number): number => {",
+        "        if (input > 0) return input;",
+        "        if (input < 0) return -input;",
+        "        return 0;",
+        "      };",
+      ];
+      const complexHelper = [
+        "      const helper = (input: number): number => {",
+        "        if (input > 10) return 10;",
+        "        if (input > 0 && input < 10) return input;",
+        "        for (const item of [input]) {",
+        "          if (item === 0) return 0;",
+        "        }",
+        "        return input < 0 ? -input : input;",
+        "      };",
+      ];
+      const source = (firstHelper: readonly string[]): string =>
+        [
+          accessorSource("outerOne", firstHelper),
+          accessorSource("outerTwo", simpleHelper),
+        ].join("\n");
+
+      const evidence = analyzeEvidence(
+        episode(source(simpleHelper), source(complexHelper)),
+      ).filter(
+        (item) =>
+          item.kind === "complexity-growth" &&
+          item.references[0]?.endsWith(".helper") === true,
+      );
+
+      expect(evidence).toHaveLength(1);
+      expect(evidence[0]?.references[0]).toBe(expectedReference);
+      expect(evidence[0]?.detail).toContain("now has 6 branches, up from 2.");
+    },
+  );
+
   it("attributes complexity growth to only the first same-named arrow across distinct accessors", () => {
     const simpleHelper = [
       "    const helper = (input: number): number => {",
