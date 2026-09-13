@@ -2301,3 +2301,90 @@
 - Analysis remains intentionally per-document with module resolution disabled,
   so public surfaces imported from other project files remain outside this
   analyzer slice.
+
+---
+
+## Latest class/type API surface findings (2026-09-13)
+
+### Corrections implemented
+
+- Canonicalized recursive references in exported type, interface, and class
+  member signatures to a stable `__external_self__` token. The normalizer
+  rewrites only parsed type references/type queries, preserves shadowing by
+  signature type parameters, and therefore ignores equivalent local/default
+  renames without hiding real recursive shape changes.
+- Added explicit `value-*` and `type-*` signature namespaces. Local merged
+  symbols now retain both checker value and declared type surfaces, including
+  non-callable merged values, while value-only and type-only transitions remain
+  independently observable.
+- Added separate getter/setter signature markers to public property surfaces.
+  Getter/setter availability and setter parameter changes are now observable;
+  non-public accessor halves remain outside the public shape.
+- Replaced first-constituent class abstractness with a sorted marker for every
+  class constituent. Construct-signature groups are canonicalized across
+  intersection order while preserving overload order inside each constituent,
+  and abstract constructor markers inspect the owning class where applicable.
+- Deduplicated equivalent type/value member changes and removals using a
+  namespace-neutral public key plus the complete before/after signature
+  transition. Evidence IDs derive from that same stable transition, so source
+  declaration order cannot select a different duplicate identity.
+
+### TDD evidence
+
+- Recursive normalization RED: **4 expected failures** for renamed recursive
+  aliases, interfaces, classes, and default exports; the real-shape-change
+  control already passed. GREEN: **5 focused cases passed**.
+- Merged namespaces RED: **3 expected failures** for dual-surface addition and
+  value-only/type-only transitions. A self-review case was tightened from an
+  already-supported callable variable to a scalar merged value, then failed as
+  expected. GREEN: **4 focused cases passed**.
+- Accessor shape RED: **2 expected failures** for adding a setter and changing
+  its parameter. Self-review added a third expected failure for a private
+  setter incorrectly suppressing its public getter. GREEN: **3 focused cases
+  passed**.
+- Intersection abstractness RED: **3 expected failures** for a non-primary
+  class marker and class/construct constituent reordering; the non-primary
+  structural abstractness control already passed. Self-review added one
+  expected failure proving overload order inside a constituent must remain
+  significant. GREEN: **7 focused intersection cases passed**.
+- Duplicate evidence RED: **2 expected failures** for duplicate merged-member
+  change/removal findings. A declaration-order identity case was tightened to
+  direct merged exports and then failed as expected. GREEN: **4 focused
+  deduplication/identity cases passed**.
+- Final focused semantic suite: **1 file, 131 tests passed**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 565 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 91.05%, branches 84.64%, functions 93.57%, lines 91.17%
+- `npm run package`: **PASS — 158 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX inclusion/exclusion scan: **PASS**
+  - compiled extension, semantic analyzer, and public docs are present;
+  - source, tests, coverage, private review material, editor/CI files, and
+    source maps are absent.
+- Production and packaged credential-pattern scans: **PASS**
+- Production and packaged runtime URL scans: **PASS — loopback default plus
+  declared repository metadata only**
+- Source and packaged repository/bugs/homepage metadata scans: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review covered recursive aliases/defaults, generic shadowing,
+  merged callable/scalar/class symbols, namespace transitions, public and
+  non-public accessors, inaccessible constructors, intersection reordering,
+  overload ordering, duplicate transitions, CommonJS paths, and existing
+  direct/local/export-equals/default export paths.
+- Self-review found and corrected merged scalar-value loss, overload-order
+  erasure within intersections, non-public setter suppression of a public
+  getter, and declaration-order-dependent deduplicated IDs.
+- No remaining high-confidence correctness, privacy, packaging, or dependency
+  issue was found. Analysis intentionally remains per-document with module
+  resolution disabled; a live VS Code extension host was not exercised in this
+  non-interactive run.

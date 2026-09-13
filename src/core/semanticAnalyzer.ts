@@ -54,6 +54,7 @@ const ANALYZER_SOURCE = "typescript-semantic-analyzer";
 const DEFAULT_EXPORT_KEY = "default-export";
 const DEFAULT_EXPORT_DISPLAY = "default export";
 const EXPORT_EQUALS_DISPLAY = "export =";
+const EXTERNAL_SELF_TYPE = "__external_self__";
 const TYPESCRIPT_LIBRARY_FILE_SYSTEM: TypeScriptLibraryFileSystem = {
   fileExists: (path) => ts.sys.fileExists(path),
   getDefaultLibFilePath: (options) => ts.getDefaultLibFilePath(options),
@@ -396,6 +397,7 @@ const collectPublicApiChangeEvidence = (
   const previousSignatures = collectExportedSignatures(previous);
   const currentSignatures = collectExportedSignatures(current);
   const evidence: Evidence[] = [];
+  const emittedTransitions = new Set<string>();
 
   for (const [key, currentSignature] of currentSignatures.entries()) {
     const previousSignature = previousSignatures.get(key);
@@ -405,12 +407,21 @@ const collectPublicApiChangeEvidence = (
     ) {
       continue;
     }
+    const transition = publicApiTransitionKey(
+      key,
+      previousSignature?.signatures,
+      currentSignature.signatures,
+    );
+    if (emittedTransitions.has(transition)) {
+      continue;
+    }
+    emittedTransitions.add(transition);
 
     evidence.push({
       id: buildEvidenceId(
         "public-api-change",
         current.sourceFile.fileName,
-        key,
+        transition,
       ),
       kind: "public-api-change",
       severity: "warning",
@@ -433,12 +444,20 @@ const collectPublicApiChangeEvidence = (
     if (currentSignatures.has(key)) {
       continue;
     }
+    const transition = publicApiTransitionKey(
+      key,
+      previousSignature.signatures,
+    );
+    if (emittedTransitions.has(transition)) {
+      continue;
+    }
+    emittedTransitions.add(transition);
 
     evidence.push({
       id: buildEvidenceId(
         "public-api-change",
         current.sourceFile.fileName,
-        key,
+        transition,
       ),
       kind: "public-api-change",
       severity: "warning",
@@ -453,6 +472,17 @@ const collectPublicApiChangeEvidence = (
 
   return evidence;
 };
+
+const publicApiTransitionKey = (
+  signatureKey: string,
+  previousSignatures: readonly string[] | undefined,
+  currentSignatures?: readonly string[],
+): string =>
+  JSON.stringify([
+    signatureKey.replace(/^(?:type|value)-/u, ""),
+    previousSignatures ?? null,
+    currentSignatures ?? null,
+  ]);
 
 const collectExportedSignatures = (
   source: SemanticSource,
@@ -519,7 +549,7 @@ const collectExportedSignatures = (
     declarations: readonly ts.FunctionLikeDeclaration[],
     rangeNode?: ts.Node,
   ): void => {
-    const key = `function:${identity.key}`;
+    const key = `value-function:${identity.key}`;
     for (const declaration of declarations) {
       appendSignatureRecord(
         signatureTarget,
@@ -547,11 +577,15 @@ const collectExportedSignatures = (
     namespace: ExportSurfaceNamespace,
     rangeNode?: ts.Node,
     knownClassDeclaration?: ts.ClassLikeDeclarationBase,
+    includeValueRoot = false,
   ): boolean => {
+    const selfTypeNames = exportedSelfTypeNames(
+      valueType,
+      location,
+      knownClassDeclaration,
+    );
     const keyFor = (category: string, suffix = ""): string =>
-      `${namespace === "type" ? "type-" : ""}${category}:${
-        identity.key
-      }${suffix}`;
+      `${namespace}-${category}:${identity.key}${suffix}`;
     const rememberCommonJsPath = (key: string): void => {
       if (identity.commonJsPath !== undefined) {
         commonJsPathsBySignatureKey.set(key, identity.commonJsPath);
@@ -587,23 +621,56 @@ const collectExportedSignatures = (
           continue;
         }
         const declarations = member.getDeclarations() ?? [];
-        if (declarations.some(isNonPublicDeclaration)) {
+        const publicDeclarations = declarations.filter(
+          (declaration) => !isNonPublicDeclaration(declaration),
+        );
+        if (declarations.length > 0 && publicDeclarations.length === 0) {
           continue;
         }
         const memberLocation =
-          member.valueDeclaration ?? declarations[0] ?? location;
+          (member.valueDeclaration !== undefined &&
+          !isNonPublicDeclaration(member.valueDeclaration)
+            ? member.valueDeclaration
+            : undefined) ??
+          publicDeclarations[0] ??
+          location;
         const memberType = checker.getTypeOfSymbolAtLocation(
           member,
           memberLocation,
         );
         const memberSignatures = memberType.getCallSignatures();
+        const accessorMarkers = (
+          [
+            ["getter", publicDeclarations.find(ts.isGetAccessorDeclaration)],
+            ["setter", publicDeclarations.find(ts.isSetAccessorDeclaration)],
+          ] as const
+        ).flatMap(([kind, declaration]) => {
+          if (declaration === undefined) {
+            return [];
+          }
+          const signature = checker.getSignatureFromDeclaration(declaration);
+          return [
+            `${kind}:${
+              signature === undefined
+                ? fallbackFunctionSignature(declaration, sourceFile)
+                : serializeCheckerSignature(
+                    signature,
+                    declaration,
+                    checker,
+                    ts.SignatureKind.Call,
+                    selfTypeNames,
+                  )
+            }`,
+          ];
+        });
         const markers = [
           (member.flags & ts.SymbolFlags.Optional) !== 0 ? "optional" : "",
-          declarations.some((declaration) =>
+          publicDeclarations.some((declaration) =>
             hasModifier(declaration, ts.SyntaxKind.ReadonlyKeyword),
           )
             ? "readonly"
             : "",
+          ...accessorMarkers,
         ]
           .filter((marker) => marker.length > 0)
           .join("|");
@@ -618,6 +685,7 @@ const collectExportedSignatures = (
                 memberLocation,
                 checker,
                 ts.SignatureKind.Call,
+                selfTypeNames,
               )}`,
               memberLocation,
             );
@@ -631,6 +699,7 @@ const collectExportedSignatures = (
               memberType,
               memberLocation,
               checker,
+              selfTypeNames,
             )}`,
             memberLocation,
           );
@@ -641,13 +710,25 @@ const collectExportedSignatures = (
     };
 
     let appended = false;
-    if (namespace === "type") {
+    if (namespace === "type" || includeValueRoot) {
       const key = keyFor("surface");
       appendSignatureRecord(
         signatureTarget,
         key,
         identity.displayName,
-        serializeExportedTypeRoot(valueType, location, checker),
+        namespace === "type"
+          ? serializeExportedTypeRoot(
+              valueType,
+              location,
+              checker,
+              selfTypeNames,
+            )
+          : serializeCheckerType(
+              valueType,
+              location,
+              checker,
+              selfTypeNames,
+            ),
         rangeForNode(sourceFile, rangeNode ?? location),
       );
       appended = true;
@@ -666,6 +747,7 @@ const collectExportedSignatures = (
             location,
             checker,
             ts.SignatureKind.Call,
+            selfTypeNames,
           ),
           rangeForNode(sourceFile, rangeNode ?? location),
         );
@@ -675,52 +757,84 @@ const collectExportedSignatures = (
     }
 
     const constructSignatures = valueType.getConstructSignatures();
-    const classDeclaration =
-      knownClassDeclaration ?? classDeclarationForValueType(valueType);
-    if (classDeclaration !== undefined) {
+    const classDeclarations =
+      knownClassDeclaration === undefined
+        ? classDeclarationsForValueType(valueType)
+        : [knownClassDeclaration];
+    if (classDeclarations.length > 0) {
       const classKey = keyFor("class");
       appendSignatureRecord(
         signatureTarget,
         classKey,
         identity.displayName,
-        hasModifier(classDeclaration, ts.SyntaxKind.AbstractKeyword)
-          ? "abstract-class"
-          : "concrete-class",
+        classDeclarations
+          .map((declaration) =>
+            hasModifier(declaration, ts.SyntaxKind.AbstractKeyword)
+              ? "abstract-class"
+              : "concrete-class",
+          )
+          .sort()
+          .join("&"),
         rangeForNode(sourceFile, rangeNode ?? location),
       );
       rememberCommonJsPath(classKey);
       appended = true;
     }
-    const publicConstructSignatures = constructSignatures.filter(
-      (signature) => {
-        const declaration = signature.getDeclaration();
-        return declaration === undefined || !hasNonPublicModifier(declaration);
-      },
-    );
+    const publicConstructSignatureGroups =
+      constructSignatureGroupsForType(valueType)
+        .map((signatures) =>
+          signatures.filter((signature) => {
+            const declaration = signature.getDeclaration();
+            return (
+              declaration === undefined ||
+              !hasNonPublicModifier(declaration)
+            );
+          }),
+        )
+        .filter((signatures) => signatures.length > 0);
+    const publicConstructSignatures =
+      publicConstructSignatureGroups.flat();
     const constructorKey = keyFor("method", "#constructor");
-    for (const signature of publicConstructSignatures) {
-      const nominalClassSignature =
-        classDeclaration !== undefined &&
-        isNominalClassConstructSignature(
-          signature,
-          classDeclaration,
-          checker,
-        );
+    const nominalClassDeclaration =
+      classDeclarations.length === 1 ? classDeclarations[0] : undefined;
+    const serializedConstructSignatureGroups =
+      publicConstructSignatureGroups.map((signatures) =>
+        signatures.map((signature) => {
+          const nominalClassSignature =
+            nominalClassDeclaration !== undefined &&
+            isNominalClassConstructSignature(
+              signature,
+              nominalClassDeclaration,
+              checker,
+            );
+          return nominalClassSignature
+            ? serializeClassConstructSignature(
+                signature,
+                location,
+                checker,
+                selfTypeNames,
+              )
+            : serializeStructuralConstructSignature(
+                signature,
+                location,
+                checker,
+                selfTypeNames,
+              );
+        }),
+      );
+    if (valueType.isIntersection()) {
+      serializedConstructSignatureGroups.sort((left, right) =>
+        JSON.stringify(left).localeCompare(JSON.stringify(right)),
+      );
+    }
+    const serializedConstructSignatures =
+      serializedConstructSignatureGroups.flat();
+    for (const serializedSignature of serializedConstructSignatures) {
       appendSignatureRecord(
         signatureTarget,
         constructorKey,
         `${identity.displayName}#constructor`,
-        nominalClassSignature
-          ? serializeClassConstructSignature(
-              signature,
-              location,
-              checker,
-            )
-          : serializeStructuralConstructSignature(
-              signature,
-              location,
-              checker,
-            ),
+        serializedSignature,
         rangeForNode(sourceFile, rangeNode ?? location),
       );
     }
@@ -733,7 +847,7 @@ const collectExportedSignatures = (
       namespace === "type" ||
       callSignatures.length > 0 ||
       constructSignatures.length > 0 ||
-      classDeclaration !== undefined;
+      classDeclarations.length > 0;
     if (exposesObjectMembers) {
       const ownMemberSeparator =
         namespace === "type" &&
@@ -765,23 +879,28 @@ const collectExportedSignatures = (
     identity: ExportIdentity,
     location: ts.Node,
     rangeNode?: ts.Node,
+    exportedType: ts.Type = checker.getTypeAtLocation(location),
+    includeRoot = false,
   ): boolean =>
     appendCheckerSurface(
       identity,
-      checker.getTypeAtLocation(location),
+      exportedType,
       location,
       "value",
       rangeNode,
+      undefined,
+      includeRoot,
     );
 
   const appendCheckerType = (
     identity: ExportIdentity,
     location: ts.Node,
     rangeNode?: ts.Node,
+    exportedType: ts.Type = checker.getTypeAtLocation(location),
   ): void => {
     appendCheckerSurface(
       identity,
-      checker.getTypeAtLocation(location),
+      exportedType,
       location,
       "type",
       rangeNode,
@@ -814,30 +933,88 @@ const collectExportedSignatures = (
       return;
     }
     const symbol = checker.getSymbolAtLocation(identifier);
-    if (
-      isTypeOnly === true ||
-      (symbol !== undefined &&
-        (symbol.flags & ts.SymbolFlags.Value) === 0)
-    ) {
-      appendCheckerType(identity, identifier, rangeNode);
+    const hasValueNamespace =
+      symbol === undefined || (symbol.flags & ts.SymbolFlags.Value) !== 0;
+    const hasTypeNamespace =
+      symbol !== undefined && (symbol.flags & ts.SymbolFlags.Type) !== 0;
+    const isMergedSymbol = isMergedTypeAndValueSymbol(symbol);
+    const exportedValueType =
+      symbol === undefined
+        ? checker.getTypeAtLocation(identifier)
+        : checker.getTypeOfSymbolAtLocation(symbol, identifier);
+    if (isTypeOnly === true || !hasValueNamespace) {
+      appendCheckerType(
+        identity,
+        identifier,
+        rangeNode,
+        symbol === undefined || !hasTypeNamespace
+          ? checker.getTypeAtLocation(identifier)
+          : checker.getDeclaredTypeOfSymbol(symbol),
+      );
       return;
     }
-    if (identifier !== undefined && variableNames.has(localName)) {
-      if (appendCheckerValue(identity, identifier, rangeNode)) {
+    if (variableNames.has(localName)) {
+      if (
+        appendCheckerValue(
+          identity,
+          identifier,
+          rangeNode,
+          exportedValueType,
+          isMergedSymbol,
+        )
+      ) {
+        if (isMergedSymbol) {
+          appendCheckerType(
+            identity,
+            identifier,
+            rangeNode,
+            checker.getDeclaredTypeOfSymbol(symbol),
+          );
+        }
         return;
       }
     }
     const functions = functionsByName.get(localName);
     if (functions !== undefined) {
       appendFunction(identity, functions, rangeNode);
+      if (isMergedSymbol) {
+        appendCheckerType(
+          identity,
+          identifier,
+          rangeNode,
+          checker.getDeclaredTypeOfSymbol(symbol),
+        );
+      }
       return;
     }
     const declaration = classesByName.get(localName);
     if (declaration !== undefined) {
       appendClass(identity, declaration, rangeNode);
+      if (isMergedSymbol) {
+        appendCheckerType(
+          identity,
+          identifier,
+          rangeNode,
+          checker.getDeclaredTypeOfSymbol(symbol),
+        );
+      }
       return;
     }
-    appendCheckerValue(identity, identifier, rangeNode);
+    appendCheckerValue(
+      identity,
+      identifier,
+      rangeNode,
+      exportedValueType,
+      isMergedSymbol,
+    );
+    if (isMergedSymbol) {
+      appendCheckerType(
+        identity,
+        identifier,
+        rangeNode,
+        checker.getDeclaredTypeOfSymbol(symbol),
+      );
+    }
   };
 
   const appendCallableExpression = (
@@ -1083,6 +1260,14 @@ const bindingIdentifiers = (name: ts.BindingName): readonly ts.Identifier[] => {
     ts.isOmittedExpression(element) ? [] : bindingIdentifiers(element.name),
   );
 };
+
+const isMergedTypeAndValueSymbol = (
+  symbol: ts.Symbol | undefined,
+): symbol is ts.Symbol =>
+  symbol !== undefined &&
+  (symbol.flags & ts.SymbolFlags.Value) !== 0 &&
+  (symbol.flags & ts.SymbolFlags.Type) !== 0 &&
+  (symbol.getDeclarations()?.length ?? 0) > 1;
 
 const appendExpressionExport = (
   expression: ts.Expression,
@@ -1668,31 +1853,37 @@ const classValueType = (
     : checker.getTypeOfSymbolAtLocation(classSymbol, declaration);
 };
 
-const classDeclarationForValueType = (
+const classDeclarationsForValueType = (
   type: ts.Type,
-): ts.ClassLikeDeclarationBase | undefined => {
-  const declaration = type
+): readonly ts.ClassLikeDeclarationBase[] => {
+  const declarations =
+    type
     .getSymbol()
     ?.getDeclarations()
-    ?.find(
+    ?.filter(
       (candidate): candidate is ts.ClassLikeDeclarationBase =>
         ts.isClassDeclaration(candidate) || ts.isClassExpression(candidate),
-    );
-  if (declaration !== undefined) {
-    return declaration;
-  }
+    ) ?? [];
 
   if (type.isIntersection()) {
     for (const constituent of type.types) {
-      const constituentDeclaration =
-        classDeclarationForValueType(constituent);
-      if (constituentDeclaration !== undefined) {
-        return constituentDeclaration;
-      }
+      declarations.push(...classDeclarationsForValueType(constituent));
     }
   }
 
-  return undefined;
+  return [...new Set(declarations)];
+};
+
+const constructSignatureGroupsForType = (
+  type: ts.Type,
+): readonly (readonly ts.Signature[])[] => {
+  if (!type.isIntersection()) {
+    return [type.getConstructSignatures()];
+  }
+
+  return type.types.flatMap((constituent) =>
+    constructSignatureGroupsForType(constituent),
+  );
 };
 
 const isNominalClassConstructSignature = (
@@ -1724,52 +1915,192 @@ const isNominalClassConstructSignature = (
   );
 };
 
+const exportedSelfTypeNames = (
+  type: ts.Type,
+  location: ts.Node,
+  classDeclaration?: ts.ClassLikeDeclarationBase,
+): ReadonlySet<string> => {
+  const names = new Set<string>();
+  const addIdentifier = (node: ts.Node | undefined): void => {
+    if (node !== undefined && ts.isIdentifier(node)) {
+      names.add(node.text);
+    }
+  };
+  const addSymbol = (symbol: ts.Symbol | undefined): void => {
+    if (symbol === undefined) {
+      return;
+    }
+    for (const declaration of symbol.getDeclarations() ?? []) {
+      if ("name" in declaration) {
+        addIdentifier((declaration as ts.NamedDeclaration).name);
+      }
+    }
+  };
+
+  addIdentifier(location);
+  addIdentifier(classDeclaration?.name);
+  addSymbol(type.aliasSymbol);
+  addSymbol(type.getSymbol());
+  return names;
+};
+
+type SerializedSurfaceKind = "signature" | "type";
+
+const normalizeSerializedSelfReferences = (
+  serialized: string,
+  surfaceKind: SerializedSurfaceKind,
+  selfTypeNames: ReadonlySet<string>,
+): string => {
+  if (selfTypeNames.size === 0) {
+    return serialized;
+  }
+
+  const prefix =
+    surfaceKind === "type"
+      ? "type __exported_surface__ = "
+      : "interface __exported_surface__ { ";
+  const suffix = surfaceKind === "type" ? ";" : " }";
+  const parsed = ts.createSourceFile(
+    "__exported_surface__.ts",
+    `${prefix}${serialized}${suffix}`,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  if (hasParseDiagnostics(parsed)) {
+    return serialized;
+  }
+
+  const replacements = new Map<number, number>();
+  const isShadowedTypeParameter = (identifier: ts.Identifier): boolean => {
+    let current: ts.Node | undefined = identifier.parent;
+    while (current !== undefined && current !== parsed) {
+      const typeParameters = (
+        current as ts.Node & {
+          readonly typeParameters?: ts.NodeArray<ts.TypeParameterDeclaration>;
+        }
+      ).typeParameters;
+      if (
+        typeParameters?.some(
+          (parameter) => parameter.name.text === identifier.text,
+        ) === true
+      ) {
+        return true;
+      }
+      current = current.parent;
+    }
+    return false;
+  };
+  const recordIdentifier = (identifier: ts.Identifier): void => {
+    if (
+      !selfTypeNames.has(identifier.text) ||
+      isShadowedTypeParameter(identifier)
+    ) {
+      return;
+    }
+    const start = identifier.getStart(parsed) - prefix.length;
+    const end = identifier.getEnd() - prefix.length;
+    if (start >= 0 && end <= serialized.length) {
+      replacements.set(start, end);
+    }
+  };
+  const recordEntityName = (name: ts.EntityName): void => {
+    if (ts.isIdentifier(name)) {
+      recordIdentifier(name);
+      return;
+    }
+    recordEntityName(name.left);
+    recordIdentifier(name.right);
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isTypeReferenceNode(node)) {
+      recordEntityName(node.typeName);
+    } else if (
+      ts.isTypeQueryNode(node) &&
+      !ts.isImportTypeNode(node.exprName)
+    ) {
+      recordEntityName(node.exprName);
+    } else if (
+      ts.isExpressionWithTypeArguments(node) &&
+      ts.isIdentifier(node.expression)
+    ) {
+      recordIdentifier(node.expression);
+    }
+    node.forEachChild(visit);
+  };
+  visit(parsed);
+
+  let normalized = serialized;
+  for (const [start, end] of [...replacements.entries()].sort(
+    ([left], [right]) => right - left,
+  )) {
+    normalized =
+      normalized.slice(0, start) +
+      EXTERNAL_SELF_TYPE +
+      normalized.slice(end);
+  }
+  return normalized;
+};
+
 const serializeCheckerSignature = (
   signature: ts.Signature,
   location: ts.Node,
   checker: ts.TypeChecker,
   signatureKind: ts.SignatureKind,
+  selfTypeNames: ReadonlySet<string> = new Set(),
 ): string =>
-  checker.signatureToString(
-    signature,
-    location,
-    ts.TypeFormatFlags.NoTruncation |
-      ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope,
-    signatureKind,
+  normalizeSerializedSelfReferences(
+    checker.signatureToString(
+      signature,
+      location,
+      ts.TypeFormatFlags.NoTruncation |
+        ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope,
+      signatureKind,
+    ),
+    "signature",
+    selfTypeNames,
   );
 
 const serializeCheckerType = (
   type: ts.Type,
   location: ts.Node,
   checker: ts.TypeChecker,
+  selfTypeNames: ReadonlySet<string> = new Set(),
 ): string =>
-  checker.typeToString(
-    type,
-    location,
-    ts.TypeFormatFlags.InTypeAlias |
-      ts.TypeFormatFlags.NoTruncation |
-      ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope,
+  normalizeSerializedSelfReferences(
+    checker.typeToString(
+      type,
+      location,
+      ts.TypeFormatFlags.InTypeAlias |
+        ts.TypeFormatFlags.NoTruncation |
+        ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope,
+    ),
+    "type",
+    selfTypeNames,
   );
 
 const serializeExportedTypeRoot = (
   type: ts.Type,
   location: ts.Node,
   checker: ts.TypeChecker,
+  selfTypeNames: ReadonlySet<string>,
 ): string =>
   (type.flags & (ts.TypeFlags.Object | ts.TypeFlags.Intersection)) !== 0
     ? "structural-type"
-    : serializeCheckerType(type, location, checker);
+    : serializeCheckerType(type, location, checker, selfTypeNames);
 
 const serializeClassConstructSignature = (
   signature: ts.Signature,
   location: ts.Node,
   checker: ts.TypeChecker,
+  selfTypeNames: ReadonlySet<string>,
 ): string => {
   const serialized = serializeCheckerSignature(
     signature,
     location,
     checker,
     ts.SignatureKind.Construct,
+    selfTypeNames,
   );
   const returnTypeDelimiter = serialized.lastIndexOf("): ");
   const constructorShape =
@@ -1783,12 +2114,10 @@ const serializeStructuralConstructSignature = (
   signature: ts.Signature,
   location: ts.Node,
   checker: ts.TypeChecker,
+  selfTypeNames: ReadonlySet<string>,
 ): string =>
   `${
-    hasModifier(
-      signature.getDeclaration() ?? location,
-      ts.SyntaxKind.AbstractKeyword,
-    )
+    isAbstractConstructSignature(signature, location)
       ? "abstract:"
       : ""
   }${serializeCheckerSignature(
@@ -1796,7 +2125,24 @@ const serializeStructuralConstructSignature = (
     location,
     checker,
     ts.SignatureKind.Construct,
+    selfTypeNames,
   )}`;
+
+const isAbstractConstructSignature = (
+  signature: ts.Signature,
+  fallback: ts.Node,
+): boolean => {
+  const declaration = signature.getDeclaration() ?? fallback;
+  if (hasModifier(declaration, ts.SyntaxKind.AbstractKeyword)) {
+    return true;
+  }
+  return (
+    ts.isConstructorDeclaration(declaration) &&
+    (ts.isClassDeclaration(declaration.parent) ||
+      ts.isClassExpression(declaration.parent)) &&
+    hasModifier(declaration.parent, ts.SyntaxKind.AbstractKeyword)
+  );
+};
 
 const serializeFunctionLikeSignature = (
   declaration: ts.FunctionLikeDeclaration,

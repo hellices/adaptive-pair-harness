@@ -1131,6 +1131,83 @@ describe("TypeScriptSemanticAnalyzer", () => {
     }
   });
 
+  it.each([
+    [
+      "type alias",
+      "export type PublicNode = { next?: PublicNode };",
+      [
+        "type InternalNode = { next?: InternalNode };",
+        "export type { InternalNode as PublicNode };",
+      ].join("\n"),
+    ],
+    [
+      "interface",
+      "export interface PublicNode { next?: PublicNode }",
+      [
+        "interface InternalNode { next?: InternalNode }",
+        "export type { InternalNode as PublicNode };",
+      ].join("\n"),
+    ],
+    [
+      "class",
+      [
+        "export class PublicNode {",
+        "  next(): PublicNode { return this; }",
+        "}",
+      ].join("\n"),
+      [
+        "class InternalNode {",
+        "  next(): InternalNode { return this; }",
+        "}",
+        "export { InternalNode as PublicNode };",
+      ].join("\n"),
+    ],
+  ])(
+    "normalizes a recursive exported %s across equivalent local renames",
+    (_label, direct, renamed) => {
+      expect(
+        analyzeEvidence(episode(direct, renamed)).filter(
+          (item) => item.kind === "public-api-change",
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it("normalizes recursive self references across equivalent default export renames", () => {
+    const direct = "export default interface PublicNode { next?: PublicNode }";
+    const renamed = [
+      "interface InternalNode { next?: InternalNode }",
+      "export type { InternalNode as default };",
+    ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(direct, renamed)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("reports a real recursive member change after normalizing its local name", () => {
+    const previous = [
+      "type PreviousNode = { next?: PreviousNode };",
+      "export type { PreviousNode as PublicNode };",
+    ].join("\n");
+    const current = [
+      "type CurrentNode = { next?: readonly CurrentNode[] };",
+      "export type { CurrentNode as PublicNode };",
+    ].join("\n");
+
+    expect(analyzeEvidence(episode(previous, current))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["PublicNode#next"],
+        }),
+      ]),
+    );
+  });
+
   it("uses default external identity for legal default interface exports", () => {
     const direct = "export default interface Direct { value: string }";
     const localList = [
@@ -1182,6 +1259,179 @@ describe("TypeScriptSemanticAnalyzer", () => {
         }),
       ]),
     );
+  });
+
+  it("records both namespaces of a merged local export with distinct identities", () => {
+    const current = [
+      "function Merged(value: string): string { return value; }",
+      "interface Merged { readonly tag: string }",
+      "export { Merged as PublicApi };",
+    ].join("\n");
+    const changes = analyzeEvidence(episode("", current)).filter(
+      (item) => item.kind === "public-api-change",
+    );
+    const rootChanges = changes.filter(
+      (item) => item.references[0] === "PublicApi",
+    );
+
+    expect(rootChanges).toHaveLength(2);
+    expect(new Set(rootChanges.map((item) => item.id)).size).toBe(2);
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ references: ["PublicApi#tag"] }),
+      ]),
+    );
+  });
+
+  it("records both namespaces when a local variable merges with an interface", () => {
+    const current = [
+      "const Merged: number = 1;",
+      "interface Merged { readonly tag: string }",
+      "export { Merged as PublicApi };",
+    ].join("\n");
+    const changes = analyzeEvidence(episode("", current)).filter(
+      (item) => item.kind === "public-api-change",
+    );
+
+    expect(
+      changes.filter((item) => item.references[0] === "PublicApi"),
+    ).toHaveLength(2);
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ references: ["PublicApi#tag"] }),
+      ]),
+    );
+  });
+
+  it("reports only the type namespace removed from a merged local export", () => {
+    const previous = [
+      "function Merged(value: string): string { return value; }",
+      "interface Merged { readonly tag: string }",
+      "export { Merged as PublicApi };",
+    ].join("\n");
+    const current = [
+      "function ValueOnly(value: string): string { return value; }",
+      "export { ValueOnly as PublicApi };",
+    ].join("\n");
+    const changes = analyzeEvidence(episode(previous, current)).filter(
+      (item) => item.kind === "public-api-change",
+    );
+
+    expect(changes).toHaveLength(2);
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: "Exported API removed",
+          references: ["PublicApi"],
+        }),
+        expect.objectContaining({
+          title: "Exported API removed",
+          references: ["PublicApi#tag"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports only the value namespace removed from a merged local export", () => {
+    const previous = [
+      "function Merged(value: string): string { return value; }",
+      "interface Merged { readonly tag: string }",
+      "export { Merged as PublicApi };",
+    ].join("\n");
+    const current = [
+      "interface TypeOnly { readonly tag: string }",
+      "export type { TypeOnly as PublicApi };",
+    ].join("\n");
+    const changes = analyzeEvidence(episode(previous, current)).filter(
+      (item) => item.kind === "public-api-change",
+    );
+
+    expect(changes).toEqual([
+      expect.objectContaining({
+        title: "Exported API removed",
+        references: ["PublicApi"],
+      }),
+    ]);
+  });
+
+  it.each([
+    [
+      "signature change",
+      [
+        "class Merged {",
+        "  run(value: string): void { void value; }",
+        "}",
+        "interface Merged { readonly tag: string }",
+        "export { Merged as PublicApi };",
+      ].join("\n"),
+      [
+        "class Merged {",
+        "  run(value: number): void { void value; }",
+        "}",
+        "interface Merged { readonly tag: string }",
+        "export { Merged as PublicApi };",
+      ].join("\n"),
+      "Exported API signature changed",
+    ],
+    [
+      "removal",
+      [
+        "class Merged {",
+        "  run(value: string): void { void value; }",
+        "}",
+        "interface Merged { readonly tag: string }",
+        "export { Merged as PublicApi };",
+      ].join("\n"),
+      [
+        "class Merged {}",
+        "interface Merged { readonly tag: string }",
+        "export { Merged as PublicApi };",
+      ].join("\n"),
+      "Exported API removed",
+    ],
+  ])(
+    "deduplicates an identical merged type/value member %s",
+    (_label, previous, current, expectedTitle) => {
+      const changes = analyzeEvidence(episode(previous, current)).filter(
+        (item) =>
+          item.kind === "public-api-change" &&
+          item.references[0] === "PublicApi#run",
+      );
+
+      expect(changes).toEqual([
+        expect.objectContaining({
+          title: expectedTitle,
+          references: ["PublicApi#run"],
+        }),
+      ]);
+    },
+  );
+
+  it("keeps a deduplicated merged-member ID stable across declaration order", () => {
+    const source = (interfaceFirst: boolean, parameterType: string): string => {
+      const classDeclaration = [
+        "export class Merged {",
+        `  run(value: ${parameterType}): void { void value; }`,
+        "}",
+      ].join("\n");
+      const interfaceDeclaration =
+        "export interface Merged { readonly tag: string }";
+      return [
+        ...(interfaceFirst
+          ? [interfaceDeclaration, classDeclaration]
+          : [classDeclaration, interfaceDeclaration]),
+      ].join("\n");
+    };
+    const valueFirst = analyzeEvidence(
+      episode(source(false, "string"), source(false, "number")),
+    ).find((item) => item.references[0] === "Merged#run");
+    const typeFirst = analyzeEvidence(
+      episode(source(true, "string"), source(true, "number")),
+    ).find((item) => item.references[0] === "Merged#run");
+
+    expect(valueFirst).toBeDefined();
+    expect(typeFirst).toBeDefined();
+    expect(valueFirst?.id).toBe(typeFirst?.id);
   });
 
   it("reports abstract-to-concrete exported class transitions", () => {
@@ -1263,6 +1513,138 @@ describe("TypeScriptSemanticAnalyzer", () => {
         expect.objectContaining({
           kind: "public-api-change",
           title: "Exported API signature changed",
+          references: ["Hybrid#constructor"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports abstractness changes in every class intersection constituent", () => {
+    const source = (secondaryAbstract: boolean): string =>
+      [
+        "class Primary { protected constructor() {} }",
+        `${secondaryAbstract ? "abstract " : ""}class Secondary {`,
+        "  protected constructor() {}",
+        "}",
+        "declare const Hybrid: typeof Primary & typeof Secondary;",
+        "export { Hybrid };",
+      ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(source(true), source(false)),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Hybrid"],
+        }),
+      ]),
+    );
+  });
+
+  it("normalizes equivalent class intersection constituent reordering", () => {
+    const declarations = [
+      "abstract class AbstractBase { protected constructor() {} }",
+      "class ConcreteBase { protected constructor() {} }",
+    ];
+    const source = (reverse: boolean): string =>
+      [
+        ...declarations,
+        `declare const Hybrid: ${
+          reverse
+            ? "typeof ConcreteBase & typeof AbstractBase"
+            : "typeof AbstractBase & typeof ConcreteBase"
+        };`,
+        "export { Hybrid };",
+      ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(source(false), source(true))).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("reports abstractness changes in every structural construct constituent", () => {
+    const source = (secondaryAbstract: boolean): string =>
+      [
+        "interface Primary {}",
+        "interface Secondary {}",
+        "declare const Hybrid:",
+        "  (new (value: string) => Primary) &",
+        `  (${secondaryAbstract ? "abstract " : ""}new ` +
+          "(value: number) => Secondary);",
+        "export { Hybrid };",
+      ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(source(true), source(false)),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Hybrid#constructor"],
+        }),
+      ]),
+    );
+  });
+
+  it("normalizes equivalent structural construct constituent reordering", () => {
+    const declarations = [
+      "interface Primary {}",
+      "interface Secondary {}",
+    ];
+    const source = (reverse: boolean): string =>
+      [
+        ...declarations,
+        `declare const Hybrid: ${
+          reverse
+            ? "(abstract new (value: number) => Secondary) & (new (value: string) => Primary)"
+            : "(new (value: string) => Primary) & (abstract new (value: number) => Secondary)"
+        };`,
+        "export { Hybrid };",
+      ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(source(false), source(true))).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("preserves construct overload order within an intersection constituent", () => {
+    const source = (reverseOverloads: boolean): string =>
+      [
+        "interface First {}",
+        "interface Second {}",
+        "interface Extra {}",
+        "interface Ordered {",
+        ...(reverseOverloads
+          ? [
+              "  new (value: number): Second;",
+              "  new (value: string): First;",
+            ]
+          : [
+              "  new (value: string): First;",
+              "  new (value: number): Second;",
+            ]),
+        "}",
+        "type Additional = new (value: boolean) => Extra;",
+        "declare const Hybrid: Ordered & Additional;",
+        "export { Hybrid };",
+      ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(source(false), source(true)),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
           references: ["Hybrid#constructor"],
         }),
       ]),
@@ -1878,6 +2260,82 @@ describe("TypeScriptSemanticAnalyzer", () => {
         }),
       ]),
     );
+  });
+
+  it("reports getter-only to getter-and-setter public surface changes", () => {
+    const getter = [
+      "export class Settings {",
+      '  get value(): string { return ""; }',
+      "}",
+    ];
+    const setter = [
+      "  set value(next: string) {",
+      "    void next;",
+      "  }",
+    ];
+    const evidence = analyzeEvidence(
+      episode(
+        getter.join("\n"),
+        [...getter.slice(0, -1), ...setter, "}"].join("\n"),
+      ),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Settings#value"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports a setter parameter change when its getter stays unchanged", () => {
+    const source = (setterType: string): string =>
+      [
+        "export class Settings {",
+        '  get value(): string { return ""; }',
+        `  set value(next: ${setterType}) {`,
+        "    void next;",
+        "  }",
+        "}",
+      ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(source("string"), source("number")),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Settings#value"],
+        }),
+      ]),
+    );
+  });
+
+  it("treats a non-public setter as absent from the public accessor shape", () => {
+    const previous = [
+      "export class Settings {",
+      '  get value(): string { return ""; }',
+      "  private set value(next: string) {",
+      "    void next;",
+      "  }",
+      "}",
+    ].join("\n");
+    const current = [
+      "export class Settings {",
+      '  get value(): string { return ""; }',
+      "}",
+    ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(previous, current)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
   });
 
   it("reports overload-only changes for exported functions", () => {
