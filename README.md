@@ -209,12 +209,20 @@ How it works today:
 - With `local-template`, `/why` and `/explain` return distinct bounded local
   summaries. `/trace` reports only the symbol and range resolved by VS Code and
   says that deeper control/data-flow analysis requires a model.
+- Fixed extension-owned Chat labels remain Markdown. Evidence, symbol,
+  workspace, configuration, provider-error, and session-result values are
+  escaped as text before insertion, including punctuation, backslashes, HTML,
+  links, images, and `command:`/`vscode:` action URI forms.
+- Remote model responses intentionally retain headings, emphasis, fenced code,
+  paragraphs, and line breaks. Links and images are rendered inert, raw HTML is
+  escaped, and bare or linked `command:`/`vscode:` action schemes are broken
+  before VS Code receives the Markdown.
 - Every dynamic `@pair` Chat response—local success, remote success, fallback,
   and dynamic error detail—passes through one **16,384 Unicode code-point**
   display limit. CRLF/CR line endings and unsafe control characters are
-  normalized, intentional Markdown and LF newlines are preserved, and
-  truncated output ends with an explicit `…` without splitting a surrogate
-  pair. Fixed short status guidance remains unchanged.
+  normalized, permitted Markdown and LF newlines are preserved, and truncated
+  output ends with an explicit `…` without splitting a surrogate pair. Fixed
+  short status guidance remains unchanged.
 
 ## Provider selection
 

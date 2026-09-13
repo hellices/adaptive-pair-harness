@@ -1,6 +1,7 @@
 import type { Evidence, PairRange } from "./types";
 import { requireSafeRemoteEndpoint } from "./remoteEndpoint";
 import { boundEvidenceMessage } from "./evidencePresentation";
+import { escapeMarkdownText } from "./chatMarkdownSafety";
 
 export interface ModelSymbolContext {
   readonly name: string;
@@ -294,6 +295,17 @@ export class OpenAICompatibleProvider implements ModelProvider {
   }
 }
 
+const escapeEvidenceForLocalMarkdown = (evidence: Evidence): Evidence => ({
+  ...evidence,
+  title: escapeMarkdownText(evidence.title),
+  detail: escapeMarkdownText(evidence.detail),
+  source: escapeMarkdownText(evidence.source),
+  references: evidence.references.map(escapeMarkdownText),
+});
+
+const formatLocalMarkdownRange = (range: PairRange): string =>
+  escapeMarkdownText(formatRange(range));
+
 export const createLocalInterventionQuestion = (evidence: Evidence): string =>
   boundEvidenceMessage(
     `${evidence.title}: ${evidence.detail} Did you intend this change?`,
@@ -301,20 +313,26 @@ export const createLocalInterventionQuestion = (evidence: Evidence): string =>
 
 const createLocalResponse = (request: ModelRequest): string => {
   switch (request.purpose ?? "intervention") {
-    case "why":
+    case "why": {
+      const evidence = escapeEvidenceForLocalMarkdown(request.evidence);
       return boundEvidenceMessage(
-        `Why it matters: ${request.evidence.title}. ${request.evidence.detail} Check whether this ${request.evidence.severity} change matches the intended contract and dependency boundary.`,
+        `Why it matters: ${evidence.title}. ${evidence.detail} Check whether this ${escapeMarkdownText(evidence.severity)} change matches the intended contract and dependency boundary.`,
       );
-    case "explain":
+    }
+    case "explain": {
+      const evidence = escapeEvidenceForLocalMarkdown(request.evidence);
+      const references = evidence.references.join(", ") || "none";
       return boundEvidenceMessage(
-        `Local explanation: ${request.evidence.title}. ${request.evidence.detail} This summary is based on ${request.evidence.source} evidence at ${formatRange(request.evidence.range)}; no deeper model analysis was performed.`,
+        `Local explanation: ${evidence.title}. ${evidence.detail} This summary is based on ${evidence.source} evidence at ${formatLocalMarkdownRange(evidence.range)}. References: ${references}. No deeper model analysis was performed.`,
       );
+    }
     case "trace": {
+      const evidence = escapeEvidenceForLocalMarkdown(request.evidence);
       const symbol = request.context?.symbol;
       const scope =
         symbol === undefined
-          ? `the evidence range ${formatRange(request.evidence.range)}`
-          : `${symbol.name} (${symbol.kind}) at ${formatRange(symbol.range)}`;
+          ? `the evidence range ${formatLocalMarkdownRange(evidence.range)}`
+          : `${escapeMarkdownText(symbol.name)} (${escapeMarkdownText(symbol.kind)}) at ${formatLocalMarkdownRange(symbol.range)}`;
       return boundEvidenceMessage(
         `Local trace scope: ${scope}. Adaptive Pair resolved only this symbol and range. A deeper control/data-flow trace requires a model; local mode has not performed that analysis.`,
       );

@@ -171,10 +171,24 @@ Every provider path uses the same non-configurable **16,384 Unicode
 code-point** limit immediately before dynamic text is displayed by `@pair`
 Chat. This includes local and remote successes, local fallback text, session
 result text, and dynamic error detail. CRLF and CR line endings are normalized
-to LF, unsafe control/format characters are replaced, and intentional Markdown,
-tabs, line breaks, and Unicode joiners are preserved. Truncated text reserves
-its final code point for an explicit `…`, so supplementary characters such as
-emoji are never split. Exact-boundary responses are unchanged.
+to LF, unsafe control/format characters are replaced, and tabs, line breaks,
+and Unicode joiners are preserved. Truncated text reserves its final code point
+for an explicit `…`, so supplementary characters such as emoji are never
+split. Exact-boundary responses are unchanged.
+
+Extension-owned labels and layout remain trusted Markdown. Dynamic local
+template fields—including evidence metadata and references, symbol data,
+workspace/coexistence notices, configuration warnings, provider failures, and
+session results—are escaped as text before composition. Markdown punctuation,
+backslashes, inline/block HTML, links, images, and `command:`/`vscode:` action
+URI forms therefore cannot become active markup.
+
+Remote model Markdown is supported with a narrower policy: headings, emphasis,
+fenced code, paragraphs, and line breaks remain available, while link/image
+delimiters and raw HTML are escaped and `command:`/`vscode:` action schemes are
+made non-actionable before rendering. This policy also applies when a provider
+response is displayed after routing; already escaped local fallback fields are
+not escaped a second time.
 
 This display limit is independent of model limits. It does not increase or
 replace the 180-token remote output allowance, rolling token accounting, or

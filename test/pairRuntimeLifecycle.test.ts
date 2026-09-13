@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as vscode from "vscode";
 import type { PairConfig } from "../src/config/pairConfig";
+import { escapeMarkdownText } from "../src/core/chatMarkdownSafety";
 import {
   hashEvidenceIdentity,
   PairMemoryStore,
@@ -2545,6 +2546,48 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
+  it("keeps malicious evidence inert in an unavailable Copilot local fallback", async () => {
+    const rawEvidence: Evidence = {
+      ...evidence,
+      id: "malicious-copilot-fallback",
+      title: "![open](command:adaptivePair.stop) **제목 😀**",
+      detail:
+        "```ts\n[open](vscode://file/workspace/secret.ts)\n<img src=x onerror=alert(1)>",
+      source: "<script>alert('fallback')</script>",
+      references: ["[start](command:adaptivePair.start)"],
+    };
+    const runtime = new PairRuntime({
+      config: config({ provider: "vscode-copilot" }),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+
+    const response = await runtime.generate(
+      "file:///workspace/pair.ts",
+      "Ask about the evidence.",
+      rawEvidence,
+      new AbortController().signal,
+      {},
+      "explain",
+    );
+
+    expect(response.text).toContain(
+      String.raw`\!\[open\]\(command：adaptivePair\.stop\) \*\*제목 😀\*\*`,
+    );
+    expect(response.text).toContain(
+      String.raw`\<script\>alert\(\'fallback\'\)\<\/script\>`,
+    );
+    expect(response.text).not.toMatch(/(?:command|vscode):/iu);
+    expect(response.text).not.toMatch(/(?<!\\)<(?!!--)[a-z/]/iu);
+    expect(vscodeState.statusItems[0]?.text).toContain(
+      "local-template fallback",
+    );
+    runtime.dispose();
+  });
+
   it("projects a budget-denied Copilot prompt but uses raw evidence for the local fallback", async () => {
     const rawEvidence: Evidence = {
       ...evidence,
@@ -3319,8 +3362,9 @@ describe("PairRuntime lifecycle ownership", () => {
       });
       expect(result).toEqual({
         errorDetails: {
-          message:
-            "Adaptive Pair could not answer: vscode-copilot provider request timed out.",
+          message: `Adaptive Pair could not answer: ${escapeMarkdownText(
+            "vscode-copilot provider request timed out.",
+          )}`,
         },
       });
     } finally {

@@ -3,6 +3,7 @@ import {
   PAIR_CHAT_RESPONSE_DISPLAY_LIMIT,
   formatChatResponseForDisplay,
 } from "../src/vscode/chatResponseDisplay";
+import { escapeMarkdownText } from "../src/core/chatMarkdownSafety";
 import {
   PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT,
   PairSharedContext,
@@ -150,11 +151,11 @@ describe("pair chat planning", () => {
     expect(buildPairChatPlan("session", context.snapshot())).toEqual({
       kind: "message",
       markdown: [
-        "**Goal:** Navigate with evidence-backed questions.",
+        "**Goal:** Navigate with evidence\\-backed questions\\.",
         "**Role:** navigator (you remain the driver)",
-        "**Provider:** vscode-copilot",
+        "**Provider:** vscode\\-copilot",
         "**Remaining budget:** 3 calls / 5700 input tokens / 690 output tokens",
-        "**Coexistence:** Cline detected; observing only.",
+        "**Coexistence:** Cline detected\\; observing only\\.",
       ].join("\n\n"),
     });
   });
@@ -614,9 +615,43 @@ describe("pair chat planning", () => {
     expect(buildPairChatPlan("session", context.snapshot())).toMatchObject({
       kind: "message",
       markdown: expect.stringContaining(
-        "**Configuration:** Invalid provider; using local-template.",
+        "**Configuration:** Invalid provider\\; using local\\-template\\.",
       ),
     });
+  });
+
+  it("keeps trusted session Markdown while escaping workspace and configuration text", () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      goal: "# [close](command:adaptivePair.stop) 목표 😀",
+      role: "navigator",
+      provider: "local-template",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice:
+        "![workspace](vscode://file/workspace/secret.ts) **observing**",
+      configurationWarning:
+        "<img src=x onerror=alert(1)> `unsafe` [start](command:adaptivePair.start)",
+    });
+
+    const plan = buildPairChatPlan("session", context.snapshot());
+
+    expect(plan).toMatchObject({ kind: "message" });
+    if (plan.kind !== "message") {
+      throw new Error("Expected session message plan.");
+    }
+    expect(plan.markdown).toContain(
+      String.raw`**Goal:** \# \[close\]\(command：adaptivePair\.stop\) 목표 😀`,
+    );
+    expect(plan.markdown).toContain(
+      String.raw`**Coexistence:** \!\[workspace\]\(vscode：\/\/file\/workspace\/secret\.ts\) \*\*observing\*\*`,
+    );
+    expect(plan.markdown).toContain(
+      String.raw`**Configuration:** \<img src\=x onerror\=alert\(1\)\> \`unsafe\` \[start\]\(command：adaptivePair\.start\)`,
+    );
+    expect(plan.markdown).toContain("**Provider:** local\\-template");
+    expect(plan.markdown).not.toMatch(/(?:command|vscode):/iu);
   });
 
   it("blocks ordinary Chat generation while permission is enabled but the session is inactive", async () => {
@@ -744,6 +779,76 @@ describe("pair chat planning", () => {
     expect(markdown).toEqual(["session started", "session stopped"]);
   });
 
+  it("escapes an untrusted session-control result before rendering it", async () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: false,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "local-template",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    const message = [
+      "[close](command:adaptivePair.stop)",
+      "![open](vscode://file/workspace/secret.ts)",
+      "<img src=x onerror=alert(1)>",
+      "``` **상태 😀**",
+    ].join("\n");
+    let handler: vscode.ChatRequestHandler | undefined;
+    const markdown = vi.fn();
+    registerPairChatParticipant(
+      (_id, registeredHandler) => {
+        handler = registeredHandler;
+        return { dispose: () => undefined } as vscode.ChatParticipant;
+      },
+      context,
+      {
+        generate: async () => ({
+          text: "unused",
+          inputTokens: 1,
+          outputTokens: 1,
+        }),
+      },
+      {
+        sessionControl: {
+          isSessionActive: () => false,
+          startSession: async () => ({
+            kind: "started",
+            active: true,
+            message,
+          }),
+          stopSession: () => ({
+            kind: "stopped",
+            active: false,
+            message: "unused",
+          }),
+        },
+      },
+    );
+
+    await handler!(
+      { command: "start", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      { markdown } as unknown as vscode.ChatResponseStream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      } as vscode.CancellationToken,
+    );
+
+    expect(markdown).toHaveBeenCalledWith(
+      [
+        String.raw`\[close\]\(command：adaptivePair\.stop\)`,
+        String.raw`\!\[open\]\(vscode：\/\/file\/workspace\/secret\.ts\)`,
+        String.raw`\<img src\=x onerror\=alert\(1\)\>`,
+        String.raw`\`\`\` \*\*상태 😀\*\*`,
+      ].join("\n"),
+    );
+  });
+
   it("bounds a dynamic session-control response before display", async () => {
     const context = new PairSharedContext({
       enabled: true,
@@ -801,7 +906,7 @@ describe("pair chat planning", () => {
     );
 
     expect(markdown).toHaveBeenCalledWith(
-      formatChatResponseForDisplay(message),
+      formatChatResponseForDisplay(escapeMarkdownText(message)),
     );
   });
 
@@ -1135,6 +1240,84 @@ describe("pair chat planning", () => {
 
       expect(markdown).toHaveBeenCalledWith(
         formatChatResponseForDisplay(generatedText),
+      );
+    },
+  );
+
+  it.each(["why", "explain", "trace"] as const)(
+    "sanitizes remote /%s Markdown actions and HTML while preserving ordinary formatting and Unicode",
+    async (command) => {
+      const context = new PairSharedContext({
+        enabled: true,
+        active: true,
+        goal: "Navigate with evidence-backed questions.",
+        role: "navigator",
+        provider: "vscode-copilot",
+        remainingCalls: 4,
+        remainingInputTokens: 6_000,
+        controlNotice: undefined,
+        configurationWarning: undefined,
+      });
+      context.publishEvidence({
+        uri: "file:///workspace/evidence.ts",
+        evidence,
+        question: "Did you intend this dependency?",
+      });
+      const generatedText = [
+        "## 분석 **강조 😀**",
+        "```ts",
+        "const value = 1;",
+        "```",
+        "[close](command:adaptivePair.stop)",
+        "![open](vscode://file/workspace/secret.ts)",
+        "<img src=x onerror=alert(1)>",
+      ].join("\n");
+      let handler: vscode.ChatRequestHandler | undefined;
+      const markdown = vi.fn();
+      registerPairChatParticipant(
+        (_id, registeredHandler) => {
+          handler = registeredHandler;
+          return { dispose: () => undefined } as vscode.ChatParticipant;
+        },
+        context,
+        {
+          generate: async () => ({
+            text: generatedText,
+            inputTokens: 1,
+            outputTokens: 1,
+          }),
+        },
+        {
+          symbolContextProvider: {
+            forEvidence: async () => ({
+              name: "handler",
+              kind: "Function",
+              range: evidence.range,
+            }),
+          },
+        },
+      );
+
+      await handler!(
+        { command, prompt: "" } as vscode.ChatRequest,
+        {} as vscode.ChatContext,
+        { markdown } as unknown as vscode.ChatResponseStream,
+        {
+          isCancellationRequested: false,
+          onCancellationRequested: () => ({ dispose: () => undefined }),
+        } as vscode.CancellationToken,
+      );
+
+      expect(markdown).toHaveBeenCalledWith(
+        [
+          "## 분석 **강조 😀**",
+          "```ts",
+          "const value = 1;",
+          "```",
+          String.raw`\[close\](command：adaptivePair.stop)`,
+          String.raw`!\[open\](vscode：//file/workspace/secret.ts)`,
+          String.raw`\<img src=x onerror=alert(1)\>`,
+        ].join("\n"),
       );
     },
   );
@@ -1617,6 +1800,65 @@ describe("pair chat planning", () => {
         message: formatChatResponseForDisplay(
           `Adaptive Pair could not answer: ${errorMessage}`,
         ),
+      },
+    });
+  });
+
+  it("escapes malicious provider error detail without escaping the fixed error template", async () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "vscode-copilot",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    context.publishEvidence({
+      uri: "file:///workspace/pair.ts",
+      evidence,
+      question: "Did you intend this dependency?",
+    });
+    const errorMessage = [
+      "[retry](command:adaptivePair.start)",
+      "![open](vscode://file/workspace/secret.ts)",
+      "<script>alert(1)</script>",
+      "``` **오류 😀**",
+    ].join("\n");
+    let handler: vscode.ChatRequestHandler | undefined;
+    registerPairChatParticipant(
+      (_id, registeredHandler) => {
+        handler = registeredHandler;
+        return { dispose: () => undefined } as vscode.ChatParticipant;
+      },
+      context,
+      {
+        generate: async () => {
+          throw new Error(errorMessage);
+        },
+      },
+    );
+
+    const result = await handler!(
+      { command: "why", prompt: "" } as vscode.ChatRequest,
+      {} as vscode.ChatContext,
+      { markdown: () => undefined } as unknown as vscode.ChatResponseStream,
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      } as vscode.CancellationToken,
+    );
+
+    expect(result).toEqual({
+      errorDetails: {
+        message: [
+          String.raw`Adaptive Pair could not answer: \[retry\]\(command：adaptivePair\.start\)`,
+          String.raw`\!\[open\]\(vscode：\/\/file\/workspace\/secret\.ts\)`,
+          String.raw`\<script\>alert\(1\)\<\/script\>`,
+          String.raw`\`\`\` \*\*오류 😀\*\*`,
+        ].join("\n"),
       },
     });
   });

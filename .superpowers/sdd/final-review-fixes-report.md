@@ -3026,3 +3026,87 @@
 - Live VS Code Chat rendering and remote providers were unavailable in this
   non-interactive environment. Deterministic response-stream and provider
   adapter tests cover the changed display boundary.
+
+---
+
+## Local Chat Markdown/action injection closure (2026-09-14)
+
+### Corrections implemented
+
+- Added one central Markdown text escaper for untrusted values embedded in
+  extension-owned Chat templates. It escapes ASCII Markdown punctuation and
+  backslashes, makes HTML delimiters literal, and breaks `command:` and
+  `vscode:`-family URI schemes with a non-URI separator while preserving
+  Unicode and line structure.
+- Local `/why`, `/explain`, and `/trace` templates now escape evidence title,
+  detail, source, references, severity, symbol name/kind, and evidence/symbol
+  ranges before interpolation. `/explain` includes the escaped bounded
+  references explicitly.
+- `/session` keeps its extension-owned labels and layout as Markdown while
+  escaping goal, role, provider, coexistence/workspace notice, and
+  configuration warning values. Session-control results and provider error
+  detail are escaped as text before applying the existing display bound.
+- All four `ChatResponseStream.markdown` call sites were audited: one is a
+  fixed literal, session-control text is escaped, fixed plan messages are
+  either literal or field-escaped at construction, and generated provider
+  output passes through the model-Markdown sanitizer.
+- Remote model Markdown intentionally retains headings, emphasis, fenced code,
+  paragraphs, and newlines. Link/image brackets and raw HTML delimiters are
+  escaped, and bare or linked action URI schemes are made non-actionable.
+  The sanitizer is idempotent, so already escaped local fallback fields are
+  not escaped again.
+- Inline comments remain on their existing safe path:
+  `MarkdownString.appendText` receives unescaped plain intervention text,
+  preventing visible double escaping while keeping untrusted text inert.
+- Documented the local-template and remote-model rendering policies in the
+  README and configuration guide.
+
+### TDD evidence
+
+- RED: the new central safety suite failed to load because the requested
+  `chatMarkdownSafety` module did not exist.
+- RED: malicious local `/why`, `/explain`, and `/trace` plus unavailable
+  Copilot fallback regressions reported **2 expected failures** with active
+  command/vscode links, images, HTML, fences, and emphasis left in output.
+- RED: participant regressions reported **6 expected failures** across
+  workspace/configuration status, session-control, remote `/why`, `/explain`,
+  `/trace`, and provider-error paths.
+- RED: the inline regression exposed double escaping through
+  `MarkdownString.appendText`; the local intervention path was separated from
+  Chat Markdown escaping before proceeding.
+- RED: the local `/explain` reference regression failed until references were
+  included and escaped.
+- GREEN: central, command, fallback, status, error, inline, and remote-policy
+  regressions pass with malicious command links, vscode images, inline/block
+  HTML, headings, emphasis, code fences, backslashes, and Korean/emoji text.
+
+### Verification
+
+- Focused Chat/model/runtime tests: **PASS — 8 files, 363 tests**
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **20 files, 533 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 90.64%, branches 84.17%, functions 94.03%, lines 90.78%
+- `npm run package`: **PASS — 160 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX safety-module inclusion and source/test/secret exclusion scan: **PASS**
+- Production and compiled credential-pattern scan: **PASS**
+- Production and compiled runtime URL scan: **PASS — loopback default only**
+- Source, compiled, and packaged Chat sink audit: **PASS — 4/4 reviewed**
+- Source and packaged repository metadata scan: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review covered action-link/image forms, bare and encoded action
+  schemes, raw HTML, Markdown block/inline punctuation, backslashes, Unicode,
+  output truncation ordering, local fallback routing, fixed-template
+  preservation, and all Chat Markdown sinks. No remaining high-confidence
+  correctness or security defect was found.
+- Remote links and images are deliberately rendered inert rather than
+  allow-listed. A live VS Code Chat renderer and live remote model were not
+  available in this non-interactive environment; deterministic stream tests
+  and packaged-code scans cover the enforced boundary.

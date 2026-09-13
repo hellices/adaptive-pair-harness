@@ -5,6 +5,10 @@ import type {
   ModelResponse,
   ModelSymbolContext,
 } from "../core/modelRouter";
+import {
+  escapeMarkdownText,
+  sanitizeModelMarkdown,
+} from "../core/chatMarkdownSafety";
 import type { Evidence, PairRange } from "../core/types";
 import type {
   PairDisposable,
@@ -333,9 +337,9 @@ export const buildPairChatPlan = (
 
   if (command === "session") {
     const sessionLines = [
-      `**Goal:** ${context.session.goal}`,
-      `**Role:** ${context.session.role} (you remain the driver)`,
-      `**Provider:** ${context.session.provider}`,
+      `**Goal:** ${escapeMarkdownText(context.session.goal)}`,
+      `**Role:** ${escapeMarkdownText(context.session.role)} (you remain the driver)`,
+      `**Provider:** ${escapeMarkdownText(context.session.provider)}`,
       `**Remaining budget:** ${context.session.remainingCalls} calls / ${context.session.remainingInputTokens} input tokens${
         context.session.remainingOutputTokens === undefined
           ? ""
@@ -343,11 +347,13 @@ export const buildPairChatPlan = (
       }`,
     ];
     if (context.session.controlNotice !== undefined) {
-      sessionLines.push(`**Coexistence:** ${context.session.controlNotice}`);
+      sessionLines.push(
+        `**Coexistence:** ${escapeMarkdownText(context.session.controlNotice)}`,
+      );
     }
     if (context.session.configurationWarning !== undefined) {
       sessionLines.push(
-        `**Configuration:** ${context.session.configurationWarning}`,
+        `**Configuration:** ${escapeMarkdownText(context.session.configurationWarning)}`,
       );
     }
     return {
@@ -499,7 +505,11 @@ export const registerPairChatParticipant = (
             ? await sessionControl.startSession()
             : sessionControl.stopSession();
         if (!abortController.signal.aborted) {
-          response.markdown(formatChatResponseForDisplay(result.message));
+          response.markdown(
+            formatChatResponseForDisplay(
+              escapeMarkdownText(result.message),
+            ),
+          );
         }
         return;
       }
@@ -591,7 +601,11 @@ export const registerPairChatParticipant = (
       ) {
         return;
       }
-      response.markdown(formatChatResponseForDisplay(generated.text));
+      response.markdown(
+        formatChatResponseForDisplay(
+          sanitizeModelMarkdown(generated.text),
+        ),
+      );
     } catch (error: unknown) {
       if (
         abortController.signal.aborted ||
@@ -607,7 +621,7 @@ export const registerPairChatParticipant = (
       return {
         errorDetails: {
           message: formatChatResponseForDisplay(
-            `Adaptive Pair could not answer: ${error.message}`,
+            `Adaptive Pair could not answer: ${escapeMarkdownText(error.message)}`,
           ),
         },
       };
