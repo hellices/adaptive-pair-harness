@@ -72,10 +72,19 @@ The semantic analyzer is intentionally narrow.
 - new static dependencies from ESM imports, literal `require("...")`, literal
   dynamic `import("...")`, and named/star re-exports; computed expressions are
   ignored and complete specifiers are deduplicated in source order
-- ESM and CommonJS exported API additions, signature changes, and removals,
-  including aliases, default exports, function-valued variables, and
-  TypeScript-checker-resolved call signatures for callable identifier chains
+- best-effort, per-document public API changes for TypeScript and JavaScript:
+  the official TypeScript declaration-only emitter produces the previous and
+  current `.d.ts` surfaces in memory, and a trivia-free TypeScript scanner
+  token stream is compared
+- at most one generic `public-api-change` item per edit; its detail identifies
+  an added, removed, or changed surface without embedding declarations
 - substantial complexity growth
+
+Declaration programs can read only the installed TypeScript standard-library
+files through the containment-checked host. Project files are never read,
+external modules and re-exports remain unresolved, and failed or otherwise
+unreliable declaration emits suppress public API evidence rather than falling
+back to hand-written export or type-surface heuristics.
 
 ### Supported language boundary
 
@@ -95,7 +104,9 @@ The analyzer does not currently:
 - review whole-repository history;
 - understand runtime behavior beyond syntax/AST evidence and editor
   diagnostics;
-- reason across multiple files as a single evidence graph.
+- reason across multiple files as a single evidence graph;
+- resolve external modules while comparing compiler-emitted public
+  declarations.
 
 ## Policy and budget decisions
 

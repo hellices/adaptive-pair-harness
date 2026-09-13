@@ -290,6 +290,15 @@ The analyzer looks for:
 - scope expanding beyond the approved plan;
 - a task that has become too large for the current challenge target.
 
+In the current vertical slice, public API detection is intentionally
+best-effort and per document. It compares trivia-free token streams from
+TypeScript's official in-memory declaration-only emit for the previous and
+current TypeScript/JavaScript text, then produces at most one generic
+`public-api-change` item. The restricted compiler host reads only TypeScript's
+standard libraries; external modules are unresolved. If either declaration
+surface is unreliable, the analyzer skips this evidence and does not fall back
+to hand-built signature or type serialization.
+
 It waits while a line is incomplete and favors questions over declarations when
 the user's intent is uncertain.
 

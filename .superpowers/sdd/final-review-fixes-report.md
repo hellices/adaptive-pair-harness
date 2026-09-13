@@ -2540,3 +2540,96 @@
   definite final export.
 - Analysis remains per-document with external module bodies unresolved. A live
   VS Code extension host was not exercised in this non-interactive run.
+
+---
+
+## Declaration-emitter public API correction (2026-09-14)
+
+### Corrections implemented
+
+- Replaced the bespoke exported signature, class/member, type-fingerprint,
+  provenance, and CommonJS surface collectors with TypeScript's official
+  declaration-only `Program.emit`.
+- Previous and current TypeScript/JavaScript text are compiled independently
+  with `declaration: true`, `emitDeclarationOnly: true`, and `noResolve: true`.
+  The existing containment-checked host exposes only the in-memory document
+  and installed TypeScript standard-library files; project and external module
+  files remain unavailable.
+- Captured each `.d.ts` output in memory and canonicalized it as a TypeScript
+  scanner token stream with trivia skipped. No declaration text enters
+  evidence.
+- A differing reliable declaration surface now yields exactly one generic,
+  bounded `public-api-change` item per edit. Its detail distinguishes an
+  added, removed, or changed document surface; its ID contains only a
+  privacy-safe module hash and declaration-transition hash.
+- Current ESM export syntax anchors evidence to a current exported declaration.
+  Declaration removal and other cases use a valid zero-width source-start
+  range.
+- Missing output, declaration-emit errors, scanner errors, or an unstable
+  source suppress public API evidence. There is deliberately no heuristic
+  fallback.
+- Retained dependency and complexity analyzers unchanged. Removed obsolete
+  hand-built surface tests and replaced them with a compact representative
+  emitter suite covering functions, classes/accessors, type/interface merges,
+  function-valued and destructured exports, export lists, unresolved
+  re-exports and type-only exports, `export =`, CommonJS root/named exports,
+  removal, formatting-only edits, invalid source, IDs, privacy, and ranges.
+- Updated README, configuration, vertical-slice architecture, design, and
+  implementation-plan wording to describe the best-effort, generic,
+  per-document compiler declaration boundary.
+
+### TDD evidence
+
+- Baseline before changes: **18 files, 688 tests passed**.
+- RED: the new declaration-emitter suite produced **15 expected failures and 2
+  passes** against the bespoke implementation. Failures demonstrated
+  symbol-specific/multiple evidence, declaration details, and invalid-baseline
+  fallback rather than the required generic compiler-emitted behavior.
+- GREEN: the new suite passed **17 tests** after the emitter implementation.
+- The pruned, focused semantic analyzer suite passed **43 tests**; the focused
+  semantic/runtime baseline integration run passed **114 tests** across two
+  files.
+
+### Complexity and removal checks
+
+- `src/core/semanticAnalyzer.ts`: **4,702 -> 1,064 lines** (**3,638 removed**).
+- `npx tsc -p tsconfig.json --noEmit --sourceMap false --noUnusedLocals
+  --noUnusedParameters`: **PASS**.
+- Obsolete-symbol scan for `SurfaceSignature`, `SignatureRecord`,
+  `collectExportedSignatures`, `documentTypeFingerprint`, checker serializers,
+  CommonJS surface collectors, imported-binding provenance, surface-member
+  identity, and type-fingerprint machinery: **PASS — no matches**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 477 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 89.77%, branches 82.97%, functions 92.99%, lines 89.91%
+- `npm run package`: **PASS — 158 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX exclusion and compiled declaration-emitter marker scans: **PASS**
+  - source, tests, coverage, private review material, editor/CI files, and
+    source maps are absent;
+  - declaration emit and scanner code are present in the package.
+- Production and packaged credential-value scans: **PASS**
+- Production and packaged runtime URL scans: **PASS — loopback default only**
+- Source and packaged repository/bugs/homepage and fake-URL scans: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- The final diff was reviewed for compiler-host containment, declaration
+  reliability gates, token canonicalization, evidence cardinality/privacy,
+  range validity, non-API analyzer preservation, integration expectations,
+  documentation accuracy, and package contents. No high-confidence defect was
+  found.
+- Public API evidence intentionally loses symbol-level specificity in favor of
+  the compiler-owned declaration surface and one generic document signal.
+- Analysis remains best-effort and per-document. External modules are not
+  resolved, and declaration-emission failure suppresses API evidence rather
+  than guessing. A live VS Code extension host was not exercised in this
+  non-interactive run.

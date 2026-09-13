@@ -2359,7 +2359,9 @@ describe("PairRuntime lifecycle ownership", () => {
       observedAt: 2,
     });
     expect(vscodeState.commentThreads).toHaveLength(1);
-    expect(shared.snapshot().latest?.evidence.references).toEqual(["load"]);
+    expect(shared.snapshot().latest?.evidence.references).toEqual([
+      "public declarations",
+    ]);
     runtime.dispose();
   });
 

@@ -16,7 +16,7 @@ explicitly start one.
 - A shared `@pair` Chat participant plus inline preview comments
 - An evidence-backed reviewer for:
   - new import dependencies;
-  - exported API signature changes or removals;
+  - best-effort public declaration surface changes;
   - substantial complexity growth;
   - active editor diagnostics.
 - A harness that can use:
@@ -51,9 +51,12 @@ Unrelated schemes remain ignored.
   `require("...")`, literal dynamic `import("...")`, named re-export, or star
   re-export. Computed/non-literal calls are ignored, and repeated specifiers
   are reported once at their first occurrence.
-- **Exported signature change** — a changed, added, or removed ESM/CommonJS
-  function, function-valued variable, alias, default export, or exported class
-  method signature
+- **Public API surface change (best effort)** — one generic, per-document
+  signal when TypeScript's official declaration-only emitter produces a
+  different public declaration surface for the previous and current text.
+  TypeScript and JavaScript ESM/CommonJS forms are supported by the compiler;
+  external modules are deliberately left unresolved. If either declaration
+  surface cannot be emitted reliably, this evidence is skipped.
 - **Complexity growth** — a function or method whose branch count grows
   substantially
 - **Editor diagnostic** — an error or warning already surfaced by VS Code
@@ -374,8 +377,10 @@ This release is intentionally narrow:
 - navigator-only; no code edits or command execution
 - TypeScript/JavaScript only
 - one active inline preview thread per file URI
-- evidence is limited to static dependency changes, exported signature changes,
-  complexity growth, and editor diagnostics
+- evidence is limited to static dependency changes, best-effort compiler-emitted
+  public declaration changes, complexity growth, and editor diagnostics
+- public API comparison is per document; imported and re-exported external
+  modules are represented in emitted declarations but are not resolved
 - remote prompts are sanitized, bounded summaries rather than full-code review
 - coexistence detection is informational only
 - README guidance documents the implemented command flow, but GUI consent paths

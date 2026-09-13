@@ -530,13 +530,18 @@ evidence when current parse diagnostics are non-empty. Collect import module
 specifiers and emit one stable-ID evidence item for each newly introduced
 specifier.
 
-- [ ] **Step 4: Implement public signature and complexity evidence**
+- [ ] **Step 4: Implement public declaration and complexity evidence**
 
-Collect exported function and class method signatures by name. Emit
-`public-api-change` when an existing exported signature changes. Count `if`,
-`switch` cases, loops, catches, conditional expressions, and logical
-short-circuit branches per function; emit `complexity-growth` only when the
-current count is at least six and increased by at least three.
+For public API evidence, perform a best-effort, per-document comparison using
+TypeScript's official in-memory declaration-only emitter for both versions.
+Canonicalize emitted `.d.ts` token streams without trivia and emit at most one
+generic `public-api-change` item for an added, removed, or changed surface.
+Restrict reads to TypeScript standard libraries, leave external modules
+unresolved, and skip evidence if either emit is unreliable; do not fall back to
+custom export or type serialization. Count `if`, `switch` cases, loops,
+catches, conditional expressions, and logical short-circuit branches per
+function; emit `complexity-growth` only when the current count is at least six
+and increased by at least three.
 
 - [ ] **Step 5: Run analyzer and full core tests**
 
@@ -1064,8 +1069,8 @@ code --install-extension adaptive-pair-harness-0.1.0.vsix
 ```
 
 Then instruct the user to reload VS Code, authenticate GitHub Copilot, open a
-TypeScript file, explicitly start the Pair, introduce a new import or public
-signature change, and test `@pair /why`.
+TypeScript file, explicitly start the Pair, introduce a new import or
+compiler-emitted public declaration change, and test `@pair /why`.
 
 - [ ] **Step 4: Document local installation and first run**
 
@@ -1170,8 +1175,9 @@ navigator-only boundary:
   identity and no raw analyzer/editor strings, while credential- or
   local-resource-bearing explicit Chat requests remain local;
 - semantic analysis returns explicit stability, retains the last stable
-  baseline, expands ESM/CommonJS export surfaces, and hashes module identity in
-  evidence IDs;
+  baseline, and uses best-effort, generic, per-document TypeScript declaration
+  emission for public API changes; external modules remain unresolved and
+  module identity is hashed in evidence IDs;
 - cooldown begins after successful render and resets on stop;
 - rolling input/output budget ownership survives runtime rebuilds and completion
   output is capped/accounted;

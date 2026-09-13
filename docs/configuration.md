@@ -20,6 +20,17 @@ loading reads only application/user values and defaults; workspace,
 workspace-folder, and workspace-language overrides are ignored with a visible
 warning. This prevents a repository from redirecting credentials or evidence.
 
+## Semantic evidence scope
+
+Public API evidence is best-effort and per document. For each stable
+TypeScript or JavaScript edit, Adaptive Pair asks TypeScript's official
+declaration-only emitter for the previous and current public declaration
+surfaces, canonicalizes their token streams without trivia, and emits at most
+one generic `public-api-change` item when they differ. External modules are
+left unresolved, and an unreliable declaration emit is skipped rather than
+replaced with custom signature heuristics. There is no setting that expands
+this analysis to the project filesystem or to cross-document type resolution.
+
 ## Secret storage behavior
 
 Adaptive Pair does not write secrets to workspace files.
