@@ -51,6 +51,37 @@ describe("explicit pair session lifecycle", () => {
     expect(ports.clearTransientState).toHaveBeenCalledOnce();
   });
 
+  it("registers listeners before committing prepared session state", async () => {
+    const order: string[] = [];
+    const ports = {
+      prepare: vi.fn(async () => {
+        order.push("prepare");
+        return {
+          commit: () => {
+            order.push("commit");
+            return true;
+          },
+        };
+      }),
+      registerDocumentListeners: vi.fn(() => {
+        order.push("listeners");
+        return { dispose: vi.fn() };
+      }),
+      cancelPendingWork: vi.fn(),
+      clearTransientState: vi.fn(),
+    };
+    const lifecycle = new PairSessionLifecycle(() => true, ports);
+
+    await expect(lifecycle.start()).resolves.toMatchObject({
+      kind: "started",
+      active: true,
+    });
+
+    expect(order).toEqual(["prepare", "listeners", "commit"]);
+    expect(lifecycle.ready).toBe(true);
+    lifecycle.dispose();
+  });
+
   it("attempts every stop cleanup in order and leaves the session stopped when cleanup fails", async () => {
     const order: string[] = [];
     const listenerFailure = new Error("listener disposal failed");

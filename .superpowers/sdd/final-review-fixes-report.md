@@ -2827,3 +2827,68 @@
   exercised in this non-interactive environment. Deterministic VS Code adapter,
   OpenAI-compatible ignored-cancellation, local fallback, and lifecycle tests
   cover the changed boundaries.
+
+---
+
+## Session-preparation race follow-up (2026-09-14)
+
+### Corrections implemented
+
+- Session preparation now stages memory, coexistence discovery, and the
+  deterministic ordered workspace-root snapshot instead of mutating runtime
+  state before listener activation.
+- Startup registers the complete listener set before committing staged state.
+  The commit re-reads workspace roots and the memory revision; stale
+  preparations are discarded and retried against current roots.
+- Startup and active refresh share a three-attempt bound. Sustained churn
+  aborts through the existing lifecycle rollback path, disposing listeners,
+  cancelling work, and clearing transient state instead of retrying forever.
+- Open-document listeners are activated atomically and fenced to their owning
+  listener generation. Reconciliation occurs only after all listeners are
+  installed, while duplicate open events safely reseed the same document.
+- Active refreshes continue to block edit processing and defer document
+  seeding until the current prepared transaction commits.
+
+### TDD evidence
+
+- RED: the added-root startup regression expected a second discovery but
+  observed one, proving the original root snapshot was reused.
+- RED: the removed-root registration regression likewise observed one
+  discovery and exposed stale root-specific dismissals at activation.
+- RED: the deferred document-open regression observed zero analyzer calls on
+  the first edit because the document had no baseline.
+- RED: invoking a stopped generation's retained open callback incorrectly
+  seeded stale text; an atomic-registration regression likewise retained a
+  document that opened and closed while listeners were only partly installed.
+- GREEN: focused lifecycle/runtime/support verification passed **3 files and
+  122 tests**, including add/remove, bounded repeated churn, first-edit
+  analysis with fake timers, stop/dispose, restart, refresh, and rollback.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 509 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 89.65%, branches 83.44%, functions 93.73%, lines 89.79%
+- `npm run package`: **PASS — 158 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX exclusion and compiled preparation-marker scans: **PASS**
+- Production and packaged credential-value scans: **PASS**
+- Production and packaged runtime URL scans: **PASS — loopback default only**
+- Source and packaged repository metadata scans: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review covered staged commit ordering, root and memory revision
+  checks, bounded retries, overlapping refreshes, listener registration
+  rollback, stale callback fencing, exact open-document reconciliation, and
+  first-edit baselines. One timing-sensitive test was converted to fake timers;
+  no remaining high-confidence defect was found.
+- Sustained workspace-folder churn intentionally stops the session after three
+  failed snapshots and reports the refresh/start failure. A live VS Code
+  extension host was not exercised; deterministic adapter tests cover the
+  affected event-ordering boundaries.

@@ -67,6 +67,7 @@ import {
 } from "./pairRuntimeSupport";
 import type {
   PairInvocationSource,
+  PairSessionPreparation,
   PairSessionPreparationContext,
   PairSessionActionResult,
 } from "./pairRuntimeSupport";
@@ -79,6 +80,24 @@ const SUPPORTED_LANGUAGE_IDS = new Set([
   "javascriptreact",
 ]);
 const SUPPORTED_DOCUMENT_SCHEMES = new Set(["file", "vscode-remote"]);
+
+interface WorkspaceRootSnapshot {
+  readonly repositoryIds: readonly string[];
+  readonly revision: string;
+}
+
+const captureWorkspaceRootSnapshot = (): WorkspaceRootSnapshot => {
+  const repositoryIds = [
+    "no-workspace",
+    ...(vscode.workspace.workspaceFolders?.map((folder) =>
+      folder.uri.toString(),
+    ) ?? []),
+  ];
+  return {
+    repositoryIds,
+    revision: JSON.stringify(repositoryIds),
+  };
+};
 
 export interface PairRuntimeOptions {
   readonly config: PairConfig;
@@ -242,9 +261,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     this.sessionLifecycle = new PairSessionLifecycle(
       () => this.options.config.enabled,
       {
-        prepare: async (context) => {
-          await this.prepareSession(context);
-        },
+        prepare: (context) => this.prepareSession(context),
         registerDocumentListeners: () => this.registerDocumentListeners(),
         cancelPendingWork: () => {
           this.cancelPendingWork();
@@ -332,13 +349,8 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
 
   private async prepareSession(
     context: PairSessionPreparationContext,
-  ): Promise<void> {
-    const repositoryIds = new Set([
-      "no-workspace",
-      ...(vscode.workspace.workspaceFolders?.map((folder) =>
-        folder.uri.toString(),
-      ) ?? []),
-    ]);
+  ): Promise<PairSessionPreparation | undefined> {
+    const workspaceRoots = captureWorkspaceRootSnapshot();
     const loadMemorySnapshot = async (): Promise<
       | {
           readonly revision: number;
@@ -354,7 +366,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       while (context.isCurrent()) {
         const revision = this.memoryStore.revision;
         const recoveredByRepository = await Promise.all(
-          [...repositoryIds].map(async (repositoryId) => ({
+          workspaceRoots.repositoryIds.map(async (repositoryId) => ({
             repositoryId,
             recovered: await this.memoryStore
               .forRepository(repositoryId)
@@ -369,19 +381,19 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     };
     let memorySnapshot = await loadMemorySnapshot();
     if (memorySnapshot === undefined) {
-      return;
+      return undefined;
     }
     const controlNotice = await this.discoverCoexistence();
     if (memorySnapshot.revision !== this.memoryStore.revision) {
       memorySnapshot = await loadMemorySnapshot();
       if (memorySnapshot === undefined) {
-        return;
+        return undefined;
       }
     }
     const { recoveredByRepository } = memorySnapshot;
     const recoveredMemory = recoveredByRepository[0]?.recovered;
     if (recoveredMemory === undefined) {
-      return;
+      return undefined;
     }
     const dismissedEvidenceIdsByRepository = new Map(
       recoveredByRepository.map(({ repositoryId, recovered }) => [
@@ -391,56 +403,81 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
         ),
       ]),
     );
+    const memoryRevision = memorySnapshot.revision;
 
-    if (!context.isCurrent()) {
-      return;
-    }
-    this.memoryWarning = recoveredMemory.warning;
-    this.interventionStyle =
-      recoveredMemory.source === "stored" &&
-      recoveredMemory.memory.preferences.interventionStyleExplicit
-        ? recoveredMemory.memory.preferences.interventionStyle
-        : recoveredMemory.source === "corrupt"
-          ? "balanced"
-          : this.options.config.interventionStyle;
-    if (
-      recoveredMemory.source === "corrupt" ||
-      recoveredMemory.memory.preferences.interventionStyleExplicit
-    ) {
-      this.applyInterventionStyleBudget();
-    }
-    if (recoveredMemory.warning !== undefined) {
-      void vscode.window.showWarningMessage(recoveredMemory.warning);
-    }
-    const documentSeeds = vscode.workspace.textDocuments
-      .filter(isSupportedDocument)
-      .map((document) => ({
-        uri: document.uri,
-        languageId: document.languageId,
-        text: document.getText(),
-      }));
+    return {
+      commit: () => {
+        const documentSeeds = vscode.workspace.textDocuments
+          .filter(isSupportedDocument)
+          .map((document) => {
+            const text = document.getText();
+            return {
+              uri: document.uri,
+              text,
+              stable: this.analyzer.isStable(
+                document.uri.toString(),
+                document.languageId,
+                text,
+              ),
+            };
+          });
+        if (
+          !context.isCurrent() ||
+          memoryRevision !== this.memoryStore.revision ||
+          workspaceRoots.revision !==
+            captureWorkspaceRootSnapshot().revision
+        ) {
+          return false;
+        }
 
-    this.dismissedEvidenceIdsByRepository =
-      dismissedEvidenceIdsByRepository;
-    for (const seed of documentSeeds) {
-      this.documentState.seed(
-        seed.uri.toString(),
-        seed.text,
-        this.analyzer.isStable(
-          seed.uri.toString(),
-          seed.languageId,
-          seed.text,
-        ),
-      );
-    }
-    this.controlNotice = controlNotice;
+        this.memoryWarning = recoveredMemory.warning;
+        this.interventionStyle =
+          recoveredMemory.source === "stored" &&
+          recoveredMemory.memory.preferences.interventionStyleExplicit
+            ? recoveredMemory.memory.preferences.interventionStyle
+            : recoveredMemory.source === "corrupt"
+              ? "balanced"
+              : this.options.config.interventionStyle;
+        if (
+          recoveredMemory.source === "corrupt" ||
+          recoveredMemory.memory.preferences.interventionStyleExplicit
+        ) {
+          this.applyInterventionStyleBudget();
+        }
+        this.dismissedEvidenceIdsByRepository =
+          dismissedEvidenceIdsByRepository;
+        for (const seed of documentSeeds) {
+          this.documentState.seed(
+            seed.uri.toString(),
+            seed.text,
+            seed.stable,
+          );
+        }
+        this.controlNotice = controlNotice;
+        if (recoveredMemory.warning !== undefined) {
+          void vscode.window.showWarningMessage(recoveredMemory.warning);
+        }
+        return true;
+      },
+    };
   }
 
   private registerDocumentListeners(): vscode.Disposable {
     const listeners: vscode.Disposable[] = [];
+    const generationFence = this.sessionLifecycle.captureFence();
+    let listening = false;
+    const acceptsEvents = (): boolean =>
+      listening &&
+      !this.disposed &&
+      (generationFence.isCurrent() || this.sessionLifecycle.active);
+    const acceptsDocumentSeeds = (): boolean =>
+      listening &&
+      !this.disposed &&
+      (generationFence.isCurrent() || this.sessionLifecycle.ready);
     const disposeListeners = (
       initialErrors: readonly unknown[] = [],
     ): void => {
+      listening = false;
       const registeredListeners = listeners.splice(0).reverse();
       runCleanupSteps(
         registeredListeners.map(
@@ -453,11 +490,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     try {
       listeners.push(
         vscode.workspace.onDidOpenTextDocument((document) => {
-          if (
-            this.invocationGate.sessionActive &&
-            this.sessionLifecycle.ready &&
-            isSupportedDocument(document)
-          ) {
+          if (acceptsDocumentSeeds() && isSupportedDocument(document)) {
             const key = document.uri.toString();
             const text = document.getText();
             this.documentState.seed(
@@ -470,19 +503,26 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       );
       listeners.push(
         vscode.workspace.onDidCloseTextDocument((document) => {
-          this.closeDocument(document.uri);
+          if (acceptsEvents()) {
+            this.closeDocument(document.uri);
+          }
         }),
       );
       listeners.push(
         vscode.workspace.onDidChangeTextDocument((event) => {
-          this.onDocumentChanged(event);
+          if (acceptsEvents()) {
+            this.onDocumentChanged(event);
+          }
         }),
       );
       listeners.push(
         vscode.workspace.onDidChangeWorkspaceFolders(() => {
-          this.onWorkspaceFoldersChanged();
+          if (acceptsEvents()) {
+            this.onWorkspaceFoldersChanged();
+          }
         }),
       );
+      listening = true;
     } catch (error: unknown) {
       disposeListeners([error]);
       throw error;

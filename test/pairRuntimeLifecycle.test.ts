@@ -74,6 +74,8 @@ const vscodeState = vi.hoisted(() => ({
     undefined as Error | undefined,
   listenerRegistrationFailureAt:
     undefined as number | undefined,
+  listenerRegistrationHook:
+    undefined as ((registrationNumber: number) => void) | undefined,
   listenerDisposalFailureAt:
     undefined as number | undefined,
   listenerDisposalOrder: [] as number[],
@@ -171,6 +173,7 @@ vi.mock("vscode", () => {
       throw vscodeState.listenerRegistrationFailure;
     }
     listeners.push(listener);
+    vscodeState.listenerRegistrationHook?.(registrationNumber);
     return {
       dispose: () => {
         vscodeState.listenerDisposalOrder.push(registrationNumber);
@@ -456,6 +459,7 @@ beforeEach(() => {
   vscodeState.listenerRegistrationCallCount = 0;
   vscodeState.listenerRegistrationFailure = undefined;
   vscodeState.listenerRegistrationFailureAt = undefined;
+  vscodeState.listenerRegistrationHook = undefined;
   vscodeState.listenerDisposalFailureAt = undefined;
   vscodeState.listenerDisposalOrder.length = 0;
   vscodeState.commentControllerDisposed = false;
@@ -4718,6 +4722,457 @@ describe("PairRuntime lifecycle ownership", () => {
     expect(runtime.isSessionActive()).toBe(true);
     runtime.dispose();
   });
+
+  it("retries deferred startup preparation when a workspace root is added before listener activation", async () => {
+    const firstDiscovery = deferred<
+      ReadonlyArray<{ relativePath: string; toString(): string }>
+    >();
+    vscodeState.findFiles.mockImplementationOnce(
+      () => firstDiscovery.promise,
+    );
+    const existingRoot = {
+      uri: { toString: () => "file:///workspace/existing" },
+    };
+    const addedRoot = {
+      uri: { toString: () => "file:///workspace/added-during-start" },
+    };
+    const addedEvidenceId = hashEvidenceIdentity("added-during-start");
+    vscodeState.workspaceFolders = [existingRoot];
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext: {
+        globalState: {
+          get: () => ({
+            version: 1,
+            preferences: {
+              interventionStyle: "balanced",
+              interventionStyleExplicit: false,
+              pauseThresholdMs: 1_000,
+            },
+            dismissedEvidenceByRepository: {
+              [addedRoot.uri.toString()]: [addedEvidenceId],
+            },
+            dismissedRepositoryOrder: [addedRoot.uri.toString()],
+            approvedEvidence: [],
+          }),
+          update: async () => undefined,
+        },
+      } as unknown as vscode.ExtensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+
+    const pendingStart = runtime.startSession();
+    await vi.waitFor(() => {
+      expect(vscodeState.findFiles).toHaveBeenCalledOnce();
+    });
+    vscodeState.workspaceFolders = [existingRoot, addedRoot];
+    firstDiscovery.resolve([]);
+
+    await expect(pendingStart).resolves.toMatchObject({
+      kind: "started",
+      active: true,
+    });
+    expect(vscodeState.findFiles).toHaveBeenCalledTimes(2);
+    const dismissals = (
+      runtime as unknown as {
+        dismissedEvidenceIdsByRepository: Map<
+          string,
+          ReadonlySet<string>
+        >;
+      }
+    ).dismissedEvidenceIdsByRepository;
+    expect(dismissals.get(addedRoot.uri.toString())).toEqual(
+      new Set([addedEvidenceId]),
+    );
+    runtime.dispose();
+  });
+
+  it("discards a removed root's deferred preparation before listener activation commits", async () => {
+    const discovery = deferred<
+      ReadonlyArray<{ relativePath: string; toString(): string }>
+    >();
+    vscodeState.findFiles.mockImplementationOnce(() => discovery.promise);
+    const retainedRoot = {
+      uri: { toString: () => "file:///workspace/retained" },
+    };
+    const removedRoot = {
+      uri: { toString: () => "file:///workspace/removed-during-start" },
+    };
+    const removedEvidenceId = hashEvidenceIdentity("removed-during-start");
+    vscodeState.workspaceFolders = [retainedRoot, removedRoot];
+    let staleDismissalWasVisible = false;
+    vscodeState.listenerRegistrationHook = (registrationNumber) => {
+      if (registrationNumber === 1) {
+        staleDismissalWasVisible = (
+          runtime as unknown as {
+            dismissedEvidenceIdsByRepository: Map<
+              string,
+              ReadonlySet<string>
+            >;
+          }
+        ).dismissedEvidenceIdsByRepository.has(
+          removedRoot.uri.toString(),
+        );
+        vscodeState.workspaceFolders = [retainedRoot];
+      }
+    };
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext: {
+        globalState: {
+          get: () => ({
+            version: 1,
+            preferences: {
+              interventionStyle: "balanced",
+              interventionStyleExplicit: false,
+              pauseThresholdMs: 1_000,
+            },
+            dismissedEvidenceByRepository: {
+              [removedRoot.uri.toString()]: [removedEvidenceId],
+            },
+            dismissedRepositoryOrder: [removedRoot.uri.toString()],
+            approvedEvidence: [],
+          }),
+          update: async () => undefined,
+        },
+      } as unknown as vscode.ExtensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+
+    const pendingStart = runtime.startSession();
+    await vi.waitFor(() => {
+      expect(vscodeState.findFiles).toHaveBeenCalledOnce();
+    });
+    discovery.resolve([]);
+
+    await expect(pendingStart).resolves.toMatchObject({
+      kind: "started",
+      active: true,
+    });
+    expect(vscodeState.findFiles).toHaveBeenCalledTimes(2);
+    expect(staleDismissalWasVisible).toBe(false);
+    const dismissals = (
+      runtime as unknown as {
+        dismissedEvidenceIdsByRepository: Map<
+          string,
+          ReadonlySet<string>
+        >;
+      }
+    ).dismissedEvidenceIdsByRepository;
+    expect(dismissals.has(removedRoot.uri.toString())).toBe(false);
+    expect([...dismissals.keys()].sort()).toEqual(
+      ["no-workspace", retainedRoot.uri.toString()].sort(),
+    );
+    runtime.dispose();
+  });
+
+  it("bounds repeated workspace-root churn and leaves startup safe to retry", async () => {
+    const discoveries = [
+      deferred<ReadonlyArray<{ relativePath: string; toString(): string }>>(),
+      deferred<ReadonlyArray<{ relativePath: string; toString(): string }>>(),
+      deferred<ReadonlyArray<{ relativePath: string; toString(): string }>>(),
+    ];
+    for (const discovery of discoveries) {
+      vscodeState.findFiles.mockImplementationOnce(
+        () => discovery.promise,
+      );
+    }
+    const roots = Array.from({ length: 4 }, (_value, index) => ({
+      uri: {
+        toString: () => `file:///workspace/churn-${index}`,
+      },
+    }));
+    vscodeState.workspaceFolders = [roots[0]!];
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+
+    const pendingStart = runtime.startSession();
+    for (const [index, discovery] of discoveries.entries()) {
+      await vi.waitFor(() => {
+        expect(vscodeState.findFiles).toHaveBeenCalledTimes(index + 1);
+      });
+      vscodeState.workspaceFolders = [roots[index + 1]!];
+      discovery.resolve([]);
+    }
+
+    await expect(pendingStart).rejects.toThrow(
+      "workspace state kept changing",
+    );
+    expect(runtime.isSessionActive()).toBe(false);
+    expect(vscodeState.openListeners).toHaveLength(0);
+    expect(vscodeState.closeListeners).toHaveLength(0);
+    expect(vscodeState.changeListeners).toHaveLength(0);
+    expect(vscodeState.workspaceFolderListeners).toHaveLength(0);
+
+    await expect(runtime.startSession()).resolves.toMatchObject({
+      kind: "started",
+      active: true,
+    });
+    expect(runtime.isSessionActive()).toBe(true);
+    runtime.dispose();
+  });
+
+  it("seeds a document opened during listener registration before processing its first edit", async () => {
+    const discovery = deferred<
+      ReadonlyArray<{ relativePath: string; toString(): string }>
+    >();
+    vscodeState.findFiles.mockImplementationOnce(() => discovery.promise);
+    const openedUri = "file:///workspace/opened-during-registration.ts";
+    const openedDocument = document(
+      openedUri,
+      "export const value = 1;",
+    );
+    let opened = false;
+    const registrationDocument = {
+      ...document(
+        "file:///workspace/registration-trigger.ts",
+        "export const trigger = true;",
+      ),
+      getText: () => {
+        if (!opened && vscodeState.openListeners.length > 0) {
+          opened = true;
+          vscodeState.textDocuments.push(openedDocument);
+          vscodeState.openListeners[0]!(openedDocument);
+        }
+        return "export const trigger = true;";
+      },
+    };
+    vscodeState.textDocuments = [registrationDocument];
+    const runtime = new PairRuntime({
+      config: config({ debounceMs: 300 }),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    const analyzer = (
+      runtime as unknown as {
+        analyzer: {
+          analyze(input: {
+            previousText: string;
+            currentText: string;
+          }): unknown;
+        };
+      }
+    ).analyzer;
+    const analyze = vi.spyOn(analyzer, "analyze");
+
+    const pendingStart = runtime.startSession();
+    await vi.waitFor(() => {
+      expect(vscodeState.findFiles).toHaveBeenCalledOnce();
+    });
+    discovery.resolve([]);
+    await pendingStart;
+    vi.useFakeTimers();
+    try {
+      vscodeState.openListeners[0]!(openedDocument);
+      vscodeState.openListeners[0]!(openedDocument);
+
+      const editedDocument = document(
+        openedUri,
+        "export const value = 2;",
+        2,
+      );
+      vscodeState.textDocuments = [registrationDocument, editedDocument];
+      vscodeState.changeListeners[0]!({
+        document: editedDocument,
+        contentChanges: [{ text: "2" }],
+      });
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(analyze).toHaveBeenCalledWith(
+        expect.objectContaining({
+          uri: openedUri,
+          previousText: "export const value = 1;",
+          currentText: "export const value = 2;",
+          version: 2,
+        }),
+      );
+    } finally {
+      runtime.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("activates document listeners atomically before reconciling the open set", async () => {
+    const discovery = deferred<
+      ReadonlyArray<{ relativePath: string; toString(): string }>
+    >();
+    vscodeState.findFiles.mockImplementationOnce(() => discovery.promise);
+    const transientDocument = document(
+      "file:///workspace/transient-registration.ts",
+      "export const transient = true;",
+    );
+    vscodeState.listenerRegistrationHook = (registrationNumber) => {
+      if (registrationNumber !== 1) {
+        return;
+      }
+      vscodeState.textDocuments = [transientDocument];
+      vscodeState.openListeners[0]!(transientDocument);
+      vscodeState.textDocuments = [];
+    };
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+
+    const pendingStart = runtime.startSession();
+    await vi.waitFor(() => {
+      expect(vscodeState.findFiles).toHaveBeenCalledOnce();
+    });
+    discovery.resolve([]);
+    await pendingStart;
+
+    const state = (
+      runtime as unknown as {
+        documentState: {
+          previousText(uri: string): string | undefined;
+        };
+      }
+    ).documentState;
+    expect(
+      state.previousText(transientDocument.uri.toString()),
+    ).toBeUndefined();
+    runtime.dispose();
+  });
+
+  it("generation-fences a stopped session's open listener across restart", async () => {
+    const staleDocument = document(
+      "file:///workspace/stale-open.ts",
+      "export const stale = true;",
+    );
+    const currentDocument = document(
+      "file:///workspace/current-open.ts",
+      "export const current = true;",
+    );
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+    const staleOpenListener = vscodeState.openListeners[0]!;
+
+    runtime.stopSession();
+    vscodeState.textDocuments = [currentDocument];
+    await runtime.startSession();
+    staleOpenListener(staleDocument);
+
+    const state = (
+      runtime as unknown as {
+        documentState: {
+          previousText(uri: string): string | undefined;
+        };
+      }
+    ).documentState;
+    expect(state.previousText(staleDocument.uri.toString())).toBeUndefined();
+    expect(state.previousText(currentDocument.uri.toString())).toBe(
+      "export const current = true;",
+    );
+    const disposedOpenListener = vscodeState.openListeners[0]!;
+    runtime.dispose();
+    const disposedDocument = document(
+      "file:///workspace/disposed-open.ts",
+      "export const disposed = true;",
+    );
+    disposedOpenListener(disposedDocument);
+    expect(
+      state.previousText(disposedDocument.uri.toString()),
+    ).toBeUndefined();
+  });
+
+  it.each(["stop", "dispose"] as const)(
+    "clears documents opened during a deferred retry on runtime %s",
+    async (action) => {
+      const retryDiscovery = deferred<
+        ReadonlyArray<{ relativePath: string; toString(): string }>
+      >();
+      vscodeState.findFiles
+        .mockResolvedValueOnce([])
+        .mockImplementationOnce(() => retryDiscovery.promise);
+      const firstRoot = {
+        uri: { toString: () => "file:///workspace/deferred-first" },
+      };
+      const secondRoot = {
+        uri: { toString: () => "file:///workspace/deferred-second" },
+      };
+      vscodeState.workspaceFolders = [firstRoot];
+      vscodeState.listenerRegistrationHook = (registrationNumber) => {
+        if (registrationNumber === 1) {
+          vscodeState.workspaceFolders = [secondRoot];
+        }
+      };
+      const runtime = new PairRuntime({
+        config: config(),
+        extensionContext,
+        sharedContext: sharedContext(),
+        languageModelApi: languageModelApi(),
+        apiKey: undefined,
+      });
+
+      const pendingStart = runtime.startSession();
+      await vi.waitFor(() => {
+        expect(vscodeState.findFiles).toHaveBeenCalledTimes(2);
+      });
+      const staleOpenListener = vscodeState.openListeners[0]!;
+      const openedDocument = document(
+        `file:///workspace/opened-before-${action}.ts`,
+        "export const pending = true;",
+      );
+      vscodeState.textDocuments = [openedDocument];
+      staleOpenListener(openedDocument);
+      const state = (
+        runtime as unknown as {
+          documentState: {
+            previousText(uri: string): string | undefined;
+          };
+        }
+      ).documentState;
+      expect(state.previousText(openedDocument.uri.toString())).toBe(
+        "export const pending = true;",
+      );
+
+      if (action === "stop") {
+        runtime.stopSession();
+      } else {
+        runtime.dispose();
+      }
+      retryDiscovery.resolve([]);
+      await expect(pendingStart).resolves.toMatchObject({
+        kind: "already-stopped",
+        active: false,
+      });
+
+      expect(state.previousText(openedDocument.uri.toString())).toBeUndefined();
+      expect(vscodeState.openListeners).toHaveLength(0);
+      staleOpenListener(
+        document(
+          `file:///workspace/opened-after-${action}.ts`,
+          "export const stale = true;",
+        ),
+      );
+      expect(
+        state.previousText(`file:///workspace/opened-after-${action}.ts`),
+      ).toBeUndefined();
+      if (action === "stop") {
+        runtime.dispose();
+      }
+    },
+  );
 
   it("commits document seeds from the open documents at preparation commit", async () => {
     const discovery = deferred<

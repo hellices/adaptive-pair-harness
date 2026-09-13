@@ -44,16 +44,26 @@ export const createRuntimeAfterSecretLookup = async <TRuntime>(
 };
 
 export interface PairSessionLifecyclePorts {
-  prepare(context: PairSessionPreparationContext): Promise<void>;
+  prepare(
+    context: PairSessionPreparationContext,
+  ): Promise<PairSessionPreparation | void>;
   registerDocumentListeners(): PairDisposable;
   cancelPendingWork(): void;
   clearTransientState(): void;
+}
+
+export interface PairSessionPreparation {
+  commit(): boolean;
 }
 
 export interface PairSessionPreparationContext {
   readonly signal: AbortSignal;
   isCurrent(): boolean;
 }
+
+const MAX_SESSION_PREPARATION_ATTEMPTS = 3;
+const PREPARATION_CHURN_MESSAGE =
+  "Adaptive Pair could not prepare the session because workspace state kept changing.";
 
 export interface PairLifecycleFence {
   readonly generation: number;
@@ -263,14 +273,30 @@ export class PairSessionLifecycle {
         lifecycleFence.isCurrent(),
     };
     try {
-      await this.ports.prepare(preparationContext);
+      for (
+        let attempt = 0;
+        attempt < MAX_SESSION_PREPARATION_ATTEMPTS;
+        attempt += 1
+      ) {
+        const preparation = await this.ports.prepare(preparationContext);
+        if (!preparationContext.isCurrent() || !this.isEnabled()) {
+          return false;
+        }
+        if (preparation === undefined || preparation.commit()) {
+          return preparationContext.isCurrent() && this.isEnabled();
+        }
+        if (!preparationContext.isCurrent()) {
+          return false;
+        }
+        this.ports.clearTransientState();
+      }
+      throw new Error(PREPARATION_CHURN_MESSAGE);
     } catch (error: unknown) {
       if (!preparationContext.isCurrent()) {
         return false;
       }
       throw error;
     }
-    return preparationContext.isCurrent() && this.isEnabled();
   }
 
   private async startOnce(
@@ -285,8 +311,79 @@ export class PairSessionLifecycle {
         lifecycleFence.generation === generation &&
         lifecycleFence.isCurrent(),
     };
+    let listener: PairDisposable | undefined;
     try {
-      await this.ports.prepare(preparationContext);
+      for (
+        let attempt = 0;
+        attempt < MAX_SESSION_PREPARATION_ATTEMPTS;
+        attempt += 1
+      ) {
+        const preparation = await this.ports.prepare(preparationContext);
+        if (!preparationContext.isCurrent()) {
+          return {
+            kind: "already-stopped",
+            active: false,
+            message: "Adaptive Pair session remained stopped.",
+          };
+        }
+        if (!this.isEnabled()) {
+          this.cleanupStoppedState(
+            [abortController],
+            [],
+            "Failed to roll back disabled Adaptive Pair startup.",
+          );
+          return {
+            kind: "already-stopped",
+            active: false,
+            message: "Adaptive Pair session remained stopped.",
+          };
+        }
+        if (listener === undefined) {
+          listener = this.ports.registerDocumentListeners();
+          if (!preparationContext.isCurrent()) {
+            listener.dispose();
+            return {
+              kind: "already-stopped",
+              active: false,
+              message: "Adaptive Pair session remained stopped.",
+            };
+          }
+          this.listener = listener;
+        }
+        if (preparation === undefined || preparation.commit()) {
+          if (
+            !preparationContext.isCurrent() ||
+            !this.isEnabled()
+          ) {
+            this.cleanupStoppedState(
+              [abortController],
+              [],
+              "Failed to roll back interrupted Adaptive Pair startup.",
+            );
+            return {
+              kind: "already-stopped",
+              active: false,
+              message: "Adaptive Pair session remained stopped.",
+            };
+          }
+          this.isActive = true;
+          return {
+            kind: "started",
+            active: true,
+            message:
+              "Adaptive Pair session started. You drive - Pair navigates.",
+          };
+        }
+        if (!preparationContext.isCurrent()) {
+          return {
+            kind: "already-stopped",
+            active: false,
+            message: "Adaptive Pair session remained stopped.",
+          };
+        }
+        this.ports.clearTransientState();
+      }
+      throw new Error(PREPARATION_CHURN_MESSAGE);
     } catch (error: unknown) {
       if (!preparationContext.isCurrent()) {
         return {
@@ -297,54 +394,6 @@ export class PairSessionLifecycle {
       }
       this.cleanupFailedStart(error, abortController);
     }
-    if (!preparationContext.isCurrent()) {
-      return {
-        kind: "already-stopped",
-        active: false,
-        message: "Adaptive Pair session remained stopped.",
-      };
-    }
-    if (!this.isEnabled()) {
-      this.cleanupStoppedState(
-        [abortController],
-        [],
-        "Failed to roll back disabled Adaptive Pair startup.",
-      );
-      return {
-        kind: "already-stopped",
-        active: false,
-        message: "Adaptive Pair session remained stopped.",
-      };
-    }
-
-    let listener: PairDisposable;
-    try {
-      listener = this.ports.registerDocumentListeners();
-    } catch (error: unknown) {
-      if (!preparationContext.isCurrent()) {
-        return {
-          kind: "already-stopped",
-          active: false,
-          message: "Adaptive Pair session remained stopped.",
-        };
-      }
-      this.cleanupFailedStart(error, abortController);
-    }
-    if (!preparationContext.isCurrent()) {
-      listener.dispose();
-      return {
-        kind: "already-stopped",
-        active: false,
-        message: "Adaptive Pair session remained stopped.",
-      };
-    }
-    this.listener = listener;
-    this.isActive = true;
-    return {
-      kind: "started",
-      active: true,
-      message: "Adaptive Pair session started. You drive - Pair navigates.",
-    };
   }
 
   private cleanupFailedStart(
