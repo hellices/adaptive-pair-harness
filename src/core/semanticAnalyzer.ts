@@ -36,6 +36,8 @@ interface ExportIdentity extends SubjectIdentity {
   readonly commonJsPath?: CommonJsExportPath;
 }
 
+type ExportSurfaceNamespace = "type" | "value";
+
 interface SemanticSource {
   readonly sourceFile: ts.SourceFile;
   readonly checker: ts.TypeChecker;
@@ -538,175 +540,122 @@ const collectExportedSignatures = (
     }
   };
 
-  const appendClass = (
+  const appendCheckerSurface = (
     identity: ExportIdentity,
-    declaration: ts.ClassLikeDeclarationBase,
+    valueType: ts.Type,
+    location: ts.Node,
+    namespace: ExportSurfaceNamespace,
     rangeNode?: ts.Node,
-  ): void => {
-    const constructorKey = `method:${identity.key}#constructor`;
-    const constructorRange = rangeForNode(
-      sourceFile,
-      rangeNode ?? declaration.name ?? declaration,
-    );
-    const constructorDeclarations = declaration.members.filter(
-      ts.isConstructorDeclaration,
-    );
-    const publicConstructSignatures = classValueType(
-      declaration,
-      checker,
-    )
-      .getConstructSignatures()
-      .filter((signature) => {
-        const signatureDeclaration = signature.getDeclaration();
-        return (
-          signatureDeclaration === undefined ||
-          !hasNonPublicModifier(signatureDeclaration)
-        );
-      });
-
-    if (publicConstructSignatures.length > 0) {
-      for (const signature of publicConstructSignatures) {
-        appendSignatureRecord(
-          signatureTarget,
-          constructorKey,
-          `${identity.displayName}#constructor`,
-          serializeClassConstructSignature(signature, declaration, checker),
-          constructorRange,
-        );
+    knownClassDeclaration?: ts.ClassLikeDeclarationBase,
+  ): boolean => {
+    const keyFor = (category: string, suffix = ""): string =>
+      `${namespace === "type" ? "type-" : ""}${category}:${
+        identity.key
+      }${suffix}`;
+    const rememberCommonJsPath = (key: string): void => {
+      if (identity.commonJsPath !== undefined) {
+        commonJsPathsBySignatureKey.set(key, identity.commonJsPath);
       }
-    } else if (constructorDeclarations.length === 0) {
-      appendSignatureRecord(
-        signatureTarget,
-        constructorKey,
-        `${identity.displayName}#constructor`,
-        "class-constructor:new ()",
-        constructorRange,
-      );
-    } else {
-      for (const constructorDeclaration of constructorDeclarations) {
-        if (hasNonPublicModifier(constructorDeclaration)) {
-          continue;
-        }
-        appendSignatureRecord(
-          signatureTarget,
-          constructorKey,
-          `${identity.displayName}#constructor`,
-          serializeClassDeclarationConstructor(
-            constructorDeclaration,
-            sourceFile,
-            checker,
-          ),
-          constructorRange,
-        );
-      }
-    }
-    if (identity.commonJsPath !== undefined) {
-      commonJsPathsBySignatureKey.set(
-        constructorKey,
-        identity.commonJsPath,
-      );
-    }
-
-    for (const member of declaration.members) {
-      if (!isPublicCallableClassMember(member) || hasNonPublicModifier(member)) {
-        continue;
-      }
-
-      const memberName = propertyNameText(member.name);
-      if (memberName === undefined) {
-        continue;
-      }
-      const staticPrefix = hasModifier(member, ts.SyntaxKind.StaticKeyword)
-        ? "."
-        : "#";
-      const separator = staticPrefix;
-      const key = `method:${identity.key}${separator}${memberName}`;
+    };
+    const appendMemberSignature = (
+      separator: "#" | ".",
+      memberName: string,
+      category: "method" | "property",
+      signature: string,
+      memberLocation: ts.Node,
+    ): void => {
+      const key = keyFor(category, `${separator}${memberName}`);
       appendSignatureRecord(
         signatureTarget,
         key,
         `${identity.displayName}${separator}${memberName}`,
-        serializeFunctionLikeSignature(member, sourceFile, checker),
-        rangeForNode(sourceFile, rangeNode ?? member.name ?? member),
+        signature,
+        rangeForNode(sourceFile, rangeNode ?? memberLocation),
       );
-      if (identity.commonJsPath !== undefined) {
-        commonJsPathsBySignatureKey.set(key, identity.commonJsPath);
-      }
-    }
-  };
-
-  const appendCheckerValue = (
-    identity: ExportIdentity,
-    location: ts.Node,
-    rangeNode?: ts.Node,
-  ): boolean => {
-    const appendCheckerMember = (
-      separator: "#" | ".",
-      memberName: string,
-      memberSignatures: readonly ts.Signature[],
-      memberLocation: ts.Node,
-      signatureKind: ts.SignatureKind,
-      classDeclaration?: ts.ClassLikeDeclarationBase,
-    ): void => {
-      const key = `method:${identity.key}${separator}${memberName}`;
-      for (const signature of memberSignatures) {
-        appendSignatureRecord(
-          signatureTarget,
-          key,
-          `${identity.displayName}${separator}${memberName}`,
-          classDeclaration !== undefined &&
-            isClassOwnedConstructSignature(signature, classDeclaration)
-            ? serializeClassConstructSignature(
-                signature,
-                memberLocation,
-                checker,
-              )
-            : serializeCheckerSignature(
-                signature,
-                memberLocation,
-                checker,
-                signatureKind,
-              ),
-          rangeForNode(sourceFile, rangeNode ?? memberLocation),
-        );
-      }
-      if (identity.commonJsPath !== undefined) {
-        commonJsPathsBySignatureKey.set(key, identity.commonJsPath);
-      }
+      rememberCommonJsPath(key);
     };
-    const appendPublicCallableMembers = (
+    const appendPublicMembers = (
       type: ts.Type,
       separator: "#" | ".",
-    ): void => {
-      for (const member of checker.getPropertiesOfType(type)) {
+    ): boolean => {
+      let appendedMember = false;
+      const members = [...checker.getPropertiesOfType(type)].sort((left, right) =>
+        left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
+      );
+      for (const member of members) {
         if (member.name === "prototype") {
           continue;
         }
         const declarations = member.getDeclarations() ?? [];
-        if (declarations.some(hasNonPublicModifier)) {
+        if (declarations.some(isNonPublicDeclaration)) {
           continue;
         }
         const memberLocation =
           member.valueDeclaration ?? declarations[0] ?? location;
-        const memberSignatures = checker
-          .getTypeOfSymbolAtLocation(member, memberLocation)
-          .getCallSignatures();
+        const memberType = checker.getTypeOfSymbolAtLocation(
+          member,
+          memberLocation,
+        );
+        const memberSignatures = memberType.getCallSignatures();
+        const markers = [
+          (member.flags & ts.SymbolFlags.Optional) !== 0 ? "optional" : "",
+          declarations.some((declaration) =>
+            hasModifier(declaration, ts.SyntaxKind.ReadonlyKeyword),
+          )
+            ? "readonly"
+            : "",
+        ]
+          .filter((marker) => marker.length > 0)
+          .join("|");
         if (memberSignatures.length > 0) {
-          appendCheckerMember(
+          for (const signature of memberSignatures) {
+            appendMemberSignature(
+              separator,
+              member.name,
+              "method",
+              `${markers}:${serializeCheckerSignature(
+                signature,
+                memberLocation,
+                checker,
+                ts.SignatureKind.Call,
+              )}`,
+              memberLocation,
+            );
+          }
+        } else {
+          appendMemberSignature(
             separator,
             member.name,
-            memberSignatures,
+            "property",
+            `${markers}:${serializeCheckerType(
+              memberType,
+              memberLocation,
+              checker,
+            )}`,
             memberLocation,
-            ts.SignatureKind.Call,
           );
         }
+        appendedMember = true;
       }
+      return appendedMember;
     };
 
-    const valueType = checker.getTypeAtLocation(location);
     let appended = false;
+    if (namespace === "type") {
+      const key = keyFor("surface");
+      appendSignatureRecord(
+        signatureTarget,
+        key,
+        identity.displayName,
+        serializeExportedTypeRoot(valueType, location, checker),
+        rangeForNode(sourceFile, rangeNode ?? location),
+      );
+      appended = true;
+    }
+
     const callSignatures = valueType.getCallSignatures();
     if (callSignatures.length > 0) {
-      const key = `function:${identity.key}`;
+      const key = keyFor("function");
       for (const signature of callSignatures) {
         appendSignatureRecord(
           signatureTarget,
@@ -721,51 +670,137 @@ const collectExportedSignatures = (
           rangeForNode(sourceFile, rangeNode ?? location),
         );
       }
-      if (identity.commonJsPath !== undefined) {
-        commonJsPathsBySignatureKey.set(key, identity.commonJsPath);
-      }
+      rememberCommonJsPath(key);
       appended = true;
     }
 
     const constructSignatures = valueType.getConstructSignatures();
-    const classDeclaration = classDeclarationForValueType(valueType);
+    const classDeclaration =
+      knownClassDeclaration ?? classDeclarationForValueType(valueType);
+    if (classDeclaration !== undefined) {
+      const classKey = keyFor("class");
+      appendSignatureRecord(
+        signatureTarget,
+        classKey,
+        identity.displayName,
+        hasModifier(classDeclaration, ts.SyntaxKind.AbstractKeyword)
+          ? "abstract-class"
+          : "concrete-class",
+        rangeForNode(sourceFile, rangeNode ?? location),
+      );
+      rememberCommonJsPath(classKey);
+      appended = true;
+    }
     const publicConstructSignatures = constructSignatures.filter(
       (signature) => {
         const declaration = signature.getDeclaration();
         return declaration === undefined || !hasNonPublicModifier(declaration);
       },
     );
-    appendCheckerMember(
-      "#",
-      "constructor",
-      publicConstructSignatures,
-      location,
-      ts.SignatureKind.Construct,
-      classDeclaration,
-    );
+    const constructorKey = keyFor("method", "#constructor");
+    for (const signature of publicConstructSignatures) {
+      const nominalClassSignature =
+        classDeclaration !== undefined &&
+        isNominalClassConstructSignature(
+          signature,
+          classDeclaration,
+          checker,
+        );
+      appendSignatureRecord(
+        signatureTarget,
+        constructorKey,
+        `${identity.displayName}#constructor`,
+        nominalClassSignature
+          ? serializeClassConstructSignature(
+              signature,
+              location,
+              checker,
+            )
+          : serializeStructuralConstructSignature(
+              signature,
+              location,
+              checker,
+            ),
+        rangeForNode(sourceFile, rangeNode ?? location),
+      );
+    }
     if (publicConstructSignatures.length > 0) {
+      rememberCommonJsPath(constructorKey);
       appended = true;
     }
 
-    if (
-      classDeclaration === undefined &&
-      publicConstructSignatures.length > 0
-    ) {
+    const exposesObjectMembers =
+      namespace === "type" ||
+      callSignatures.length > 0 ||
+      constructSignatures.length > 0 ||
+      classDeclaration !== undefined;
+    if (exposesObjectMembers) {
+      const ownMemberSeparator =
+        namespace === "type" &&
+        callSignatures.length === 0 &&
+        constructSignatures.length === 0
+          ? "#"
+          : ".";
+      if (appendPublicMembers(valueType, ownMemberSeparator)) {
+        appended = true;
+      }
+
       const visitedInstanceTypes = new Set<ts.Type>();
-      for (const signature of publicConstructSignatures) {
+      for (const signature of constructSignatures) {
         const instanceType = signature.getReturnType();
-        if (!visitedInstanceTypes.has(instanceType)) {
-          visitedInstanceTypes.add(instanceType);
-          appendPublicCallableMembers(instanceType, "#");
+        if (visitedInstanceTypes.has(instanceType)) {
+          continue;
+        }
+        visitedInstanceTypes.add(instanceType);
+        if (appendPublicMembers(instanceType, "#")) {
+          appended = true;
         }
       }
-      appendPublicCallableMembers(valueType, ".");
-    } else if (classDeclaration !== undefined) {
-      appendClass(identity, classDeclaration, rangeNode);
-      appended = true;
     }
 
     return appended;
+  };
+
+  const appendCheckerValue = (
+    identity: ExportIdentity,
+    location: ts.Node,
+    rangeNode?: ts.Node,
+  ): boolean =>
+    appendCheckerSurface(
+      identity,
+      checker.getTypeAtLocation(location),
+      location,
+      "value",
+      rangeNode,
+    );
+
+  const appendCheckerType = (
+    identity: ExportIdentity,
+    location: ts.Node,
+    rangeNode?: ts.Node,
+  ): void => {
+    appendCheckerSurface(
+      identity,
+      checker.getTypeAtLocation(location),
+      location,
+      "type",
+      rangeNode,
+    );
+  };
+
+  const appendClass = (
+    identity: ExportIdentity,
+    declaration: ts.ClassLikeDeclarationBase,
+    rangeNode?: ts.Node,
+  ): void => {
+    appendCheckerSurface(
+      identity,
+      classValueType(declaration, checker),
+      declaration,
+      "value",
+      rangeNode,
+      declaration,
+    );
   };
 
   const appendLocalExport = (
@@ -774,16 +809,19 @@ const collectExportedSignatures = (
     rangeNode?: ts.Node,
     isTypeOnly?: boolean,
   ): void => {
-    if (isTypeOnly === true) {
-      appendSignatureRecord(
-        signatureTarget,
-        `function:${identity.key}`,
-        identity.displayName,
-        "local-export:type-only",
-        rangeForNode(sourceFile, rangeNode ?? sourceFile),
-      );
-    }
     const identifier = identifiersByName.get(localName);
+    if (identifier === undefined) {
+      return;
+    }
+    const symbol = checker.getSymbolAtLocation(identifier);
+    if (
+      isTypeOnly === true ||
+      (symbol !== undefined &&
+        (symbol.flags & ts.SymbolFlags.Value) === 0)
+    ) {
+      appendCheckerType(identity, identifier, rangeNode);
+      return;
+    }
     if (identifier !== undefined && variableNames.has(localName)) {
       if (appendCheckerValue(identity, identifier, rangeNode)) {
         return;
@@ -797,9 +835,6 @@ const collectExportedSignatures = (
     const declaration = classesByName.get(localName);
     if (declaration !== undefined) {
       appendClass(identity, declaration, rangeNode);
-      return;
-    }
-    if (identifier === undefined) {
       return;
     }
     appendCheckerValue(identity, identifier, rangeNode);
@@ -836,8 +871,12 @@ const collectExportedSignatures = (
         ts.isInterfaceDeclaration(statement)) &&
       hasExportModifier(statement)
     ) {
-      appendCheckerValue(
-        exportIdentity(statement.name.text),
+      appendCheckerType(
+        exportIdentity(
+          hasModifier(statement, ts.SyntaxKind.DefaultKeyword)
+            ? "default"
+            : statement.name.text,
+        ),
         statement.name,
         statement.name,
       );
@@ -1242,16 +1281,6 @@ const isModuleExports = (expression: ts.Expression): boolean =>
   ts.isIdentifier(expression.expression) &&
   expression.expression.text === "module" &&
   expression.name.text === "exports";
-
-const isPublicCallableClassMember = (
-  member: ts.ClassElement,
-): member is
-  | ts.MethodDeclaration
-  | ts.GetAccessorDeclaration
-  | ts.SetAccessorDeclaration =>
-  ts.isMethodDeclaration(member) ||
-  ts.isGetAccessorDeclaration(member) ||
-  ts.isSetAccessorDeclaration(member);
 
 const collectComplexityGrowthEvidence = (
   previousSource: ts.SourceFile,
@@ -1666,15 +1695,32 @@ const classDeclarationForValueType = (
   return undefined;
 };
 
-const isClassOwnedConstructSignature = (
+const isNominalClassConstructSignature = (
   signature: ts.Signature,
   declaration: ts.ClassLikeDeclarationBase,
+  checker: ts.TypeChecker,
 ): boolean => {
   const signatureDeclaration = signature.getDeclaration();
+  if (
+    signatureDeclaration !== undefined &&
+    !ts.isConstructorDeclaration(signatureDeclaration)
+  ) {
+    return false;
+  }
+  if (
+    signatureDeclaration !== undefined &&
+    signatureDeclaration.parent === declaration
+  ) {
+    return true;
+  }
+
+  const classSymbol =
+    declaration.name === undefined
+      ? checker.getTypeAtLocation(declaration).getSymbol()
+      : checker.getSymbolAtLocation(declaration.name);
   return (
-    signatureDeclaration === undefined ||
-    (ts.isConstructorDeclaration(signatureDeclaration) &&
-      signatureDeclaration.parent === declaration)
+    classSymbol !== undefined &&
+    signature.getReturnType().getSymbol() === classSymbol
   );
 };
 
@@ -1691,6 +1737,28 @@ const serializeCheckerSignature = (
       ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope,
     signatureKind,
   );
+
+const serializeCheckerType = (
+  type: ts.Type,
+  location: ts.Node,
+  checker: ts.TypeChecker,
+): string =>
+  checker.typeToString(
+    type,
+    location,
+    ts.TypeFormatFlags.InTypeAlias |
+      ts.TypeFormatFlags.NoTruncation |
+      ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope,
+  );
+
+const serializeExportedTypeRoot = (
+  type: ts.Type,
+  location: ts.Node,
+  checker: ts.TypeChecker,
+): string =>
+  (type.flags & (ts.TypeFlags.Object | ts.TypeFlags.Intersection)) !== 0
+    ? "structural-type"
+    : serializeCheckerType(type, location, checker);
 
 const serializeClassConstructSignature = (
   signature: ts.Signature,
@@ -1711,16 +1779,24 @@ const serializeClassConstructSignature = (
   return `class-constructor:${constructorShape}`;
 };
 
-const serializeClassDeclarationConstructor = (
-  declaration: ts.ConstructorDeclaration,
-  sourceFile: ts.SourceFile,
+const serializeStructuralConstructSignature = (
+  signature: ts.Signature,
+  location: ts.Node,
   checker: ts.TypeChecker,
-): string => {
-  const signature = checker.getSignatureFromDeclaration(declaration);
-  return signature === undefined
-    ? `class-constructor:${fallbackFunctionSignature(declaration, sourceFile)}`
-    : serializeClassConstructSignature(signature, declaration, checker);
-};
+): string =>
+  `${
+    hasModifier(
+      signature.getDeclaration() ?? location,
+      ts.SyntaxKind.AbstractKeyword,
+    )
+      ? "abstract:"
+      : ""
+  }${serializeCheckerSignature(
+    signature,
+    location,
+    checker,
+    ts.SignatureKind.Construct,
+  )}`;
 
 const serializeFunctionLikeSignature = (
   declaration: ts.FunctionLikeDeclaration,
@@ -1828,6 +1904,18 @@ const hasExportModifier = (node: ts.Node): boolean =>
 const hasNonPublicModifier = (node: ts.Node): boolean =>
   hasModifier(node, ts.SyntaxKind.PrivateKeyword) ||
   hasModifier(node, ts.SyntaxKind.ProtectedKeyword);
+
+const isNonPublicDeclaration = (node: ts.Declaration): boolean => {
+  if (hasNonPublicModifier(node)) {
+    return true;
+  }
+  if (!("name" in node)) {
+    return false;
+  }
+
+  const name = (node as ts.NamedDeclaration).name;
+  return name !== undefined && ts.isPrivateIdentifier(name);
+};
 
 const hasModifier = (node: ts.Node, modifier: ts.SyntaxKind): boolean => {
   if (!ts.canHaveModifiers(node)) {

@@ -2229,3 +2229,75 @@
 - A live VS Code host was not exercised in this non-interactive environment.
   Analysis remains intentionally per-document, so imported class declarations
   are not resolved across modules.
+
+---
+
+## Class/type export review findings (2026-09-13)
+
+### Corrections implemented
+
+- Removed the synthetic public zero-argument constructor fallback. Constructor
+  records now come only from checker-resolved signatures whose effective
+  declarations are public, including inherited constructor accessibility.
+- Unified direct classes, class expressions, checker-resolved aliases, and
+  callable/constructable intersections behind one checker-derived public
+  surface. Nominal and inherited constructors are canonicalized without their
+  local return-class names, while additional structural/class-intersection
+  constructors retain overload order and return types.
+- Added deterministic, deduplicated static and constructed-instance member
+  collection. Public methods and data properties are included; private,
+  protected, and private-identifier declarations remain excluded.
+- Added a distinct type-export namespace and structural surface records for
+  direct aliases/interfaces and local type export lists. Runtime value exports
+  no longer masquerade as type-only exports, while equivalent direct/list and
+  `export type`/`export { type ... }` forms share external identities.
+- Keyed legal default interface exports by the external `default` identity.
+- Added class-level abstract/concrete markers and structural
+  abstract-constructor markers. Class markers also cover inaccessible
+  constructors without fabricating a public construct signature.
+
+### TDD evidence
+
+- Initial semantic RED: **13 expected failures** across the constructor-access,
+  structural-member, direct-type/default, namespace, and abstract regressions.
+  The initially vacuous constructor-equivalence case was tightened through a
+  checker-resolved alias and then failed for the expected duplicate signature.
+- Self-review RED cases covered an abstract class with a protected constructor,
+  a non-primary class return in a constructable intersection, duplicate
+  abstract/class evidence, and an abstract structural constructor returning
+  the intersected nominal class.
+- Focused semantic GREEN: **1 file, 111 tests passed**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 545 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 91.01%, branches 84.38%, functions 93.66%, lines 91.14%
+- `npm run package`: **PASS — 158 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX inclusion/exclusion scan: **PASS**
+  - compiled extension, semantic analyzer, and public docs are present;
+  - source, tests, coverage, private review material, editor/CI files, and
+    source maps are absent.
+- Production and packaged credential-pattern scans: **PASS**
+- Production and packaged runtime URL scans: **PASS — loopback default only**
+- Source and packaged repository/bugs/homepage metadata scans: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review covered explicit, implicit, inherited, inaccessible, and
+  overloaded constructors; class and structural abstractness; external export
+  identities; type/value namespace transitions; intersection member ordering
+  and deduplication; non-public filtering; and structural constructor returns.
+- Self-review found and corrected over-normalization of non-primary class and
+  structural constructor returns, plus duplicate abstract-class evidence. No
+  remaining high-confidence correctness, privacy, or packaging concern was
+  found.
+- Analysis remains intentionally per-document with module resolution disabled,
+  so public surfaces imported from other project files remain outside this
+  analyzer slice.

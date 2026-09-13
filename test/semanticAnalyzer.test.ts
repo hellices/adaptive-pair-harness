@@ -944,6 +944,331 @@ describe("TypeScriptSemanticAnalyzer", () => {
     );
   });
 
+  it.each(["protected", "private"] as const)(
+    "does not fabricate a public constructor inherited from a %s base constructor",
+    (access) => {
+      const source = (exported: boolean): string =>
+        [
+          `class Base { ${access} constructor(value: string) { void value; } }`,
+          `${exported ? "export " : ""}class Derived extends Base {}`,
+        ].join("\n");
+      const evidence = analyzeEvidence(episode(source(false), source(true)));
+
+      expect(
+        evidence.filter(
+          (item) =>
+            item.kind === "public-api-change" &&
+            item.references[0] === "Derived#constructor",
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it("canonicalizes an inherited public constructor across equivalent export forms and local renames", () => {
+    const previous = [
+      "class Base { constructor(value: string) { void value; } }",
+      "export class PublicClass extends Base {}",
+    ].join("\n");
+    const current = [
+      "class Base { constructor(value: string) { void value; } }",
+      "class RenamedImplementation extends Base {}",
+      "const CheckerResolvedAlias = RenamedImplementation;",
+      "export { CheckerResolvedAlias as PublicClass };",
+    ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(previous, current)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("preserves non-primary class return types in constructable intersections", () => {
+    const source = (additionalClass: string): string =>
+      [
+        "class Primary { constructor(value: string) { void value; } }",
+        "class Secondary { constructor(value: number) { void value; } }",
+        "class Replacement { constructor(value: number) { void value; } }",
+        `declare const Hybrid: typeof Primary & typeof ${additionalClass};`,
+        "export { Hybrid };",
+      ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(source("Secondary"), source("Replacement")),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Hybrid#constructor"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports removal when an inherited public constructor becomes protected", () => {
+    const source = (access: "" | "protected "): string =>
+      [
+        `class Base { ${access}constructor(value: string) { void value; } }`,
+        "export class Derived extends Base {}",
+      ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(source(""), source("protected ")),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API removed",
+          references: ["Derived#constructor"],
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    [
+      "additional static property",
+      "{ version: string }",
+      "{ version: number }",
+      "Hybrid.version",
+    ],
+    [
+      "constructed instance property",
+      "new () => { value: string }",
+      "new () => { value: number }",
+      "Hybrid#value",
+    ],
+    [
+      "constructed instance method",
+      "new () => { run(value: string): void }",
+      "new () => { run(value: number): void }",
+      "Hybrid#run",
+    ],
+  ])(
+    "reports a class intersection %s-only change",
+    (_label, previousMember, currentMember, reference) => {
+      const source = (member: string): string =>
+        [
+          "class Base {}",
+          `declare const Hybrid: typeof Base & (${member});`,
+          "export { Hybrid };",
+        ].join("\n");
+      const evidence = analyzeEvidence(
+        episode(source(previousMember), source(currentMember)),
+      );
+
+      expect(evidence).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "public-api-change",
+            title: "Exported API signature changed",
+            references: [reference],
+          }),
+        ]),
+      );
+    },
+  );
+
+  it("deduplicates repeated structural class-intersection properties deterministically", () => {
+    const source = (propertyType: string, duplicate: boolean): string =>
+      [
+        "class Base {}",
+        "declare const Hybrid:",
+        "  typeof Base &",
+        `  { version: ${propertyType} }${
+          duplicate ? ` & { version: ${propertyType} }` : ""
+        };`,
+        "export { Hybrid };",
+      ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(source("string", false), source("number", true)),
+    ).filter(
+      (item) =>
+        item.kind === "public-api-change" &&
+        item.references[0] === "Hybrid.version",
+    );
+
+    expect(evidence).toHaveLength(1);
+  });
+
+  it("models direct type alias and interface member changes", () => {
+    const previous = [
+      "export type Payload = { value: string };",
+      "export interface Service { run(value: string): void; }",
+    ].join("\n");
+    const current = [
+      "export type Payload = { value: number };",
+      "export interface Service { run(value: number): void; }",
+    ].join("\n");
+    const references = analyzeEvidence(episode(previous, current))
+      .filter((item) => item.kind === "public-api-change")
+      .map((item) => item.references[0]);
+
+    expect(references).toEqual(
+      expect.arrayContaining(["Payload#value", "Service#run"]),
+    );
+  });
+
+  it("normalizes equivalent direct and local-list type exports", () => {
+    const direct = "export type Payload = { value: string };";
+    const localList = [
+      "type InternalPayload = { value: string };",
+      "export type { InternalPayload as Payload };",
+    ].join("\n");
+
+    for (const [previous, current] of [
+      [direct, localList],
+      [localList, direct],
+    ] as const) {
+      expect(
+        analyzeEvidence(episode(previous, current)).filter(
+          (item) => item.kind === "public-api-change",
+        ),
+      ).toEqual([]);
+    }
+  });
+
+  it("uses default external identity for legal default interface exports", () => {
+    const direct = "export default interface Direct { value: string }";
+    const localList = [
+      "interface Renamed { value: string }",
+      "export type { Renamed as default };",
+    ].join("\n");
+    const equivalent = analyzeEvidence(episode(direct, localList)).filter(
+      (item) => item.kind === "public-api-change",
+    );
+    const changed = analyzeEvidence(
+      episode(
+        direct,
+        [
+          "interface Renamed { value: number }",
+          "export { type Renamed as default };",
+        ].join("\n"),
+      ),
+    );
+
+    expect(equivalent).toEqual([]);
+    expect(changed).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["default export#value"],
+        }),
+      ]),
+    );
+  });
+
+  it("distinguishes a type-only callable API from an equivalent runtime value export", () => {
+    const previous =
+      "export type Handler = (value: string) => string;";
+    const current =
+      "export const Handler = (value: string): string => value;";
+    const evidence = analyzeEvidence(episode(previous, current)).filter(
+      (item) => item.kind === "public-api-change",
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: "Exported API added",
+          references: ["Handler"],
+        }),
+        expect.objectContaining({
+          title: "Exported API removed",
+          references: ["Handler"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports abstract-to-concrete exported class transitions", () => {
+    const source = (abstract: boolean): string =>
+      `export ${abstract ? "abstract " : ""}class Service { ` +
+      "constructor(value: string) { void value; } }";
+    const evidence = analyzeEvidence(
+      episode(source(true), source(false)),
+    ).filter((item) => item.kind === "public-api-change");
+
+    expect(evidence).toEqual([
+      expect.objectContaining({
+        title: "Exported API signature changed",
+        references: ["Service"],
+      }),
+    ]);
+  });
+
+  it("reports an abstract class transition even when its constructor is protected", () => {
+    const source = (abstract: boolean): string =>
+      [
+        `export ${abstract ? "abstract " : ""}class Service {`,
+        "  protected constructor(value: string) { void value; }",
+        "}",
+      ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(source(true), source(false)),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Service"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports abstract-to-concrete structural construct transitions", () => {
+    const source = (abstract: boolean): string =>
+      [
+        "interface Instance { run(): void }",
+        `export type Factory = ${
+          abstract ? "abstract " : ""
+        }new (value: string) => Instance;`,
+      ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(source(true), source(false)),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Factory#constructor"],
+        }),
+      ]),
+    );
+  });
+
+  it("preserves an abstract structural construct that returns the intersected class", () => {
+    const source = (abstract: boolean): string =>
+      [
+        "class Base {}",
+        "declare const Hybrid:",
+        `  typeof Base & (${abstract ? "abstract " : ""}new ` +
+          "(value: string) => Base);",
+        "export { Hybrid };",
+      ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(source(true), source(false)),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Hybrid#constructor"],
+        }),
+      ]),
+    );
+  });
+
   it("reports inferred signature changes for exported function-valued variables", () => {
     const evidence = analyzeEvidence(
       episode(
