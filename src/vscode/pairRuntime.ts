@@ -1725,7 +1725,12 @@ const diagnosticEvidenceForDocument = (
   document: vscode.TextDocument,
   selectedRange?: PairRange,
 ): readonly Evidence[] => {
-  const diagnostics = vscode.languages.getDiagnostics(document.uri);
+  const diagnostics = vscode.languages
+    .getDiagnostics(document.uri)
+    .filter((diagnostic) =>
+      diagnostic.severity === vscode.DiagnosticSeverity.Error ||
+      diagnostic.severity === vscode.DiagnosticSeverity.Warning
+    );
   const relevantDiagnostics =
     selectedRange === undefined
       ? diagnostics

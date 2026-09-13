@@ -1785,6 +1785,193 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
+  it.each([
+    ["Information", 2],
+    ["Hint", 3],
+  ] as const)(
+    "ignores a selected %s diagnostic without calling the provider",
+    async (_label, severity) => {
+      const fetchMock = vi.fn(async () =>
+        providerResponse("Unexpected diagnostic response"),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const uri = `file:///workspace/src/manual-severity-${severity}.ts`;
+      const currentDocument = document(uri, "export const value = 1;", 1);
+      const selectedRange = {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 6 },
+      };
+      vscodeState.textDocuments = [currentDocument];
+      vscodeState.activeTextEditor = {
+        document: currentDocument,
+        selection: {
+          isEmpty: false,
+          active: selectedRange.start,
+          start: selectedRange.start,
+          end: selectedRange.end,
+        },
+      };
+      vscodeState.diagnostics.push({
+        range: selectedRange,
+        message: `${_label} diagnostic`,
+        severity,
+        source: "typescript",
+        code: `TS${severity}`,
+      });
+      const shared = sharedContext();
+      const runtime = new PairRuntime({
+        config: config({
+          provider: "openai-compatible",
+          baseUrl: new URL("https://model.example/v1"),
+        }),
+        extensionContext,
+        sharedContext: shared,
+        languageModelApi: languageModelApi(),
+        apiKey: undefined,
+      });
+      await runtime.startSession();
+
+      await runtime.reviewCurrentBlock();
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(shared.snapshot().latest).toBeUndefined();
+      expect(vscodeState.commentThreads).toEqual([]);
+      runtime.dispose();
+    },
+  );
+
+  it.each([
+    ["Information", 2],
+    ["Hint", 3],
+  ] as const)(
+    "ignores an automatic %s diagnostic without calling the provider",
+    async (_label, severity) => {
+      const fetchMock = vi.fn(async () =>
+        providerResponse("Unexpected diagnostic response"),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const uri = `file:///workspace/src/automatic-severity-${severity}.ts`;
+      const currentDocument = document(uri, "export const value = 1;", 2);
+      vscodeState.textDocuments = [currentDocument];
+      vscodeState.diagnostics.push({
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 6 },
+        },
+        message: `${_label} diagnostic`,
+        severity,
+        source: "typescript",
+        code: `TS${severity}`,
+      });
+      const shared = sharedContext();
+      const runtime = new PairRuntime({
+        config: config({
+          provider: "openai-compatible",
+          baseUrl: new URL("https://model.example/v1"),
+        }),
+        extensionContext,
+        sharedContext: shared,
+        languageModelApi: languageModelApi(),
+        apiKey: undefined,
+      });
+      await runtime.startSession();
+
+      await (
+        runtime as unknown as {
+          handleEpisode(episode: {
+            uri: string;
+            languageId: string;
+            previousText: string;
+            currentText: string;
+            version: number;
+            observedAt: number;
+          }): Promise<void>;
+        }
+      ).handleEpisode({
+        uri,
+        languageId: "typescript",
+        previousText: currentDocument.getText(),
+        currentText: currentDocument.getText(),
+        version: currentDocument.version,
+        observedAt: 1,
+      });
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(shared.snapshot().latest).toBeUndefined();
+      expect(vscodeState.commentThreads).toEqual([]);
+      runtime.dispose();
+    },
+  );
+
+  it("records only Error and Warning diagnostics during automatic analysis", async () => {
+    const uri = "file:///workspace/src/diagnostic-severities.ts";
+    const currentDocument = document(uri, "export const value = 1;", 2);
+    vscodeState.textDocuments = [currentDocument];
+    vscodeState.diagnostics.push(
+      ...[
+        ["Error diagnostic", 0],
+        ["Warning diagnostic", 1],
+        ["Information diagnostic", 2],
+        ["Hint diagnostic", 3],
+      ].map(([message, severity], index) => ({
+        range: {
+          start: { line: 0, character: index },
+          end: { line: 0, character: index + 1 },
+        },
+        message: String(message),
+        severity: Number(severity),
+        source: "typescript",
+        code: `TS${index}`,
+      })),
+    );
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: sharedContext(),
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+    await runtime.startSession();
+
+    await (
+      runtime as unknown as {
+        handleEpisode(episode: {
+          uri: string;
+          languageId: string;
+          previousText: string;
+          currentText: string;
+          version: number;
+          observedAt: number;
+        }): Promise<void>;
+      }
+    ).handleEpisode({
+      uri,
+      languageId: "typescript",
+      previousText: currentDocument.getText(),
+      currentText: currentDocument.getText(),
+      version: currentDocument.version,
+      observedAt: 1,
+    });
+    const state = (
+      runtime as unknown as {
+        documentState: {
+          latestEvidence(uri: string): readonly Evidence[];
+        };
+      }
+    ).documentState;
+
+    expect(
+      state.latestEvidence(uri).map((item) => [
+        item.detail,
+        item.severity,
+      ]),
+    ).toEqual([
+      ["Error diagnostic", "error"],
+      ["Warning diagnostic", "warning"],
+    ]);
+    runtime.dispose();
+  });
+
   it("keeps automatic diagnostic evidence bounded to the first 20 items", async () => {
     const uri = "file:///workspace/src/automatic-diagnostics.ts";
     const currentDocument = document(uri, "export const value = 1;", 2);

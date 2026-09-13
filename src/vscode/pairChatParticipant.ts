@@ -65,7 +65,10 @@ export class PairSharedContext {
   private revision = 0;
   private evidenceEpoch = 0;
   private readonly evidenceRevisionByUri = new Map<string, number>();
-  private readonly activeEvidencePinsByUri = new Map<string, number>();
+  private readonly activeEvidencePinsByUri = new Map<
+    string,
+    Set<object>
+  >();
   private readonly contextRevisionByFence = new WeakMap<
     PairContextRevisionFence,
     number
@@ -226,10 +229,11 @@ export class PairSharedContext {
       revision = this.nextEvidenceRevision();
       this.evidenceRevisionByUri.set(uri, revision);
     }
-    this.activeEvidencePinsByUri.set(
-      uri,
-      (this.activeEvidencePinsByUri.get(uri) ?? 0) + 1,
-    );
+    const pin = {};
+    const activePins =
+      this.activeEvidencePinsByUri.get(uri) ?? new Set<object>();
+    activePins.add(pin);
+    this.activeEvidencePinsByUri.set(uri, activePins);
     this.evictIdleEvidenceRevisions();
     let active = true;
     return {
@@ -240,12 +244,10 @@ export class PairSharedContext {
           return;
         }
         active = false;
-        const remaining =
-          (this.activeEvidencePinsByUri.get(uri) ?? 1) - 1;
-        if (remaining === 0) {
+        const currentPins = this.activeEvidencePinsByUri.get(uri);
+        currentPins?.delete(pin);
+        if (currentPins?.size === 0) {
           this.activeEvidencePinsByUri.delete(uri);
-        } else {
-          this.activeEvidencePinsByUri.set(uri, remaining);
         }
         this.evictIdleEvidenceRevisions();
       },
@@ -316,11 +318,11 @@ export class PairSharedContext {
   }
 
   private releaseAllEvidenceUris(): void {
-    if (this.evidenceRevisionByUri.size === 0) {
-      return;
+    if (this.evidenceRevisionByUri.size > 0) {
+      this.nextEvidenceRevision();
     }
-    this.nextEvidenceRevision();
     this.evidenceRevisionByUri.clear();
+    this.activeEvidencePinsByUri.clear();
   }
 
   private nextEvidenceRevision(): number {

@@ -3633,3 +3633,76 @@
   high-confidence defect remains in the changed scope.
 - No live VS Code extension-host test was run; the behavior is isolated to
   TypeScript AST printing and is covered through the real compiler API.
+
+---
+
+## Diagnostic, complexity-owner, and active-pin follow-ups (2026-09-14)
+
+### Corrections implemented
+
+- Automatic and selected-range/manual diagnostic collection now filters VS
+  Code diagnostics before bounding or evidence construction. Only Error and
+  Warning severities can become evidence, trigger an intervention, or call a
+  provider. Information and Hint diagnostics remain ignored. The README's
+  existing error-or-warning contract is unchanged.
+- Complexity collection now records method, getter, and setter bodies declared
+  in class expressions and object literals. Owner identities prefer named
+  class expressions, then enclosing variable, property-assignment, class
+  property, or default-export context, and finally a deterministic
+  same-owner occurrence fallback for otherwise anonymous expressions.
+- Member identities preserve class static (`.`), instance (`#`), getter,
+  setter, and object-member distinctions. Nested function ownership now also
+  includes supported class-expression and object-literal accessors.
+- Whole-context evidence cleanup clears URI revisions/LRU state and every
+  active URI pin, including when the revision map is already empty. Pins now
+  use per-fence tokens, so a stale runtime/request release cannot remove or
+  retain a replacement runtime's same-URI pin. Live-runtime pin reference
+  counting and temporary over-limit concurrency remain intact.
+
+### TDD evidence
+
+- Diagnostic RED: **5 expected failures** showed selected and automatic
+  Information/Hint diagnostics calling the provider and all four severities
+  entering automatic evidence. GREEN: all **5 focused tests passed**.
+- Complexity RED: **8 expected failures** covered class-expression and
+  object-literal methods/accessors plus variable, property, export, and
+  anonymous fallback ownership. The corrected parenthesized default-export
+  class-expression regression also failed independently before implementation.
+  GREEN: all **9 focused cases** and the complete **82-test semantic suite**
+  passed.
+- Active-pin RED: **4 expected failures** exposed pin retention across
+  begin-runtime, end-runtime, empty-map reset, and over-limit churn; the
+  same-URI stale-release guard passed as a preservation test. GREEN: all **5
+  focused cleanup/replacement cases passed**.
+- Focused semantic, runtime-lifecycle, and Chat/shared-context verification:
+  **PASS — 3 files, 245 tests**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **20 files, 585 tests passed**
+- `npm run test:coverage`: **PASS — 20 files, 585 tests**
+  - statements 90.51%, branches 83.13%, functions 93.56%, lines 90.64%
+- `npm run package`: **PASS — 161 files, 4.37 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX exclusion, compiled-module byte-integrity, and changed-behavior marker
+  scans: **PASS — 161 entries**
+- Production and packaged credential-shaped value, runtime/fake endpoint,
+  repository metadata, conflict-marker, whitespace, and unchanged-README
+  contract scans: **PASS**
+
+### Self-review and residual concerns
+
+- Reviewed diagnostic filtering order, selected-range behavior, owner
+  recursion and matching determinism, static/instance/accessor separation,
+  anonymous occurrence alignment, reset-era pin isolation, same-URI
+  replacement release, and live-runtime eviction behavior. No
+  high-confidence correctness or lifecycle defect remains in the changed
+  scope.
+- A live VS Code extension host and live remote provider were unavailable.
+  Deterministic VS Code adapters, real TypeScript AST analysis, deferred
+  runtime behavior, and package byte-integrity checks cover the changed
+  boundaries.

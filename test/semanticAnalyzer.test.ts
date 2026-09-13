@@ -32,6 +32,45 @@ const analyzeEvidence = (edit: EditEpisode): readonly Evidence[] => {
 const publicApiEvidence = (edit: EditEpisode): readonly Evidence[] =>
   analyzeEvidence(edit).filter((item) => item.kind === "public-api-change");
 
+const returningComplexityBody = (
+  indentation: string,
+  complex: boolean,
+): readonly string[] =>
+  (complex
+    ? [
+        "if (input > 10) return 10;",
+        "if (input > 0 && input < 10) return input;",
+        "for (const item of [input]) {",
+        "  if (item === 0) return 0;",
+        "}",
+        "return input < 0 ? -input : input;",
+      ]
+    : [
+        "if (input > 0) return input;",
+        "if (input < 0) return -input;",
+        "return 0;",
+      ]
+  ).map((line) => `${indentation}${line}`);
+
+const setterComplexityBody = (
+  indentation: string,
+  complex: boolean,
+): readonly string[] =>
+  (complex
+    ? [
+        "if (input > 10) return;",
+        "if (input > 0 && input < 10) return;",
+        "for (const item of [input]) {",
+        "  if (item === 0) return;",
+        "}",
+        "void (input < 0 ? -input : input);",
+      ]
+    : [
+        "if (input > 0) return;",
+        "if (input < 0) return;",
+      ]
+  ).map((line) => `${indentation}${line}`);
+
 const comparePositions = (left: PairRange["start"], right: PairRange["start"]): number => {
   if (left.line === right.line) {
     return left.character - right.character;
@@ -1098,7 +1137,7 @@ describe("TypeScriptSemanticAnalyzer", () => {
           "  return target.value;",
           "}",
         ].join("\n"),
-      "outerOne.helper",
+      "outerOne.target#get value.helper",
     ],
     [
       "class-expression setters",
@@ -1114,7 +1153,7 @@ describe("TypeScriptSemanticAnalyzer", () => {
           "  new Target().value = input;",
           "}",
         ].join("\n"),
-      "outerOne.helper",
+      "outerOne.Target#set value.helper",
     ],
     [
       "computed static getters",
@@ -1133,7 +1172,7 @@ describe("TypeScriptSemanticAnalyzer", () => {
       "outerOne.Target.helper",
     ],
   ] as const)(
-    "attributes first-only complexity growth inside %s to its outer scope",
+    "attributes first-only complexity growth inside %s to its enclosing owner",
     (_caseName, accessorSource, expectedReference) => {
       const simpleHelper = [
         "      const helper = (input: number): number => {",
@@ -1643,6 +1682,171 @@ describe("TypeScriptSemanticAnalyzer", () => {
     expect(evidence).toHaveLength(1);
     expect(evidence[0]?.references).toEqual(["Alpha#decide"]);
   });
+
+  it("records class-expression method, static method, getter, and setter growth under the named owner", () => {
+    const source = (complex: boolean): string =>
+      [
+        "const Worker = class NamedWorker {",
+        "  decide(input: number): number {",
+        ...returningComplexityBody("    ", complex),
+        "  }",
+        "  static decide(input: number): number {",
+        ...returningComplexityBody("    ", complex),
+        "  }",
+        "  get value(): number {",
+        "    const input = 1;",
+        ...returningComplexityBody("    ", complex),
+        "  }",
+        "  set value(input: number) {",
+        ...setterComplexityBody("    ", complex),
+        "  }",
+        "};",
+      ].join("\n");
+
+    const evidence = analyzeEvidence(
+      episode(source(false), source(true)),
+    ).filter((item) => item.kind === "complexity-growth");
+
+    expect(evidence).toHaveLength(4);
+    expect(evidence.flatMap((item) => item.references).sort()).toEqual([
+      "NamedWorker#decide",
+      "NamedWorker#get value",
+      "NamedWorker#set value",
+      "NamedWorker.decide",
+    ]);
+  });
+
+  it("records object-literal method, getter, and setter growth under the variable owner", () => {
+    const source = (complex: boolean): string =>
+      [
+        "const worker = {",
+        "  decide(input: number): number {",
+        ...returningComplexityBody("    ", complex),
+        "  },",
+        "  get value(): number {",
+        "    const input = 1;",
+        ...returningComplexityBody("    ", complex),
+        "  },",
+        "  set value(input: number) {",
+        ...setterComplexityBody("    ", complex),
+        "  },",
+        "};",
+      ].join("\n");
+
+    const evidence = analyzeEvidence(
+      episode(source(false), source(true)),
+    ).filter((item) => item.kind === "complexity-growth");
+
+    expect(evidence).toHaveLength(3);
+    expect(evidence.flatMap((item) => item.references).sort()).toEqual([
+      "worker#decide",
+      "worker#get value",
+      "worker#set value",
+    ]);
+  });
+
+  it.each([
+    [
+      "anonymous class expression variable",
+      (member: string) => `const Worker = class {\n${member}\n};`,
+      "Worker#decide",
+    ],
+    [
+      "anonymous class expression property",
+      (member: string) =>
+        `const registry = {\n  Worker: class {\n${member}\n  },\n};`,
+      "registry.Worker#decide",
+    ],
+    [
+      "anonymous default-exported class expression",
+      (member: string) => `export default (class {\n${member}\n});`,
+      "default export#decide",
+    ],
+    [
+      "nested object-literal property",
+      (member: string) =>
+        `const registry = {\n  worker: {\n${member}\n  },\n};`,
+      "registry.worker#decide",
+    ],
+    [
+      "default-exported object literal",
+      (member: string) => `export default {\n${member}\n};`,
+      "default export#decide",
+    ],
+  ] as const)(
+    "derives a stable method owner from the %s context",
+    (_label, wrap, expectedReference) => {
+      const member = (complex: boolean): string =>
+        [
+          "    decide(input: number): number {",
+          ...returningComplexityBody("      ", complex),
+          "    }",
+        ].join("\n");
+
+      const evidence = analyzeEvidence(
+        episode(wrap(member(false)), wrap(member(true))),
+      ).filter((item) => item.kind === "complexity-growth");
+
+      expect(evidence).toHaveLength(1);
+      expect(evidence[0]?.references).toEqual([expectedReference]);
+    },
+  );
+
+  it.each([
+    [
+      "class expressions",
+      (complex: boolean) =>
+        [
+          "class {",
+          "  decide(input: number): number {",
+          ...returningComplexityBody("    ", complex),
+          "  }",
+          "}",
+        ].join("\n"),
+      "class expression#decide",
+    ],
+    [
+      "object literals",
+      (complex: boolean) =>
+        [
+          "{",
+          "  decide(input: number): number {",
+          ...returningComplexityBody("    ", complex),
+          "  },",
+          "}",
+        ].join("\n"),
+      "object literal#decide",
+    ],
+  ] as const)(
+    "uses deterministic occurrence fallback for unnamed %s across unrelated block insertion",
+    (_label, expression, expectedReference) => {
+      const previous = [
+        `consume(${expression(false)},`,
+        `${expression(false)});`,
+      ].join("\n");
+      const current = [
+        "{",
+        "  const unrelated = true;",
+        "}",
+        `consume(${expression(false)},`,
+        `${expression(true)});`,
+      ].join("\n");
+      const edit = episode(previous, current);
+
+      const first = analyzeEvidence(edit).filter(
+        (item) => item.kind === "complexity-growth",
+      );
+      const second = analyzeEvidence(edit).filter(
+        (item) => item.kind === "complexity-growth",
+      );
+
+      expect(first).toHaveLength(1);
+      expect(first[0]?.references).toEqual([expectedReference]);
+      expect(second.map((item) => item.id)).toEqual(
+        first.map((item) => item.id),
+      );
+    },
+  );
 
   it("compares the next stable edit with the last stable source", () => {
     const lastStable =

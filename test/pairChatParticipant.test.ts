@@ -647,6 +647,187 @@ describe("pair chat planning", () => {
     );
   });
 
+  it("clears active URI pins when a replacement runtime begins", () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "local-template",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    const uri = "file:///workspace/begin-runtime-reset.ts";
+    const staleFence = context.captureEvidenceRevisionFenceForUri(uri);
+
+    context.beginRuntime();
+    context.captureEvidenceRevisionForUri(uri);
+    for (
+      let index = 0;
+      index < PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT;
+      index += 1
+    ) {
+      context.captureEvidenceRevisionForUri(
+        `file:///workspace/begin-runtime-churn-${index}.ts`,
+      );
+    }
+
+    expect(staleFence.isCurrent()).toBe(false);
+    expect(context.evidenceRevisionForUri(uri)).toBeUndefined();
+    staleFence.dispose();
+  });
+
+  it("clears active URI pins when the current runtime ends", () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "local-template",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    const runtime = context.beginRuntime();
+    const uri = "file:///workspace/end-runtime-reset.ts";
+    const staleFence = context.captureEvidenceRevisionFenceForUri(uri);
+
+    context.endRuntime(runtime);
+    context.captureEvidenceRevisionForUri(uri);
+    for (
+      let index = 0;
+      index < PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT;
+      index += 1
+    ) {
+      context.captureEvidenceRevisionForUri(
+        `file:///workspace/end-runtime-churn-${index}.ts`,
+      );
+    }
+
+    expect(staleFence.isCurrent()).toBe(false);
+    expect(context.evidenceRevisionForUri(uri)).toBeUndefined();
+    staleFence.dispose();
+  });
+
+  it("clears pins when runtime reset finds an empty URI revision map", () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "local-template",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    const runtime = context.beginRuntime();
+    const uri = "file:///workspace/empty-map-pin.ts";
+    const staleFence = context.captureEvidenceRevisionFenceForUri(uri);
+    context.releaseEvidenceUri(uri, runtime);
+    expect(context.evidenceRevisionForUri(uri)).toBeUndefined();
+
+    context.endRuntime(runtime);
+    context.captureEvidenceRevisionForUri(uri);
+    for (
+      let index = 0;
+      index < PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT;
+      index += 1
+    ) {
+      context.captureEvidenceRevisionForUri(
+        `file:///workspace/empty-map-churn-${index}.ts`,
+      );
+    }
+
+    expect(context.evidenceRevisionForUri(uri)).toBeUndefined();
+    staleFence.dispose();
+  });
+
+  it("keeps a same-URI replacement pin active after an old fence releases", () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "local-template",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    const uri = "file:///workspace/replacement-pin.ts";
+    const firstRuntime = context.beginRuntime();
+    const staleFence = context.captureEvidenceRevisionFenceForUri(uri);
+    context.endRuntime(firstRuntime);
+    context.beginRuntime();
+    const replacementFence =
+      context.captureEvidenceRevisionFenceForUri(uri);
+
+    staleFence.dispose();
+    for (
+      let index = 0;
+      index < PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT;
+      index += 1
+    ) {
+      context.captureEvidenceRevisionForUri(
+        `file:///workspace/replacement-churn-${index}.ts`,
+      );
+    }
+
+    expect(replacementFence.isCurrent()).toBe(true);
+    replacementFence.dispose();
+  });
+
+  it("restores bounded LRU churn after a runtime with every URI pinned", () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "local-template",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+    });
+    const runtime = context.beginRuntime();
+    const staleFences = Array.from(
+      { length: PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT },
+      (_, index) =>
+        context.captureEvidenceRevisionFenceForUri(
+          `file:///workspace/reset-churn-${index}.ts`,
+        ),
+    );
+    context.endRuntime(runtime);
+
+    for (
+      let index = 0;
+      index <= PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT;
+      index += 1
+    ) {
+      context.captureEvidenceRevisionForUri(
+        `file:///workspace/reset-churn-${index}.ts`,
+      );
+    }
+
+    expect(
+      context.evidenceRevisionForUri(
+        "file:///workspace/reset-churn-0.ts",
+      ),
+    ).toBeUndefined();
+    expect(
+      context.evidenceRevisionForUri(
+        `file:///workspace/reset-churn-${PAIR_SHARED_CONTEXT_URI_REVISION_LIMIT}.ts`,
+      ),
+    ).toBeDefined();
+    for (const fence of staleFences) {
+      fence.dispose();
+    }
+  });
+
   it("keeps a 257th captured URI current while 256 existing revisions are pinned", () => {
     const context = new PairSharedContext({
       enabled: true,

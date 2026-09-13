@@ -603,11 +603,15 @@ const collectComplexityRecords = (
     });
   };
 
-  const recordMethod = (
+  const recordMember = (
     identity: SubjectIdentity,
-    node: ts.MethodDeclaration,
+    node:
+      | ts.MethodDeclaration
+      | ts.GetAccessorDeclaration
+      | ts.SetAccessorDeclaration,
   ): void => {
-    const baseKey = `method:${identity.key}`;
+    const memberKind = ts.isMethodDeclaration(node) ? "method" : "accessor";
+    const baseKey = `${memberKind}:${identity.key}`;
     const occurrence = occurrencesByBaseKey.get(baseKey) ?? 0;
     occurrencesByBaseKey.set(baseKey, occurrence + 1);
     records.push({
@@ -629,7 +633,15 @@ const collectComplexityRecords = (
     } else if (ts.isMethodDeclaration(node)) {
       const identity = methodIdentity(node, false);
       if (identity !== undefined) {
-        recordMethod(identity, node);
+        recordMember(identity, node);
+      }
+    } else if (
+      ts.isGetAccessorDeclaration(node) ||
+      ts.isSetAccessorDeclaration(node)
+    ) {
+      const identity = accessorIdentity(node, false);
+      if (identity !== undefined) {
+        recordMember(identity, node);
       }
     } else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
       const initializer = unwrapFunctionExpression(node.initializer);
@@ -775,7 +787,7 @@ const functionIdentity = (
 };
 
 const classIdentity = (
-  node: ts.ClassDeclaration,
+  node: ts.ClassDeclaration | ts.ClassExpression,
   includeLexicalScopes = true,
 ): SubjectIdentity | undefined => {
   const name = node.name?.text;
@@ -787,31 +799,35 @@ const classIdentity = (
     );
   }
 
-  if (
-    !hasModifier(node, ts.SyntaxKind.DefaultKeyword) ||
-    !hasExportModifier(node)
-  ) {
-    return undefined;
+  if (ts.isClassExpression(node)) {
+    return expressionOwnerIdentity(
+      node,
+      includeLexicalScopes,
+      "class-expression",
+      "class expression",
+    );
   }
 
-  return qualifyIdentity(
-    enclosingScopeIdentity(node.parent, includeLexicalScopes),
-    DEFAULT_EXPORT_KEY,
-    DEFAULT_EXPORT_DISPLAY,
-  );
+  if (
+    hasModifier(node, ts.SyntaxKind.DefaultKeyword) &&
+    hasExportModifier(node)
+  ) {
+    return qualifyIdentity(
+      enclosingScopeIdentity(node.parent, includeLexicalScopes),
+      DEFAULT_EXPORT_KEY,
+      DEFAULT_EXPORT_DISPLAY,
+    );
+  }
+
+  return undefined;
 };
 
 const methodIdentity = (
   node: ts.MethodDeclaration,
   includeLexicalScopes = true,
 ): SubjectIdentity | undefined => {
-  const classDeclaration = node.parent;
-  if (!ts.isClassDeclaration(classDeclaration)) {
-    return undefined;
-  }
-
-  const ownerIdentity = classIdentity(
-    classDeclaration,
+  const ownerIdentity = memberOwnerIdentity(
+    node.parent,
     includeLexicalScopes,
   );
   const methodName = propertyNameText(node.name);
@@ -819,7 +835,11 @@ const methodIdentity = (
     return undefined;
   }
 
-  const staticPrefix = hasModifier(node, ts.SyntaxKind.StaticKeyword) ? "." : "#";
+  const staticPrefix =
+    !ts.isObjectLiteralExpression(node.parent) &&
+    hasModifier(node, ts.SyntaxKind.StaticKeyword)
+      ? "."
+      : "#";
 
   return {
     key: `${ownerIdentity.key}${staticPrefix}${methodName}`,
@@ -831,13 +851,8 @@ const accessorIdentity = (
   node: ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
   includeLexicalScopes = true,
 ): SubjectIdentity | undefined => {
-  const classDeclaration = node.parent;
-  if (!ts.isClassDeclaration(classDeclaration)) {
-    return undefined;
-  }
-
-  const ownerIdentity = classIdentity(
-    classDeclaration,
+  const ownerIdentity = memberOwnerIdentity(
+    node.parent,
     includeLexicalScopes,
   );
   const propertyName = propertyNameText(node.name);
@@ -846,9 +861,15 @@ const accessorIdentity = (
   }
 
   const accessorKind = ts.isGetAccessorDeclaration(node) ? "get" : "set";
-  const staticMember = hasModifier(node, ts.SyntaxKind.StaticKeyword);
+  const staticMember =
+    !ts.isObjectLiteralExpression(node.parent) &&
+    hasModifier(node, ts.SyntaxKind.StaticKeyword);
   const memberPrefix = staticMember ? "." : "#";
-  const scopeKind = staticMember ? "static" : "instance";
+  const scopeKind = ts.isObjectLiteralExpression(node.parent)
+    ? "member"
+    : staticMember
+      ? "static"
+      : "instance";
 
   return {
     key: `${ownerIdentity.key}/${scopeKind}-${accessorKind}-accessor:${propertyName}`,
@@ -860,6 +881,13 @@ const variableFunctionIdentity = (
   node: ts.VariableDeclaration,
   includeLexicalScopes = true,
 ): SubjectIdentity | undefined => {
+  return variableValueIdentity(node, includeLexicalScopes);
+};
+
+const variableValueIdentity = (
+  node: ts.VariableDeclaration,
+  includeLexicalScopes = true,
+): SubjectIdentity | undefined => {
   if (!ts.isIdentifier(node.name)) {
     return undefined;
   }
@@ -868,6 +896,114 @@ const variableFunctionIdentity = (
     enclosingScopeIdentity(node.parent, includeLexicalScopes),
     node.name.text,
     node.name.text,
+  );
+};
+
+const memberOwnerIdentity = (
+  node: ts.Node,
+  includeLexicalScopes = true,
+): SubjectIdentity | undefined => {
+  if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+    return classIdentity(node, includeLexicalScopes);
+  }
+  if (ts.isObjectLiteralExpression(node)) {
+    return objectLiteralIdentity(node, includeLexicalScopes);
+  }
+  return undefined;
+};
+
+const objectLiteralIdentity = (
+  node: ts.ObjectLiteralExpression,
+  includeLexicalScopes = true,
+): SubjectIdentity =>
+  expressionOwnerIdentity(
+    node,
+    includeLexicalScopes,
+    "object-literal",
+    "object literal",
+  );
+
+const expressionOwnerIdentity = (
+  node: ts.ClassExpression | ts.ObjectLiteralExpression,
+  includeLexicalScopes: boolean,
+  fallbackKey: string,
+  fallbackDisplay: string,
+): SubjectIdentity => {
+  let expression: ts.Expression = node;
+  while (
+    (ts.isParenthesizedExpression(expression.parent) ||
+      ts.isAsExpression(expression.parent) ||
+      ts.isTypeAssertionExpression(expression.parent) ||
+      ts.isSatisfiesExpression(expression.parent) ||
+      ts.isNonNullExpression(expression.parent)) &&
+    expression.parent.expression === expression
+  ) {
+    expression = expression.parent;
+  }
+
+  const parent = expression.parent;
+  if (
+    ts.isVariableDeclaration(parent) &&
+    unwrapExpression(parent.initializer) === node
+  ) {
+    const identity = variableValueIdentity(parent, includeLexicalScopes);
+    if (identity !== undefined) {
+      return identity;
+    }
+  }
+
+  if (
+    ts.isPropertyAssignment(parent) &&
+    unwrapExpression(parent.initializer) === node
+  ) {
+    const propertyName = propertyNameText(parent.name);
+    if (propertyName !== undefined) {
+      return qualifyIdentity(
+        objectLiteralIdentity(parent.parent, includeLexicalScopes),
+        `property:${propertyName}`,
+        propertyName,
+      );
+    }
+  }
+
+  if (
+    ts.isPropertyDeclaration(parent) &&
+    unwrapExpression(parent.initializer) === node
+  ) {
+    const propertyName = propertyNameText(parent.name);
+    const owner = memberOwnerIdentity(
+      parent.parent,
+      includeLexicalScopes,
+    );
+    if (propertyName !== undefined && owner !== undefined) {
+      const memberPrefix = hasModifier(
+        parent,
+        ts.SyntaxKind.StaticKeyword,
+      )
+        ? "."
+        : "#";
+      return {
+        key: `${owner.key}${memberPrefix}property:${propertyName}`,
+        displayName: `${owner.displayName}${memberPrefix}${propertyName}`,
+      };
+    }
+  }
+
+  if (
+    ts.isExportAssignment(parent) &&
+    unwrapExpression(parent.expression) === node
+  ) {
+    return qualifyIdentity(
+      enclosingScopeIdentity(parent.parent, includeLexicalScopes),
+      DEFAULT_EXPORT_KEY,
+      DEFAULT_EXPORT_DISPLAY,
+    );
+  }
+
+  return qualifyIdentity(
+    enclosingScopeIdentity(parent, includeLexicalScopes),
+    fallbackKey,
+    fallbackDisplay,
   );
 };
 
@@ -919,9 +1055,19 @@ const enclosingScopeIdentity = (
       );
     }
 
-    if (ts.isClassDeclaration(current)) {
+    if (
+      ts.isClassDeclaration(current) ||
+      ts.isClassExpression(current)
+    ) {
       return withLexicalBlockPath(
         classIdentity(current, includeLexicalScopes),
+        lexicalBlockPath,
+      );
+    }
+
+    if (ts.isObjectLiteralExpression(current)) {
+      return withLexicalBlockPath(
+        objectLiteralIdentity(current, includeLexicalScopes),
         lexicalBlockPath,
       );
     }
