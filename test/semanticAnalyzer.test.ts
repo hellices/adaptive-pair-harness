@@ -673,6 +673,250 @@ describe("TypeScriptSemanticAnalyzer", () => {
     );
   });
 
+  it.each([
+    [
+      "direct declaration",
+      "export class C {}",
+      "class C {}",
+      "C#constructor",
+    ],
+    [
+      "anonymous default declaration",
+      "export default class {}",
+      "class C {}",
+      "default export#constructor",
+    ],
+    [
+      "export-equals class expression",
+      "export = class {};",
+      "const C = class {};",
+      "export =#constructor",
+    ],
+    [
+      "local class-expression alias",
+      ["const C = class {};", "export { C as PublicC };"].join("\n"),
+      "const C = class {};",
+      "PublicC#constructor",
+    ],
+  ])(
+    "reports removal of an implicit constructor from a %s",
+    (_label, previous, current, reference) => {
+      const evidence = analyzeEvidence(episode(previous, current));
+
+      expect(evidence).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "public-api-change",
+            title: "Exported API removed",
+            references: [reference],
+          }),
+        ]),
+      );
+    },
+  );
+
+  it("reports adding and changing an implicit constructor surface", () => {
+    const added = analyzeEvidence(
+      episode("class C {}", ["class C {}", "export { C };"].join("\n")),
+    );
+    const changed = analyzeEvidence(
+      episode(
+        "export class C {}",
+        "export class C { constructor(value: string) { void value; } }",
+      ),
+    );
+
+    expect(added).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: "Exported API added",
+          references: ["C#constructor"],
+        }),
+      ]),
+    );
+    expect(changed).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: "Exported API signature changed",
+          references: ["C#constructor"],
+        }),
+      ]),
+    );
+  });
+
+  it("serializes an exported structural constructor type alias independently", () => {
+    const source = (parameterType: string): string =>
+      [
+        "class Named { run(): void {} }",
+        `export type Factory = new (value: ${parameterType}) => Named;`,
+      ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(source("string"), source("number")),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Factory#constructor"],
+        }),
+      ]),
+    );
+  });
+
+  it("detects a structural constructor variable return-type change", () => {
+    const source = (returnType: string): string =>
+      [
+        "class First { run(): void {} }",
+        "class Second { run(): void {} }",
+        `declare const Factory: new (value: string) => ${returnType};`,
+        "export { Factory };",
+      ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(source("First"), source("Second")),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Factory#constructor"],
+        }),
+      ]),
+    );
+  });
+
+  it("composes call and construct signatures when only construction changes", () => {
+    const source = (parameterType: string): string =>
+      [
+        "class Named {}",
+        "interface Hybrid {",
+        "  (value: string): string;",
+        `  new (value: ${parameterType}): Named;`,
+        "}",
+        "declare const hybrid: Hybrid;",
+        "export default hybrid;",
+      ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(source("string"), source("number")),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["default export#constructor"],
+        }),
+      ]),
+    );
+  });
+
+  it("composes callable class aliases with their public members", () => {
+    const source = (parameterType: string): string =>
+      [
+        "class Named {",
+        `  run(value: ${parameterType}): void { void value; }`,
+        "}",
+        "declare const Hybrid: typeof Named & ((value: boolean) => boolean);",
+        "export = Hybrid;",
+      ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(source("string"), source("number")),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["export =#run"],
+        }),
+      ]),
+    );
+  });
+
+  it("retains structural return types in callable class intersections", () => {
+    const source = (returnType: string): string =>
+      [
+        "class Base {}",
+        "class First {}",
+        "class Second {}",
+        "declare const Hybrid:",
+        "  typeof Base &",
+        "  ((value: boolean) => boolean) &",
+        `  (new (value: string) => ${returnType});`,
+        "export { Hybrid };",
+      ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(source("First"), source("Second")),
+    );
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Hybrid#constructor"],
+        }),
+      ]),
+    );
+  });
+
+  it("deduplicates identical callable and constructable overloads", () => {
+    const source = (duplicate: boolean): string =>
+      [
+        "class Named {}",
+        "interface Hybrid {",
+        "  (value: string): string;",
+        ...(duplicate ? ["  (value: string): string;"] : []),
+        "  new (value: string): Named;",
+        ...(duplicate ? ["  new (value: string): Named;"] : []),
+        "}",
+        "declare const hybrid: Hybrid;",
+        "export { hybrid };",
+      ].join("\n");
+    const evidence = analyzeEvidence(episode(source(false), source(true)));
+
+    expect(
+      evidence.filter((item) => item.kind === "public-api-change"),
+    ).toEqual([]);
+  });
+
+  it("preserves construct overload order semantics", () => {
+    const source = (reverse: boolean): string =>
+      [
+        "class First {}",
+        "class Second {}",
+        "interface Hybrid {",
+        "  (value: boolean): boolean;",
+        ...(reverse
+          ? [
+              "  new (value: number): Second;",
+              "  new (value: string): First;",
+            ]
+          : [
+              "  new (value: string): First;",
+              "  new (value: number): Second;",
+            ]),
+        "}",
+        "declare const hybrid: Hybrid;",
+        "export { hybrid };",
+      ].join("\n");
+    const evidence = analyzeEvidence(episode(source(false), source(true)));
+
+    expect(evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["hybrid#constructor"],
+        }),
+      ]),
+    );
+  });
+
   it("reports a removed method from a locally exported class-valued identifier", () => {
     const evidence = analyzeEvidence(
       episode(

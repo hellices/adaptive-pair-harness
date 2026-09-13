@@ -482,6 +482,13 @@ const collectExportedSignatures = (
       classesByName.set(statement.name.text, statement);
       continue;
     }
+    if (
+      ts.isTypeAliasDeclaration(statement) ||
+      ts.isInterfaceDeclaration(statement)
+    ) {
+      identifiersByName.set(statement.name.text, statement.name);
+      continue;
+    }
     if (ts.isVariableStatement(statement)) {
       for (const declaration of statement.declarationList.declarations) {
         for (const identifier of bindingIdentifiers(declaration.name)) {
@@ -536,24 +543,83 @@ const collectExportedSignatures = (
     declaration: ts.ClassLikeDeclarationBase,
     rangeNode?: ts.Node,
   ): void => {
+    const constructorKey = `method:${identity.key}#constructor`;
+    const constructorRange = rangeForNode(
+      sourceFile,
+      rangeNode ?? declaration.name ?? declaration,
+    );
+    const constructorDeclarations = declaration.members.filter(
+      ts.isConstructorDeclaration,
+    );
+    const publicConstructSignatures = classValueType(
+      declaration,
+      checker,
+    )
+      .getConstructSignatures()
+      .filter((signature) => {
+        const signatureDeclaration = signature.getDeclaration();
+        return (
+          signatureDeclaration === undefined ||
+          !hasNonPublicModifier(signatureDeclaration)
+        );
+      });
+
+    if (publicConstructSignatures.length > 0) {
+      for (const signature of publicConstructSignatures) {
+        appendSignatureRecord(
+          signatureTarget,
+          constructorKey,
+          `${identity.displayName}#constructor`,
+          serializeClassConstructSignature(signature, declaration, checker),
+          constructorRange,
+        );
+      }
+    } else if (constructorDeclarations.length === 0) {
+      appendSignatureRecord(
+        signatureTarget,
+        constructorKey,
+        `${identity.displayName}#constructor`,
+        "class-constructor:new ()",
+        constructorRange,
+      );
+    } else {
+      for (const constructorDeclaration of constructorDeclarations) {
+        if (hasNonPublicModifier(constructorDeclaration)) {
+          continue;
+        }
+        appendSignatureRecord(
+          signatureTarget,
+          constructorKey,
+          `${identity.displayName}#constructor`,
+          serializeClassDeclarationConstructor(
+            constructorDeclaration,
+            sourceFile,
+            checker,
+          ),
+          constructorRange,
+        );
+      }
+    }
+    if (identity.commonJsPath !== undefined) {
+      commonJsPathsBySignatureKey.set(
+        constructorKey,
+        identity.commonJsPath,
+      );
+    }
+
     for (const member of declaration.members) {
       if (!isPublicCallableClassMember(member) || hasNonPublicModifier(member)) {
         continue;
       }
 
-      const memberName =
-        ts.isConstructorDeclaration(member)
-          ? "constructor"
-          : propertyNameText(member.name);
+      const memberName = propertyNameText(member.name);
       if (memberName === undefined) {
         continue;
       }
       const staticPrefix = hasModifier(member, ts.SyntaxKind.StaticKeyword)
         ? "."
         : "#";
-      const separator = ts.isConstructorDeclaration(member)
-        ? "#"
-        : staticPrefix;
+      const separator = staticPrefix;
       const key = `method:${identity.key}${separator}${memberName}`;
       appendSignatureRecord(
         signatureTarget,
@@ -568,49 +634,18 @@ const collectExportedSignatures = (
     }
   };
 
-  const appendCheckerClass = (
+  const appendCheckerValue = (
     identity: ExportIdentity,
-    identifier: ts.Identifier,
+    location: ts.Node,
     rangeNode?: ts.Node,
   ): boolean => {
-    const classType = checker.getTypeAtLocation(identifier);
-    const constructSignatures = classType.getConstructSignatures();
-    if (constructSignatures.length === 0) {
-      return false;
-    }
-
-    const classDeclaration = constructSignatures
-      .flatMap((signature) => {
-        const signatureDeclaration = signature.getDeclaration();
-        const declarations = [
-          ...(signatureDeclaration !== undefined &&
-          ts.isConstructorDeclaration(signatureDeclaration) &&
-          (ts.isClassDeclaration(signatureDeclaration.parent) ||
-            ts.isClassExpression(signatureDeclaration.parent))
-            ? [signatureDeclaration.parent]
-            : []),
-          ...(signature.getReturnType().getSymbol()?.declarations ?? []).filter(
-            (
-              declaration,
-            ): declaration is ts.ClassLikeDeclarationBase =>
-              ts.isClassDeclaration(declaration) ||
-              ts.isClassExpression(declaration),
-          ),
-        ];
-        return declarations;
-      })
-      .at(0);
-    if (classDeclaration !== undefined) {
-      appendClass(identity, classDeclaration, rangeNode);
-      return true;
-    }
-
     const appendCheckerMember = (
       separator: "#" | ".",
       memberName: string,
       memberSignatures: readonly ts.Signature[],
-      location: ts.Node,
+      memberLocation: ts.Node,
       signatureKind: ts.SignatureKind,
+      classDeclaration?: ts.ClassLikeDeclarationBase,
     ): void => {
       const key = `method:${identity.key}${separator}${memberName}`;
       for (const signature of memberSignatures) {
@@ -618,14 +653,20 @@ const collectExportedSignatures = (
           signatureTarget,
           key,
           `${identity.displayName}${separator}${memberName}`,
-          checker.signatureToString(
-            signature,
-            location,
-            ts.TypeFormatFlags.NoTruncation |
-              ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope,
-            signatureKind,
-          ),
-          rangeForNode(sourceFile, rangeNode ?? location),
+          classDeclaration !== undefined &&
+            isClassOwnedConstructSignature(signature, classDeclaration)
+            ? serializeClassConstructSignature(
+                signature,
+                memberLocation,
+                checker,
+              )
+            : serializeCheckerSignature(
+                signature,
+                memberLocation,
+                checker,
+                signatureKind,
+              ),
+          rangeForNode(sourceFile, rangeNode ?? memberLocation),
         );
       }
       if (identity.commonJsPath !== undefined) {
@@ -644,23 +685,50 @@ const collectExportedSignatures = (
         if (declarations.some(hasNonPublicModifier)) {
           continue;
         }
-        const location =
-          member.valueDeclaration ?? declarations[0] ?? identifier;
+        const memberLocation =
+          member.valueDeclaration ?? declarations[0] ?? location;
         const memberSignatures = checker
-          .getTypeOfSymbolAtLocation(member, location)
+          .getTypeOfSymbolAtLocation(member, memberLocation)
           .getCallSignatures();
         if (memberSignatures.length > 0) {
           appendCheckerMember(
             separator,
             member.name,
             memberSignatures,
-            location,
+            memberLocation,
             ts.SignatureKind.Call,
           );
         }
       }
     };
 
+    const valueType = checker.getTypeAtLocation(location);
+    let appended = false;
+    const callSignatures = valueType.getCallSignatures();
+    if (callSignatures.length > 0) {
+      const key = `function:${identity.key}`;
+      for (const signature of callSignatures) {
+        appendSignatureRecord(
+          signatureTarget,
+          key,
+          identity.displayName,
+          serializeCheckerSignature(
+            signature,
+            location,
+            checker,
+            ts.SignatureKind.Call,
+          ),
+          rangeForNode(sourceFile, rangeNode ?? location),
+        );
+      }
+      if (identity.commonJsPath !== undefined) {
+        commonJsPathsBySignatureKey.set(key, identity.commonJsPath);
+      }
+      appended = true;
+    }
+
+    const constructSignatures = valueType.getConstructSignatures();
+    const classDeclaration = classDeclarationForValueType(valueType);
     const publicConstructSignatures = constructSignatures.filter(
       (signature) => {
         const declaration = signature.getDeclaration();
@@ -671,19 +739,33 @@ const collectExportedSignatures = (
       "#",
       "constructor",
       publicConstructSignatures,
-      identifier,
+      location,
       ts.SignatureKind.Construct,
+      classDeclaration,
     );
-    const visitedInstanceTypes = new Set<ts.Type>();
-    for (const signature of publicConstructSignatures) {
-      const instanceType = signature.getReturnType();
-      if (!visitedInstanceTypes.has(instanceType)) {
-        visitedInstanceTypes.add(instanceType);
-        appendPublicCallableMembers(instanceType, "#");
-      }
+    if (publicConstructSignatures.length > 0) {
+      appended = true;
     }
-    appendPublicCallableMembers(classType, ".");
-    return true;
+
+    if (
+      classDeclaration === undefined &&
+      publicConstructSignatures.length > 0
+    ) {
+      const visitedInstanceTypes = new Set<ts.Type>();
+      for (const signature of publicConstructSignatures) {
+        const instanceType = signature.getReturnType();
+        if (!visitedInstanceTypes.has(instanceType)) {
+          visitedInstanceTypes.add(instanceType);
+          appendPublicCallableMembers(instanceType, "#");
+        }
+      }
+      appendPublicCallableMembers(valueType, ".");
+    } else if (classDeclaration !== undefined) {
+      appendClass(identity, classDeclaration, rangeNode);
+      appended = true;
+    }
+
+    return appended;
   };
 
   const appendLocalExport = (
@@ -703,29 +785,7 @@ const collectExportedSignatures = (
     }
     const identifier = identifiersByName.get(localName);
     if (identifier !== undefined && variableNames.has(localName)) {
-      const callSignatures = checker
-        .getTypeAtLocation(identifier)
-        .getCallSignatures();
-      if (callSignatures.length > 0) {
-        const key = `function:${identity.key}`;
-        for (const signature of callSignatures) {
-          appendSignatureRecord(
-            signatureTarget,
-            key,
-            identity.displayName,
-            checker.signatureToString(
-              signature,
-              identifier,
-              ts.TypeFormatFlags.NoTruncation |
-                ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope,
-              ts.SignatureKind.Call,
-            ),
-            rangeForNode(sourceFile, rangeNode ?? identifier),
-          );
-        }
-        if (identity.commonJsPath !== undefined) {
-          commonJsPathsBySignatureKey.set(key, identity.commonJsPath);
-        }
+      if (appendCheckerValue(identity, identifier, rangeNode)) {
         return;
       }
     }
@@ -742,30 +802,7 @@ const collectExportedSignatures = (
     if (identifier === undefined) {
       return;
     }
-    if (appendCheckerClass(identity, identifier, rangeNode)) {
-      return;
-    }
-    const key = `function:${identity.key}`;
-    for (const signature of checker
-      .getTypeAtLocation(identifier)
-      .getCallSignatures()) {
-      appendSignatureRecord(
-        signatureTarget,
-        key,
-        identity.displayName,
-        checker.signatureToString(
-          signature,
-          identifier,
-          ts.TypeFormatFlags.NoTruncation |
-            ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope,
-          ts.SignatureKind.Call,
-        ),
-        rangeForNode(sourceFile, rangeNode ?? identifier),
-      );
-    }
-    if (identity.commonJsPath !== undefined) {
-      commonJsPathsBySignatureKey.set(key, identity.commonJsPath);
-    }
+    appendCheckerValue(identity, identifier, rangeNode);
   };
 
   const appendCallableExpression = (
@@ -773,27 +810,7 @@ const collectExportedSignatures = (
     expression: ts.Expression,
     rangeNode?: ts.Node,
   ): void => {
-    const key = `function:${identity.key}`;
-    for (const signature of checker
-      .getTypeAtLocation(expression)
-      .getCallSignatures()) {
-      appendSignatureRecord(
-        signatureTarget,
-        key,
-        identity.displayName,
-        checker.signatureToString(
-          signature,
-          expression,
-          ts.TypeFormatFlags.NoTruncation |
-            ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope,
-          ts.SignatureKind.Call,
-        ),
-        rangeForNode(sourceFile, rangeNode ?? expression),
-      );
-    }
-    if (identity.commonJsPath !== undefined) {
-      commonJsPathsBySignatureKey.set(key, identity.commonJsPath);
-    }
+    appendCheckerValue(identity, expression, rangeNode);
   };
 
   for (const statement of sourceFile.statements) {
@@ -811,6 +828,19 @@ const collectExportedSignatures = (
       if (externalName !== undefined) {
         appendClass(exportIdentity(externalName), statement);
       }
+      continue;
+    }
+
+    if (
+      (ts.isTypeAliasDeclaration(statement) ||
+        ts.isInterfaceDeclaration(statement)) &&
+      hasExportModifier(statement)
+    ) {
+      appendCheckerValue(
+        exportIdentity(statement.name.text),
+        statement.name,
+        statement.name,
+      );
       continue;
     }
 
@@ -1218,12 +1248,10 @@ const isPublicCallableClassMember = (
 ): member is
   | ts.MethodDeclaration
   | ts.GetAccessorDeclaration
-  | ts.SetAccessorDeclaration
-  | ts.ConstructorDeclaration =>
+  | ts.SetAccessorDeclaration =>
   ts.isMethodDeclaration(member) ||
   ts.isGetAccessorDeclaration(member) ||
-  ts.isSetAccessorDeclaration(member) ||
-  ts.isConstructorDeclaration(member);
+  ts.isSetAccessorDeclaration(member);
 
 const collectComplexityGrowthEvidence = (
   previousSource: ts.SourceFile,
@@ -1324,6 +1352,9 @@ const appendSignatureRecord = (
       signatures: [signature],
       range,
     });
+    return;
+  }
+  if (existing.signatures.includes(signature)) {
     return;
   }
 
@@ -1592,6 +1623,104 @@ const sameOrderedValues = (
   left: readonly string[],
   right: readonly string[],
 ): boolean => left.length === right.length && left.every((value, index) => value === right[index]);
+
+const classValueType = (
+  declaration: ts.ClassLikeDeclarationBase,
+  checker: ts.TypeChecker,
+): ts.Type => {
+  const declarationType = checker.getTypeAtLocation(declaration);
+  if (declarationType.getConstructSignatures().length > 0) {
+    return declarationType;
+  }
+
+  const classSymbol = declarationType.getSymbol();
+  return classSymbol === undefined
+    ? declarationType
+    : checker.getTypeOfSymbolAtLocation(classSymbol, declaration);
+};
+
+const classDeclarationForValueType = (
+  type: ts.Type,
+): ts.ClassLikeDeclarationBase | undefined => {
+  const declaration = type
+    .getSymbol()
+    ?.getDeclarations()
+    ?.find(
+      (candidate): candidate is ts.ClassLikeDeclarationBase =>
+        ts.isClassDeclaration(candidate) || ts.isClassExpression(candidate),
+    );
+  if (declaration !== undefined) {
+    return declaration;
+  }
+
+  if (type.isIntersection()) {
+    for (const constituent of type.types) {
+      const constituentDeclaration =
+        classDeclarationForValueType(constituent);
+      if (constituentDeclaration !== undefined) {
+        return constituentDeclaration;
+      }
+    }
+  }
+
+  return undefined;
+};
+
+const isClassOwnedConstructSignature = (
+  signature: ts.Signature,
+  declaration: ts.ClassLikeDeclarationBase,
+): boolean => {
+  const signatureDeclaration = signature.getDeclaration();
+  return (
+    signatureDeclaration === undefined ||
+    (ts.isConstructorDeclaration(signatureDeclaration) &&
+      signatureDeclaration.parent === declaration)
+  );
+};
+
+const serializeCheckerSignature = (
+  signature: ts.Signature,
+  location: ts.Node,
+  checker: ts.TypeChecker,
+  signatureKind: ts.SignatureKind,
+): string =>
+  checker.signatureToString(
+    signature,
+    location,
+    ts.TypeFormatFlags.NoTruncation |
+      ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope,
+    signatureKind,
+  );
+
+const serializeClassConstructSignature = (
+  signature: ts.Signature,
+  location: ts.Node,
+  checker: ts.TypeChecker,
+): string => {
+  const serialized = serializeCheckerSignature(
+    signature,
+    location,
+    checker,
+    ts.SignatureKind.Construct,
+  );
+  const returnTypeDelimiter = serialized.lastIndexOf("): ");
+  const constructorShape =
+    returnTypeDelimiter < 0
+      ? serialized
+      : serialized.slice(0, returnTypeDelimiter + 1);
+  return `class-constructor:${constructorShape}`;
+};
+
+const serializeClassDeclarationConstructor = (
+  declaration: ts.ConstructorDeclaration,
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+): string => {
+  const signature = checker.getSignatureFromDeclaration(declaration);
+  return signature === undefined
+    ? `class-constructor:${fallbackFunctionSignature(declaration, sourceFile)}`
+    : serializeClassConstructSignature(signature, declaration, checker);
+};
 
 const serializeFunctionLikeSignature = (
   declaration: ts.FunctionLikeDeclaration,

@@ -2163,3 +2163,69 @@
 - A live VS Code host was not exercised in this non-interactive environment.
   The semantic analyzer remains intentionally per-document, so class values
   imported from other modules are outside this slice.
+
+---
+
+## Remaining class-valued export signatures (2026-09-13)
+
+### Corrections implemented
+
+- Class declarations and expressions now always publish a constructor record.
+  Their checker-derived constructor shape covers implicit and inherited
+  constructors, normalizes away local class names, and retains public overload
+  order.
+- Callable and constructable type aliases, interfaces, variables, and
+  expressions are collected under their external export identities. Structural
+  construct signatures retain both parameter and return types instead of being
+  mistaken for aliases to the returned class declaration.
+- Callable/constructable values now compose call, construct, and applicable
+  class/member signatures rather than returning after the callable surface.
+  Exact duplicate entries are removed while the first occurrence order remains
+  significant.
+- Direct, default, TypeScript `export =`, local alias, and CommonJS paths keep
+  the existing structured ESM/export-equals/CommonJS identity scheme.
+
+### TDD evidence
+
+- Initial semantic RED: **11 expected failures, 82 passing tests**. The
+  regressions covered four implicit-constructor removal paths, implicit
+  constructor addition/change, a structural constructor type alias, a
+  structural variable return change, constructor-only change on a callable
+  and constructable value, callable class members, duplicate signatures, and
+  construct overload order.
+- Self-review RED: a callable class intersection normalized an additional
+  structural constructor as though it belonged to the class, hiding its return
+  change. Per-signature ownership now normalizes only class-owned constructors.
+- Focused semantic GREEN: **1 file, 94 tests passed**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 528 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 90.60%, branches 83.81%, functions 93.39%, lines 90.72%
+- `npm run package`: **PASS — 158 files, 4.36 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX inclusion/exclusion scan: **PASS**
+  - compiled extension, semantic analyzer, and public docs are present;
+  - source, tests, coverage, private review material, editor/CI files, and
+    source maps are absent.
+- Production and packaged credential-pattern scans: **PASS**
+- Production and packaged runtime URL scans: **PASS — loopback default only**
+- Source and packaged repository/bugs/homepage metadata scans: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review covered implicit and inherited constructors, explicit
+  overloads, structural parameter/return changes, hybrid call/construct
+  surfaces, class intersections, duplicate entries, overload ordering, export
+  paths, public-member filtering, and structured identities. The intersection
+  ownership issue described above was fixed with its own RED/GREEN regression;
+  no remaining high-confidence issue was found.
+- A live VS Code host was not exercised in this non-interactive environment.
+  Analysis remains intentionally per-document, so imported class declarations
+  are not resolved across modules.
