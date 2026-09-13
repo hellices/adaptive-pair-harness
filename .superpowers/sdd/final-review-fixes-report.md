@@ -3110,3 +3110,67 @@
   allow-listed. A live VS Code Chat renderer and live remote model were not
   available in this non-interactive environment; deterministic stream tests
   and packaged-code scans cover the enforced boundary.
+
+---
+
+## Chat Markdown bare-autolink closure (2026-09-14)
+
+### Corrections implemented
+
+- `sanitizeModelMarkdown` now neutralizes GFM extended autolinks beginning with
+  bare `http://`, `https://`, or `www.`, plus bare email addresses.
+- The sanitizer backslash-escapes one ASCII separator (`:`, `.`, or `@`).
+  CommonMark/GFM renders the original readable punctuation, but the source no
+  longer contains the contiguous token required by the autolink scanner.
+- URL text remaining inside an escaped Markdown link or image destination is
+  neutralized by the same rule, so escaping the delimiters cannot expose a
+  second bare-autolink path.
+- Sanitized URL spans are recognized on later passes, preventing a nested
+  `www.` or email-shaped path segment from receiving an additional escape.
+- Existing fullwidth-colon handling for `command:` and `vscode:` schemes and
+  delimiter escaping for links, images, raw HTML, `data:`, and `file:` targets
+  remain unchanged.
+- README and configuration guidance now document the rendering-compatible,
+  idempotent separator strategy.
+
+### TDD evidence
+
+- RED: the focused safety suite ran **11 tests with 9 expected failures**.
+  Exact bare HTTP/HTTPS, `www.`, email, escaped link/image destination,
+  punctuation, Unicode, retained inert-scheme, and repeat-sanitization cases
+  all exposed the missing autolink neutralization.
+- GREEN: the focused sanitizer suite passed **11/11 tests** after the minimal
+  source transformation was implemented.
+
+### Verification
+
+- Focused Chat safety tests: **PASS — 8 files, 248 tests**
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **20 files, 542 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 90.68%, branches 84.23%, functions 94.05%, lines 90.81%
+- `npm run package`: **PASS — 160 files, 4.37 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX safety-module inclusion and source/test/secret exclusion scan: **PASS**
+- Secretlint preset scan of source, compiled output, package metadata, and
+  public documentation: **PASS**
+- Production and compiled credential-pattern scan: **PASS**
+- Production and compiled runtime URL scan: **PASS — loopback default only**
+- Source and compiled Chat sink scan: **PASS — 4/4 sinks retained**
+- Packaged repository metadata scan: **PASS**
+- Markdown-it linkify rendering check: **PASS — 6 autolink/idempotence cases
+  rendered with no anchors or images**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Changed-file review covered exact output, punctuation boundaries, Unicode,
+  nested `www.`/email text in an already neutralized URL, repeated
+  sanitization, existing schemes, HTML, links/images, documentation, compiled
+  output, and package contents. No high-confidence defect remains.
+- A live VS Code Chat renderer was unavailable in this non-interactive
+  environment. The exact sanitizer tests plus a Markdown-it linkify rendering
+  check exercise the same documented backslash-escape behavior.

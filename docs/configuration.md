@@ -188,7 +188,12 @@ fenced code, paragraphs, and line breaks remain available, while link/image
 delimiters and raw HTML are escaped and `command:`/`vscode:` action schemes are
 made non-actionable before rendering. This policy also applies when a provider
 response is displayed after routing; already escaped local fallback fields are
-not escaped a second time.
+not escaped a second time. GFM bare `http://`, `https://`, `www.`, and email
+autolinks are also made inert, including URL text that remains in an escaped
+link or image destination. The sanitizer backslash-escapes the URL colon,
+`www.` dot, or email `@`: CommonMark/GFM renders the escaped ASCII punctuation
+as its original readable character, but the source no longer contains the
+contiguous token required by the autolink scanner. The operation is idempotent.
 
 This display limit is independent of model limits. It does not increase or
 replace the 180-token remote output allowance, rolling token accounting, or

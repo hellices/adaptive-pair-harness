@@ -216,7 +216,12 @@ How it works today:
 - Remote model responses intentionally retain headings, emphasis, fenced code,
   paragraphs, and line breaks. Links and images are rendered inert, raw HTML is
   escaped, and bare or linked `command:`/`vscode:` action schemes are broken
-  before VS Code receives the Markdown.
+  before VS Code receives the Markdown. GFM bare `http://`, `https://`, `www.`,
+  and email autolinks—including URL text left inside an escaped link or image
+  destination—are neutralized by backslash-escaping one ASCII punctuation
+  separator. Markdown renders that escape as the original readable character,
+  while its autolink scanner no longer receives one contiguous URL or address;
+  repeated sanitization does not add another escape.
 - Every dynamic `@pair` Chat response—local success, remote success, fallback,
   and dynamic error detail—passes through one **16,384 Unicode code-point**
   display limit. CRLF/CR line endings and unsafe control characters are
