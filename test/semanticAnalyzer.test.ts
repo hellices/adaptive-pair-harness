@@ -279,9 +279,11 @@ describe("TypeScriptSemanticAnalyzer", () => {
       "export const value = [required, imported];",
     ].join("\n");
 
-    expect(analyzeEvidence(episode("export const value = 1;", current))).toEqual(
-      [],
-    );
+    expect(
+      analyzeEvidence(episode("export const value = 1;", current)).filter(
+        (item) => item.kind === "new-dependency",
+      ),
+    ).toEqual([]);
   });
 
   it("deduplicates repeated dependency forms by full specifier in source order", () => {
@@ -1094,6 +1096,870 @@ describe("TypeScriptSemanticAnalyzer", () => {
     expect(evidence).toHaveLength(1);
   });
 
+  it("retains the type surface of every anonymous class intersection constituent", () => {
+    const source = (secondPropertyType: string): string =>
+      [
+        "const First = class { first!: string };",
+        `const Second = class { second!: ${secondPropertyType} };`,
+        "declare const Hybrid: typeof First & typeof Second;",
+        "export { Hybrid };",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source("string"), source("number")),
+    ).filter(
+      (item) =>
+        item.kind === "public-api-change" &&
+        item.references[0] === "Hybrid#second",
+    );
+
+    expect(changes).toHaveLength(2);
+    expect(
+      changes.map((item) => item.detail).sort(),
+    ).toEqual([
+      "Updated the exported type signature for Hybrid#second.",
+      "Updated the exported value signature for Hybrid#second.",
+    ]);
+  });
+
+  it("normalizes instance member groups across class intersection order", () => {
+    const declarations = [
+      "class First {",
+      "  constructor(value: 1) { void value; }",
+      "  shared!: string;",
+      "}",
+      "class Second {",
+      "  constructor(value: 2) { void value; }",
+      "  shared!: number;",
+      "}",
+    ];
+    const source = (reverse: boolean): string =>
+      [
+        ...declarations,
+        `declare const Hybrid: ${
+          reverse ? "typeof Second & typeof First" : "typeof First & typeof Second"
+        };`,
+        "export { Hybrid };",
+      ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(source(false), source(true))).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("reports property type changes on a non-callable exported value", () => {
+    const source = (propertyType: string): string =>
+      [
+        "export declare const settings: {",
+        `  value: ${propertyType};`,
+        "  readonly enabled: boolean;",
+        "};",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source("string"), source("number")),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["settings.value"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports a static property change on a namespace-merged function", () => {
+    const source = (propertyType: string, initializer: string): string =>
+      [
+        "export function service(): void {}",
+        "export namespace service {",
+        `  export const version: ${propertyType} = ${initializer};`,
+        "}",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source("string", '"1"'), source("number", "1")),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["service.version"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports a JavaScript expando property change on an exported function", () => {
+    const source = (propertyValue: string): string =>
+      [
+        "export function service(value) { return value; }",
+        `service.version = ${propertyValue};`,
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(
+        source("1"),
+        source('"1"'),
+        "javascript",
+        "file:///pair.js",
+      ),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["service.version"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports checker-derived readonly changes on const-asserted values", () => {
+    const previous = "export const settings = { mode: 1 } as const;";
+    const current =
+      "export const settings: { mode: 1 } = { mode: 1 };";
+    const changes = analyzeEvidence(episode(previous, current));
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["settings.mode"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports readonly changes on namespace-merged function properties", () => {
+    const source = (binding: "const" | "let"): string =>
+      [
+        "export function service(): void {}",
+        "export namespace service {",
+        `  export ${binding} status: number = 1;`,
+        "}",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source("const"), source("let")),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["service.status"],
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    ["direct", (body: string) => `export namespace Config { ${body} }`],
+    [
+      "local export",
+      (body: string) =>
+        [`namespace Config { ${body} }`, "export { Config };"].join("\n"),
+    ],
+  ])("reports a property change on a %s namespace", (_label, source) => {
+    const changes = analyzeEvidence(
+      episode(
+        source("export const timeout: number = 1;"),
+        source('export const timeout: string = "1";'),
+      ),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Config.timeout"],
+        }),
+      ]),
+    );
+  });
+
+  it("normalizes equivalent direct and local namespace exports", () => {
+    const direct =
+      "export namespace Config { export const timeout: number = 1; }";
+    const local = [
+      "namespace Config { export const timeout: number = 1; }",
+      "export { Config };",
+    ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(direct, local)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("normalizes enclosing self references through a namespace export alias", () => {
+    const source = (namespaceName: string): string =>
+      [
+        `namespace ${namespaceName} {`,
+        `  export function clone(): typeof ${namespaceName} {`,
+        `    return ${namespaceName};`,
+        "  }",
+        "}",
+        `export { ${namespaceName} as API };`,
+      ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(source("Before"), source("After"))).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("normalizes equivalent direct and local namespace-merged function exports", () => {
+    const direct = [
+      "export function service(value: string): string { return value; }",
+      "export namespace service { export const version: number = 1; }",
+    ].join("\n");
+    const local = [
+      "function service(value: string): string { return value; }",
+      "namespace service { export const version: number = 1; }",
+      "export { service };",
+    ].join("\n");
+
+    for (const [previous, current] of [
+      [direct, local],
+      [local, direct],
+    ] as const) {
+      expect(
+        analyzeEvidence(episode(previous, current)).filter(
+          (item) => item.kind === "public-api-change",
+        ),
+      ).toEqual([]);
+    }
+  });
+
+  it("keeps unique-symbol member identities stable across checker programs", () => {
+    const source = [
+      "export declare const brand: unique symbol;",
+      "export interface Branded { readonly [brand]: string }",
+    ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(source, `${source}\n// no API change`)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("records exported enum members and their constant values", () => {
+    const added = analyzeEvidence(
+      episode(
+        "export enum Mode { First = 1 }",
+        "export enum Mode { First = 1, Second = 2 }",
+      ),
+    );
+    const changed = analyzeEvidence(
+      episode(
+        "export enum Mode { First = 1 }",
+        "export enum Mode { First = 2 }",
+      ),
+    );
+
+    expect(added).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API added",
+          references: ["Mode.Second"],
+        }),
+      ]),
+    );
+    expect(changed).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Mode.First"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports regular-to-const enum transitions", () => {
+    const changes = analyzeEvidence(
+      episode(
+        "export enum Mode { First }",
+        "export const enum Mode { First }",
+      ),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Mode"],
+        }),
+      ]),
+    );
+  });
+
+  it("records type members on a locally exported namespace-merged enum", () => {
+    const source = (propertyType: string): string =>
+      [
+        "enum Status { Ok }",
+        "namespace Status {",
+        `  export interface Meta { value: ${propertyType} }`,
+        "}",
+        "export { Status };",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source("string"), source("number")),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Status.Meta#value"],
+        }),
+      ]),
+    );
+  });
+
+  it("normalizes direct and local exports of a namespace-merged enum", () => {
+    const direct = [
+      "export enum Status { Ok }",
+      "export namespace Status {",
+      "  export interface Meta { value: string }",
+      "}",
+    ].join("\n");
+    const local = [
+      "enum Status { Ok }",
+      "namespace Status {",
+      "  export interface Meta { value: string }",
+      "}",
+      "export { Status };",
+    ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(direct, local)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("records type-only members nested in an exported namespace", () => {
+    const source = (propertyType: string): string =>
+      [
+        "export namespace API {",
+        `  export interface Config { value: ${propertyType} }`,
+        "}",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source("string"), source("number")),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["API.Config#value"],
+        }),
+      ]),
+    );
+  });
+
+  it("emits one transition for a changed function nested in a namespace", () => {
+    const source = (parameterType: string): string =>
+      [
+        "export namespace API {",
+        `  export function run(value: ${parameterType}): void { void value; }`,
+        "}",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source("string"), source("number")),
+    ).filter(
+      (item) =>
+        item.kind === "public-api-change" &&
+        item.references[0] === "API.run",
+    );
+
+    expect(changes).toHaveLength(1);
+  });
+
+  it.each([
+    ["static", "static value", "API.Service.value"],
+    ["instance", "value", "API.Service#value"],
+  ])(
+    "records %s class members nested in an exported namespace",
+    (_label, memberPrefix, reference) => {
+      const source = (propertyType: string): string =>
+        [
+          "export namespace API {",
+          "  export class Service {",
+          `    ${memberPrefix}: ${propertyType};`,
+          "  }",
+          "}",
+        ].join("\n");
+      const changes = analyzeEvidence(
+        episode(source("string"), source("number")),
+      );
+
+      expect(changes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "public-api-change",
+            title: "Exported API signature changed",
+            references: [reference],
+          }),
+        ]),
+      );
+    },
+  );
+
+  it("uses an exported alias for a computed unique-symbol member identity", () => {
+    const source = (localName: string, memberType: string): string =>
+      [
+        `declare const ${localName}: unique symbol;`,
+        `export { ${localName} as token };`,
+        `export interface API { readonly [${localName}]: ${memberType} }`,
+      ].join("\n");
+    const renamed = analyzeEvidence(
+      episode(source("before", "string"), source("after", "string")),
+    ).filter((item) => item.kind === "public-api-change");
+    const changed = analyzeEvidence(
+      episode(source("before", "string"), source("after", "number")),
+    ).filter(
+      (item) =>
+        item.kind === "public-api-change" &&
+        item.references[0] === "API#[token]",
+    );
+
+    expect(renamed).toEqual([]);
+    expect(changed).toEqual([
+      expect.objectContaining({
+        title: "Exported API signature changed",
+        references: ["API#[token]"],
+      }),
+    ]);
+  });
+
+  it("resolves computed constant property names by checker value", () => {
+    const source = (propertyName: string): string =>
+      [
+        `const key = "${propertyName}" as const;`,
+        "export interface API { [key]: string }",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source("first"), source("second")),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API removed",
+          references: ["API#first"],
+        }),
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API added",
+          references: ["API#second"],
+        }),
+      ]),
+    );
+  });
+
+  it("tracks well-known symbol members without checker-local IDs", () => {
+    const source = (returnType: string): string =>
+      [
+        "export class Collection {",
+        `  [Symbol.iterator](): Iterator<${returnType}> {`,
+        "    return [][Symbol.iterator]();",
+        "  }",
+        "}",
+      ].join("\n");
+    const unchanged = analyzeEvidence(
+      episode(source("number"), `${source("number")}\n// no API change`),
+    ).filter((item) => item.kind === "public-api-change");
+    const changed = analyzeEvidence(
+      episode(source("number"), source("string")),
+    ).filter((item) => item.kind === "public-api-change");
+
+    expect(unchanged).toEqual([]);
+    expect(changed).toHaveLength(2);
+    expect(
+      changed.every(
+        (item) => item.references[0] === "Collection#[Symbol.iterator]",
+      ),
+    ).toBe(true);
+  });
+
+  it("reports value properties independently of a merged interface surface", () => {
+    const source = (propertyType: string): string =>
+      [
+        `declare const Registry: { version: ${propertyType} };`,
+        "interface Registry { readonly entry: boolean }",
+        "export { Registry };",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source("string"), source("number")),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Registry.version"],
+        }),
+      ]),
+    );
+  });
+
+  it("normalizes declaration order for non-callable exported value properties", () => {
+    const previous = [
+      "export declare const settings: {",
+      "  first: string;",
+      "  second: number;",
+      "};",
+    ].join("\n");
+    const current = [
+      "export declare const settings: {",
+      "  second: number;",
+      "  first: string;",
+      "};",
+    ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(previous, current)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not expose unstable standard-library symbol members on values", () => {
+    const previous = "export const values: number[] = [];";
+    const current = [
+      "export const values: number[] = [];",
+      "// implementation-only edit",
+    ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(previous, current)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("tracks a generic value root without emitting standard-library members", () => {
+    const changes = analyzeEvidence(
+      episode(
+        "export const values: number[] = [];",
+        "export const values: string[] = [];",
+      ),
+    ).filter((item) => item.kind === "public-api-change");
+
+    expect(changes).toEqual([
+      expect.objectContaining({
+        title: "Exported API signature changed",
+        references: ["values"],
+      }),
+    ]);
+  });
+
+  it("does not normalize an external value root as exported self", () => {
+    const changes = analyzeEvidence(
+      episode(
+        "export declare const values: Set<string>;",
+        "export declare const values: ReadonlySet<string>;",
+      ),
+    ).filter((item) => item.kind === "public-api-change");
+
+    expect(changes).toEqual([
+      expect.objectContaining({
+        title: "Exported API signature changed",
+        references: ["values"],
+      }),
+    ]);
+  });
+
+  it("tracks a generic type root without emitting standard-library members", () => {
+    const changes = analyzeEvidence(
+      episode(
+        "export type Values = number[];",
+        "export type Values = string[];",
+      ),
+    ).filter((item) => item.kind === "public-api-change");
+
+    expect(changes).toEqual([
+      expect.objectContaining({
+        title: "Exported API signature changed",
+        references: ["Values"],
+      }),
+    ]);
+  });
+
+  it("retains the target and arguments of exported generic aliases", () => {
+    const argumentChange = analyzeEvidence(
+      episode(
+        "export type Values = Promise<number>;",
+        "export type Values = Promise<string>;",
+      ),
+    );
+    const targetChange = analyzeEvidence(
+      episode(
+        "export type Values<T> = Promise<T>;",
+        "export type Values<T> = Set<T>;",
+      ),
+    );
+
+    for (const changes of [argumentChange, targetChange]) {
+      expect(changes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "public-api-change",
+            title: "Exported API signature changed",
+            references: ["Values"],
+          }),
+        ]),
+      );
+    }
+  });
+
+  it("retains generic constituents beside document-local structural members", () => {
+    const source = (payloadType: string): string =>
+      [
+        `export type Result = Promise<${payloadType}> & {`,
+        "  readonly tag: string;",
+        "};",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source("number"), source("boolean")),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Result"],
+        }),
+      ]),
+    );
+  });
+
+  it("retains external generic heritage on exported interfaces", () => {
+    const source = (elementType: string): string =>
+      `export interface Values extends Array<${elementType}> {}`;
+    const genericChange = analyzeEvidence(
+      episode(source("string"), source("number")),
+    );
+    const containerChange = analyzeEvidence(
+      episode(
+        "export interface Values extends Set<string> {}",
+        "export interface Values extends ReadonlySet<string> {}",
+      ),
+    );
+
+    for (const changes of [genericChange, containerChange]) {
+      expect(changes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "public-api-change",
+            title: "Exported API signature changed",
+            references: ["Values"],
+          }),
+        ]),
+      );
+    }
+  });
+
+  it.each([
+    [
+      "interface",
+      (base: string) =>
+        [
+          'import type { First, Second } from "external-package";',
+          `export interface API extends ${base} {}`,
+        ].join("\n"),
+      "First",
+      "Second",
+    ],
+    [
+      "class",
+      (argument: string) =>
+        [
+          'import { Base } from "external-package";',
+          `export class API extends Base<${argument}> {}`,
+        ].join("\n"),
+      "string",
+      "number",
+    ],
+  ])(
+    "retains unresolved external heritage on an exported %s",
+    (_label, source, previousBase, currentBase) => {
+      const changes = analyzeEvidence(
+        episode(source(previousBase), source(currentBase)),
+      ).filter((item) => item.kind === "public-api-change");
+
+      expect(changes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            title: "Exported API signature changed",
+            references: ["API"],
+          }),
+        ]),
+      );
+    },
+  );
+
+  it("does not expose local implements-clause names in a class surface", () => {
+    const source = (interfaceName: string): string =>
+      [
+        `interface ${interfaceName} { value: string }`,
+        `export class API implements ${interfaceName} {`,
+        '  value = "";',
+        "}",
+      ].join("\n");
+    const withBase = (baseName: string): string =>
+      [
+        `class ${baseName} { run(): void {} }`,
+        "interface Contract { value: string }",
+        `export class API extends ${baseName} implements Contract {`,
+        '  value = "";',
+        "}",
+      ].join("\n");
+
+    for (const [previous, current] of [
+      [source("Before"), source("After")],
+      [withBase("BeforeBase"), withBase("AfterBase")],
+    ] as const) {
+      expect(
+        analyzeEvidence(episode(previous, current)).filter(
+          (item) => item.kind === "public-api-change",
+        ),
+      ).toEqual([]);
+    }
+  });
+
+  it("reports an exported index-signature value type change", () => {
+    const changes = analyzeEvidence(
+      episode(
+        "export interface Dictionary { [key: string]: string }",
+        "export interface Dictionary { [key: string]: number }",
+      ),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Dictionary"],
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    [
+      "constraint",
+      "export interface Box<T extends string> { value: T }",
+      "export interface Box<T extends number> { value: T }",
+    ],
+    [
+      "default",
+      "export interface Box<T = string> { value: T }",
+      "export interface Box<T = number> { value: T }",
+    ],
+  ])("reports an exported generic parameter %s change", (_label, previous, current) => {
+    expect(analyzeEvidence(episode(previous, current))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Box"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports readonly modifier changes on generic mapped type exports", () => {
+    const previous =
+      "export type API<T> = { readonly [K in keyof T]: T[K] };";
+    const current =
+      "export type API<T> = { -readonly [K in keyof T]: T[K] };";
+
+    expect(analyzeEvidence(episode(previous, current))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["API"],
+        }),
+      ]),
+    );
+  });
+
+  it("normalizes mapped type parameter names", () => {
+    const previous =
+      "export type API<T> = { [Key in keyof T]: T[Key] };";
+    const current =
+      "export type API<T> = { [Property in keyof T]: T[Property] };";
+
+    expect(
+      analyzeEvidence(episode(previous, current)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("normalizes recursive aliases behind exported non-callable values", () => {
+    const previous = [
+      "interface Before { next?: Before }",
+      "export const node: Before = {};",
+    ].join("\n");
+    const current = [
+      "interface After { next?: After }",
+      "export const node: After = {};",
+    ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(previous, current)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("normalizes static self references behind exported class-valued aliases", () => {
+    const previous = [
+      "class Before {",
+      "  static create(): Before { return new Before(); }",
+      "}",
+      "export const Public = Before;",
+    ].join("\n");
+    const current = [
+      "class After {",
+      "  static create(): After { return new After(); }",
+      "}",
+      "export const Public = After;",
+    ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(previous, current)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
   it("models direct type alias and interface member changes", () => {
     const previous = [
       "export type Payload = { value: string };",
@@ -1111,6 +1977,40 @@ describe("TypeScriptSemanticAnalyzer", () => {
       expect.arrayContaining(["Payload#value", "Service#run"]),
     );
   });
+
+  it.each([
+    [
+      "interface property",
+      "export interface Value { data: string }",
+      "export interface Value { data: string | null }",
+      "Value#data",
+    ],
+    [
+      "type alias",
+      "export type Value = string;",
+      "export type Value = string | undefined;",
+      "Value",
+    ],
+    [
+      "getter",
+      'export class Value { get data(): string { return ""; } }',
+      'export class Value { get data(): string | null { return ""; } }',
+      "Value#data",
+    ],
+  ])(
+    "preserves nullable constituents on an exported %s",
+    (_label, previous, current, reference) => {
+      expect(analyzeEvidence(episode(previous, current))).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "public-api-change",
+            title: "Exported API signature changed",
+            references: [reference],
+          }),
+        ]),
+      );
+    },
+  );
 
   it("normalizes equivalent direct and local-list type exports", () => {
     const direct = "export type Payload = { value: string };";
@@ -1185,6 +2085,192 @@ describe("TypeScriptSemanticAnalyzer", () => {
         (item) => item.kind === "public-api-change",
       ),
     ).toEqual([]);
+  });
+
+  it("does not treat an unrelated qualified type with the same name as exported self", () => {
+    const previous = [
+      "namespace External { export interface Node { value: string } }",
+      "interface Node { child: External.Node }",
+      "export type { Node as PublicNode };",
+    ].join("\n");
+    const current = [
+      "namespace External { export interface Node { value: string } }",
+      "interface Renamed { child: External.Node }",
+      "export type { Renamed as PublicNode };",
+    ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(previous, current)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("normalizes qualified recursion through an exported type alias target", () => {
+    const previous = [
+      "namespace Previous {",
+      "  export interface Node { next?: Previous.Node }",
+      "}",
+      "export type PublicNode = Previous.Node;",
+    ].join("\n");
+    const current = [
+      "namespace Current {",
+      "  export interface Renamed { next?: Current.Renamed }",
+      "}",
+      "export type PublicNode = Current.Renamed;",
+    ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(previous, current)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("normalizes recursion through an exported type-alias chain", () => {
+    const previous = [
+      "type PreviousNode = { next?: PreviousNode };",
+      "export type PublicNode = PreviousNode;",
+    ].join("\n");
+    const current = [
+      "type CurrentNode = { next?: CurrentNode };",
+      "export type PublicNode = CurrentNode;",
+    ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(previous, current)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it.each([
+    [
+      "intersection",
+      (name: string) =>
+        `export type PublicNode = ${name} & { readonly tag: string };`,
+    ],
+    [
+      "generic wrapper",
+      (name: string) => `export type PublicNode = Readonly<${name}>;`,
+    ],
+  ])(
+    "normalizes recursive constituent names through an exported %s alias",
+    (_label, exportedDeclaration) => {
+      const previous = [
+        "interface Before { next?: Before }",
+        exportedDeclaration("Before"),
+      ].join("\n");
+      const current = [
+        "interface After { next?: After }",
+        exportedDeclaration("After"),
+      ].join("\n");
+
+      expect(
+        analyzeEvidence(episode(previous, current)).filter(
+          (item) => item.kind === "public-api-change",
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it("does not collapse distinct document-local union constituents as self", () => {
+    const declarations = [
+      "export interface Dog { legs: number; bark(): void }",
+      "export interface Cat { legs: number; meow(): void }",
+      "export interface Bird { legs: number; fly(): void }",
+    ];
+    const previous = [...declarations, "export type Pet = Dog | Cat;"].join(
+      "\n",
+    );
+    const current = [...declarations, "export type Pet = Dog | Bird;"].join(
+      "\n",
+    );
+
+    expect(analyzeEvidence(episode(previous, current))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Pet"],
+        }),
+      ]),
+    );
+  });
+
+  it("distinguishes structurally different recursive generic arguments", () => {
+    const declarations = [
+      "interface Cat { next?: Cat; meow(): void }",
+      "interface Bird { next?: Bird; fly(): void }",
+    ];
+    const previous = [
+      ...declarations,
+      "export type Pet = Promise<Cat>;",
+    ].join("\n");
+    const current = [
+      ...declarations,
+      "export type Pet = Promise<Bird>;",
+    ].join("\n");
+
+    expect(analyzeEvidence(episode(previous, current))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Pet"],
+        }),
+      ]),
+    );
+  });
+
+  it("distinguishes normalized self from a legal same-named user type", () => {
+    const previous = [
+      "interface __external_self__ { value: string }",
+      "export interface API { next: API }",
+    ].join("\n");
+    const current = [
+      "interface __external_self__ { value: string }",
+      "export interface API { next: __external_self__ }",
+    ].join("\n");
+
+    expect(analyzeEvidence(episode(previous, current))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["API#next"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports replacing an unrelated qualified type after an exported-self rename", () => {
+    const previous = [
+      "namespace External {",
+      "  export interface Node { value: string }",
+      "  export interface Other { value: number }",
+      "}",
+      "interface Node { child: External.Node }",
+      "export type { Node as PublicNode };",
+    ].join("\n");
+    const current = [
+      "namespace External {",
+      "  export interface Node { value: string }",
+      "  export interface Other { value: number }",
+      "}",
+      "interface Renamed { child: External.Other }",
+      "export type { Renamed as PublicNode };",
+    ].join("\n");
+
+    expect(analyzeEvidence(episode(previous, current))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["PublicNode#child"],
+        }),
+      ]),
+    );
   });
 
   it("reports a real recursive member change after normalizing its local name", () => {
@@ -1390,7 +2476,7 @@ describe("TypeScriptSemanticAnalyzer", () => {
       "Exported API removed",
     ],
   ])(
-    "deduplicates an identical merged type/value member %s",
+    "retains both namespaces for an identical merged type/value member %s",
     (_label, previous, current, expectedTitle) => {
       const changes = analyzeEvidence(episode(previous, current)).filter(
         (item) =>
@@ -1398,16 +2484,15 @@ describe("TypeScriptSemanticAnalyzer", () => {
           item.references[0] === "PublicApi#run",
       );
 
-      expect(changes).toEqual([
-        expect.objectContaining({
-          title: expectedTitle,
-          references: ["PublicApi#run"],
-        }),
-      ]);
+      expect(changes).toHaveLength(2);
+      expect(new Set(changes.map((item) => item.id)).size).toBe(2);
+      expect(
+        changes.every((item) => item.title === expectedTitle),
+      ).toBe(true);
     },
   );
 
-  it("keeps a deduplicated merged-member ID stable across declaration order", () => {
+  it("keeps namespaced merged-member IDs stable across declaration order", () => {
     const source = (interfaceFirst: boolean, parameterType: string): string => {
       const classDeclaration = [
         "export class Merged {",
@@ -1424,14 +2509,104 @@ describe("TypeScriptSemanticAnalyzer", () => {
     };
     const valueFirst = analyzeEvidence(
       episode(source(false, "string"), source(false, "number")),
-    ).find((item) => item.references[0] === "Merged#run");
+    )
+      .filter((item) => item.references[0] === "Merged#run")
+      .map((item) => item.id)
+      .sort();
     const typeFirst = analyzeEvidence(
       episode(source(true, "string"), source(true, "number")),
-    ).find((item) => item.references[0] === "Merged#run");
+    )
+      .filter((item) => item.references[0] === "Merged#run")
+      .map((item) => item.id)
+      .sort();
 
-    expect(valueFirst).toBeDefined();
-    expect(typeFirst).toBeDefined();
-    expect(valueFirst?.id).toBe(typeFirst?.id);
+    expect(valueFirst).toHaveLength(2);
+    expect(typeFirst).toEqual(valueFirst);
+  });
+
+  it("retains distinct type and value provenance for identical member transitions", () => {
+    const source = (parameterType: string): string =>
+      [
+        "export class Merged {",
+        `  run(value: ${parameterType}): void { void value; }`,
+        "}",
+        `export interface Merged { run(value: ${parameterType}): void }`,
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source("string"), source("number")),
+    ).filter(
+      (item) =>
+        item.kind === "public-api-change" &&
+        item.references[0] === "Merged#run",
+    );
+
+    expect(changes).toHaveLength(2);
+    expect(new Set(changes.map((item) => item.id)).size).toBe(2);
+  });
+
+  it("deduplicates repeated emissions within one exported namespace member", () => {
+    const source = (parameterType: string): string =>
+      [
+        `export interface Service { run(value: ${parameterType}): void }`,
+        `export interface Service { run(value: ${parameterType}): void }`,
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source("string"), source("number")),
+    ).filter(
+      (item) =>
+        item.kind === "public-api-change" &&
+        item.references[0] === "Service#run",
+    );
+
+    expect(changes).toHaveLength(1);
+  });
+
+  it("keeps a class surface stable when an interface augmentation moves into the class", () => {
+    const augmented = [
+      "export declare class Service {}",
+      "export interface Service {",
+      "  readonly status: string;",
+      "  run(value: number): void;",
+      "}",
+    ].join("\n");
+    const consolidated = [
+      "export declare class Service {",
+      "  readonly status: string;",
+      "  run(value: number): void;",
+      "}",
+    ].join("\n");
+
+    for (const [previous, current] of [
+      [augmented, consolidated],
+      [consolidated, augmented],
+    ] as const) {
+      expect(
+        analyzeEvidence(episode(previous, current)).filter(
+          (item) => item.kind === "public-api-change",
+        ),
+      ).toEqual([]);
+    }
+  });
+
+  it("retains real class member changes while consolidating an augmentation", () => {
+    const previous = [
+      "export declare class Service {}",
+      "export interface Service { readonly status: string }",
+    ].join("\n");
+    const current =
+      "export declare class Service { readonly status: number }";
+    const changes = analyzeEvidence(episode(previous, current)).filter(
+      (item) =>
+        item.kind === "public-api-change" &&
+        item.references[0] === "Service#status",
+    );
+
+    expect(changes.length).toBeGreaterThan(0);
+    expect(
+      changes.every(
+        (item) => item.title === "Exported API signature changed",
+      ),
+    ).toBe(true);
   });
 
   it("reports abstract-to-concrete exported class transitions", () => {
@@ -1448,6 +2623,33 @@ describe("TypeScriptSemanticAnalyzer", () => {
         references: ["Service"],
       }),
     ]);
+  });
+
+  it("reports concrete-to-abstract class member transitions", () => {
+    const previous = [
+      "export abstract class Service {",
+      "  run(): void {}",
+      "}",
+    ].join("\n");
+    const current = [
+      "export abstract class Service {",
+      "  abstract run(): void;",
+      "}",
+    ].join("\n");
+    const changes = analyzeEvidence(
+      episode(previous, current),
+    ).filter(
+      (item) =>
+        item.kind === "public-api-change" &&
+        item.references[0] === "Service#run",
+    );
+
+    expect(changes).toHaveLength(2);
+    expect(
+      changes.every(
+        (item) => item.title === "Exported API signature changed",
+      ),
+    ).toBe(true);
   });
 
   it("reports an abstract class transition even when its constructor is protected", () => {
@@ -1651,6 +2853,300 @@ describe("TypeScriptSemanticAnalyzer", () => {
     );
   });
 
+  it("preserves construct overload provenance within intersection constituents", () => {
+    const previous = [
+      "interface FirstFactory { new (value: 1): { first: true } }",
+      "interface SecondFactory { new (value: 2): { second: true } }",
+      "declare const Factory: FirstFactory & SecondFactory;",
+      "export { Factory };",
+    ].join("\n");
+    const current = [
+      "interface FirstFactory { new (value: 1): { first: true } }",
+      "interface SecondFactory {",
+      "  new (value: 1): { first: true };",
+      "  new (value: 2): { second: true };",
+      "}",
+      "declare const Factory: FirstFactory & SecondFactory;",
+      "export { Factory };",
+    ].join("\n");
+
+    expect(analyzeEvidence(episode(previous, current))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Factory#constructor"],
+        }),
+      ]),
+    );
+  });
+
+  it("sorts and deduplicates complete intersection construct groups", () => {
+    const declarations = [
+      "interface FirstFactory { new (value: 1): { first: true } }",
+      "interface DuplicateFirstFactory { new (value: 1): { first: true } }",
+      "interface SecondFactory { new (value: 2): { second: true } }",
+    ];
+    const previous = [
+      ...declarations,
+      "declare const Factory: FirstFactory & SecondFactory;",
+      "export { Factory };",
+    ].join("\n");
+    const current = [
+      ...declarations,
+      "declare const Factory:",
+      "  SecondFactory & DuplicateFirstFactory & FirstFactory;",
+      "export { Factory };",
+    ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(previous, current)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("normalizes equivalent callable intersection constituent reordering", () => {
+    const declarations = [
+      "interface FirstHandler { (value: 1): { first: true } }",
+      "interface SecondHandler { (value: 2): { second: true } }",
+    ];
+    const source = (reverse: boolean): string =>
+      [
+        ...declarations,
+        `declare const handler: ${
+          reverse
+            ? "SecondHandler & FirstHandler"
+            : "FirstHandler & SecondHandler"
+        };`,
+        "export { handler };",
+      ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(source(false), source(true))).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("preserves call overload order within an intersection constituent", () => {
+    const source = (reverseOverloads: boolean): string =>
+      [
+        "interface First {}",
+        "interface Second {}",
+        "interface Extra {}",
+        "interface Ordered {",
+        ...(reverseOverloads
+          ? [
+              "  (value: number): Second;",
+              "  (value: string): First;",
+            ]
+          : [
+              "  (value: string): First;",
+              "  (value: number): Second;",
+            ]),
+        "}",
+        "type Additional = (value: boolean) => Extra;",
+        "declare const handler: Ordered & Additional;",
+        "export { handler };",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source(false), source(true)),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          references: ["handler"],
+        }),
+      ]),
+    );
+  });
+
+  it("preserves call overload provenance within intersection constituents", () => {
+    const previous = [
+      "interface FirstHandler { (value: 1): { first: true } }",
+      "interface SecondHandler { (value: 2): { second: true } }",
+      "declare const handler: FirstHandler & SecondHandler;",
+      "export { handler };",
+    ].join("\n");
+    const current = [
+      "interface FirstHandler { (value: 1): { first: true } }",
+      "interface SecondHandler {",
+      "  (value: 1): { first: true };",
+      "  (value: 2): { second: true };",
+      "}",
+      "declare const handler: FirstHandler & SecondHandler;",
+      "export { handler };",
+    ].join("\n");
+
+    expect(analyzeEvidence(episode(previous, current))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["handler"],
+        }),
+      ]),
+    );
+  });
+
+  it("normalizes recursive callable constituent names through a value intersection", () => {
+    const previous = [
+      "declare function First(value: string): typeof First;",
+      "declare function Second(value: number): typeof Second;",
+      "declare const Hybrid: typeof First & typeof Second;",
+      "export { Hybrid };",
+    ].join("\n");
+    const current = [
+      "declare function Alpha(value: string): typeof Alpha;",
+      "declare function Beta(value: number): typeof Beta;",
+      "declare const Hybrid: typeof Alpha & typeof Beta;",
+      "export { Hybrid };",
+    ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(previous, current)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("normalizes callable intersection constituent order on object members", () => {
+    const declarations = [
+      "interface FirstHandler { (value: 1): { first: true } }",
+      "interface SecondHandler { (value: 2): { second: true } }",
+    ];
+    const source = (reverse: boolean): string =>
+      [
+        ...declarations,
+        "export declare const api: {",
+        `  handler: ${
+          reverse
+            ? "SecondHandler & FirstHandler"
+            : "FirstHandler & SecondHandler"
+        };`,
+        "};",
+      ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(source(false), source(true))).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("preserves callable intersection provenance on object members", () => {
+    const previous = [
+      "interface FirstHandler { (value: 1): { first: true } }",
+      "interface SecondHandler { (value: 2): { second: true } }",
+      "export declare const api: {",
+      "  handler: FirstHandler & SecondHandler;",
+      "};",
+    ].join("\n");
+    const current = [
+      "interface FirstHandler { (value: 1): { first: true } }",
+      "interface SecondHandler {",
+      "  (value: 1): { first: true };",
+      "  (value: 2): { second: true };",
+      "}",
+      "export declare const api: {",
+      "  handler: FirstHandler & SecondHandler;",
+      "};",
+    ].join("\n");
+
+    expect(analyzeEvidence(episode(previous, current))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["api.handler"],
+        }),
+      ]),
+    );
+  });
+
+  it("records construct signatures attached to callable object members", () => {
+    const source = (constructorType: string): string =>
+      [
+        "export interface API {",
+        "  make: {",
+        "    (value: string): void;",
+        `    new (value: ${constructorType}): { value: string };`,
+        "  };",
+        "}",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source("string"), source("number")),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["API#make"],
+        }),
+      ]),
+    );
+  });
+
+  it("records properties attached to callable object members", () => {
+    const source = (propertyType: string): string =>
+      [
+        "export interface API {",
+        "  handler: {",
+        "    (value: string): void;",
+        `    tag: ${propertyType};`,
+        "  };",
+        "}",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source("string"), source("number")),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["API#handler"],
+        }),
+      ]),
+    );
+  });
+
+  it("normalizes attached properties across callable intersection order", () => {
+    const declarations = [
+      "interface FirstHandler {",
+      "  (value: number): void;",
+      "  property: { first: true };",
+      "}",
+      "interface SecondHandler {",
+      "  (value: string): void;",
+      "  property: { second: true };",
+      "}",
+    ];
+    const source = (reverse: boolean): string =>
+      [
+        ...declarations,
+        "export interface API {",
+        `  handler: ${
+          reverse
+            ? "SecondHandler & FirstHandler"
+            : "FirstHandler & SecondHandler"
+        };`,
+        "}",
+      ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(source(false), source(true))).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
   it("reports inferred signature changes for exported function-valued variables", () => {
     const evidence = analyzeEvidence(
       episode(
@@ -1847,6 +3343,57 @@ describe("TypeScriptSemanticAnalyzer", () => {
         }),
       ]),
     );
+  });
+
+  it.each([
+    [
+      "value",
+      'import { item as localItem } from "./dep";',
+      "export { localItem as item };",
+      'export { item } from "./dep";',
+    ],
+    [
+      "type",
+      'import type { Item as LocalItem } from "./dep";',
+      "export type { LocalItem as Item };",
+      'export type { Item } from "./dep";',
+    ],
+  ])(
+    "tracks an imported %s binding re-export without module resolution",
+    (_label, importStatement, exportStatement, directReExport) => {
+      const indirect = [importStatement, exportStatement].join("\n");
+      const added = analyzeEvidence(episode(importStatement, indirect));
+      const equivalent = analyzeEvidence(
+        episode(indirect, directReExport),
+      ).filter((item) => item.kind === "public-api-change");
+
+      expect(added).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "public-api-change",
+            title: "Exported API added",
+          }),
+        ]),
+      );
+      expect(equivalent).toEqual([]);
+    },
+  );
+
+  it("tracks namespace re-export syntax without resolving the module", () => {
+    const namespaceReExport = 'export * as api from "./dep";';
+    const added = analyzeEvidence(episode("", namespaceReExport));
+    const removed = analyzeEvidence(episode(namespaceReExport, ""));
+
+    for (const changes of [added, removed]) {
+      expect(changes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "public-api-change",
+            references: ["api"],
+          }),
+        ]),
+      );
+    }
   });
 
   it("resolves callable identifiers assigned to exported variables", () => {
@@ -2167,6 +3714,264 @@ describe("TypeScriptSemanticAnalyzer", () => {
     ).toEqual([]);
   });
 
+  it("forgets non-callable value roots overwritten at one CommonJS path", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        ["exports.setting = 1;", "exports.setting = 2;"].join("\n"),
+        "exports.setting = 2;",
+        "javascript",
+        "file:///pair.js",
+      ),
+    );
+
+    expect(
+      evidence.filter((item) => item.kind === "public-api-change"),
+    ).toEqual([]);
+  });
+
+  it("forgets class type surfaces overwritten at one CommonJS path", () => {
+    const evidence = analyzeEvidence(
+      episode(
+        "exports.setting = 1;",
+        [
+          "exports.setting = class { run() {} };",
+          "exports.setting = 1;",
+        ].join("\n"),
+        "javascript",
+        "file:///pair.js",
+      ),
+    );
+
+    expect(
+      evidence.filter((item) => item.kind === "public-api-change"),
+    ).toEqual([]);
+  });
+
+  it("forgets namespace members overwritten at one CommonJS path", () => {
+    const source = (returnType: string): string =>
+      [
+        `namespace internal { export function run(): ${returnType} {`,
+        `  return ${returnType === "string" ? '""' : "1"};`,
+        "} }",
+        "exports.api = internal;",
+        "exports.api = 42;",
+      ].join("\n");
+    const evidence = analyzeEvidence(
+      episode(source("string"), source("number")),
+    );
+
+    expect(
+      evidence.filter((item) => item.kind === "public-api-change"),
+    ).toEqual([]);
+  });
+
+  it("ignores exports writes after module.exports detaches the alias", () => {
+    const previous = "module.exports = function api() {};";
+    const current = [
+      previous,
+      "exports.extra = 1;",
+    ].join("\n");
+
+    expect(
+      analyzeEvidence(
+        episode(previous, current, "javascript", "file:///pair.js"),
+      ).filter((item) => item.kind === "public-api-change"),
+    ).toEqual([]);
+  });
+
+  it("tracks chained CommonJS alias attachment assignments", () => {
+    const functionSource = (withOptions: boolean): string =>
+      `exports = module.exports = (value${
+        withOptions ? ", options" : ""
+      }) => value;`;
+    const propertySource = (withOptions: boolean): string =>
+      [
+        "module.exports = exports = {};",
+        `exports.load = (value${withOptions ? ", options" : ""}) => value;`,
+      ].join("\n");
+
+    for (const [previous, current, reference] of [
+      [functionSource(false), functionSource(true), "default export"],
+      [propertySource(false), propertySource(true), "load"],
+    ] as const) {
+      expect(
+        analyzeEvidence(
+          episode(previous, current, "javascript", "file:///pair.js"),
+        ),
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "public-api-change",
+            title: "Exported API signature changed",
+            references: [reference],
+          }),
+        ]),
+      );
+    }
+  });
+
+  it("ignores chained writes to a pre-replacement CommonJS receiver", () => {
+    const previous = "module.exports = { keep: 1 };";
+    const current =
+      "module.exports.ghost = module.exports = { keep: 1 };";
+
+    expect(
+      analyzeEvidence(
+        episode(previous, current, "javascript", "file:///pair.js"),
+      ).filter((item) => item.kind === "public-api-change"),
+    ).toEqual([]);
+  });
+
+  it("preserves existing exports when module.exports reuses the alias", () => {
+    const source = (value: string): string =>
+      [
+        `exports.item = ${value};`,
+        "module.exports = exports;",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(
+        source("1"),
+        source('"1"'),
+        "javascript",
+        "file:///pair.js",
+      ),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["item"],
+        }),
+      ]),
+    );
+  });
+
+  it("keeps class instance surfaces after CommonJS static writes", () => {
+    const source = (returnType: string, value: string): string =>
+      [
+        `class API { method(): ${returnType} { return ${value}; } }`,
+        "module.exports = API;",
+        "module.exports.method = 1;",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(
+        source("string", '""'),
+        source("number", "1"),
+        "typescript",
+        "file:///pair.ts",
+      ),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["default export#method"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports CommonJS object-literal accessor type changes", () => {
+    const source = (returnType: string, value: string): string =>
+      [
+        "module.exports = {",
+        `  get value(): ${returnType} { return ${value}; }`,
+        "};",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(
+        source("string", '"x"'),
+        source("number", "1"),
+        "typescript",
+        "file:///pair.ts",
+      ),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["value"],
+        }),
+      ]),
+    );
+  });
+
+  it("distinguishes CommonJS object-literal accessors from methods", () => {
+    const previous = [
+      "module.exports = {",
+      '  get value(): string { return "x"; }',
+      "};",
+    ].join("\n");
+    const current = [
+      "module.exports = {",
+      '  value(): string { return "x"; }',
+      "};",
+    ].join("\n");
+
+    expect(analyzeEvidence(episode(previous, current))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["value"],
+        }),
+      ]),
+    );
+  });
+
+  it("records statically typed CommonJS object spread members", () => {
+    const source = (withOptions: boolean): string =>
+      [
+        `const api = { load(value${withOptions ? ", options" : ""}) {`,
+        "  return value;",
+        "} };",
+        "module.exports = { ...api };",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(
+        source(false),
+        source(true),
+        "javascript",
+        "file:///pair.js",
+      ),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["default export.load"],
+        }),
+      ]),
+    );
+  });
+
+  it("honors last-write semantics after a CommonJS object spread", () => {
+    const source = (spreadValue: string): string =>
+      [
+        `const base = { item: ${spreadValue} };`,
+        'module.exports = { ...base, item: "fixed" };',
+      ].join("\n");
+
+    expect(
+      analyzeEvidence(
+        episode(
+          source("1"),
+          source("true"),
+          "javascript",
+          "file:///pair.js",
+        ),
+      ).filter((item) => item.kind === "public-api-change"),
+    ).toEqual([]);
+  });
+
   it("reports a CommonJS property removed by a later whole replacement", () => {
     const evidence = analyzeEvidence(
       episode(
@@ -2338,6 +4143,158 @@ describe("TypeScriptSemanticAnalyzer", () => {
     ).toEqual([]);
   });
 
+  it("does not let a private getter type contaminate a public setter", () => {
+    const source = (privateGetterType: string): string =>
+      [
+        "export class Settings {",
+        `  private get value(): ${privateGetterType} {`,
+        `    return ${privateGetterType === "string" ? '""' : "false"};`,
+        "  }",
+        "  set value(next: number) { void next; }",
+        "}",
+      ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(source("string"), source("boolean"))).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not infer an unannotated public setter type from a private getter", () => {
+    const source = (privateGetterType: string): string =>
+      [
+        "export class Settings {",
+        `  private get value(): ${privateGetterType} {`,
+        `    return ${privateGetterType === "string" ? '""' : "false"};`,
+        "  }",
+        "  set value(next) { void next; }",
+        "}",
+      ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(source("string"), source("boolean"))).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("retains an explicit JSDoc type on a public JavaScript setter", () => {
+    const source = (setterType: string): string =>
+      [
+        "export class Settings {",
+        `  /** @param {${setterType}} next */`,
+        "  set value(next) { void next; }",
+        "}",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(
+        source("number"),
+        source("string"),
+        "javascript",
+        "file:///pair.js",
+      ),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Settings#value"],
+        }),
+      ]),
+    );
+  });
+
+  it.each(["private", "protected"] as const)(
+    "excludes a JSDoc-%s JavaScript accessor from the public surface",
+    (visibility) => {
+      const source = (returnValue: '""' | "false"): string =>
+        [
+          "export class Settings {",
+          `  /** @${visibility} */`,
+          `  get value() { return ${returnValue}; }`,
+          "}",
+        ].join("\n");
+
+      expect(
+        analyzeEvidence(
+          episode(
+            source('""'),
+            source("false"),
+            "javascript",
+            "file:///pair.js",
+          ),
+        ).filter((item) => item.kind === "public-api-change"),
+      ).toEqual([]);
+    },
+  );
+
+  it("derives a public setter type independently of its private getter", () => {
+    const source = (setterType: string): string =>
+      [
+        "export class Settings {",
+        '  private get value(): string { return ""; }',
+        `  set value(next: ${setterType}) { void next; }`,
+        "}",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source("number"), source("boolean")),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Settings#value"],
+        }),
+      ]),
+    );
+  });
+
+  it("does not let a private setter type contaminate a public getter", () => {
+    const source = (privateSetterType: string): string =>
+      [
+        "export class Settings {",
+        '  get value(): string { return ""; }',
+        `  private set value(next: ${privateSetterType}) { void next; }`,
+        "}",
+      ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(source("number"), source("boolean"))).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("derives a public getter return independently of its private setter", () => {
+    const source = (getterType: string): string =>
+      [
+        "export class Settings {",
+        `  get value(): ${getterType} {`,
+        `    return ${getterType === "string" ? '""' : "false"};`,
+        "  }",
+        "  private set value(next: number) { void next; }",
+        "}",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source("string"), source("boolean")),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["Settings#value"],
+        }),
+      ]),
+    );
+  });
+
   it("reports overload-only changes for exported functions", () => {
     const evidence = analyzeEvidence(
       episode(
@@ -2358,6 +4315,350 @@ describe("TypeScriptSemanticAnalyzer", () => {
         expect.objectContaining({
           kind: "public-api-change",
           references: ["load"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports local type changes exposed through an exported signature", () => {
+    const source = (propertyType: string): string =>
+      [
+        `interface Payload { id: ${propertyType} }`,
+        "export function send(payload: Payload): void {}",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source("string"), source("number")),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["send"],
+        }),
+      ]),
+    );
+  });
+
+  it("retains imported type provenance in exported signatures", () => {
+    const source = (importedName: string): string =>
+      [
+        `import type { ${importedName} as Payload } from "./dep";`,
+        "export function send(payload: Payload): void {}",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source("First"), source("Second")),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["send"],
+        }),
+      ]),
+    );
+  });
+
+  it("normalizes imported aliases while retaining namespace-import provenance", () => {
+    const renamedPrevious = [
+      'import type { Payload as Before } from "./dep";',
+      "export function send(payload: Before): void {}",
+    ].join("\n");
+    const renamedCurrent = [
+      'import type { Payload as After } from "./dep";',
+      "export function send(payload: After): void {}",
+    ].join("\n");
+    const namespaceSource = (specifier: string): string =>
+      [
+        `import type * as dependency from "${specifier}";`,
+        "export function send(payload: dependency.Payload): void {}",
+      ].join("\n");
+
+    expect(
+      analyzeEvidence(
+        episode(renamedPrevious, renamedCurrent),
+      ).filter((item) => item.kind === "public-api-change"),
+    ).toEqual([]);
+    expect(
+      analyzeEvidence(
+        episode(namespaceSource("./first"), namespaceSource("./second")),
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["send"],
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    [
+      "optional callback parameter",
+      "type Local = (value?: string) => void;",
+      "type Local = (value: string) => void;",
+    ],
+    [
+      "rest callback parameter",
+      "type Local = (value: string[]) => void;",
+      "type Local = (...value: string[]) => void;",
+    ],
+    [
+      "callback generic constraint",
+      "type Local = <T extends string>(value: T) => T;",
+      "type Local = <T extends number>(value: T) => T;",
+    ],
+    [
+      "index signature",
+      "interface Local { [key: string]: string }",
+      "interface Local { [key: string]: number }",
+    ],
+  ])(
+    "reports a local %s change exposed through an exported signature",
+    (_label, previousDeclaration, currentDeclaration) => {
+      const previous = [
+        previousDeclaration,
+        "export function use(value: Local): void {}",
+      ].join("\n");
+      const current = [
+        currentDeclaration,
+        "export function use(value: Local): void {}",
+      ].join("\n");
+
+      expect(analyzeEvidence(episode(previous, current))).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "public-api-change",
+            title: "Exported API signature changed",
+            references: ["use"],
+          }),
+        ]),
+      );
+    },
+  );
+
+  it("reports local enum value changes exposed through an exported signature", () => {
+    const source = (value: string): string =>
+      [
+        `enum Status { Ready = "${value}" }`,
+        "export function current(): Status { return Status.Ready; }",
+      ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(source("ready"), source("done"))),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["current"],
+        }),
+      ]),
+    );
+  });
+
+  it("bounds recursive local type fingerprints", () => {
+    const declarations = Array.from({ length: 20 }, (_, index) =>
+      [
+        `interface Level${index} {`,
+        `  left: Level${index + 1};`,
+        `  right: Level${index + 1};`,
+        "}",
+      ].join("\n"),
+    );
+    const source = [
+      ...declarations,
+      "interface Level20 { value: string }",
+      "export function inspect(value: Level0): void {}",
+    ].join("\n");
+
+    expect(() =>
+      analyzeEvidence(episode(source, `${source}\n// no API change`)),
+    ).not.toThrow();
+    expect(
+      analyzeEvidence(episode(source, `${source}\n// no API change`)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("normalizes mutually recursive fingerprints across member order", () => {
+    const declarations = [
+      "interface First { second: Second }",
+      "interface Second { first: First }",
+    ];
+    const source = (reverse: boolean): string =>
+      [
+        ...declarations,
+        "interface Root {",
+        ...(reverse
+          ? ["  second: Second;", "  first: First;"]
+          : ["  first: First;", "  second: Second;"]),
+        "}",
+        "export function inspect(value: Root): void {}",
+      ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(source(false), source(true))).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("normalizes self references in exported function signatures", () => {
+    const direct = [
+      "export function Public(): typeof Public {",
+      "  return Public;",
+      "}",
+    ].join("\n");
+    const renamed = [
+      "function Internal(): typeof Internal {",
+      "  return Internal;",
+      "}",
+      "export { Internal as Public };",
+    ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(direct, renamed)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("preserves overload order for directly exported functions", () => {
+    const source = (reverse: boolean): string =>
+      [
+        ...(reverse
+          ? [
+              "export function parse(value: unknown): number;",
+              "export function parse(value: string): string;",
+            ]
+          : [
+              "export function parse(value: string): string;",
+              "export function parse(value: unknown): number;",
+            ]),
+        "export function parse(value: unknown): unknown { return value; }",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(source(false), source(true)),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["parse"],
+        }),
+      ]),
+    );
+  });
+
+  it("normalizes equivalent direct and local-list function overload groups", () => {
+    const declarations = [
+      "function parse(value: number): void;",
+      "function parse(value: string): void;",
+      "function parse(value: number | string): void {}",
+    ];
+    const direct = declarations
+      .map((declaration) => `export ${declaration}`)
+      .join("\n");
+    const local = [...declarations, "export { parse };"].join("\n");
+
+    expect(
+      analyzeEvidence(episode(direct, local)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("ignores implementation-only changes behind exported overloads", () => {
+    const previous = [
+      "export function parse(value: string): string;",
+      "export function parse(value: any): any { return value; }",
+    ].join("\n");
+    const current = [
+      "export function parse(value: string): string;",
+      "export function parse(value: unknown): unknown { return value; }",
+    ].join("\n");
+
+    expect(
+      analyzeEvidence(episode(previous, current)).filter(
+        (item) => item.kind === "public-api-change",
+      ),
+    ).toEqual([]);
+  });
+
+  it("reports exported JavaScript JSDoc overload changes", () => {
+    const source = (secondType: string): string =>
+      [
+        "/**",
+        " * @overload",
+        " * @param {string} value",
+        " * @returns {string}",
+        " */",
+        "/**",
+        " * @overload",
+        ` * @param {${secondType}} value`,
+        ` * @returns {${secondType}}`,
+        " */",
+        "/**",
+        " * @param {string | number | boolean} value",
+        " * @returns {string | number | boolean}",
+        " */",
+        "export function parse(value) { return value; }",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(
+        source("number"),
+        source("boolean"),
+        "javascript",
+        "file:///pair.js",
+      ),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["parse"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports a sole exported JavaScript JSDoc overload change", () => {
+    const source = (overloadType: string): string =>
+      [
+        "/**",
+        " * @overload",
+        ` * @param {${overloadType}} value`,
+        ` * @returns {${overloadType}}`,
+        " */",
+        "/** @param {string | number} value */",
+        "export function parse(value) { return value; }",
+      ].join("\n");
+    const changes = analyzeEvidence(
+      episode(
+        source("string"),
+        source("number"),
+        "javascript",
+        "file:///pair.js",
+      ),
+    );
+
+    expect(changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "public-api-change",
+          title: "Exported API signature changed",
+          references: ["parse"],
         }),
       ]),
     );

@@ -2388,3 +2388,77 @@
   issue was found. Analysis intentionally remains per-document with module
   resolution disabled; a live VS Code extension host was not exercised in this
   non-interactive run.
+
+---
+
+## Exported surface serializer final review fixes (2026-09-13)
+
+### Corrections implemented
+
+- Replaced textual self-name matching with checker symbol and alias-target
+  identity. Canonical printer substitutions now distinguish the exported root,
+  structurally different recursive constituents, imported provenance, and
+  legal user identifiers that resemble internal sentinels.
+- Added a stable type surface for classes in direct, local, aliased, merged,
+  anonymous, and namespace-nested forms. Consolidating equivalent interface
+  augmentation into a class is now a no-op, while real instance/static changes
+  remain visible.
+- Expanded value serialization to non-callable object properties, declared
+  values merged with interfaces, namespace/function statics, nested namespace
+  classes and types, enums, computed symbol keys, and CommonJS object members.
+  Library-only members are excluded while generic roots remain represented.
+- Derived accessor surfaces independently from public getter returns and setter
+  parameters. Private/protected TypeScript and JSDoc accessors cannot affect a
+  public counterpart; explicit JSDoc setter types remain visible.
+- Introduced structured `SurfaceSignature` records. Callable and constructable
+  intersections, callable members, and class-instance members retain overload
+  order inside each constituent while sorting and deduplicating complete
+  constituent groups.
+- Preserved namespace and member provenance in transition keys and evidence
+  IDs. Type and value changes with equal text remain distinct, while exact
+  duplicates within one namespace/member collapse deterministically.
+- Hardened directly coupled cases found during self-review: strict nullable
+  types, index signatures, generic constraints/defaults, mapped modifiers,
+  external heritage syntax, local type fingerprints with bounded traversal,
+  imported re-exports, CommonJS alias/replacement/spread ordering, and
+  implementation-vs-overload separation.
+
+### TDD evidence
+
+- Added focused RED/GREEN regressions and no-change controls for all six
+  findings, plus the directly coupled alias, namespace, CommonJS, generic,
+  computed-key, enum, and overload cases found during review.
+- Each primary reproducer failed for the expected missing or conflated surface
+  before its implementation change.
+- Final focused semantic suite: **1 file, 241 tests passed**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **18 files, 675 tests passed**
+- `npm run test:coverage`: **PASS**
+  - statements 91.51%, branches 85.31%, functions 93.80%, lines 91.61%
+- `npm run package`: **PASS — 158 files, 4.37 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX inclusion/exclusion scan: **PASS**
+  - compiled extension, semantic analyzer, and public docs are present;
+  - source, tests, coverage, private review material, editor/CI files, and
+    source maps are absent.
+- Production and packaged credential-pattern scans: **PASS**
+- Production and packaged runtime URL scans: **PASS — loopback default only**
+- Source and packaged repository/bugs/homepage metadata scans: **PASS**
+- `git diff --check`: **PASS**
+
+### Self-review and residual concerns
+
+- Base-to-working-tree review covered all changed collection, canonicalization,
+  transition, CommonJS, and regression-test paths. Focused differential probes
+  confirmed stable no-op identities and visible real changes across both type
+  and value namespaces.
+- Analysis intentionally remains per-document: imported symbols contribute
+  syntax-level provenance, but external module bodies are not resolved or
+  analyzed. A live VS Code extension host was not exercised in this
+  non-interactive run.

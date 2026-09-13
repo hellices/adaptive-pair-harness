@@ -3492,12 +3492,14 @@ describe("PairRuntime lifecycle ownership", () => {
       }
     ).documentState;
 
-    expect(state.latestEvidence(uri)).toEqual([
-      expect.objectContaining({
-        kind: "new-dependency",
-        references: ["./repository"],
-      }),
-    ]);
+    expect(state.latestEvidence(uri)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "new-dependency",
+          references: ["./repository"],
+        }),
+      ]),
+    );
     runtime.dispose();
   });
 
