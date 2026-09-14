@@ -4,6 +4,7 @@ export interface TokenBudgetConfig {
   readonly maxInputTokens: number;
   readonly maxOutputTokens: number;
   readonly maxOutputTokensPerCall: number;
+  readonly maxOutputTokensPerChatCall?: number;
 }
 
 interface Reservation {
@@ -67,12 +68,18 @@ export class TokenBudget {
     this.config = config;
   }
 
-  public outputTokenLimit(now: number): number {
+  private perCallOutputLimit(kind: "automatic" | "chat"): number {
+    return kind === "chat"
+      ? this.config.maxOutputTokensPerChatCall ?? this.config.maxOutputTokensPerCall
+      : this.config.maxOutputTokensPerCall;
+  }
+
+  public outputTokenLimit(now: number, kind: "automatic" | "chat" = "automatic"): number {
     this.purgeExpired(now);
     return Math.max(
       0,
       Math.min(
-        this.config.maxOutputTokensPerCall,
+        this.perCallOutputLimit(kind),
         this.config.maxOutputTokens - this.currentOutputTokens(),
       ),
     );
@@ -82,6 +89,7 @@ export class TokenBudget {
     inputTokens: number,
     outputTokens: number,
     now: number,
+    kind: "automatic" | "chat" = "automatic",
   ): BudgetDecision {
     this.purgeExpired(now);
 
@@ -102,7 +110,7 @@ export class TokenBudget {
       };
     }
     if (
-      normalizedOutputTokens > this.config.maxOutputTokensPerCall ||
+      normalizedOutputTokens > this.perCallOutputLimit(kind) ||
       normalizedOutputTokens > this.config.maxOutputTokens
     ) {
       return {

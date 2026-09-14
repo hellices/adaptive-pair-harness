@@ -32,6 +32,22 @@ class TestConfiguration {
 }
 
 describe("readPairConfig", () => {
+  it("defaults interactive Chat to the selected-model workspace agent", () => {
+    expect(readPairConfig(new TestConfiguration({})).chatMode).toBe("workspace-agent");
+  });
+
+  it("preserves an application-level local-only choice against workspace overrides", () => {
+    const config = readPairConfig(new TestConfiguration({ "chat.mode": "workspace-agent" }, {
+      "chat.mode": { defaultValue: "workspace-agent", globalValue: "local-only", workspaceValue: "workspace-agent" },
+    }));
+    expect(config.chatMode).toBe("local-only");
+    expect(config.statusWarning).toContain("workspace");
+  });
+
+  it("fails closed for an unknown interactive mode", () => {
+    expect(readPairConfig(new TestConfiguration({ "chat.mode": "unknown" })).chatMode).toBe("local-only");
+  });
+
   it("clamps debounce and maps the balanced style to its exact budget", () => {
     const config = readPairConfig(
       new TestConfiguration({
@@ -43,9 +59,10 @@ describe("readPairConfig", () => {
     expect(config.debounceMs).toBe(800);
     expect(config.budget).toEqual({
       maxCalls: 4,
-      maxInputTokens: 6_000,
-      maxOutputTokens: 720,
+      maxInputTokens: 24_000,
+      maxOutputTokens: 2_400,
       maxOutputTokensPerCall: 180,
+      maxOutputTokensPerChatCall: 600,
       windowMs: 600_000,
     });
   });
@@ -74,17 +91,19 @@ describe("readPairConfig", () => {
       modelName: "copilot-selected",
       budget: {
         maxCalls: 2,
-        maxInputTokens: 2_000,
-        maxOutputTokens: 360,
+        maxInputTokens: 12_000,
+        maxOutputTokens: 1_200,
         maxOutputTokensPerCall: 180,
+        maxOutputTokensPerChatCall: 600,
         windowMs: 600_000,
       },
     });
     expect(active.budget).toEqual({
       maxCalls: 8,
-      maxInputTokens: 12_000,
-      maxOutputTokens: 1_440,
+      maxInputTokens: 48_000,
+      maxOutputTokens: 4_800,
       maxOutputTokensPerCall: 180,
+      maxOutputTokensPerChatCall: 600,
       windowMs: 600_000,
     });
   });

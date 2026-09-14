@@ -1,12 +1,16 @@
 # Adaptive Pair vertical slice architecture
 
-This document describes the implemented realtime vertical slice in this branch,
+This document describes the implemented goal-aware realtime vertical slice,
 not the full future design.
 
 ## Scope of the slice
 
-The shipped slice is a **navigator-only** VS Code extension that:
+The shipped slice has a background navigator and a supervised interactive pair:
 
+- reads bounded project documents locally and asks the developer to confirm a
+  working goal, acceptance criteria, and constraints;
+- supports planning, explicit decisions, and verification checkpoints before
+  or during code edits, with scoped conversational continuity;
 - watches open TypeScript/JavaScript `file:` and `vscode-remote:` documents
   after an explicit session start;
 - aggregates short edit bursts into an edit episode;
@@ -16,8 +20,32 @@ The shipped slice is a **navigator-only** VS Code extension that:
 - renders a single inline preview comment thread per file URI;
 - shares the latest evidence with the `@pair` chat participant.
 
-It does **not** edit code, invoke tools, claim driver ownership, or persist
-project changes.
+The background navigator does not edit or execute. Interactive `@pair` can
+apply individually approved exact edits and run approved npm validation scripts;
+it never claims exclusive driver ownership or unattended project control.
+
+## Interactive model/tool loop
+
+`pairChatParticipant` sends ordinary, planning, brief, work and checkpoint
+requests to `PairAgentSession` by default, auto-starting on the user action.
+`pairAgentModel` adapts that request's exact native `ChatRequest.model` without
+selecting another vendor or consulting the background provider. Native tool-call
+and tool-result message parts preserve the protocol across model iterations.
+
+`pairAgent` requires an initial read, then admits only mode-appropriate tools.
+`pairWorkspaceTools` owns root-scoped discovery/read/search, reviewed exact edits
+and approved npm checks. Real observations return to the model before its next
+answer. A separate activity record reports actual actions even when a later
+model operation fails. Per-turn calls, tokens, results and time are bounded.
+
+Interactive workspace consent is separate from background sharing and bound
+to session generation, conversation ID, selected root and exact vendor/model.
+The agent uses lifecycle/working scope rather than volatile inline-evidence
+revisions, so its own approved edit does not invalidate its next verification
+step. Tool implementations independently reject stale file contents before
+mutation. Stop/rebuild/goal/context replacement abort pending work; no late
+approval can resurrect it. `chat.mode=local-only` bypasses interactive models
+and tools rather than silently choosing another remote provider.
 
 ## Edit episode flow
 
@@ -67,6 +95,50 @@ project changes.
 9. **Intervention rendering** either uses a local template question or a model
    provider response, then renders the result inline and publishes it to shared
    chat state.
+
+## Working agreement flow
+
+Project context is separate from the static evidence sensor:
+
+1. On explicit start or context refresh, `projectContextReader` reads the
+   selected root's README/AGENTS and Markdown under `docs/`. Selection uses the
+   active editor's owning root, otherwise the first root; changing editor focus
+   alone does not replace the working agreement.
+2. The injected reader requires Workspace Trust, checks root/URI ownership and
+   symlink ancestors, limits candidate discovery to 50 and attempted files to
+   five, rejects files over 64 KiB, and retains at most 4,000 characters per
+   document. Open buffers supersede saved text. Trust and lifecycle checks
+   after asynchronous operations prevent stale reads from publishing.
+3. `projectContext` extracts English/Korean goal, acceptance, and constraint
+   headings outside fenced examples. Working plans/briefs are prioritized,
+   followed by README and specifications. Criteria come from the selected
+   goal's document, not an unrelated-plan merge. Proposed goals need explicit
+   `/goal` confirmation.
+4. The transient working agreement retains the confirmed task, current phase,
+   up to eight explicit decisions, four recent developer statements, sharing
+   permission, and a random conversation scope. The palette draft command opens
+   unsaved Markdown; interactive `/brief` prepares an individually approved edit.
+5. `/plan`, `/checkpoint`, and ordinary Chat can run without evidence. Model
+   requests can incorporate the task, scoped dialogue, and, only after explicit
+   destination-disclosed consent, bounded documents and same-root code excerpts.
+   Automatic evidence feedback uses the same working task rather than a
+   separate generic goal. Interactive checkpoints can run an approved validation
+   script and report actual output; they never infer success from absent diagnostics.
+6. Goal, context, and consent changes invalidate pending model/Chat work. Goal
+   changes discard previous decisions/dialogue. Same-root refresh preserves the
+   confirmed agreement but immediately revokes sharing and rotates Chat scope.
+   A dedicated lifecycle/read-revision fence allows concurrent planning without
+   cancelling the refresh, while sharing approval waits for it to finish. Stop,
+   rebuild, or root replacement clears working state and sharing. Cross-root
+   requests never inherit another root's working context.
+
+Dialogue and phase updates commit only after a successful, current generation.
+Cancelled/stale requests leave no retained turn. Code ranges apply only to the
+requested source document: root-scoped planning uses the active selection, and
+a missing evidence document is not replaced by another active buffer.
+
+This is bounded context preparation and a planning loop, not autonomous task
+execution or whole-repository retrieval.
 
 ## Semantic analyzer boundaries
 
@@ -142,6 +214,12 @@ The analyzer does not currently:
 If the budget denies the request, the runtime falls back to a local-template
 question instead of dropping the intervention entirely.
 
+Automatic/manual inline responses retain a 180-token cap; explicit Chat can
+reserve up to 600 tokens through the same ledger. The eco/balanced/active
+ten-minute limits are 2/4/8 calls, 12,000/24,000/48,000 input tokens, and
+1,200/2,400/4,800 output tokens. These defaults accommodate bounded working
+context without bypassing admission.
+
 The configured style remains authoritative until the style command records an
 explicit selection in global Pair memory. Session preparation reapplies only
 an explicit selection to policy thresholds and the shared rolling budget;
@@ -153,7 +231,7 @@ Remote-capable providers receive a sanitized `ModelRequest` shape:
 
 - `goal`
 - `interactionStyle`
-- `evidence`
+- optional `evidence` (planning and checkpoints do not require it)
   - `kind`
   - `severity`
   - `title`
@@ -161,10 +239,22 @@ Remote-capable providers receive a sanitized `ModelRequest` shape:
   - `source`
   - `confidence`
   - `range`
-  - `references`
-- optional user context for chat:
+- purpose-specific instructions;
+- optional working/user context:
   - bounded `userPrompt`
   - bounded symbol identity and symbol range
+  - confirmed goal, criteria, constraints, phase, and recorded decisions;
+  - bounded same-scope user/assistant conversation;
+  - only with session sharing consent: document excerpts, their proposed
+    requirements, and current/previous code excerpts from the working root.
+
+Unapproved workspace context is omitted entirely, including document-derived
+proposals, and does not affect sensitivity routing. Approved context retains at
+most three documents of 1,200 characters each, current/previous code of 1,500
+characters each, and six dialogue turns of 600 characters each. The structured
+context has a 6,000-serialized-character bound before token admission. Document
+URIs are not projected. Retrieved content and history are quoted as untrusted
+data, never as tool permissions.
 
 Automatic evidence crosses the remote boundary only through a whitelist keyed
 by `Evidence.kind`. Each kind has fixed extension-owned title, detail, and
@@ -181,7 +271,9 @@ the projection, status, or error text. A separate raw structured request stays
 local so any availability, budget, or sensitive-content fallback can render
 the bounded original evidence.
 
-Explicit Chat fields are inspected before bounding. Known credential material
+Explicit Chat, working-task, history, and approved workspace fields are
+inspected before bounding. Sensitivity metadata survives repeated projection.
+Known credential material
 or an exact `file://`/`vscode-remote://` URI, recognized or multi-segment POSIX
 path, Windows drive path, or UNC path keeps the complete request local. The
 unsafe field is replaced with a fixed local-only notice rather than partially
@@ -192,8 +284,10 @@ path.
 
 ### Provider behavior
 
-- **Local template**: deterministic, complete-question-bounded local response,
-  zero remote tokens
+- **Local template**: deterministic, purpose-specific local response, zero
+  remote tokens. Planning/checkpoints organize supplied information and expose
+  missing decisions/results; they do not claim semantic code understanding or
+  unperformed tests. Automatic questions remain concise.
 - **Official VS Code Copilot**: uses the VS Code language model API and falls
   back locally when no model is available, access is denied, or proactive access
   is unavailable. VS Code access kinds map explicitly to allowed, disallowed,
@@ -254,10 +348,33 @@ Instead, it reads the shared Pair snapshot containing:
 - whether the session is active;
 - current provider and remaining budget;
 - coexistence notice;
-- the latest published evidence/question pair.
+- the latest published evidence/question pair, if present;
+- the selected root's document summary, working task, phase, sharing state, and
+  opaque conversation scope.
+
+`pairConversation` reads the last three completed exchanges from VS Code Chat
+history, filtered to this participant and matching response metadata. Assistant
+turns require workspace sharing consent; old session/goal/consent turns and
+other participants are excluded. Successful responses return scoped metadata.
+No hidden durable conversation store is introduced, and invalidating scope
+does not erase the existing Chat UI history.
+
+Published evidence carries its host-resolved owning root. Planning omits
+evidence without matching working-root ownership, and responses about another
+root receive no working-scope metadata. Thus local fallback text from another
+root cannot be forwarded later under the working root's sharing approval.
+
+`/goal`, `/decision`, and `/context` remain explicit runtime controls. In the
+default interactive path, `/brief`, `/plan`, `/work`, `/checkpoint` and ordinary
+dialogue invoke the selected Chat model with scoped tools. In local-only mode,
+the legacy navigator path keeps `/brief` local and `/why`/`/trace` evidence-backed.
 
 That is why `@pair /why` expands the latest inline question rather than
-reconstructing unrelated state. The local provider has distinct `/why` and
+reconstructing unrelated state. The interactive session includes the approved
+same-root observation, question and relative source range as earlier evidence,
+and directs the selected model to re-read it before judging current behavior.
+An unrelated active editor cannot silently replace this explanation target.
+The local provider has distinct `/why` and
 `/explain` summaries. Local `/trace` discloses only the resolved symbol/range
 and explicitly declines to fabricate deeper flow analysis. When symbol
 providers return nested or flat results in arbitrary order, the smallest range
@@ -339,17 +456,20 @@ repository files.
 - OpenAI-compatible keys are stored in `SecretStorage`, separately per
   validated canonical endpoint origin;
 - remote settings are application-scoped and cannot be supplied by a folder;
-- remote requests avoid full source text, whitelist automatic evidence by kind,
-  and keep detected credential/local-resource Chat fields local.
+- workspace excerpts remain local until destination-disclosed, session/root-
+  scoped sharing consent; revocation/refresh/stop/rebuild invalidate pending
+  work, and drafts remain unsaved;
+- remote requests bound approved source/document excerpts, whitelist automatic
+  evidence by kind, and keep detected credential/local-resource fields local.
 
 ## Differences from the full design
 
 Compared with the broader Adaptive Pair design, this slice is intentionally
 smaller:
 
-- navigator-only, with no driver mode
-- no automatic code edits, tool execution, or task orchestration
-- no multi-file repository memory or GitHub-backed history
+- developer-led pairing, with no unattended driver mode
+- no unattended edits, arbitrary shell execution, or autonomous task ownership
+- no whole-repository retrieval, durable multi-file memory, or GitHub-backed history
 - no broader language support beyond TypeScript/JavaScript
 - no advanced evidence ranking beyond the implemented thresholds/cooldown
 - no durable threaded inline discussion; only the latest preview thread per file

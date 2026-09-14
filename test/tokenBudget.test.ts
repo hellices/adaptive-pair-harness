@@ -1,6 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { TokenBudget } from "../src/core/tokenBudget";
 
+describe("user-requested planning budget", () => {
+  it("allows a longer Chat response without widening automatic interventions", () => {
+    const budget = new TokenBudget({ windowMs: 600_000, maxCalls: 4, maxInputTokens: 24_000, maxOutputTokens: 2_400, maxOutputTokensPerCall: 180, maxOutputTokensPerChatCall: 600 });
+    expect(budget.outputTokenLimit(0)).toBe(180);
+    expect(budget.outputTokenLimit(0, "chat")).toBe(600);
+    expect(budget.tryReserve(1_000, 600, 0)).toMatchObject({ allowed: false, reason: "output-request-too-large" });
+    expect(budget.tryReserve(1_000, 600, 0, "chat")).toMatchObject({ allowed: true, maxOutputTokens: 600 });
+  });
+
+  it("shares the rolling limit between automatic and Chat calls", () => {
+    const budget = new TokenBudget({ windowMs: 600_000, maxCalls: 4, maxInputTokens: 24_000, maxOutputTokens: 650, maxOutputTokensPerCall: 180, maxOutputTokensPerChatCall: 600 });
+    expect(budget.tryReserve(1_000, 600, 0, "chat").allowed).toBe(true);
+    expect(budget.outputTokenLimit(1, "chat")).toBe(50);
+    expect(budget.outputTokenLimit(1)).toBe(50);
+    expect(budget.tryReserve(100, 51, 1, "chat")).toMatchObject({ allowed: false, reason: "output-token-limit" });
+  });
+
+  it("retains the old per-call cap for configurations without a Chat override", () => {
+    const budget = new TokenBudget({ windowMs: 600_000, maxCalls: 4, maxInputTokens: 100, maxOutputTokens: 100, maxOutputTokensPerCall: 25 });
+    expect(budget.outputTokenLimit(0, "chat")).toBe(25);
+  });
+});
+
 describe("TokenBudget", () => {
   it("rejects calls after either call or token capacity is exhausted", () => {
     const budget = new TokenBudget({

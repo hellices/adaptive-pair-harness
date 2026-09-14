@@ -36,6 +36,10 @@
     "onCommand:adaptivePair.dismissCurrentEvidence",
     "onCommand:adaptivePair.approveCurrentEvidence",
     "onCommand:adaptivePair.setInterventionStyle",
+    "onCommand:adaptivePair.setWorkingGoal",
+    "onCommand:adaptivePair.refreshProjectContext",
+    "onCommand:adaptivePair.toggleProjectContextSharing",
+    "onCommand:adaptivePair.draftWorkingAgreement",
     "onChatParticipant:adaptivePair.chat"
   ],
   "main": "./dist/src/extension.js",
@@ -76,6 +80,22 @@
       {
         "command": "adaptivePair.setInterventionStyle",
         "title": "Adaptive Pair: Set Intervention Style"
+      },
+      {
+        "command": "adaptivePair.setWorkingGoal",
+        "title": "Adaptive Pair: Set Working Goal"
+      },
+      {
+        "command": "adaptivePair.refreshProjectContext",
+        "title": "Adaptive Pair: Refresh Project Context"
+      },
+      {
+        "command": "adaptivePair.toggleProjectContextSharing",
+        "title": "Adaptive Pair: Toggle Project Context Sharing"
+      },
+      {
+        "command": "adaptivePair.draftWorkingAgreement",
+        "title": "Adaptive Pair: Draft Working Agreement"
       }
     ],
     "chatParticipants": [
@@ -83,8 +103,40 @@
         "id": "adaptivePair.chat",
         "name": "pair",
         "fullName": "Adaptive Pair",
-        "description": "Discuss the latest evidence from the navigator-only Adaptive Pair session.",
+        "description": "Pair using your selected Chat model: inspect project goals and code, apply reviewed edits, and run approved validation checks.",
         "commands": [
+          {
+            "name": "plan",
+            "description": "Clarify the goal, acceptance criteria, and next development step"
+          },
+          {
+            "name": "work",
+            "description": "Work on one concrete step with project tools, reviewed edits, and approved checks"
+          },
+          {
+            "name": "access",
+            "description": "Approve or revoke project access for this session and selected Chat model"
+          },
+          {
+            "name": "goal",
+            "description": "Confirm the working goal; optionally include acceptance criteria and constraints"
+          },
+          {
+            "name": "decision",
+            "description": "Record an agreed choice and its reason for this working goal"
+          },
+          {
+            "name": "context",
+            "description": "Read or refresh local project documents for the active workspace root"
+          },
+          {
+            "name": "brief",
+            "description": "Read project context and prepare a working brief with a reviewed, approved document edit"
+          },
+          {
+            "name": "checkpoint",
+            "description": "Inspect actual implementation, run an approved validation check, and assess remaining criteria"
+          },
           {
             "name": "explain",
             "description": "Explain the current evidence and trade-off"
@@ -122,6 +174,13 @@
     "configuration": {
       "title": "Adaptive Pair",
       "properties": {
+        "adaptivePair.chat.mode": {
+          "scope": "application",
+          "type": "string",
+          "enum": ["workspace-agent", "local-only"],
+          "default": "workspace-agent",
+          "description": "Interactive @pair uses the Chat model picker and bounded workspace tools by default. Workspace access, edits, and checks require approval. local-only disables interactive model and tool calls."
+        },
         "adaptivePair.enabled": {
           "type": "boolean",
           "default": true
@@ -150,7 +209,8 @@
             "vscode-copilot",
             "openai-compatible"
           ],
-          "default": "local-template"
+          "default": "local-template",
+          "description": "Provider for background navigator guidance. Interactive @pair normally uses the model selected in Chat instead."
         },
         "adaptivePair.model.baseUrl": {
           "scope": "application",
@@ -170,6 +230,7 @@
     "compile": "tsc -p tsconfig.json",
     "lint": "eslint src test",
     "test": "vitest run --passWithNoTests --exclude=dist/** --testTimeout=15000",
+    "test:host": "npm run compile && node scripts/test-extension-host.mjs",
     "test:coverage": "vitest run --coverage --passWithNoTests --exclude=dist/** --testTimeout=15000",
     "check": "npm run compile && npm run lint && npm run test",
     "package": "vsce package --no-rewrite-relative-links"

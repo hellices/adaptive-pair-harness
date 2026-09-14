@@ -2,17 +2,21 @@
 
 [Open in GitHub Codespaces](https://codespaces.new/hellices/adaptive-pair-harness?quickstart=1)
 
-Adaptive Pair Harness is an open-source VS Code extension that watches active
-TypeScript and JavaScript edits, detects a small set of high-signal changes,
-and asks concise navigator-style questions inline.
+Adaptive Pair Harness is an open-source VS Code programming pair. Interactive
+`@pair` uses the model selected in Chat to inspect project documents and source,
+work on a small agreed step, and respond to real verification results. Static
+TypeScript/JavaScript evidence remains a background sensor, not the entire loop.
 
-It is **not** an autonomous coding agent. It does not edit files, run commands,
-or write project files. Sessions start **off** and stay dormant until you
-explicitly start one.
+It is **not** an unattended coding agent. Workspace sharing needs approval;
+each file edit requires a reviewed diff and **Apply and save**, and each check
+requires separate confirmation. Sessions stay off until an explicit start or
+the developer's first interactive pairing request.
 
 ## What it is
 
-- A navigator-only pair for VS Code 1.136+
+- A developer-led programming pair for VS Code 1.136+
+- A goal-aware working session with document proposals, explicit decisions,
+  planning, and verification checkpoints
 - A shared `@pair` Chat participant plus inline preview comments
 - An evidence-backed reviewer for:
   - new import dependencies;
@@ -26,7 +30,7 @@ explicitly start one.
 
 ## What it is not
 
-- Not a driver that writes code for you
+- Not an autonomous driver that takes over the task
 - Not a background agent that changes your repository
 - Not a general-purpose language extension outside TypeScript/JavaScript today
 - Not proof of ownership over Copilot, Superpowers, Cline, or other tools it
@@ -90,9 +94,61 @@ inputs; only bounded single-line message, source, and code prefixes enter
 - GitHub Copilot installed if you want to test the official Copilot provider
 - A TypeScript or JavaScript workspace
 
-## Quick start: test in GitHub Codespaces
+## Goal-aware pairing workflow
 
-This is the fastest end-to-end validation path.
+1. Select a tool-capable model in VS Code Chat and send `@pair` your development
+   goal. Pair uses that exact model and starts the session on this user action.
+   `adaptivePair.model.provider` separately controls background navigation.
+2. Approve project access for the selected model. Pair inspects bounded project
+   guidance and relevant source; a read tool must run before a grounded answer.
+   Document-derived goals and criteria remain **proposals**.
+3. Use `@pair /plan` for read-only planning. If documentation is missing,
+   `@pair /brief` prepares a real document change for your diff review and approval.
+4. Confirm the actual task with `@pair /goal <goal>`. You can include `Goal`,
+   `Acceptance criteria`, and `Constraints` headings in the same message.
+5. Use `@pair /access` to revoke or reapprove interactive project access.
+   Each selected model needs its own approval; background sharing is separate.
+6. Ask `@pair /plan` for the next small behavior and its first test. Record an
+   agreed choice and reason with `@pair /decision <choice and reason>`; goals,
+   decisions, and recent developer replies also inform subsequent code feedback.
+7. Implement together with `@pair /work`: inspect the proposed diff and approve
+   each change. `/checkpoint` can run an approved npm validation script and feed
+   its actual output back to the model. The activity record distinguishes real
+   edits/checks from generated claims.
+
+`@pair /context` rereads documents; `@pair /session` shows the goal, phase,
+documents, and sharing state. Stop/rebuild clears working context. Refresh
+revokes sharing, and switching roots also clears the previous working goal.
+See [Goal-aware pairing](docs/goal-aware-pairing.md) for boundaries and examples.
+
+## Verify locally
+
+```bash
+npm run check
+npm run test:host
+```
+
+The first command compiles, lints, and runs the regression suite. The second
+launches an isolated Extension Development Host with a disposable fixture,
+user-data directory, extension directory, and empty npm configuration. It
+checks native extension activation, file discovery/reads, approved and denied
+edits, stale buffers, and real validation-process exit/output records.
+It does not use your signed-in profile, install into your normal IDE, or test
+a real LLM/approval dialog; automated approval callbacks are fixture-only.
+
+Use a compatible VS Code executable (1.136+). The runner detects Windows
+installations, or accepts `VSCODE_EXECUTABLE_PATH` for an explicit executable.
+It does not download an IDE or bypass an installation's update lock. If the
+installed IDE is updating, wait or point it at a separate compatible build.
+Failed-run logs and fixtures are retained in the reported temporary directory.
+Set `VSCODE_HOST_TEST_KEEP_ARTIFACTS=1` to retain a successful run's JSON report
+and logs as well; otherwise only that run's isolated directory is cleaned up.
+
+## Quick start: background navigation in GitHub Codespaces
+
+Codespaces can exercise remote document context and background navigation.
+The supervised filesystem/edit/process tools currently require a local
+`file:` workspace; use the local workflow for interactive development work.
 
 1. Select [Open in GitHub Codespaces](https://codespaces.new/hellices/adaptive-pair-harness?quickstart=1)
    or create a codespace from the repository's **Code** menu.
@@ -192,6 +248,14 @@ Adaptive Pair contributes one shared Chat participant: `@pair`.
 
 Available Chat commands:
 
+- `@pair /goal`
+- `@pair /decision`
+- `@pair /plan`
+- `@pair /work`
+- `@pair /access`
+- `@pair /context`
+- `@pair /brief`
+- `@pair /checkpoint`
 - `@pair /start`
 - `@pair /stop`
 - `@pair /session`
@@ -209,21 +273,23 @@ How it works today:
   notice are interpreted as Markdown.
 - `@pair` reads the same shared session/evidence state as the inline question;
   it does not create a separate hidden chat-specific session.
-- When a session starts, `@pair /start` and `@pair /session` include a
-  **Start Here** hint based on discovered project docs such as `README.md`,
-  `docs/**/*.md`, and `AGENTS.md`. If none exist, Pair suggests creating a
-  README or plan with the product goal, acceptance criteria, and next slice.
-- Use `@pair /why` to expand the latest inline question.
-- Use `@pair /trace` to ask for control/data-flow context when VS Code can
-  resolve a current symbol.
-- With `local-template`, `/why` and `/explain` return distinct bounded local
+- Start reads bounded `README.md`, `AGENTS.md`, `WORKING-AGREEMENT.md`, and `docs/**/*.md` content
+  locally in the selected trusted root. The **Start Here** hint distinguishes
+  discovered files, readable excerpts, and unconfirmed goals. Missing or
+  unreadable docs do not block `/plan` or an editable `/brief`.
+- Use `@pair /why` to expand the latest inline question. With approved workspace
+  access, the selected model receives that question's same-root evidence and
+  source range, then re-reads the source instead of assuming the old risk still applies.
+- Use `@pair /trace` for read-only source/search-based control and data flow.
+  Unresolved paths stay explicit rather than becoming an invented call graph.
+- In interactive `local-only` mode, `/why` and `/explain` return distinct bounded local
   summaries. `/trace` reports only the symbol and range resolved by VS Code and
   says that deeper control/data-flow analysis requires a model.
 - Fixed extension-owned Chat guidance, labels, and layout remain trusted
   Markdown. Dynamic evidence, symbol, workspace, configuration, provider-error,
   and session-result values are emitted through a separate text sink and are
   never interpolated into that Markdown.
-- Every provider response—including `local-template`, GitHub Copilot,
+- Provider prose—including `local-template`, GitHub Copilot,
   OpenAI-compatible output, and local fallback—is treated as untrusted plain
   text. Before calling `MarkdownString.appendText`, the production adapter
   inserts Unicode separators into every `://`, bare `www.`, and `@` autolink
@@ -234,6 +300,9 @@ How it works today:
   Markdown delimiters and HTML before the adapter writes the result to
   `ChatResponseStream.markdown`. Fixed extension-owned Markdown bypasses this
   plain-text path unchanged.
+- Interactive code examples use untrusted fenced code blocks with a delimiter
+  longer than any embedded backtick sequence; arbitrary Markdown/HTML and
+  command links do not become executable content.
 - Every dynamic `@pair` Chat response—local success, remote success, fallback,
   and dynamic error detail—passes through one **16,384 Unicode code-point**
   display limit. CRLF/CR line endings and unsafe control characters are
@@ -251,8 +320,9 @@ runtime.
 
 ### `local-template`
 
-Default. No remote model request is sent. Adaptive Pair generates a local,
-rule-based question from the selected evidence.
+Default. No remote model request is sent. Adaptive Pair generates rule-based
+questions or a deterministic plan/checkpoint from the supplied working brief.
+It explicitly discloses that it has not analyzed the code or executed tests.
 
 ### `vscode-copilot`
 
@@ -284,14 +354,27 @@ See the repository documentation for the full configuration reference:
 
 ## Privacy and token behavior
 
-- Adaptive Pair performs **no project-file writes**.
-- `local-template` keeps all generation local to the extension process.
-- Remote requests send **fixed kind-level evidence summaries**, not cleaned
-  analyzer/editor text or full source buffers. Evidence IDs and raw titles,
+- Background navigation performs **no project-file writes**. Interactive file
+  changes require a reviewed exact diff, explicit approval and a fresh buffer
+  check before applying and saving only the target file.
+- `adaptivePair.chat.mode = "local-only"` keeps interactive Chat local and
+  disables its workspace tools. The background provider remains separately configured.
+- Automatic evidence uses **fixed kind-level summaries**, not cleaned
+  analyzer/editor text. Evidence IDs and raw titles,
   details, sources, references, specifiers, diagnostics, URIs, and paths are
   omitted from remote prompts. The public-API summary generically covers
   declaration/API surface additions, removals, and changes involving types,
-  interfaces, and values; raw declarations are never transmitted.
+  interfaces, and values; raw declarations are not part of this projection.
+- Workspace document/code excerpts are omitted by default. Explicit session
+  consent enables a separate bounded context projection, which can contain
+  source declarations or all of a sufficiently small selected block. It does
+  not enable bulk repository uploads or tool execution. Stop, refresh, root
+  replacement, or a provider rebuild clears consent.
+- Explicit goals, recorded decisions, and recent user dialogue are reused in
+  the current working session. Chat history is scoped to this participant and
+  the current session/goal/consent epoch; assistant history is included only
+  with workspace-context consent. Old Chat UI messages are not deleted, but
+  they are excluded from replacement sessions.
 - Before that fixed projection is built, every raw automatic-evidence ID,
   title, detail, source, and reference is inspected by the same credential and
   local-resource detector used for explicit Chat fields. Any match routes the
@@ -325,13 +408,14 @@ See the repository documentation for the full configuration reference:
   part of eviction.
 - Token budgets are enforced per 10-minute window and survive configuration or
   API-key runtime rebuilds:
-  - `eco`: 2 calls / 2,000 input / 360 output tokens
-  - `balanced`: 4 calls / 6,000 input / 720 output tokens
-  - `active`: 8 calls / 12,000 input / 1,440 output tokens
+  - `eco`: 2 calls / 12,000 input / 1,200 output tokens
+  - `balanced`: 4 calls / 24,000 input / 2,400 output tokens
+  - `active`: 8 calls / 48,000 input / 4,800 output tokens
 - Before reservation, Copilot requests use the selected model's official
   `countTokens` result and OpenAI-compatible requests use a conservative UTF-8
   byte estimate of the exact serialized body. Each admitted remote call then
-  atomically reserves its input count and up to its 180-token output allowance.
+  atomically reserves its input count and output allowance: up to 180 tokens
+  for automatic/manual inline questions, or 600 for user-requested Chat.
   OpenAI-compatible requests send `max_tokens`, reject blank or conservatively
   over-limit output, and account for the greater of reported and conservative
   observed usage.
@@ -349,8 +433,8 @@ See the repository documentation for the full configuration reference:
 - If a remote request would exceed the budget, Adaptive Pair falls back to the
   local template for that intervention.
 - The 16,384-code-point Chat display cap is a UI safety boundary, not a model
-  generation, token-budget, or billing limit. The separate 180-token per-call
-  allowance governs remote admission/accounting, and the OpenAI-compatible
+  generation, token-budget, or billing limit. Separate 180/600-token per-call
+  allowances govern remote admission/accounting, and the OpenAI-compatible
   64 KiB limit bounds the complete HTTP response body.
 
 ## Coexistence
@@ -419,14 +503,17 @@ pending session first.
 
 This release is intentionally narrow:
 
-- navigator-only; no code edits or command execution
-- TypeScript/JavaScript only
+- supervised edits and existing npm validation scripts only; no arbitrary shell
+- partial document context, not a whole-repository semantic index
+- goals and decisions are explicit; no automatic requirements approval
+- checkpoints use supplied results or actual approved script exit/output records
+- automatic static evidence is TypeScript/JavaScript-only; interactive tools read text files
 - one active inline preview thread per file URI
 - evidence is limited to static dependency changes, best-effort compiler-emitted
   public declaration changes, complexity growth, and editor diagnostics
 - public API comparison is per document; imported and re-exported external
   modules are represented in emitted declarations but are not resolved
-- remote prompts are sanitized, bounded summaries rather than full-code review
+- interactive tool context is bounded; no claim of whole-repository understanding
 - coexistence detection is informational only
 - README guidance documents the implemented command flow, but GUI consent paths
   for official Copilot requests have not been manually validated end to end yet

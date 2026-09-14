@@ -15,7 +15,7 @@ const HAIR_SPACE = "\u200a";
 
 vi.mock("vscode", () => {
   class MarkdownString {
-    public value = "";
+    public constructor(public value = "") {}
 
     public appendText(value: string): this {
       vscodeState.appendedText.push(value);
@@ -28,6 +28,25 @@ vi.mock("vscode", () => {
 });
 
 describe("VS Code Chat response adapter", () => {
+  it("renders code as an untrusted fence longer than any embedded fence", () => {
+    const markdown = vi.fn();
+    const response = createVsCodeChatResponse({ markdown } as unknown as vscode.ChatResponseStream);
+    response.code!("`````\n[run](command:unsafe)\n<img src=unsafe>", "ts");
+    expect(markdown.mock.calls[0]?.[0]).toMatchObject({ isTrusted: false, supportHtml: false });
+    expect(markdown.mock.calls[0]?.[0].value).toMatch(/^``````ts\n/u);
+    expect(markdown.mock.calls[0]?.[0].value).toMatch(/\n``````\n$/u);
+  });
+
+  it("bounds generated code examples before constructing Markdown", () => {
+    const markdown = vi.fn();
+    const response = createVsCodeChatResponse({ markdown } as unknown as vscode.ChatResponseStream);
+    response.code!("a".repeat(PAIR_CHAT_RESPONSE_DISPLAY_LIMIT * 2), "typescript\nunsafe");
+    const displayed = markdown.mock.calls[0]?.[0].value as string;
+    expect(displayed.length).toBeLessThan(PAIR_CHAT_RESPONSE_DISPLAY_LIMIT + 30);
+    expect(displayed).toContain("…");
+    expect(displayed).not.toContain("unsafe");
+  });
+
   it("passes trusted Markdown directly and lets appendText escape untrusted Markdown and HTML", () => {
     vscodeState.appendedText.length = 0;
     const markdown = vi.fn();

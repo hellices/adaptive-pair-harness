@@ -28,13 +28,17 @@ import type {
 } from "./vscode/vsCodeLanguageModelProvider";
 import { createVsCodeChatResponse } from "./vscode/vsCodeChatResponse";
 import { findCurrentSymbol } from "./vscode/symbolContext";
+import { createWorkingCommandHandlers } from "./vscode/workingCommands";
+import { PairAgentSession, type PairAgentFocusedFile } from "./vscode/pairAgentSession";
+import { createPairAgentModel } from "./vscode/pairAgentModel";
+import { createPairWorkspaceTools } from "./vscode/pairWorkspaceTools";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const sharedContext = new PairSharedContext({
     enabled: true,
     active: false,
     generation: 0,
-    goal: "Navigate with concise, evidence-backed, ask-first questions.",
+    goal: "Goal not confirmed — start Pair and use @pair /plan.",
     role: "navigator",
     provider: "local-template",
     remainingCalls: 0,
@@ -121,6 +125,49 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
   };
 
+  const requireRuntime = (): PairRuntime => {
+    if (runtime === undefined) {
+      throw new Error("Adaptive Pair runtime is rebuilding. Try again in a moment.");
+    }
+    return runtime;
+  };
+
+  let agentRuntime: PairRuntime | undefined;
+  let workspaceAgent: PairAgentSession | undefined;
+  const requireWorkspaceAgent = (): PairAgentSession => {
+    const activeRuntime = requireRuntime();
+    if (workspaceAgent === undefined || agentRuntime !== activeRuntime) {
+      workspaceAgent?.dispose();
+      agentRuntime = activeRuntime;
+      workspaceAgent = new PairAgentSession({
+        snapshot: () => sharedContext.snapshot(),
+        isTrusted: () => runtime === activeRuntime && vscode.workspace.isTrusted,
+        createModel: createPairAgentModel,
+        createTools: (rootUri, isCurrent) => createPairWorkspaceTools({ rootUri: vscode.Uri.parse(rootUri), isCurrent }),
+        focusedFiles: focusedFilesForPair,
+        approveWorkspace: async (destination, rootUri, signal) => {
+          signal.throwIfAborted();
+          const choice = await vscode.window.showInformationMessage(
+            "Allow the selected Chat model to inspect this project for pairing?",
+            {
+              modal: true,
+              detail: `Model: ${destination}\nWorkspace: ${vscode.Uri.parse(rootUri).fsPath}\n\nPair can send bounded document/source excerpts and same-scope dialogue to this model and use read/search tools. Each file edit still needs a reviewed diff and Apply and save confirmation; each validation run needs separate approval. Access is scoped to this session, goal/context epoch and exact model. Use @pair /access to revoke it. Background navigator sharing is unchanged.`,
+            },
+            "Allow workspace context",
+          );
+          signal.throwIfAborted();
+          return choice === "Allow workspace context";
+        },
+        onComplete: (conversationId, prompt, phase) => {
+          if (!activeRuntime.completeAgentTurn(conversationId, prompt, phase)) {
+            throw new Error("The working session changed before this response could be recorded.");
+          }
+        },
+      });
+    }
+    return workspaceAgent;
+  };
+
   const participant = registerPairChatParticipant(
     (id, handler) =>
       vscode.chat.createChatParticipant(
@@ -134,6 +181,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           ),
       ),
     {
+      captureRuntimeFence: () => sharedContext.captureRuntimeFence(),
       captureRevisionFence: () => sharedContext.captureRevisionFence(),
       isRevisionFenceCurrent: (fence) =>
         sharedContext.isRevisionFenceCurrent(fence),
@@ -168,6 +216,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       },
     },
     {
+      workspaceAgent: {
+        enabled: () => runtime?.isWorkspaceAgentEnabled() === true,
+        run: (request, chatContext, response, signal) => requireWorkspaceAgent().run(request, chatContext, response, signal),
+      },
+      workingControl: {
+        setGoal: (prompt, signal) => requireRuntime().setWorkingGoal(prompt, signal),
+        refreshContext: (signal) => requireRuntime().refreshProjectContext(signal),
+        draftBrief: (signal) => requireRuntime().draftWorkingAgreement(signal),
+        recordDecision: (prompt, signal) => requireRuntime().recordWorkingDecision(prompt, signal),
+      },
       symbolContextProvider: createSymbolContextProvider(),
       sessionControl: {
         isSessionActive: () => runtime?.isSessionActive() ?? false,
@@ -359,6 +417,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
   );
 
+  const workingCommands = createWorkingCommandHandlers(
+    () => runtime,
+    (message) => vscode.window.showInformationMessage(message),
+  ).map((command) => vscode.commands.registerCommand(command.id, command.run));
+
   context.subscriptions.push(
     participant,
     startSession,
@@ -371,9 +434,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     approveCurrentEvidence,
     setInterventionStyle,
     configurationListener,
+    ...workingCommands,
     {
       dispose: () => {
         extensionDisposed = true;
+        workspaceAgent?.dispose();
         runtime?.dispose();
         runtime = undefined;
       },
@@ -382,6 +447,35 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   await rebuild();
 }
+
+const focusedFilesForPair = (request: vscode.ChatRequest, rootUri: string): readonly PairAgentFocusedFile[] => {
+  const root = vscode.Uri.parse(rootUri);
+  const files: PairAgentFocusedFile[] = [];
+  const add = (uri: vscode.Uri, range?: vscode.Range): void => {
+    if (vscode.workspace.getWorkspaceFolder(uri)?.uri.toString() !== rootUri) {
+      return;
+    }
+    const path = uri.path.slice(root.path.replace(/\/+$/u, "").length + 1);
+    if (path.length === 0 || path.startsWith("/") || path.split("/").some((segment) => segment === ".." || segment === ".")) {
+      return;
+    }
+    if (!files.some((file) => file.path === path)) {
+      files.push({ path, ...(range === undefined ? {} : { startLine: range.start.line + 1, endLine: range.end.line + 1 }) });
+    }
+  };
+  for (const reference of request.references ?? []) {
+    if (reference.value instanceof vscode.Uri) {
+      add(reference.value);
+    } else if (reference.value instanceof vscode.Location) {
+      add(reference.value.uri, reference.value.range);
+    }
+  }
+  const editor = vscode.window.activeTextEditor;
+  if (editor !== undefined) {
+    add(editor.document.uri, editor.selection);
+  }
+  return files.slice(0, 8);
+};
 
 const createLanguageModelApi = (
   context: vscode.ExtensionContext,

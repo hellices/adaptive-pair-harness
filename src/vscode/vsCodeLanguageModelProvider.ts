@@ -86,10 +86,7 @@ export interface PreparedCopilotCandidates {
 }
 
 export const buildCopilotPrompt = (request: ModelRequest): string =>
-  [
-    "You are an ask-first programming pair. Ask one concise question grounded only in the structured evidence.",
-    buildStructuredModelPrompt(createRemoteSafeModelRequest(request)),
-  ].join("\n");
+  buildStructuredModelPrompt(createRemoteSafeModelRequest(request));
 
 const isCodePointBoundary = (text: string, index: number): boolean =>
   index <= 0 ||

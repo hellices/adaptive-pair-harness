@@ -133,7 +133,7 @@ describe("remote model request privacy", () => {
         detail,
         source,
         references: [],
-        range: request.evidence.range,
+        range: request.evidence?.range,
       });
 
       for (const payload of [
@@ -414,8 +414,8 @@ describe("remote model request privacy", () => {
     const plan = buildPairChatPlan("why", context.snapshot(), {
       prompt: "Please explain this diagnostic.",
     });
-    if (plan.kind !== "generate") {
-      throw new Error("Expected generation plan.");
+    if (plan.kind !== "generate" || plan.evidence === undefined) {
+      throw new Error("Expected generation plan with evidence.");
     }
     expect(plan.evidence.detail).toContain(sourceCode);
     const serialized = JSON.stringify(
@@ -1011,7 +1011,7 @@ describe("remote model request privacy", () => {
     expect(prepared.sensitiveDataDetected).toBe(true);
     expect(serialized).not.toContain(basicPayload);
     expect(serialized).not.toContain(`Basic ${basicPayload}`);
-    expect(prepared.request.evidence.title).toBe(
+    expect(prepared.request.evidence?.title).toBe(
       "Dependency change detected",
     );
   });

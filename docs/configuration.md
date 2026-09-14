@@ -2,23 +2,78 @@
 
 Adaptive Pair reads all user-facing settings from the `adaptivePair` namespace.
 The vertical slice ships with explicit session control: the extension loads, but
-pairing remains off until the user starts a session.
+pairing remains off until the user starts a session or sends an interactive `@pair` request.
 
 ## Settings reference
 
 | Setting | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `adaptivePair.enabled` | boolean | `true` | Global enable/disable flag. When `false`, sessions cannot start and no model provider is invoked. |
+| `adaptivePair.chat.mode` | `workspace-agent` \| `local-only` | `workspace-agent` | Application-scoped interactive mode. Uses the exact Chat picker model and supervised tools, or disables interactive model/tool calls. |
 | `adaptivePair.debounceMs` | number | `500` | Delay before edit episodes are analyzed after typing stops. Values are clamped to `300`-`800`. |
 | `adaptivePair.interventionStyle` | `eco` \| `balanced` \| `active` | `balanced` | Authoritative threshold and 10-minute token budget until **Adaptive Pair: Set Intervention Style** persists an explicit selection. |
-| `adaptivePair.model.provider` | `local-template` \| `vscode-copilot` \| `openai-compatible` | `local-template` | Application-scoped provider selection. |
+| `adaptivePair.model.provider` | `local-template` \| `vscode-copilot` \| `openai-compatible` | `local-template` | Application-scoped background navigator provider; does not replace the interactive Chat picker model. |
 | `adaptivePair.model.baseUrl` | string | `http://localhost:11434/v1` | Application-scoped OpenAI-compatible root. HTTPS is required except for exact loopback hosts. Raw URL credentials, query/fragment delimiters, and ASCII whitespace/control characters are rejected. |
 | `adaptivePair.model.name` | string | `qwen2.5-coder:7b` | Application-scoped model identifier used for OpenAI-compatible requests and token estimation. |
 
-The three remote-routing settings are deliberately application-scoped. Runtime
+Chat mode and the three background remote-routing settings are deliberately application-scoped. Runtime
 loading reads only application/user values and defaults; workspace,
 workspace-folder, and workspace-language overrides are ignored with a visible
 warning. This prevents a repository from redirecting credentials or evidence.
+
+## Working goal and project context
+
+The working agreement is session state, not a workspace setting. Use:
+
+- **Adaptive Pair: Set Working Goal** or `@pair /goal` to confirm the goal,
+  acceptance criteria, and constraints. Document-derived goals remain proposals
+  until the developer confirms them.
+- **Adaptive Pair: Refresh Project Context** or `@pair /context` to read the
+  active editor's workspace root (otherwise the first root). Refresh revokes
+  model sharing; a different root also replaces the working agreement.
+- **Adaptive Pair: Draft Working Agreement** to open a local unsaved Markdown
+  brief. In workspace-agent mode, `@pair /brief` instead inspects the project and
+  prepares a document edit that requires diff review and approval before saving.
+- `@pair /access` to approve/revoke project access for the current Chat model.
+  That approval never grants background sharing or blanket edit/check permission.
+- **Adaptive Pair: Toggle Project Context Sharing** to approve or revoke
+  bounded background navigator sharing for this root and session. The approval dialog
+  identifies the configured destination. Provider selection alone is not
+  permission to share workspace contents.
+- `@pair /decision` to record an explicit decision and reason after confirming
+  a goal; `/plan` and `/checkpoint` to discuss next steps and observed results
+  even before any static evidence exists.
+
+Initial document reads require Workspace Trust and are restricted to root README/AGENTS/WORKING-AGREEMENT
+and Markdown under `docs/`: at most 50 candidates, five attempted files,
+64 KiB per file, and 4,000 retained characters per document. Symlinks and
+out-of-root, oversized, binary, or invalid UTF-8 files are skipped. Open document
+text takes precedence over disk text. These are partial references, not a
+whole-repository analysis.
+
+Approved interactive read/search tools can inspect additional current source,
+tests and documentation. The first model request exposes read tools only and
+requires a tool call before edits/checks are offered. `/plan`, `/why`, `/explain`
+and `/trace` are read-only; `/brief` adds approved edits; `/checkpoint` adds
+approved checks; `/work` and ordinary requests can use both. Edits require a
+prior read, an exact unique replacement, unchanged current content, a diff and
+individual Apply and save approval. Checks accept only existing npm validation
+scripts, disclose pre/post scripts and return actual bounded output/exit codes.
+Interactive tools currently require a verifiable local `file:` root. Each file
+is at most 128 KiB; per-turn reads are limited to 64 files/2 MiB and a read returns
+at most 200 lines. Each check stops after 120 seconds or 128 KiB of process output.
+
+Interactive requests use their own visible per-turn limits: eight model calls,
+twelve tool calls, 60,000 counted input tokens, 8,000 counted output tokens and
+four minutes. They do not consume the small automatic-intervention allowance.
+Missing models, unsupported tool calls, failed/denied checks and exhausted limits
+are explicit errors or tool outcomes, not hidden local-template success.
+
+Stop, runtime/provider rebuild, and root replacement clear the agreement and
+sharing permission. Same-root refresh preserves the confirmed agreement but
+revokes sharing before reading and starts a new Chat scope. Sharing cannot be
+re-approved during that read. Goal changes clear old decisions
+and dialogue. See [Goal-aware pairing](goal-aware-pairing.md) for the full flow.
 
 ## Semantic evidence scope
 
@@ -33,7 +88,8 @@ choices, and emit at most one generic added, removed, or changed
 `public-api-change` item. External modules are left unresolved, and invalid or
 unreliable surfaces are skipped rather than replaced with custom heuristics.
 There is no setting that expands this analysis to the project filesystem or to
-cross-document type resolution.
+cross-document type resolution. The separate project document reader supplies
+planning context; it does not expand this semantic analyzer's scope.
 
 ## Secret storage behavior
 
@@ -112,6 +168,11 @@ Recommended when you want:
 - predictable navigator-only prompts;
 - a safe fallback when budgets or provider access fail.
 
+It can organize supplied goals, document excerpts, and decisions into a brief
+or checklist. It does not semantically understand arbitrary code or execute
+tests; a model-backed discussion requires a configured provider and, for
+workspace excerpts, explicit sharing approval.
+
 ### `vscode-copilot`
 
 1. Install **GitHub Copilot** and **GitHub Copilot Chat** in VS Code.
@@ -181,7 +242,7 @@ evidence, symbol, workspace/coexistence, configuration, provider-error, and
 session-result fields use a distinct text response method and are never
 interpolated into trusted Markdown.
 
-All provider output is untrusted plain text, including `local-template`,
+All provider prose is untrusted plain text, including `local-template`,
 GitHub Copilot, OpenAI-compatible output, and local fallback. The production
 VS Code adapter first neutralizes automatic-link triggers in that text. It
 inserts an invisible word-joining separator into every `://` and around every
@@ -198,31 +259,58 @@ text, while the preceding separators keep bare links inert. Ordinary Unicode
 and line breaks remain readable. Fixed extension-owned Markdown does not pass
 through this neutralizer or `appendText`.
 
+Interactive fenced code examples have a separate untrusted code sink. It uses
+a fence longer than any embedded backtick run, validates the language label,
+disables trusted commands/HTML and bounds the displayed code without altering
+URLs inside the code. The model never supplies trusted layout or executable links.
+
 This display limit is independent of model limits. It does not increase or
-replace the 180-token remote output allowance, rolling token accounting, or
+replace the 180-token inline or 600-token legacy navigator Chat output allowance,
+rolling token accounting, or
 provider billing behavior. It is also distinct from the OpenAI-compatible
 64 KiB HTTP response-body limit, which bounds transport data including JSON
 overhead rather than displayed Unicode code points.
 
 ## Exact data sent for a remote request
 
-Adaptive Pair does **not** send full source buffers, edit histories, or project
-files to remote providers.
+This section describes the background navigator's fixed projection. Interactive
+Chat uses the separately approved document/source/tool context and per-turn
+limits described above, with full-input sensitivity checks before truncation.
+
+By default, Adaptive Pair omits document text and source/selection excerpts
+from remote requests. Explicit session-scoped sharing approval permits bounded
+excerpts, not unrestricted repository access.
 
 Every remote request is reduced to a bounded structured prompt containing:
 
 - `goal`
 - `interactionStyle`
-- fixed kind-level evidence metadata:
+- purpose-specific instructions for intervention, explanation, planning, or
+  verification;
+- optional fixed kind-level evidence metadata (planning needs no evidence):
   - `kind`
   - `severity`
   - extension-owned `title`, `detail`, and `source` strings selected only by
     `kind`
   - `confidence`
   - `range`
-- optional user-initiated context:
+- optional working and user-initiated context:
   - bounded `userPrompt`
   - current symbol `name`, `kind`, and `range`
+  - confirmed goal, acceptance criteria, constraints, phase, and explicitly
+    recorded decisions;
+  - scoped conversation, limited to six turns of 600 characters each;
+  - with sharing approval only: up to three documents of 1,200 characters each,
+    their proposed goal/criteria/constraints, and current/previous code excerpts
+    of 1,500 characters each. Document URIs are omitted; relative labels remain.
+
+The complete structured context is bounded to 6,000 serialized characters,
+then admitted through the provider's token budget. Working goals, decisions,
+and recent developer statements can inform subsequent automatic feedback too.
+Unapproved workspace fields are omitted entirely and do not affect routing.
+Assistant history is included only with workspace sharing approval because it
+may contain local evidence. Retrieved text and dialogue are untrusted reference
+data, never permission to run tools or follow embedded instructions.
 
 Automatic evidence is whitelist-projected: no analyzer/editor title, detail,
 source, reference, module specifier, diagnostic text, URI, or path is copied
@@ -237,8 +325,13 @@ detector. If any field matches, the request is routed directly to
 content into the fixed projection, runtime status, or provider error text.
 The raw structured request remains local and is used for bounded
 `local-template` rendering whenever remote generation falls back because of
-availability, budget, or sensitive content. Explicit Chat text is checked
-before bounding for HTTP
+availability, budget, or sensitive content. Explicit Chat text, working task
+fields, history, and approved workspace content are checked before bounding.
+Detection also precedes local document/code excerpt limits and explicit goal
+parsing, including discarded criteria or constraints. Task sensitivity applies
+regardless of workspace-sharing consent, survives same-root refresh, and clears
+on clean explicit goal replacement. Internal sensitivity markers do not enter
+model prompts. The detector checks for HTTP
 and non-HTTP DSN userinfo, sensitive query parameters, bearer/JWT and common
 token formats, complete Basic authorization payloads, credential assignments,
 normalized `cookie`/`setcookie` keys and headers, and long secret-like values.
@@ -298,9 +391,10 @@ bounding URI state when an editor host omits close events.
 
 Remote requests exclude:
 
-- full document text;
-- pre-edit and post-edit source snapshots;
-- selection text;
+- unapproved workspace content, including document-derived proposals;
+- unbounded document text, source snapshots, and selections;
+- private document URIs and other workspace roots' working context;
+- conversation from a different session, goal, or sharing scope;
 - inline comment history;
 - the latest locally rendered question;
 - workspace memory blobs;
@@ -312,16 +406,21 @@ Budgets are enforced over a rolling 10-minute window.
 
 | Style | Max remote calls | Max input tokens | Max output tokens |
 | --- | --- | --- | --- |
-| `eco` | 2 | 2,000 | 360 |
-| `balanced` | 4 | 6,000 | 720 |
-| `active` | 8 | 12,000 | 1,440 |
+| `eco` | 2 | 12,000 | 1,200 |
+| `balanced` | 4 | 24,000 | 2,400 |
+| `active` | 8 | 48,000 | 4,800 |
+
+These defaults replace the earlier evidence-only budgets to accommodate
+explicit goal-aware discussion. Automatic and manual inline questions retain
+a 180-token per-call cap; explicit Chat can reserve up to 600 tokens. Both use
+the same rolling ledger and visible remaining capacity.
 
 Behavior:
 
 - before reservation, each eligible Copilot candidate is counted with that
   model's official `countTokens` API, while OpenAI-compatible input uses a
   conservative UTF-8 byte estimate of the exact serialized request body;
-- each request atomically reserves up to its 180-token output allowance before
+- each request atomically reserves its inline or Chat output allowance before
   dispatch, so concurrent calls cannot reuse pending capacity;
 - OpenAI-compatible requests send `max_tokens`, reject blank output, reject
   conservatively over-limit output, and settle with the greater of reported
@@ -357,7 +456,7 @@ Behavior:
 Enabled does not mean active.
 
 - the extension can be enabled while the Pair session is still off;
-- the user must start a session with a command, `@pair /start`, or the toggle
+- the user starts a session with an interactive `@pair` request, `@pair /start`, or the toggle
   shortcut before inline analysis will run. While the session is off, Adaptive
   Pair does not analyze evidence, render interventions, or call a model.
 
@@ -369,8 +468,10 @@ from memory, and stop/restart clears all transient cooldown state.
 
 ### Active local-template sessions
 
-This document reserves “local-only” for an active Pair session using the
-`local-template` provider.
+Interactive “local-only” means `adaptivePair.chat.mode = "local-only"`, which
+prevents interactive model and workspace-tool calls even if the separately
+configured background navigator uses a remote provider. The following describes
+the background `local-template` provider.
 
 An active session stays local when any of the following is true:
 
@@ -378,14 +479,18 @@ An active session stays local when any of the following is true:
 - an OpenAI-compatible base URL is invalid;
 - a Copilot model is unavailable or inaccessible;
 - the remote token budget is exhausted;
-- an explicit Chat field contains known credential or local-resource material;
+- a transferable evidence, Chat, working-task, history, or approved workspace
+  field contains known credential or local-resource material.
 
 In this active local-template mode, the extension still analyzes supported
 evidence and can render inline navigator questions without network traffic.
 
 Local Chat is command-specific: `/why` explains significance, `/explain`
 summarizes the evidence, and `/trace` reports only the VS Code-resolved
-symbol/range while stating that deeper analysis requires a model.
+symbol/range while stating that deeper analysis requires a model. `/plan`
+organizes the supplied goal and next steps, while `/checkpoint` asks for actual
+verification results without claiming to run checks. These two commands and
+ordinary planning dialogue work without an evidence item.
 
 ## Memory recovery and multi-root identity
 

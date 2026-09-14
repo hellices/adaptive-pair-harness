@@ -1603,7 +1603,7 @@ describe("pair chat planning", () => {
     if (plan.kind !== "generate") {
       throw new Error("Expected generation plan.");
     }
-    expect(plan.evidence.id).toBe(sensitiveIdEvidence.id);
+    expect(plan.evidence?.id).toBe(sensitiveIdEvidence.id);
 
     let handler: PairChatRequestHandler | undefined;
     const markdown = vi.fn();

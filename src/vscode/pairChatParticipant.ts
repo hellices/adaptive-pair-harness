@@ -4,7 +4,11 @@ import type {
   ModelRequestContext,
   ModelResponse,
   ModelSymbolContext,
+  ModelConversationTurn,
+  ModelPurpose,
 } from "../core/modelRouter";
+import type { WorkingAgreement } from "../core/projectContext";
+import { collectPairConversation } from "./pairConversation";
 import type { Evidence, PairRange } from "../core/types";
 import type {
   PairDisposable,
@@ -24,16 +28,19 @@ export interface PairSessionSnapshot {
   readonly goal: string;
   readonly role: "navigator";
   readonly provider: PairProvider;
+  readonly chatMode?: "workspace-agent" | "local-only";
   readonly remainingCalls: number;
   readonly remainingInputTokens: number;
   readonly remainingOutputTokens?: number;
   readonly controlNotice: string | undefined;
   readonly configurationWarning: string | undefined;
   readonly startupGuidance?: string;
+  readonly working?: WorkingAgreement;
 }
 
 export interface PairPublishedEvidence {
   readonly uri: string;
+  readonly rootUri?: string;
   readonly evidence: Evidence;
   readonly question: string;
 }
@@ -93,6 +100,11 @@ export class PairSharedContext {
     this.releaseAllEvidenceUris();
     this.latest = undefined;
     return this.currentRuntimeRevision as PairRuntimeRevision;
+  }
+
+  public captureRuntimeFence(): () => boolean {
+    const revision = this.currentRuntimeRevision;
+    return () => revision === this.currentRuntimeRevision;
   }
 
   public endRuntime(runtimeRevision: PairRuntimeRevision): void {
@@ -345,12 +357,14 @@ const sameSessionSnapshot = (
   left.goal === right.goal &&
   left.role === right.role &&
   left.provider === right.provider &&
+  left.chatMode === right.chatMode &&
   left.remainingCalls === right.remainingCalls &&
   left.remainingInputTokens === right.remainingInputTokens &&
   left.remainingOutputTokens === right.remainingOutputTokens &&
   left.controlNotice === right.controlNotice &&
   left.configurationWarning === right.configurationWarning &&
-  left.startupGuidance === right.startupGuidance;
+  left.startupGuidance === right.startupGuidance &&
+  left.working === right.working;
 
 const appendStartupGuidanceParts = (
   parts: ChatResponseDisplayPart[],
@@ -375,14 +389,16 @@ export type PairChatPlan =
       readonly kind: "generate";
       readonly uri: string;
       readonly goal: string;
-      readonly evidence: Evidence;
+      readonly evidence?: Evidence;
       readonly context: ModelRequestContext;
-      readonly purpose: "why" | "explain" | "trace";
+      readonly purpose: Exclude<ModelPurpose, "intervention">;
+      readonly conversationId?: string;
     };
 
 export interface PairChatRequestContext {
   readonly prompt: string;
   readonly symbol?: ModelSymbolContext;
+  readonly conversation?: readonly ModelConversationTurn[];
 }
 
 export const buildPairChatPlan = (
@@ -449,6 +465,34 @@ export const buildPairChatPlan = (
         { kind: "text", value: context.session.configurationWarning },
       );
     }
+    if (context.session.chatMode !== undefined) {
+      parts.push(
+        { kind: "markdown", value: "\n\n**Interactive Chat:** " },
+        { kind: "text", value: context.session.chatMode === "local-only" ? "local-only; no model or workspace-tool calls" : "selected Chat model with bounded workspace tools; the provider and rolling budget above apply to background navigator guidance" },
+      );
+    }
+    const working = context.session.working;
+    if (working !== undefined) {
+      parts.push(
+        { kind: "markdown", value: "\n\n**Phase:** " },
+        { kind: "text", value: working.phase },
+        { kind: "markdown", value: "\n\n**Workspace context:** " },
+        { kind: "text", value: working.shareWorkspaceContext ? "sharing approved for this session" : "local only (not shared with models)" },
+        { kind: "markdown", value: "\n\n**Documents read:** " },
+        { kind: "text", value: working.project.documents.map((document) => `${document.label}${document.truncated ? " (partial)" : ""}`).join(", ") || "none" },
+      );
+      if (working.goal === undefined && working.project.suggestedGoal !== undefined) {
+        parts.push(
+          { kind: "markdown", value: "\n\n**Proposed goal — not confirmed:** " },
+          { kind: "text", value: working.project.suggestedGoal },
+        );
+      }
+      const criteria = working.acceptanceCriteria.length > 0 ? working.acceptanceCriteria : working.project.acceptanceCriteria;
+      parts.push(
+        { kind: "markdown", value: "\n\n**Acceptance criteria to verify:** " },
+        { kind: "text", value: criteria.join("; ") || "not agreed yet — clarify these with @pair /plan" },
+      );
+    }
     appendStartupGuidanceParts(parts, context.session.startupGuidance);
     return {
       kind: "message",
@@ -457,7 +501,9 @@ export const buildPairChatPlan = (
   }
 
   const latest = context.latest;
-  if (latest === undefined) {
+  const planning = command === "plan" || command === "checkpoint" ||
+    (latest === undefined && (command === undefined || command === "explain"));
+  if (latest === undefined && !planning) {
     const parts: ChatResponseDisplayPart[] = [
       {
         kind: "markdown",
@@ -484,11 +530,20 @@ export const buildPairChatPlan = (
     };
   }
 
+  const belongsToWorkingRoot = latest?.rootUri !== undefined &&
+    latest.rootUri === context.session.working?.project.rootUri;
+  const working = planning || belongsToWorkingRoot ? context.session.working : undefined;
+  const requestEvidence = planning && context.session.working !== undefined && !belongsToWorkingRoot
+    ? undefined : latest?.evidence;
+
   return {
     kind: "generate",
-    uri: latest.uri,
-    evidence: latest.evidence,
-    goal: goalForCommand(command),
+    uri: planning
+      ? working === undefined ? latest?.uri ?? "adaptive-pair:session" : working.project.rootUri ?? "adaptive-pair:session"
+      : latest!.uri,
+    ...(requestEvidence === undefined ? {} : { evidence: requestEvidence }),
+    ...(working === undefined ? {} : { conversationId: working.conversationId }),
+    goal: working?.goal ?? goalForCommand(planning && command !== "checkpoint" ? "plan" : command),
     context: {
       ...(requestContext.prompt.trim().length === 0
         ? {}
@@ -496,8 +551,21 @@ export const buildPairChatPlan = (
       ...(requestContext.symbol === undefined
         ? {}
         : { symbol: requestContext.symbol }),
+      ...(working === undefined || requestContext.conversation === undefined || requestContext.conversation.length === 0
+        ? {}
+        : { conversation: requestContext.conversation }),
+      ...(working?.goal === undefined ? {} : {
+        task: {
+          goal: working.goal,
+          acceptanceCriteria: working.acceptanceCriteria,
+          constraints: working.constraints,
+          decisions: working.decisions,
+          phase: working.phase,
+          sensitiveDataDetected: working.taskSensitiveDataDetected === true,
+        },
+      }),
     },
-    purpose: purposeForCommand(command),
+    purpose: planning ? command === "checkpoint" ? "checkpoint" : "plan" : purposeForCommand(command),
   };
 };
 
@@ -519,6 +587,10 @@ const goalForCommand = (
   command: string | undefined,
 ): string => {
   switch (command) {
+    case "plan":
+      return "Clarify the development goal and observable acceptance criteria, then propose one small next step and its first test.";
+    case "checkpoint":
+      return "Compare the working goal with observed verification, identify remaining criteria, and ask for missing test results without claiming to run them.";
     case "trace":
       return "Describe the relevant control and data flow for this evidence without inventing code context.";
     case "why":
@@ -533,15 +605,16 @@ export interface PairChatGenerator {
   generate(
     uri: string,
     goal: string,
-    evidence: Evidence,
+    evidence: Evidence | undefined,
     signal: AbortSignal,
     context: ModelRequestContext,
-    purpose?: "why" | "explain" | "trace",
+    purpose?: Exclude<ModelPurpose, "intervention">,
     revisionFence?: PairContextRevisionFence,
   ): Promise<ModelResponse>;
 }
 
 export interface PairChatContextSource {
+  captureRuntimeFence?(): () => boolean;
   captureRevisionFence(): PairContextRevisionFence;
   isRevisionFenceCurrent(fence: PairContextRevisionFence): boolean;
   snapshot(): PairContextSnapshot;
@@ -560,6 +633,16 @@ const NO_SYMBOL_CONTEXT: PairSymbolContextProvider = {
 };
 
 export interface PairChatParticipantOptions {
+  readonly workspaceAgent?: {
+    enabled(): boolean;
+    run(request: vscode.ChatRequest, context: vscode.ChatContext, response: PairChatResponse, signal: AbortSignal): Promise<vscode.ChatResult | undefined>;
+  };
+  readonly workingControl?: {
+    setGoal(prompt: string, signal: AbortSignal): Promise<string>;
+    refreshContext(signal: AbortSignal): Promise<string>;
+    draftBrief(signal: AbortSignal): Promise<string>;
+    recordDecision?(prompt: string, signal: AbortSignal): Promise<string>;
+  };
   readonly symbolContextProvider?: PairSymbolContextProvider;
   readonly sessionControl?: PairSessionControlPort;
   readonly requestLifecycle?: {
@@ -588,7 +671,7 @@ export const registerPairChatParticipant = (
     options.symbolContextProvider ?? NO_SYMBOL_CONTEXT;
   const handler: PairChatRequestHandler = async (
     request,
-    _chatContext,
+    chatContext,
     response,
     token,
   ) => {
@@ -624,14 +707,57 @@ export const registerPairChatParticipant = (
       }
 
       let snapshot = context.snapshot();
+      const runtimeIsCurrent = context.captureRuntimeFence?.() ?? (() => true);
+      const workspaceAgentRequest = options.workspaceAgent?.enabled() === true &&
+        !["start", "stop", "session", "goal", "decision", "context"].includes(request.command ?? "");
+      if (workspaceAgentRequest && snapshot.session.enabled && !snapshot.session.active && options.sessionControl !== undefined) {
+        const started = await options.sessionControl.startSession();
+        if (abortController.signal.aborted || !started.active || !runtimeIsCurrent() || options.workspaceAgent?.enabled() !== true) {
+          return;
+        }
+        snapshot = context.snapshot();
+      }
+      if (workspaceAgentRequest && snapshot.session.enabled && snapshot.session.active) {
+        if (!runtimeIsCurrent() || options.workspaceAgent?.enabled() !== true) {
+          return;
+        }
+        requestRegistration = options.requestLifecycle?.register(snapshot.session.working?.project.rootUri ?? "adaptive-pair:session", abortController);
+        if (!abortController.signal.aborted && runtimeIsCurrent() && options.workspaceAgent?.enabled() === true) {
+          return await options.workspaceAgent!.run(request, chatContext, response, abortController.signal);
+        }
+        return;
+      }
       requestRevisionFence = context.captureRevisionFence();
+      if (
+        snapshot.session.enabled && snapshot.session.active &&
+        (request.command === "goal" || request.command === "context" || request.command === "brief" || request.command === "decision")
+      ) {
+        const control = options.workingControl;
+        if (control === undefined) {
+          response.markdown("Working-goal controls are temporarily unavailable.");
+          return;
+        }
+        const message = request.command === "decision"
+          ? await control.recordDecision?.(request.prompt, abortController.signal) ?? "Decision recording is temporarily unavailable."
+          : request.command === "goal"
+          ? await control.setGoal(request.prompt, abortController.signal)
+          : request.command === "context"
+            ? await control.refreshContext(abortController.signal)
+            : await control.draftBrief(abortController.signal);
+        const current = context.snapshot();
+        if (!abortController.signal.aborted && current.session.active && current.session.generation === snapshot.session.generation) {
+          response.text(formatChatResponseForDisplay(message));
+          return conversationResult(current, current.session.working?.conversationId);
+        }
+        return;
+      }
       if (
         snapshot.session.enabled &&
         snapshot.session.active &&
-        snapshot.latest !== undefined
+        (snapshot.latest !== undefined || request.command === undefined || ["plan", "checkpoint", "explain"].includes(request.command))
       ) {
         requestRegistration = options.requestLifecycle?.register(
-          snapshot.latest.uri,
+          snapshot.latest?.uri ?? snapshot.session.working?.project.rootUri ?? "adaptive-pair:session",
           abortController,
         );
         if (abortController.signal.aborted) {
@@ -684,6 +810,13 @@ export const registerPairChatParticipant = (
       const plan = buildPairChatPlan(request.command, snapshot, {
         prompt: request.prompt,
         ...(symbol === undefined ? {} : { symbol }),
+        ...(snapshot.session.working === undefined ? {} : {
+          conversation: collectPairConversation(
+            chatContext.history ?? [],
+            snapshot.session.working.conversationId,
+            snapshot.session.working.shareWorkspaceContext,
+          ),
+        }),
       });
       if (plan.kind === "message") {
         for (const part of formatChatResponsePartsForDisplay(plan.parts)) {
@@ -713,6 +846,7 @@ export const registerPairChatParticipant = (
         return;
       }
       response.text(formatChatResponseForDisplay(generated.text));
+      return conversationResult(current, plan.conversationId);
     } catch (error: unknown) {
       if (
         abortController.signal.aborted ||
@@ -743,6 +877,11 @@ export const registerPairChatParticipant = (
 
   return register("adaptivePair.chat", handler);
 };
+
+const conversationResult = (snapshot: PairContextSnapshot, conversationId: string | undefined): vscode.ChatResult | undefined =>
+  conversationId === undefined || snapshot.session.working?.conversationId !== conversationId ? undefined : {
+    metadata: { pairConversationId: conversationId },
+  };
 
 const isCurrentGeneratedResponse = (
   current: PairContextSnapshot,

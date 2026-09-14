@@ -17,6 +17,7 @@ export interface PairConfig {
   readonly debounceMs: number;
   readonly interventionStyle: "eco" | "balanced" | "active";
   readonly provider: PairProvider;
+  readonly chatMode?: "workspace-agent" | "local-only";
   readonly baseUrl: URL | undefined;
   readonly modelName: string;
   readonly budget: TokenBudgetConfig;
@@ -42,23 +43,26 @@ export interface ConfigurationInspection {
 const STYLE_BUDGETS = {
   eco: {
     maxCalls: 2,
-    maxInputTokens: 2_000,
-    maxOutputTokens: 360,
+    maxInputTokens: 12_000,
+    maxOutputTokens: 1_200,
     maxOutputTokensPerCall: 180,
+    maxOutputTokensPerChatCall: 600,
     windowMs: 600_000,
   },
   balanced: {
     maxCalls: 4,
-    maxInputTokens: 6_000,
-    maxOutputTokens: 720,
+    maxInputTokens: 24_000,
+    maxOutputTokens: 2_400,
     maxOutputTokensPerCall: 180,
+    maxOutputTokensPerChatCall: 600,
     windowMs: 600_000,
   },
   active: {
     maxCalls: 8,
-    maxInputTokens: 12_000,
-    maxOutputTokens: 1_440,
+    maxInputTokens: 48_000,
+    maxOutputTokens: 4_800,
     maxOutputTokensPerCall: 180,
+    maxOutputTokensPerChatCall: 600,
     windowMs: 600_000,
   },
 } as const;
@@ -103,6 +107,15 @@ export function readPairConfig(workspace: ConfigurationReader): PairConfig {
         ? parseSafeRemoteEndpoint(configuredBaseUrl)
         : undefined;
   const warnings: string[] = [];
+  const chatModeSetting = readApplicationSetting(workspace, "chat.mode");
+  const chatMode: NonNullable<PairConfig["chatMode"]> = chatModeSetting.value === undefined || chatModeSetting.value === "workspace-agent"
+    ? "workspace-agent" : "local-only";
+  if (chatModeSetting.ignoredWorkspaceOverride) {
+    warnings.push("Unsafe workspace Chat mode ignored; using the application setting.");
+  }
+  if (chatModeSetting.value !== undefined && chatModeSetting.value !== "workspace-agent" && chatModeSetting.value !== "local-only") {
+    warnings.push("Unknown interactive Chat mode; using local-only.");
+  }
   if (
     providerSetting.ignoredWorkspaceOverride ||
     baseUrlSetting.ignoredWorkspaceOverride
@@ -134,6 +147,7 @@ export function readPairConfig(workspace: ConfigurationReader): PairConfig {
     debounceMs,
     interventionStyle,
     provider,
+    chatMode,
     baseUrl,
     modelName,
     budget: budgetForInterventionStyle(interventionStyle),

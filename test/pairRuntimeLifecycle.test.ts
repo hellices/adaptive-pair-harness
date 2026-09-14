@@ -97,6 +97,10 @@ const vscodeState = vi.hoisted(() => ({
   activeTextEditor: undefined as unknown,
   errorMessages: [] as string[],
   warningMessages: [] as string[],
+  sharingChoice: undefined as string | undefined,
+  sharingPrompt: undefined as Promise<string | undefined> | undefined,
+  openedDrafts: [] as string[],
+  shownDrafts: [] as unknown[],
 }));
 
 vi.mock("vscode", () => {
@@ -257,11 +261,17 @@ vi.mock("vscode", () => {
         vscodeState.errorMessages.push(message);
       },
       showInformationMessage: async () => undefined,
+      showTextDocument: async (value: unknown) => { vscodeState.shownDrafts.push(value); },
       showWarningMessage: async (message: string) => {
         vscodeState.warningMessages.push(message);
+        return vscodeState.sharingPrompt ?? vscodeState.sharingChoice;
       },
     },
     workspace: {
+      openTextDocument: async (options: { content: string }) => {
+        vscodeState.openedDrafts.push(options.content);
+        return { uri: { toString: () => "untitled:pair-brief" } };
+      },
       get workspaceFolders() {
         return vscodeState.workspaceFolders;
       },
@@ -472,10 +482,430 @@ beforeEach(() => {
   vscodeState.activeTextEditor = undefined;
   vscodeState.errorMessages.length = 0;
   vscodeState.warningMessages.length = 0;
+  vscodeState.sharingChoice = undefined;
+  vscodeState.sharingPrompt = undefined;
+  vscodeState.openedDrafts.length = 0;
+  vscodeState.shownDrafts.length = 0;
   vi.unstubAllGlobals();
 });
 
 describe("PairRuntime lifecycle ownership", () => {
+  it("records completed agent dialogue without changing its goal scope", async () => {
+    const shared = sharedContext();
+    const runtime = new PairRuntime({ config: config(), extensionContext, sharedContext: shared, languageModelApi: languageModelApi(), apiKey: undefined });
+    await runtime.startSession();
+    const conversationId = shared.snapshot().session.working!.conversationId;
+    expect(runtime.completeAgentTurn(conversationId, "We need an idempotent retry.", "implement")).toBe(true);
+    expect(shared.snapshot().session.working).toMatchObject({ conversationId, phase: "implement", recentUserDialogue: [{ role: "user", content: "We need an idempotent retry." }] });
+    expect(runtime.completeAgentTurn("old-scope", "Never record this.", "verify")).toBe(false);
+    runtime.stopSession();
+    expect(runtime.completeAgentTurn(conversationId, "Late response.", "verify")).toBe(false);
+    runtime.dispose();
+  });
+
+  it("keeps local-only Chat local even if the background provider is remote", async () => {
+    const shared = sharedContext();
+    const api = languageModelApi([{ id: "copilot", name: "Copilot" }]);
+    const send = vi.fn(api.sendRequest);
+    api.sendRequest = send;
+    const runtime = new PairRuntime({ config: config({ provider: "vscode-copilot", chatMode: "local-only" }), extensionContext, sharedContext: shared, languageModelApi: api, apiKey: undefined });
+    await runtime.startSession();
+    await runtime.generate("file:///workspace", "Plan a small step.", undefined, new AbortController().signal, { userPrompt: "What test comes first?" }, "plan");
+    expect(send).not.toHaveBeenCalled();
+    runtime.dispose();
+  });
+
+  const projectAccess = (text = "## Goal\nProtect checkout retries.\n## Acceptance criteria\n- PRIVATE_CRITERION_RETRY_ONCE") => ({
+    isTrusted: () => true,
+    stat: vi.fn(async (uri: string) => ({ size: 100, isFile: uri.endsWith(".md"), isSymbolicLink: false })),
+    readFile: vi.fn(async () => new TextEncoder().encode(text)),
+    openText: () => undefined,
+  });
+
+  const discoverReadme = () => {
+    vscodeState.findFiles.mockResolvedValue([{ relativePath: "README.md", toString: () => "file:///workspace/README.md" }]);
+  };
+
+  it("reads project contents at start but leaves the proposed goal unconfirmed", async () => {
+    discoverReadme();
+    const shared = sharedContext();
+    const port = projectAccess();
+    const runtime = new PairRuntime({ config: config(), extensionContext, sharedContext: shared, languageModelApi: languageModelApi(), apiKey: undefined, projectContextAccess: port });
+    await runtime.startSession();
+    expect(port.readFile).toHaveBeenCalledWith("file:///workspace/README.md");
+    expect(shared.snapshot().session.working?.project.suggestedGoal).toBe("Protect checkout retries.");
+    expect(shared.snapshot().session.working?.goal).toBeUndefined();
+    expect(shared.snapshot().session.working?.shareWorkspaceContext).toBe(false);
+    runtime.dispose();
+  });
+
+  it("discovers a root brief without requiring a docs directory", async () => {
+    vscodeState.findFiles.mockResolvedValue([{ relativePath: "WORKING-AGREEMENT.md", toString: () => "file:///workspace/WORKING-AGREEMENT.md" }]);
+    const shared = sharedContext();
+    const runtime = new PairRuntime({ config: config(), extensionContext, sharedContext: shared, languageModelApi: languageModelApi(), apiKey: undefined, projectContextAccess: projectAccess() });
+    await runtime.startSession();
+    expect(shared.snapshot().session.working?.project.suggestedGoalSource).toBe("WORKING-AGREEMENT.md");
+    expect(vscodeState.findFiles).toHaveBeenCalledWith(expect.stringContaining("WORKING-AGREEMENT.md"), expect.any(String), 50);
+    runtime.dispose();
+  });
+
+  it("uses an explicitly confirmed goal for evidence-free model planning without leaking unshared docs", async () => {
+    discoverReadme();
+    const shared = sharedContext();
+    const api = languageModelApi([{ id: "copilot", name: "Copilot" }]);
+    const prompts: string[] = [];
+    api.sendRequest = async (_model, prompt) => {
+      prompts.push(prompt);
+      return (async function* () { yield "First write the retry test."; })();
+    };
+    const runtime = new PairRuntime({ config: config({ provider: "vscode-copilot" }), extensionContext, sharedContext: shared, languageModelApi: api, apiKey: undefined, projectContextAccess: projectAccess() });
+    await runtime.startSession();
+    await runtime.setWorkingGoal("Prevent duplicate charges.");
+    await runtime.generate("file:///workspace", "old generic instruction", undefined, new AbortController().signal, { userPrompt: "What test comes first?" }, "plan");
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("Prevent duplicate charges.");
+    expect(prompts[0]).not.toContain("PRIVATE_CRITERION_RETRY_ONCE");
+    expect(shared.snapshot().session.goal).toBe("Prevent duplicate charges.");
+    runtime.dispose();
+  });
+
+  it("shares document context only after confirmation and revokes it on stop", async () => {
+    discoverReadme();
+    const shared = sharedContext();
+    const runtime = new PairRuntime({ config: config(), extensionContext, sharedContext: shared, languageModelApi: languageModelApi(), apiKey: undefined, projectContextAccess: projectAccess() });
+    await runtime.startSession();
+    await runtime.toggleProjectContextSharing();
+    expect(shared.snapshot().session.working?.shareWorkspaceContext).toBe(false);
+    vscodeState.sharingChoice = "Share for this session";
+    await runtime.toggleProjectContextSharing();
+    expect(shared.snapshot().session.working?.shareWorkspaceContext).toBe(true);
+    runtime.stopSession();
+    expect(shared.snapshot().session.working).toBeUndefined();
+    await runtime.startSession();
+    expect(shared.snapshot().session.working?.shareWorkspaceContext).toBe(false);
+    runtime.dispose();
+  });
+
+  it("refreshes document contents and invalidates prior sharing and conversation scope", async () => {
+    discoverReadme();
+    const shared = sharedContext();
+    const port = projectAccess();
+    const runtime = new PairRuntime({ config: config(), extensionContext, sharedContext: shared, languageModelApi: languageModelApi(), apiKey: undefined, projectContextAccess: port });
+    await runtime.startSession();
+    await runtime.setWorkingGoal("Keep checkout compatible.");
+    const previousScope = shared.snapshot().session.working?.conversationId;
+    port.readFile.mockResolvedValue(new TextEncoder().encode("## Goal\nHandle request cancellation."));
+    await runtime.refreshProjectContext();
+    expect(shared.snapshot().session.working?.project.suggestedGoal).toBe("Handle request cancellation.");
+    expect(shared.snapshot().session.working?.goal).toBe("Keep checkout compatible.");
+    expect(shared.snapshot().session.working?.conversationId).not.toBe(previousScope);
+    expect(shared.snapshot().session.working?.shareWorkspaceContext).toBe(false);
+    runtime.dispose();
+  });
+
+  it("does not retain project contents when stopped during the read", async () => {
+    discoverReadme();
+    const shared = sharedContext();
+    const pending = deferred<Uint8Array>();
+    const port = { ...projectAccess(), readFile: vi.fn(() => pending.promise) };
+    const runtime = new PairRuntime({ config: config(), extensionContext, sharedContext: shared, languageModelApi: languageModelApi(), apiKey: undefined, projectContextAccess: port });
+    const starting = runtime.startSession();
+    await vi.waitFor(() => expect(port.readFile).toHaveBeenCalledOnce());
+    runtime.stopSession();
+    pending.resolve(new TextEncoder().encode("## Goal\nMust not be retained."));
+    await starting;
+    expect(shared.snapshot().session.active).toBe(false);
+    expect(shared.snapshot().session.working).toBeUndefined();
+    runtime.dispose();
+  });
+
+  it("revokes sharing before a pending refresh and completes despite concurrent planning", async () => {
+    discoverReadme();
+    const shared = sharedContext();
+    const port = projectAccess();
+    const pending = deferred<Uint8Array<ArrayBuffer>>();
+    const prompts: string[] = [];
+    const api = languageModelApi([{ id: "copilot", name: "Copilot" }]);
+    api.sendRequest = async (_model, prompt) => {
+      prompts.push(prompt);
+      return (async function* () { yield "Check the retry boundary."; })();
+    };
+    const runtime = new PairRuntime({ config: config({ provider: "vscode-copilot" }), extensionContext, sharedContext: shared, languageModelApi: api, apiKey: undefined, projectContextAccess: port });
+    await runtime.startSession();
+    await runtime.setWorkingGoal("Keep checkout compatible.");
+    vscodeState.sharingChoice = "Share for this session";
+    await runtime.toggleProjectContextSharing();
+    const previousScope = shared.snapshot().session.working?.conversationId;
+    port.readFile.mockImplementationOnce(() => pending.promise);
+    const refreshing = runtime.refreshProjectContext();
+    await vi.waitFor(() => expect(port.readFile).toHaveBeenCalledTimes(2));
+    expect(shared.snapshot().session.working?.shareWorkspaceContext).toBe(false);
+    expect(shared.snapshot().session.working?.conversationId).not.toBe(previousScope);
+    await runtime.generate("file:///workspace", "Plan", undefined, new AbortController().signal, { userPrompt: "Consider a smaller next step." }, "plan");
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).not.toContain("PRIVATE_CRITERION_RETRY_ONCE");
+    await runtime.toggleProjectContextSharing();
+    expect(shared.snapshot().session.working?.shareWorkspaceContext).toBe(false);
+    pending.resolve(new TextEncoder().encode("## Goal\nHandle request cancellation."));
+    expect(await refreshing).not.toContain("cancelled");
+    expect(shared.snapshot().session.working?.project.suggestedGoal).toBe("Handle request cancellation.");
+    expect(shared.snapshot().session.working?.goal).toBe("Keep checkout compatible.");
+    expect(shared.snapshot().session.working?.shareWorkspaceContext).toBe(false);
+    runtime.dispose();
+  });
+
+  it("retains explicit decisions and recent developer replies for later code feedback", async () => {
+    const shared = sharedContext();
+    const api = languageModelApi([{ id: "copilot", name: "Copilot" }]);
+    const prompts: string[] = [];
+    api.sendRequest = async (_model, prompt) => {
+      prompts.push(prompt);
+      return (async function* () { yield "Check the retry boundary."; })();
+    };
+    const runtime = new PairRuntime({ config: config({ provider: "vscode-copilot" }), extensionContext, sharedContext: shared, languageModelApi: api, apiKey: undefined, projectContextAccess: projectAccess() });
+    await runtime.startSession();
+    await runtime.setWorkingGoal("Prevent duplicate charges.");
+    await runtime.recordWorkingDecision("Keep the current payment provider because migration is out of scope.");
+    await runtime.generate("file:///workspace", "Plan", undefined, new AbortController().signal, { userPrompt: "The response can be lost after a successful charge." }, "plan");
+    await runtime.generate("file:///workspace/current.ts", "Explain", evidence, new AbortController().signal, {}, "explain");
+    expect(prompts[1]).toContain("Keep the current payment provider");
+    expect(prompts[1]).toContain("response can be lost");
+    expect(shared.snapshot().session.working?.decisions).toHaveLength(1);
+    await runtime.setWorkingGoal("Build an unrelated prototype.");
+    expect(shared.snapshot().session.working?.decisions).toEqual([]);
+    expect(shared.snapshot().session.working?.recentUserDialogue).toEqual([]);
+    runtime.dispose();
+  });
+
+  it("does not record a developer turn from an already cancelled request", async () => {
+    const shared = sharedContext();
+    const runtime = new PairRuntime({ config: config(), extensionContext, sharedContext: shared, languageModelApi: languageModelApi(), apiKey: undefined, projectContextAccess: projectAccess() });
+    await runtime.startSession();
+    await runtime.setWorkingGoal("Protect retries.");
+    const abort = new AbortController();
+    abort.abort();
+    await expect(runtime.generate("file:///workspace", "Plan", undefined, abort.signal, { userPrompt: "This turn was cancelled." }, "plan")).rejects.toThrow();
+    expect(shared.snapshot().session.working?.recentUserDialogue).toEqual([]);
+    runtime.dispose();
+  });
+
+  it("does not retain developer dialogue cancelled during model selection", async () => {
+    const shared = sharedContext();
+    const selection = deferred<readonly CopilotModelReference[]>();
+    const selectedModel = { id: "copilot", name: "Copilot" };
+    const prompts: string[] = [];
+    const api = languageModelApi([selectedModel]);
+    const selectModels = vi.fn(() => selection.promise);
+    api.selectChatModels = selectModels;
+    api.sendRequest = async (_model, prompt) => {
+      prompts.push(prompt);
+      return (async function* () { yield "Check the retry boundary."; })();
+    };
+    const runtime = new PairRuntime({ config: config({ provider: "vscode-copilot" }), extensionContext, sharedContext: shared, languageModelApi: api, apiKey: undefined, projectContextAccess: projectAccess() });
+    await runtime.startSession();
+    await runtime.setWorkingGoal("Protect retries.");
+    const abort = new AbortController();
+    const generating = runtime.generate("file:///workspace", "Checkpoint", undefined, abort.signal, { userPrompt: "Cancelled: replace the payment provider." }, "checkpoint");
+    const cancelled = expect(generating).rejects.toThrow();
+    await vi.waitFor(() => expect(selectModels).toHaveBeenCalledOnce());
+    abort.abort();
+    selection.resolve([selectedModel]);
+    await cancelled;
+    expect(prompts).toHaveLength(0);
+    expect(shared.snapshot().session.working?.recentUserDialogue).toEqual([]);
+    expect(shared.snapshot().session.working?.phase).toBe("plan");
+    await runtime.generate("file:///workspace", "Plan", undefined, new AbortController().signal, { userPrompt: "Keep the existing retry contract." }, "plan");
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).not.toContain("replace the payment provider");
+    expect(shared.snapshot().session.working?.recentUserDialogue).toEqual([{ role: "user", content: "Keep the existing retry contract." }]);
+    runtime.dispose();
+  });
+
+  it("provides approved current code and document excerpts to the model", async () => {
+    discoverReadme();
+    const source = document("file:///workspace/discount.ts", "export function discount(total: number) { return total * 0.1; }", 1);
+    vscodeState.textDocuments = [source];
+    vscodeState.activeTextEditor = { document: source, selection: { isEmpty: false, active: { line: 0, character: 0 }, start: { line: 0, character: 0 }, end: { line: 0, character: 65 } } };
+    const prompts: string[] = [];
+    const api = languageModelApi([{ id: "copilot", name: "Copilot" }]);
+    api.sendRequest = async (_model, prompt) => {
+      prompts.push(prompt);
+      return (async function* () { yield "Check the discount acceptance test."; })();
+    };
+    const shared = sharedContext();
+    const runtime = new PairRuntime({ config: config({ provider: "vscode-copilot" }), extensionContext, sharedContext: shared, languageModelApi: api, apiKey: undefined, projectContextAccess: projectAccess() });
+    await runtime.startSession();
+    vscodeState.sharingChoice = "Share for this session";
+    await runtime.toggleProjectContextSharing();
+    await runtime.generate("file:///workspace", "Plan", undefined, new AbortController().signal, { userPrompt: "Review the selected behavior." }, "plan");
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("PRIVATE_CRITERION_RETRY_ONCE");
+    expect(prompts[0]).toContain("total * 0.1");
+    expect(prompts[0]).not.toContain("file:///workspace");
+    runtime.dispose();
+  });
+
+  it("keeps a document with discarded sensitive text local only when sharing is approved", async () => {
+    discoverReadme();
+    const sensitiveText = "api_key=project-suffix-credential";
+    const port = projectAccess(`## Goal\nProtect retries.\n${"ordinary project details ".repeat(200)}\n${sensitiveText}`);
+    const shared = sharedContext();
+    const prompts: string[] = [];
+    const api = languageModelApi([{ id: "copilot", name: "Copilot" }]);
+    api.sendRequest = async (_model, prompt) => {
+      prompts.push(prompt);
+      return (async function* () { yield "Define the retry test."; })();
+    };
+    const runtime = new PairRuntime({ config: config({ provider: "vscode-copilot" }), extensionContext, sharedContext: shared, languageModelApi: api, apiKey: undefined, projectContextAccess: port });
+    await runtime.startSession();
+    expect(shared.snapshot().session.working?.project.documents[0]?.text).not.toContain(sensitiveText);
+    await runtime.generate("file:///workspace", "Plan", undefined, new AbortController().signal, {}, "plan");
+    expect(prompts).toHaveLength(1);
+    vscodeState.sharingChoice = "Share for this session";
+    await runtime.toggleProjectContextSharing();
+    const result = await runtime.generate("file:///workspace", "Plan", undefined, new AbortController().signal, {}, "plan");
+    expect(prompts).toHaveLength(1);
+    expect(result).toMatchObject({ inputTokens: 0, outputTokens: 0 });
+    expect(prompts[0]).not.toContain("sensitiveDataDetected");
+    runtime.dispose();
+  });
+
+  it.each(["current", "previous"] as const)("checks the complete %s code region before character truncation", async (sensitiveVersion) => {
+    const prefix = `export const description = '${"ordinary details ".repeat(150)}';\n`;
+    const sensitiveCode = `${prefix}export const api_key = 'truncated-code-credential';`;
+    const ordinaryCode = `${prefix}export const behavior = 'retry once';`;
+    const source = document("file:///workspace/long-context.ts", sensitiveVersion === "current" ? sensitiveCode : ordinaryCode);
+    const range = { start: { line: 0, character: 0 }, end: { line: 1, character: 50 } };
+    vscodeState.textDocuments = [source];
+    vscodeState.activeTextEditor = { document: source, selection: { isEmpty: false, active: range.start, ...range } };
+    const prompts: string[] = [];
+    const api = languageModelApi([{ id: "copilot", name: "Copilot" }]);
+    api.sendRequest = async (_model, prompt) => {
+      prompts.push(prompt);
+      return (async function* () { yield "Test the retry behavior."; })();
+    };
+    const runtime = new PairRuntime({ config: config({ provider: "vscode-copilot" }), extensionContext, sharedContext: sharedContext(), languageModelApi: api, apiKey: undefined, projectContextAccess: projectAccess() });
+    await runtime.startSession();
+    const invoke = () => sensitiveVersion === "current"
+      ? runtime.generate("file:///workspace", "Plan", undefined, new AbortController().signal, {}, "plan")
+      : (runtime as unknown as {
+        intervene(document: TestDocument, evidence: Evidence, source: "automatic", goal: string, previousText: string): Promise<void>;
+      }).intervene(source, { ...evidence, range }, "automatic", "Review the changed behavior.", sensitiveCode);
+    await invoke();
+    expect(prompts).toHaveLength(1);
+    vscodeState.sharingChoice = "Share for this session";
+    await runtime.toggleProjectContextSharing();
+    await invoke();
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).not.toContain("truncated-code-credential");
+    expect(prompts[0]).not.toContain("sensitiveDataDetected");
+    runtime.dispose();
+  });
+
+  it.each([
+    ["goal", `Goal: ${"ordinary goal words ".repeat(50)}api_key=goal-suffix-credential`],
+    ["criterion", `Goal: Protect retries.\nAcceptance criteria:\n- ${"observable behavior ".repeat(20)}api_key=criterion-suffix-credential`],
+    ["constraint", `Goal: Protect retries.\nConstraints:\n- ${"compatibility detail ".repeat(20)}api_key=constraint-suffix-credential`],
+    ["discarded criterion", `Goal: Protect retries.\nAcceptance criteria:\n${Array.from({ length: 8 }, (_unused, index) => `- Check behavior ${index}.`).join("\n")}\n- api_key=discarded-criterion-credential`],
+  ].flatMap(([field, input]) => [false, true].map((approved) => ({ field: field!, input: input!, approved }))))("retains pre-parsing sensitivity for $field independently of sharing: $approved", async ({ input, approved }) => {
+    const shared = sharedContext();
+    const prompts: string[] = [];
+    const api = languageModelApi([{ id: "copilot", name: "Copilot" }]);
+    api.sendRequest = async (_model, prompt) => {
+      prompts.push(prompt);
+      return (async function* () { yield "Define the next behavior."; })();
+    };
+    const runtime = new PairRuntime({ config: config({ provider: "vscode-copilot" }), extensionContext, sharedContext: shared, languageModelApi: api, apiKey: undefined, projectContextAccess: projectAccess() });
+    await runtime.startSession();
+    await runtime.setWorkingGoal(input);
+    if (approved) {
+      vscodeState.sharingChoice = "Share for this session";
+      await runtime.toggleProjectContextSharing();
+    }
+    await runtime.generate("file:///workspace", "Plan", undefined, new AbortController().signal, {}, "plan");
+    expect(prompts).toHaveLength(0);
+    await runtime.refreshProjectContext();
+    await runtime.generate("file:///workspace", "Plan", undefined, new AbortController().signal, {}, "plan");
+    expect(prompts).toHaveLength(0);
+    await runtime.setWorkingGoal("Use a clean replacement goal.");
+    await runtime.generate("file:///workspace", "Plan", undefined, new AbortController().signal, {}, "plan");
+    expect(prompts).toHaveLength(1);
+    runtime.dispose();
+  });
+
+  it("does not grant sharing when a consent dialog finishes after stop", async () => {
+    const shared = sharedContext();
+    const pending = deferred<string | undefined>();
+    const runtime = new PairRuntime({ config: config(), extensionContext, sharedContext: shared, languageModelApi: languageModelApi(), apiKey: undefined, projectContextAccess: projectAccess() });
+    await runtime.startSession();
+    vscodeState.sharingPrompt = pending.promise;
+    const sharing = runtime.toggleProjectContextSharing();
+    runtime.stopSession();
+    pending.resolve("Share for this session");
+    await sharing;
+    expect(shared.snapshot().session.working).toBeUndefined();
+    runtime.dispose();
+  });
+
+  it("uses the active selection instead of another document's evidence range for planning", async () => {
+    const lines = Array.from({ length: 100 }, (_unused, line) => `export const value${line} = ${line};`);
+    lines[5] = "export const selectedBusinessRule = 'retry once';";
+    lines[95] = "export const unrelatedTailRule = 'outside the selection';";
+    const source = document("file:///workspace/selected.ts", lines.join("\n"));
+    const other = document("file:///workspace/other.ts", lines.join("\n"));
+    vscodeState.textDocuments = [other, source];
+    vscodeState.activeTextEditor = { document: source, selection: { isEmpty: false, active: { line: 5, character: 0 }, start: { line: 5, character: 0 }, end: { line: 5, character: 45 } } };
+    const prompts: string[] = [];
+    const api = languageModelApi([{ id: "copilot", name: "Copilot" }]);
+    api.sendRequest = async (_model, prompt) => {
+      prompts.push(prompt);
+      return (async function* () { yield "Test the selected retry behavior."; })();
+    };
+    const runtime = new PairRuntime({ config: config({ provider: "vscode-copilot" }), extensionContext, sharedContext: sharedContext(), languageModelApi: api, apiKey: undefined, projectContextAccess: projectAccess() });
+    await runtime.startSession();
+    vscodeState.sharingChoice = "Share for this session";
+    await runtime.toggleProjectContextSharing();
+    const otherEvidence = { ...evidence, range: { start: { line: 95, character: 0 }, end: { line: 95, character: 45 } } };
+    await runtime.generate("file:///workspace", "Plan", otherEvidence, new AbortController().signal, { userPrompt: "Review my selected behavior." }, "plan");
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("selectedBusinessRule");
+    expect(prompts[0]).not.toContain("unrelatedTailRule");
+    runtime.dispose();
+  });
+
+  it("does not substitute active code when the requested evidence document is closed", async () => {
+    const source = document("file:///workspace/active.ts", "export const activeDocumentOnly = 'unrelated';");
+    vscodeState.textDocuments = [source];
+    vscodeState.activeTextEditor = { document: source, selection: { isEmpty: false, active: { line: 0, character: 0 }, start: { line: 0, character: 0 }, end: { line: 0, character: 50 } } };
+    const prompts: string[] = [];
+    const api = languageModelApi([{ id: "copilot", name: "Copilot" }]);
+    api.sendRequest = async (_model, prompt) => {
+      prompts.push(prompt);
+      return (async function* () { yield "The original source is unavailable."; })();
+    };
+    const runtime = new PairRuntime({ config: config({ provider: "vscode-copilot" }), extensionContext, sharedContext: sharedContext(), languageModelApi: api, apiKey: undefined, projectContextAccess: projectAccess() });
+    await runtime.startSession();
+    vscodeState.sharingChoice = "Share for this session";
+    await runtime.toggleProjectContextSharing();
+    await runtime.generate("file:///workspace/closed.ts", "Explain", evidence, new AbortController().signal, {}, "why");
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).not.toContain("activeDocumentOnly");
+    runtime.dispose();
+  });
+
+  it("opens an editable unsaved brief instead of writing a project file", async () => {
+    const runtime = new PairRuntime({ config: config(), extensionContext, sharedContext: sharedContext(), languageModelApi: languageModelApi(), apiKey: undefined, projectContextAccess: projectAccess() });
+    await runtime.startSession();
+    await runtime.setWorkingGoal("Prevent duplicate charges.");
+    const result = await runtime.draftWorkingAgreement();
+    expect(vscodeState.openedDrafts).toHaveLength(1);
+    expect(vscodeState.openedDrafts[0]).toContain("Prevent duplicate charges.");
+    expect(vscodeState.openedDrafts[0]).toContain("## Acceptance criteria");
+    expect(vscodeState.shownDrafts).toHaveLength(1);
+    expect(result).toContain("No project file was written");
+    runtime.dispose();
+  });
+
   it.each([
     ["first", 1],
     ["second", 2],
@@ -697,7 +1127,7 @@ describe("PairRuntime lifecycle ownership", () => {
       "Start here: Project context found in README.md, docs/superpowers/plans/2026-09-12-plan.md.",
     );
     expect(shared.snapshot().session.startupGuidance).toContain(
-      "Use those docs to identify the product goal, acceptance criteria, and next implementation slice",
+      "Use @pair /plan to compare the documents with your goal and agree on the next implementation slice",
     );
     expect(shared.snapshot().session.startupGuidance).not.toContain(
       "private.md",
