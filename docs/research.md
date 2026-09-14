@@ -171,7 +171,7 @@ surfaces.
 | Capability | Current platform evidence | Architectural decision |
 |---|---|---|
 | Chat participant | The Chat Participant API provides an `@`-mentioned assistant that owns its request flow and receives the model selected in Chat. [17][18] | Keep `@pair` as a controlled, model-selecting fallback surface. |
-| Extension tools | Language Model Tools can be contributed by Marketplace extensions, included in custom agents, and given confirmation behavior. [19] | Expose Pair Runtime operations through extension tools. |
+| Extension tools | Language Model Tools can be contributed by Marketplace extensions, included in custom agents, restricted with `when` clauses, and given confirmation behavior. [19] | Expose Pair Runtime operations through mode-aware extension tools and revalidate every call. |
 | Custom agents | `.agent.md` files define instructions, model choice, tools, visibility in the agent picker, and agent-to-agent handoffs. [20] | Use an Agent Plugin for the native picker surface. Keep human-to-AI edit handoff in the Pair Runtime. |
 | Agent plugins | Plugins package skills, MCP servers, and Copilot-specific custom agents, hooks, and commands for marketplace or repository installation. [21] | Distribute the picker customization separately from, but versioned with, the VSIX. |
 | Agent sessions | Native sessions provide shared context, pause/resume, checkpoints, multiple surfaces, and handoff. [22] | Reuse presentation/session UX, but keep pairing authority in the open core. |
@@ -232,11 +232,32 @@ another control mechanism.
 Every adapter must demonstrate the same observable Growth, Pair, and Delivery
 contracts. An adapter that cannot preserve a mode does not expose that mode.
 
+### Instructions and tools form one harness contract
+
+Instructions alone are probabilistic guidance. A tool list alone can still be
+misleading or unsafe if it is stale, too broad, or inconsistent with the
+current owner. v2 therefore compiles both from the same immutable Pair state.
+
+Native model selection, streaming, session UI, confirmation, diffs, and
+checkpoints are valuable infrastructure. Workspace read, edit, test, terminal,
+web, and MCP capabilities are reused directly only when their scope and
+failure semantics match the mode contract; otherwise they are wrapped or
+excluded. Invocation-time core authorization remains mandatory even when the
+native UI hid the tool correctly.
+
 ### Local, low-noise observation
 
 The v1 evidence engine is useful as a background sensor, but intervention
 frequency is not proof of value. Local deterministic analysis can recommend
 questions; remote background model observation is off by default.
+
+### Ambient presence without ambient surveillance
+
+The product must be able to start with an idea, an existing repository, or work
+already in progress. A workspace-level Presence layer maintains bounded local
+continuity and makes the AI available beside normal development. It does not
+stream raw activity to a remote model, infer mental state from silence, or
+acquire edit authority from observation.
 
 ### Explicit and correctable personalization
 

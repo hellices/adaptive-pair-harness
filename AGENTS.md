@@ -4,6 +4,7 @@
 
 - Write all repository documentation in English for an international hackathon audience. Conversation with the user may follow their preferred language.
 - Use `README.md` as the public entry point, `docs/design.md` for the current design and open decisions, and `docs/research.md` for evidence and rationale.
+- Use `docs/implementation-plan.md` for the current reviewed implementation sequence; replace it deliberately when a later milestone receives its own plan rather than creating competing active plans.
 - Use `docs/archive/` only for clearly labeled historical versions. Workflow defaults must not create tool-specific or recovery-specific documentation directories.
 - Integrate useful session notes into the relevant design or research section instead of creating parallel handoff reports or duplicate drafts.
 - Distinguish confirmed requirements, proposed design choices, verified evidence, and implemented behavior. Publishing a draft does not approve it or authorize implementation.

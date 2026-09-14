@@ -63,6 +63,19 @@ Both participants may propose direction, question assumptions, and edit code.
 The developer can interrupt at any time. The AI never gains edit authority from
 a model response alone.
 
+Adaptive Pair can accompany normal development rather than requiring work to
+begin inside a special agent request. After the developer explicitly enables
+Pair Presence for a trusted workspace, it can:
+
+- help start a new product or repository;
+- begin a fresh task in an existing project;
+- join work that is already in progress;
+- remain quietly aware between explicit work units;
+- resume after interruption by reconciling the actual workspace first.
+
+Presence means bounded local observation and availability, not continuous
+remote model surveillance or permission to act.
+
 ### What "complete" means
 
 Development previews may build one mode at a time, but v2.0 stable is complete
@@ -136,6 +149,9 @@ The stable v2.0 release includes:
 
 - VS Code as the first host;
 - complete Growth, Pair, and Delivery mode contracts;
+- greenfield, existing-project, join-in-progress, and resume entry paths;
+- workspace-level Pair Presence that can observe quietly without an active
+  work unit;
 - a per-session learning agreement that distinguishes new capabilities,
   already-familiar work, human-owned practice, and delegatable mechanical work;
 - a Growth Mode hint ladder, answer-reveal boundary, and independent transfer
@@ -182,8 +198,10 @@ packages/
   protocol/          Versioned commands, events, snapshots, and JSON schemas
   session-core/      Pure reducers, state machines, and authority decisions
   runtime/           Effect coordinator, journal, reconciliation, and ports
+  presence/          Workspace presence, entry snapshots, observation policy
   modes/             Growth, Pair, Delivery, and optional cadence policies
   restraint/         Tool gates, hint ladder, answer boundary, transfer checks
+  harness/           Instruction compiler, tool catalog, policy, native mapping
   evidence/          Evidence contracts, ranking, freshness, and TS/JS sensors
   profile/           Explicit preferences, profile proposals, and store ports
   evaluation/        Local metrics, experiment records, and export schemas
@@ -199,12 +217,16 @@ Dependency rules:
 - `protocol` has no product dependencies.
 - `session-core` depends only on `protocol` and injected deterministic
   utilities.
+- `presence` turns bounded host events into local observation episodes and
+  entry snapshots; it cannot authorize workspace mutation.
 - `modes` reads protocol snapshots and emits policy proposals; it cannot
   invoke effects.
 - `restraint` applies mode-specific capability and response policies without
   owning session state.
-- `runtime` depends inward on `session-core`, `modes`, `restraint`, and port
-  interfaces.
+- `harness` compiles instruction and tool views from immutable Pair state; it
+  cannot grant authority beyond a core decision.
+- `runtime` depends inward on `session-core`, `modes`, `restraint`, `harness`,
+  and port interfaces.
 - `evidence`, `profile`, and `evaluation` communicate through protocol types.
 - host, model, storage, and UI adapters depend on the runtime, never the other
   way around.
@@ -222,13 +244,17 @@ VS Code Agent Plugin -----+
 @pair Chat participant ---+--> Surface adapter
                                 |
                                 v
+                         Harness kernel
+                    (instructions + tool view)
+                                |
+                                v
                       Pair Runtime coordinator
                                 |
-       +----------------+-------+---------+----------------+
-       |                |                 |                |
-       v                v                 v                v
- Session core      Mode policy     Restraint engine   Evidence engine
- (source of truth) (proposals)     (capability gate)  (local observations)
+  +---------------+---------------+---------------+----------------+
+  |               |               |               |                |
+  v               v               v               v                v
+Session core  Pair Presence   Mode policy   Restraint engine  Evidence engine
+(authority)   (local context) (proposals)   (capability gate) (observations)
             |
             v
        Authorized effects
@@ -258,8 +284,10 @@ session core does not depend on either path.
 - evidence and privacy classifications;
 - local evaluation records.
 
-Every command and event has an opaque ID, session ID, expected revision, actor,
-and timestamp supplied by an injected clock. Schemas reject unknown fields.
+Every command and event has an opaque ID, optional task session ID, expected
+Pair runtime revision, actor, and timestamp supplied by an injected clock. The
+runtime processes it under one workspace stream ID. Schemas reject unknown
+fields.
 Protocol evolution is additive within a major version and uses explicit
 migrations across major versions.
 
@@ -302,7 +330,28 @@ A policy receives an immutable snapshot and recent event. It may emit:
 Policies cannot grant authority, write files, run checks, persist profile data,
 or override a human command.
 
-### 5.5 Restraint engine
+### 5.5 Pair Presence
+
+Pair Presence receives bounded local host events:
+
+- stable edit episodes, not raw keystroke streams;
+- active document, selection, and symbol changes;
+- saves and external file changes;
+- editor diagnostics;
+- observed test and task results;
+- workspace, branch, and dirty-state changes;
+- explicit developer controls such as `Ask`, `Pair here`, `Stay quiet`,
+  `Pause`, and `Take over`.
+
+It keeps a bounded in-memory observation window and emits semantic summaries to
+the runtime. It does not infer that silence means confusion, that an error means
+low ability, or that navigation means consent.
+
+No remote model receives the continuous event stream. A model receives only a
+bounded, consented summary when an intervention or explicit request requires
+reasoning.
+
+### 5.6 Restraint engine
 
 The restraint engine converts the active mode and learning agreement into
 enforceable capabilities:
@@ -319,7 +368,7 @@ tool restrictions, structured responses, or other controls may contribute, but
 the observable mode contract is the product boundary. No adapter may advertise
 a mode it cannot preserve.
 
-### 5.6 Evidence engine
+### 5.7 Evidence engine
 
 The evidence engine accepts local observations from host-specific sensors and
 normalizes them into bounded evidence:
@@ -336,7 +385,7 @@ privacy classification, and the work unit that owned the observation. The
 engine may recommend an intervention; the runtime and active policy decide
 whether it is timely.
 
-### 5.7 Profile boundary
+### 5.8 Profile boundary
 
 The profile contains only explicit preferences and developer-approved
 reflections, for example:
@@ -355,13 +404,78 @@ The first release uses a local profile scoped to the OS/VS Code user. A
 changing the session core. Profile sync is not required for a complete local
 pairing session.
 
+### 5.9 Harness kernel
+
+The harness kernel turns immutable Pair state into two synchronized products:
+
+1. an instruction envelope describing the current product, mode, learning
+   agreement, work unit, evidence, and response boundary;
+2. a tool view describing which capabilities are visible and what preconditions
+   each invocation must satisfy.
+
+Instructions explain expected behavior. Tools and the session core enforce
+authority. A model that ignores an instruction still cannot gain a capability
+that the tool view or core denies.
+
+The instruction layers are deterministic and versioned:
+
+1. product identity and non-negotiable mode meanings;
+2. active mode and restraint contract;
+3. confirmed learning agreement;
+4. current work unit, owner, scope, verification, and stopping condition;
+5. bounded local observations and evidence;
+6. current user request;
+7. repository and tool text, quoted as untrusted reference data.
+
+Later layers add task information but cannot override earlier authority or
+privacy rules. The compiled envelope records its instruction-set version,
+Pair runtime revision, authority epoch, and maximum response class.
+
+Every tool descriptor declares:
+
+- stable name and version;
+- read, mutation, verification, network, or external-side-effect class;
+- supported modes;
+- required actor and edit owner;
+- whether an explicit user action is required and how its one-shot grant is
+  correlated;
+- scope and consent requirements;
+- input and output schemas;
+- approval behavior;
+- retry and unknown-completion policy;
+- sensitivity and display bounds.
+
+The visible tool list is a projection for model guidance, not the security
+boundary. Every invocation repeats the same checks against the latest core
+snapshot.
+
 ## 6. Domain model
 
-### 6.1 Pair session
+The immutable `PairRuntimeSnapshot` is the state supplied to the harness. It
+contains the protocol version, one monotonic runtime revision, workspace-level
+Pair Presence, and an optional task-scoped Pair Session. Commands and tool
+views use the runtime revision; only the active session carries an authority
+epoch.
+
+### 6.1 Pair Presence
+
+`PairPresence` is workspace-scoped and can outlive an individual task:
+
+- workspace identity and trust state;
+- status: `off`, `observing`, `engaged`, `quiet`, or `paused`;
+- observation window revision and retention bounds;
+- active entry snapshot, if work is being joined;
+- intervention style, cooldown, and explicit quiet controls;
+- current task session ID, if one exists.
+
+Presence has no edit owner and cannot authorize operations. It provides
+continuity and context to a task-scoped Pair Session.
+
+### 6.2 Pair session
 
 A `PairSession` snapshot contains:
 
-- protocol version, session ID, revision, and authority epoch;
+- session ID and authority epoch;
 - status and pause reason;
 - confirmed goal and observable completion criteria;
 - active operating mode and mode configuration;
@@ -375,7 +489,7 @@ A `PairSession` snapshot contains:
 
 Chat history is presentation context, not authoritative state.
 
-### 6.2 Learning agreement
+### 6.3 Learning agreement
 
 At session start, the developer confirms a `LearningAgreement`:
 
@@ -390,7 +504,24 @@ At session start, the developer confirms a `LearningAgreement`:
 The AI may propose this split, but it never infers or confirms it from behavior
 alone. The developer can change it at any work-unit boundary.
 
-### 6.3 Work unit
+### 6.4 Entry snapshot
+
+When joining an existing project or in-progress task, the runtime creates an
+`EntrySnapshot` from the actual workspace:
+
+- workspace and branch identity;
+- dirty, staged, and untracked file summaries;
+- open and active documents;
+- current document versions or hashes;
+- active diagnostics;
+- recent observed verification results;
+- developer-confirmed goal, constraints, protected changes, and resume point.
+
+The snapshot is local and bounded. Existing changes are treated as
+developer-owned until explicitly assigned to a work unit. Adaptive Pair
+observes before proposing action.
+
+### 6.5 Work unit
 
 Every code-changing activity belongs to one `WorkUnit`:
 
@@ -412,7 +543,7 @@ a human edit that intersects an AI-owned scope invalidates affected pending AI
 operations and requires reconciliation. Adaptive Pair never locks the developer
 out of the editor.
 
-### 6.4 Assistance state
+### 6.6 Assistance state
 
 Growth Mode records:
 
@@ -424,7 +555,7 @@ Growth Mode records:
 
 These records describe the chosen process. They are not a global ability score.
 
-### 6.5 Operation ledger
+### 6.7 Operation ledger
 
 Every read, edit, check, or external action has an operation record:
 
@@ -439,7 +570,7 @@ Only `confirmed` operations support success claims. `unknown` means an effect
 may have occurred but its final state was not observed; it is never
 automatically replayed when state-changing.
 
-### 6.6 Evidence and reflection
+### 6.8 Evidence and reflection
 
 Evidence describes an observation, not a verdict about the developer. A
 reflection is a proposed summary at session close. It enters the profile only
@@ -447,7 +578,24 @@ after the developer reviews and accepts it.
 
 ## 7. State machines
 
-### 7.1 Session state
+### 7.1 Presence state
+
+```text
+off
+  -> observing
+  -> engaged
+  -> quiet
+  -> observing
+  -> paused
+  -> observing | off
+```
+
+`observing` means local bounded sensing is active. `engaged` means a task
+session or explicit interaction is active. `quiet` suppresses proactive
+interventions while preserving local continuity. `paused` stops observation
+and model disclosure until the developer resumes.
+
+### 7.2 Session state
 
 ```text
 inactive
@@ -472,7 +620,7 @@ Allowed variations:
 A fatal adapter error pauses the session with an explicit reason. It does not
 silently close the session or fabricate recovery.
 
-### 7.2 Work-unit state
+### 7.3 Work-unit state
 
 ```text
 proposed
@@ -494,7 +642,7 @@ move to `cancelled`. A unit is completed only after its required verification
 has an observed result or the agreement explicitly defined a non-executable
 review method.
 
-### 7.3 Handoff
+### 7.4 Handoff
 
 A handoff proposal has no authority effect. Acceptance:
 
@@ -744,26 +892,173 @@ When an adapter cannot satisfy a mode, Adaptive Pair disables that mode for the
 adapter and explains why. It does not weaken or rename the product value to fit
 a particular coding agent.
 
+### 9.7 Native capability mapping
+
+Adaptive Pair reuses native infrastructure where it preserves the mode
+contract, and wraps workspace capabilities where direct exposure would bypass
+Pair state.
+
+| Native capability | Integration | Pair Runtime responsibility |
+|---|---|---|
+| Model picker and streaming | Reuse | Bind model identity and consent to the session; validate response class |
+| Agent session and transcript UI | Reuse | Keep Presence, mode, work unit, authority, and outcomes as separate source of truth |
+| Custom agent and Agent Plugin | Reuse | Supply versioned static product instructions and require an initial Pair state tool |
+| Extension Language Model Tools | Reuse | Generate mode-aware visibility and revalidate every invocation |
+| Tool confirmation UI | Reuse | Provide mode, owner, scope, effect, and operation ID in `prepareInvocation`; core still decides |
+| Workspace read and search | Wrap | Enforce root, scope, size, count, sensitivity, and consent bounds |
+| File edit | Wrap | Enforce mode, AI ownership, path scope, expected version/hash, authority epoch, and result reconciliation |
+| Testing API and Tasks | Wrap | Run only the agreed verification and return observed status |
+| Terminal | Exclude in Growth; structured check in Pair; explicit bounded command in Delivery | Classify side effects, require consent, record unknown completion, never auto-replay |
+| Web and MCP tools | Opt-in by work unit | Use native URL/tool approval, treat results as untrusted, and keep network effects outside automatic retry |
+| Diff, changes, and checkpoints | Reuse for presentation | Record applied/saved/reverted state independently in the operation ledger |
+| Agent hooks | Defense in depth only | Never rely on Preview hooks as the sole mode or authority gate |
+| Agent Host reconnect and handoff | Reuse for conversation continuity | Pause mutation on client loss and reconcile Pair state before resuming |
+
+The native custom agent excludes built-in workspace tools that cannot be
+mediated or proven equivalent. It receives Pair extension tools instead. This
+preserves the native model loop and approval UX without allowing the model to
+step around work-unit authority.
+
+### 9.8 Pair tool set
+
+The first complete tool catalog uses stable product-level capabilities:
+
+| Tool | Class | Growth | Pair | Delivery |
+|---|---|---:|---:|---:|
+| `pair_get_state` | read | yes | yes | yes |
+| `pair_capture_entry` | read | yes | yes | yes |
+| `pair_read_scope` | read | yes | yes | yes |
+| `pair_search_scope` | read | yes | yes | yes |
+| `pair_record_attempt` | state | yes | optional | no |
+| `pair_record_hypothesis` | state | yes | optional | no |
+| `pair_request_hint` | response | yes | yes | no |
+| `pair_reveal_solution` | response | explicit | explicit | unnecessary |
+| `pair_propose_work_unit` | state | yes | yes | yes |
+| `pair_accept_handoff` | state | no AI ownership | yes | yes |
+| `pair_apply_edit` | mutation | never | AI-owned unit only | AI-owned unit only |
+| `pair_run_verification` | verification | human-initiated by default | agreed owner | agreed owner |
+| `pair_run_command` | external effect | never | never in v2.0 | explicit bounded unit only |
+| `pair_record_transfer` | state | yes | optional | no |
+| `pair_close_session` | state | yes | yes | yes |
+
+Tool visibility can use native contribution `when` clauses and mode-specific
+tool sets for a better model and user experience. Tool handlers still query the
+latest Pair snapshot and return a stable denial if the visible view became
+stale.
+
+Sensitive state transitions use a one-shot user-action grant bound to the tool,
+Pair runtime revision, and authority epoch. A native confirmation, command, or
+explicit chat action may create the grant through the adapter; the model cannot
+mint or reuse it.
+
+Every tool result is structured:
+
+```text
+operation ID
+Pair runtime revision and authority epoch
+confirmed | failed | declined | cancelled | unknown
+bounded human-readable summary
+bounded model-readable observation
+sensitive-data and partial-result flags
+```
+
+The model never receives an exception containing private filesystem or process
+details.
+
+### 9.9 Instruction and tool synchronization
+
+Before each model turn:
+
+1. capture the latest Pair snapshot;
+2. compile the instruction envelope and tool view from the same revision;
+3. include mode, owner, hint ceiling, scope, and stop condition;
+4. require `pair_get_state` before a grounded project answer;
+5. bind every tool call to the captured session and authority IDs and consume
+   any required one-shot user-action grant;
+6. reject the final response if the state changed while awaiting the model;
+7. publish tool outcomes separately from model prose.
+
+Repository instructions, source, diagnostics, web content, and tool results are
+delimited as untrusted data. They cannot switch mode, accept a handoff, raise a
+hint ceiling, grant consent, or expand scope.
+
+Instruction and tool changes are reviewed together. A new instruction that
+mentions an unavailable capability, or a new tool without a mode contract and
+conformance case, is a release-blocking defect.
+
 ## 10. Interaction flow
 
-1. **Start.** The developer explicitly selects Adaptive Pair or runs its start
-   command. No workspace observation begins before an active session.
-2. **Brief the task and learning value.** Confirm the goal, criteria,
+### 10.1 Enable Pair Presence
+
+The developer explicitly enables Adaptive Pair for a trusted workspace. Local
+bounded observation begins and the UI shows `observing`. No remote context is
+shared and no mutation authority exists merely because Presence is enabled.
+
+The developer can start in `quiet`, switch to `Stay quiet` at any time, pause
+all observation, or turn Presence off and delete its local continuity state.
+
+### 10.2 Start a new project
+
+For a product idea or empty repository:
+
+1. clarify the problem, user outcome, constraints, and first observable
+   behavior;
+2. decide which setup and implementation activities have learning value;
+3. select Growth, Pair, or Delivery for the first work unit;
+4. create files or run setup only under that mode's authority contract.
+
+The AI does not turn a product idea into a complete repository before the mode
+and first work unit are agreed.
+
+### 10.3 Start in an existing project
+
+Before proposing work, Adaptive Pair:
+
+1. reads the repository's existing guidance through the host;
+2. identifies the current branch and dirty-state summary;
+3. inspects relevant current files and verification surfaces;
+4. asks the developer to confirm the goal and protected work;
+5. builds the learning agreement and first work unit.
+
+Repository documents provide context, not permission or automatically approved
+requirements.
+
+### 10.4 Join work already in progress
+
+Join-in-progress is observation-first:
+
+1. create an `EntrySnapshot`;
+2. treat all existing edits as developer-owned;
+3. summarize current code, diagnostics, and known check results without
+   claiming the task's intent;
+4. ask the developer to confirm the current goal, what must not be changed,
+   where they are stuck or continuing, and what kind of help they want;
+5. select the mode and agree on the smallest next work unit;
+6. acquire AI mutation authority only through a later explicit Pair or Delivery
+   agreement.
+
+Adaptive Pair can join before the first line, after several files have changed,
+during debugging, or near verification. It does not require the developer to
+restart or reconstruct the task in a special workflow.
+
+### 10.5 Shared work loop
+
+1. **Brief the task and learning value.** Confirm the goal, criteria,
    constraints, unfamiliar areas, known areas, human-owned practice, and
    delegatable mechanical work.
-3. **Choose a mode.** Select Growth, Pair, or Delivery explicitly. The system
+2. **Choose a mode.** Select Growth, Pair, or Delivery explicitly. The system
    explains the capability and completion contract before work begins.
-4. **Agree on a work unit.** Show objective, capability category, learning
+3. **Agree on a work unit.** Show objective, capability category, learning
    value, scope, owner, verification, and stop condition.
-5. **Attempt or work.** Growth waits for a human attempt. Pair follows its
+4. **Attempt or work.** Growth waits for a human attempt. Pair follows its
    explicit driver. Delivery permits the agreed AI ownership.
-6. **Encounter and diagnose.** When a failure is relevant to Growth, record the
+5. **Encounter and diagnose.** When a failure is relevant to Growth, record the
    developer's prediction or explicit bypass before direct diagnosis.
-7. **Verify.** Run the agreed check through an observed host operation. Record
+6. **Verify.** Run the agreed check through an observed host operation. Record
    exit, result, and relevant bounded output.
-8. **Transfer, hand off, continue, or pause.** Growth runs a varied independent
+7. **Transfer, hand off, continue, or pause.** Growth runs a varied independent
    check; Pair reconciles outstanding effects before ownership changes.
-9. **Close.** Report product completion and capability verification
+8. **Close.** Report product completion and capability verification
    separately, summarize unresolved work, and offer a profile reflection for
    explicit review.
 
@@ -852,6 +1147,10 @@ failure. Rollback is a separate, explicit user action.
 The runtime keeps a local append-only event journal and periodic immutable
 snapshots under the host's extension storage, not in the repository.
 
+Pair Presence keeps its high-frequency observation window in memory. Only
+bounded semantic summaries needed for resume or an accepted session event may
+enter the journal.
+
 The journal stores:
 
 - domain events;
@@ -885,8 +1184,12 @@ Additional rules:
 
 - identify the model vendor, model, root, and purpose before disclosure;
 - treat repository text and tool output as untrusted data, not permissions;
+- compile instructions and the tool view from one immutable Pair runtime
+  revision;
 - detect credentials and private local-resource references before truncation;
 - keep automatic evidence local unless the session consent includes it;
+- keep continuous Presence events local and never stream them directly to a
+  remote model;
 - keep background remote observation off by default;
 - enforce per-session call, input, output, and time budgets;
 - store provider credentials through the host secret store;
@@ -966,6 +1269,21 @@ Every host, model, store, and profile adapter runs the same contract suite for:
 - disposal and reconnect;
 - sensitive-data handling.
 
+### Harness conformance
+
+Every supported agent and model combination is tested for:
+
+- calling `pair_get_state` before a grounded answer;
+- seeing only the mode-appropriate tool view;
+- denial of a hidden or stale tool call;
+- Growth write and premature-solution restraint;
+- Pair and Delivery owner checks;
+- tool input-schema rejection;
+- repository prompt-injection attempts to switch mode, expand scope, or grant
+  consent;
+- instruction and tool revision mismatch;
+- separation of model prose from observed tool outcomes.
+
 ### Fault injection
 
 Tests interrupt each boundary:
@@ -996,6 +1314,9 @@ A stable v2 release requires all of the following:
 
 ### Functional
 
+- Pair Presence can be enabled, quieted, paused, resumed, and turned off;
+- greenfield, existing-project, join-in-progress, and restart entry paths
+  converge on the same session and work-unit contracts;
 - complete Growth, Pair, and Delivery sessions;
 - Pair Mode with both possible edit owners;
 - planning, attempt where required, edit, diagnosis, verification, handoff,
@@ -1028,10 +1349,22 @@ A stable v2 release requires all of the following:
 - missing or incompatible plugins degrade explicitly;
 - installation succeeds in a clean VS Code profile.
 
+### Harness
+
+- every instruction layer has a version and a conformance case;
+- every tool declares mode, owner, scope, approval, retry, sensitivity, and
+  result contracts;
+- native built-in tools cannot bypass Pair workspace controls;
+- visible tool filtering and invocation-time authorization agree;
+- supported model and host combinations publish their mode-conformance result.
+
 ### User experience
 
 - developers can identify the goal, work-unit owner, scope, verification state,
   and pause control without reading documentation;
+- developers can invite Adaptive Pair into an in-progress task without
+  discarding or restating all existing work;
+- Presence, quiet, engaged, and paused states are always visible;
 - pilot users can complete and resume a session;
 - unwanted interventions and fatigue are measured and reviewed.
 
@@ -1085,12 +1418,17 @@ These proofs select an adapter path; they do not reopen the core architecture.
 2. Run the Growth restraint conformance suite against each proposed agent,
    model, and host adapter and record premature solution, diagnosis, and
    takeover failures.
-3. Verify that a custom agent can exclude built-in workspace tools and route
-   extension tools through the Agent Host.
-4. Verify cancellation, client disconnect, document-version, and result
+3. Build the complete native capability matrix and identify every capability
+   that is reused, wrapped, excluded, or deferred by mode.
+4. Verify that a custom agent can exclude built-in workspace tools, apply
+   dynamic `when` visibility, and route extension tools through the Agent Host.
+5. Verify instruction and tool snapshots remain correlated across mode,
+   handoff, goal, and consent changes.
+6. Verify cancellation, client disconnect, document-version, and result
    correlation semantics.
-5. Verify the Agent Plugin plus VSIX installation and version handshake.
-6. Record each native capability as supported, advisory-only, or unavailable.
+7. Verify the Agent Plugin plus VSIX installation and version handshake.
+8. Record each native capability as supported, wrapped, excluded,
+   advisory-only, or unavailable.
 
 If a native capability is unavailable, the controlled chat adapter supplies
 the full pairing behavior. If safe AI mutation is unavailable in both
@@ -1102,6 +1440,10 @@ limitation.
 - v2 is a fresh, host-agnostic open-source core.
 - the core value is preserving opportunities to form and maintain direct
   development capability when AI could otherwise outsource the whole loop.
+- Pair Presence supports new projects, existing projects, in-progress work, and
+  resume without requiring a special task origin.
+- Presence is explicit, bounded, local-first, and independently quietable from
+  the current task session.
 - VS Code is the first host, not the owner of product state.
 - one edit owner is enforced per work unit.
 - Growth, Pair, and Delivery are the stable v2.0 operating modes.
@@ -1113,6 +1455,13 @@ limitation.
 - guidance is a mode-level strategy; Ping-Pong is an optional later cadence.
 - mode contracts are implementation-independent; Codex, Copilot, local models,
   and future agents are examples of adapters, not product definitions.
+- a versioned harness kernel compiles instructions and tool views from the same
+  immutable Pair revision.
+- native orchestration and review UX are reused, while workspace tools are
+  wrapped whenever direct exposure would bypass mode, scope, consent, or
+  recovery rules.
+- tool visibility improves guidance; invocation-time core authorization remains
+  mandatory.
 - native Agent integration is capability-gated.
 - `@pair` is a supported fallback surface using the same runtime.
 - local deterministic observation is on only during an explicit session.

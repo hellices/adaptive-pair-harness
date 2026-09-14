@@ -7,6 +7,11 @@ protects opportunities for developers to generate code, encounter failure,
 diagnose, repair, and verify for themselves, while still allowing honest pair
 work and explicit AI delegation.
 
+Enable it at the start of a product, inside an existing repository, or halfway
+through debugging. Pair Presence follows bounded local workspace activity,
+stays available beside normal development, and can be quieted or paused without
+discarding the task.
+
 It exists because a default coding agent can outsource the whole learning loop,
 not just a narrow calculation. Learning to prompt, review, and select AI output
 is valuable, but it does not automatically replace the ability to create and
@@ -21,8 +26,12 @@ v2 is a complete redesign around a host-agnostic open core:
 - Growth, Pair, and Delivery as explicit operating modes;
 - learning agreements, progressive hints, solution-reveal boundaries, and
   independent transfer checks;
+- a versioned harness kernel that compiles mode instructions and tool
+  capabilities from the same Pair state;
 - Driver/Navigator ownership and optional collaboration cadences on one core;
 - local-first editor and compiler evidence;
+- explicit, local-first Pair Presence for greenfield, existing, and
+  join-in-progress work;
 - replaceable VS Code, Agent Plugin, model, storage, and profile adapters;
 - local evaluation with no telemetry upload by default.
 
@@ -68,6 +77,8 @@ not merely on whether AI can complete it.
   recovery behavior.
 - Personal preferences are explicit, correctable, local by default, and never
   stored in the repository.
+- Existing and in-progress edits remain developer-owned until a new work unit
+  explicitly says otherwise.
 
 ## Stable v2.0
 
@@ -94,11 +105,18 @@ The open-source Pair Runtime is the source of truth. A VSIX provides the
 runtime, tools, local sensors, inline UI, and an `@pair` fallback. A coordinated
 Agent Plugin provides the native VS Code Agent-picker experience.
 
+Native model selection, streaming, confirmations, diffs, and session UX are
+reused. Workspace read, edit, verification, terminal, web, and MCP tools are
+wrapped or excluded whenever they could bypass the active mode, owner, scope,
+consent, or recovery contract.
+
 Native integration is capability-gated. When the host cannot enforce the
 pairing invariants, Adaptive Pair uses its controlled surface or safely degrades
 to Human Driver / AI Navigator instead of claiming unsupported AI edit control.
 
 Read the complete initial [product and system design](docs/design.md).
+The first executable milestone is specified in the
+[Foundation and Growth Mode implementation plan](docs/implementation-plan.md).
 
 ## Research
 
@@ -114,8 +132,8 @@ AI universally improves speed, quality, learning, or satisfaction.
 
 ## Project status
 
-This branch contains the first complete v2 plan. Every v2 decision is initial
-and awaiting written review; implementation has not started.
+This branch contains the first complete v2 design and its first implementation
+plan. Every v2 decision is initial; implementation has not started.
 
 The earlier runnable experiment remains on
 `feature/realtime-pair-vertical-slice`. It is a test and behavior baseline plus
