@@ -170,6 +170,7 @@ surfaces.
 
 | Capability | Current platform evidence | Architectural decision |
 |---|---|---|
+| Session Target | VS Code documents Local, Copilot, Claude, Codex, and Cloud as execution harness or target choices, separately from Agent, model, permissions, and isolation controls. [32] | Keep the underlying execution harness user-selectable; do not place Adaptive Pair's product modes in this selector. |
 | Chat participant | The Chat Participant API provides an `@`-mentioned assistant that owns its request flow and receives the model selected in Chat. [17][18] | Keep `@pair` as a controlled, model-selecting fallback surface. |
 | Extension tools | Language Model Tools can be contributed by Marketplace extensions, included in custom agents, restricted with `when` clauses, and given confirmation behavior. [19] | Expose Pair Runtime operations through mode-aware extension tools and revalidate every call. |
 | Custom agents | `.agent.md` files define instructions, model choice, tools, visibility in the agent picker, and agent-to-agent handoffs. [20] | Use an Agent Plugin for the native picker surface. Keep human-to-AI edit handoff in the Pair Runtime. |
@@ -196,6 +197,13 @@ semantics. The implementation must still verify:
 The architecture does not wait on these answers. A capability gate selects the
 native adapter only when it passes. The controlled VSIX surface remains the
 complete fallback.
+
+Current public documentation describes first-party Agent Host adapters and
+extension points for tools, MCP, custom agents, and chat participants. It does
+not document a stable Marketplace contribution point for registering an
+arbitrary third-party Session Target beside Copilot, Claude, and Codex. AHP is
+open and agent-agnostic, but Agent Host integration is still under active
+development.
 
 ## 6. Design decisions derived from the evidence
 
@@ -244,6 +252,16 @@ web, and MCP capabilities are reused directly only when their scope and
 failure semantics match the mode contract; otherwise they are wrapped or
 excluded. Invocation-time core authorization remains mandatory even when the
 native UI hid the tool correctly.
+
+### Presence, target, agent, and mode are separate choices
+
+Pair Presence is the workspace-level lifecycle. Session Target selects the
+execution harness. The Adaptive Pair custom agent selects its instructions and
+tools. Growth, Pair, or Delivery selects the capability contract.
+
+Combining these into one harness dropdown would couple the product value to an
+execution provider and prevent the same Pair state from spanning supported
+targets.
 
 ### Local, low-noise observation
 
@@ -387,3 +405,5 @@ Future documentation must:
 31. Kirschner, Sweller, and Clark (2006). *Why Minimal Guidance During
     Instruction Does Not Work.*
     https://doi.org/10.1207/s15326985ep4102_1
+32. VS Code. *Choose and use an agent harness.*
+    https://code.visualstudio.com/docs/agents/run/agent-harnesses

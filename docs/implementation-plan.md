@@ -48,6 +48,9 @@ typescript-eslint 8.69.0, esbuild 0.28.2, VS Code API 1.136.0,
   scope, consent, revision, and authority epoch.
 - Repository and tool content is always delimited as untrusted reference data
   and cannot alter mode, authority, consent, or scope.
+- Pair Presence is the workspace entry. Session Target remains the user's
+  execution-harness choice; Adaptive Pair belongs under Agent behavior and
+  inside the Pair mode selector.
 - Raw code, paths, diagnostics, prompts, and transcripts never enter the
   portable profile or evaluation export.
 - No remote telemetry is enabled by default.
@@ -65,8 +68,10 @@ This is the first of four implementation plans:
    capability-category rotation on the proven core.
 3. **Delivery Mode and mode switching** - adds explicit delegation and honest
    cross-mode outcome reporting.
-4. **Native Agent adapter and v2.0 release** - adds Agent Plugin integration,
-   adapter capability gates, full mode conformance, and stable release gates.
+4. **Native Agent adapter and v2.0 release** - adds Adaptive Pair under the
+   Agent control, validates Local/Copilot/Claude/Codex target compatibility,
+   adds adapter capability gates, and completes stable release gates. It does
+   not register Adaptive Pair as a Session Target.
 
 Each subsequent plan starts only after the preceding public interfaces and
 contract tests are green. This prevents four independent subsystems from being
@@ -3287,6 +3292,8 @@ Update `README.md` and create `docs/growth-preview.md` with:
 - the five independent Growth outcomes;
 - local storage, export, and deletion;
 - supported languages and host versions;
+- Pair Presence as the workspace entry and Session Target as a separate
+  execution choice;
 - exact known limitations;
 - no claim that the preview improves learning or productivity.
 

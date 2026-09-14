@@ -114,6 +114,22 @@ Native integration is capability-gated. When the host cannot enforce the
 pairing invariants, Adaptive Pair uses its controlled surface or safely degrades
 to Human Driver / AI Navigator instead of claiming unsupported AI edit control.
 
+## VS Code entry
+
+The `Copilot / Claude / Codex / Local` **Session Target** control chooses the
+execution harness. Adaptive Pair does not replace that choice.
+
+1. Enable **Pair Presence** for the workspace or select **Pair here** while
+   already working.
+2. Keep or choose the Session Target that should execute the agent.
+3. Select **Adaptive Pair** under the separate Agent control when supported, or
+   use `@pair` as the controlled fallback.
+4. Select or restore Growth, Pair, or Delivery inside the Pair session.
+5. Choose the model and native permission level independently.
+
+This separation lets the same Pair state and learning contract work across
+supported agents instead of binding the product to one harness.
+
 Read the complete initial [product and system design](docs/design.md).
 The first executable milestone is specified in the
 [Foundation and Growth Mode implementation plan](docs/implementation-plan.md).

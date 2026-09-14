@@ -813,7 +813,55 @@ The full VS Code experience has two coordinated open-source artifacts:
 Both declare a compatible protocol version range. The extension displays a
 clear health result when the plugin is absent or incompatible.
 
-### 9.2 Native Agent adapter
+### 9.2 Entry-point layers
+
+VS Code exposes separate controls that must remain separate in Adaptive Pair:
+
+| Control | Meaning | Adaptive Pair decision |
+|---|---|---|
+| Workspace / folder | Where development is happening | Pair Presence is enabled here and can outlive one task |
+| Session Target | Which execution harness runs the agent: Local, Copilot, Claude, Codex, or Cloud | User choice; Adaptive Pair is not this selector |
+| Agent | Which instructions and tools shape behavior | Select the Adaptive Pair custom agent when the target supports it |
+| Adaptive Pair mode | Whether the work is Growth, Pair, or Delivery | Stored and enforced by Pair Runtime |
+| Language model | Which model reasons | User choice within the selected target |
+| Permissions and isolation | Native approval and workspace boundary | Reused in addition to Pair authority |
+
+The primary workspace entry is **Enable Pair Presence** or **Pair here**, not
+the Session Target selector. The chat entry is the **Adaptive Pair custom
+agent** under the Agent control. Selecting it attaches the conversation to the
+existing workspace Presence and Pair Runtime state, then asks for or restores
+the Growth, Pair, or Delivery mode.
+
+If the selected target does not expose the custom agent or required extension
+tools, `@pair` opens the controlled surface against the same state. The user
+does not need to restart or reconstruct the task.
+
+Adaptive Pair is not implemented as a new Session Target in v2.0 because:
+
+- Session Target chooses an execution runtime, while Adaptive Pair defines
+  cross-runtime collaboration behavior;
+- making the product a harness would bind its identity to one agent loop and
+  duplicate provider-specific execution;
+- current public extension documentation exposes custom agents, tools, MCP,
+  and chat participants, but not a stable Marketplace contribution point for a
+  third-party target beside Copilot, Claude, and Codex;
+- the product value should survive a change of harness or model.
+
+An Adaptive Pair AHP adapter may become an optional Session Target only if a
+stable third-party registration and distribution contract appears and native
+targets cannot preserve the Pair mode contracts. It is not the primary entry
+or a v2.0 dependency.
+
+Target compatibility is capability-based:
+
+| Session Target | Intended v2 use |
+|---|---|
+| Local | Baseline full local experience because VS Code and extension tools run in the extension host |
+| Copilot | Full experience when client extension tools, custom agent, cancellation, and context boundaries pass conformance |
+| Claude or Codex | Full or controlled experience only after target-specific tool and customization conformance |
+| Cloud | Delivery-only candidate; no Growth or live Pair Presence claim without a connected local workspace |
+
+### 9.3 Native Agent adapter
 
 The Agent Plugin contributes one visible Adaptive Pair agent. Human-to-AI and
 AI-to-human handoffs are Pair Runtime domain transitions inside that session;
@@ -845,7 +893,7 @@ Native mode is enabled only when a startup capability probe verifies:
 Preview hooks may provide defense in depth, but are not a correctness or
 security boundary.
 
-### 9.3 Controlled chat adapter
+### 9.4 Controlled chat adapter
 
 If native mode cannot preserve an invariant, the VSIX offers `@pair` using the
 same session core, mode policies, restraint rules, evidence, journal, and tool
@@ -859,20 +907,20 @@ the core authorizes. It can use:
 - a configured local model;
 - an OpenAI-compatible provider.
 
-### 9.4 Safe degraded mode
+### 9.5 Safe degraded mode
 
 When neither adapter can guarantee AI mutation authority, Adaptive Pair remains
 usable as Human Driver / AI Navigator. It explains the missing capability and
 does not present itself as an AI driver.
 
-### 9.5 Presence
+### 9.6 Presence
 
 An Agent Host can continue without a connected editor client, but a live pair
 cannot. Losing the VS Code client pauses new pairing mutations. The session may
 retain conversational state in the host, but it must reconcile with the Pair
 Runtime before editing resumes.
 
-### 9.6 Implementation-independent mode conformance
+### 9.7 Implementation-independent mode conformance
 
 Every host, model, and agent adapter runs the same observable mode-conformance
 suite:
@@ -892,7 +940,7 @@ When an adapter cannot satisfy a mode, Adaptive Pair disables that mode for the
 adapter and explains why. It does not weaken or rename the product value to fit
 a particular coding agent.
 
-### 9.7 Native capability mapping
+### 9.8 Native capability mapping
 
 Adaptive Pair reuses native infrastructure where it preserves the mode
 contract, and wraps workspace capabilities where direct exposure would bypass
@@ -919,7 +967,7 @@ mediated or proven equivalent. It receives Pair extension tools instead. This
 preserves the native model loop and approval UX without allowing the model to
 step around work-unit authority.
 
-### 9.8 Pair tool set
+### 9.9 Pair tool set
 
 The first complete tool catalog uses stable product-level capabilities:
 
@@ -965,7 +1013,7 @@ sensitive-data and partial-result flags
 The model never receives an exception containing private filesystem or process
 details.
 
-### 9.9 Instruction and tool synchronization
+### 9.10 Instruction and tool synchronization
 
 Before each model turn:
 
@@ -1427,7 +1475,9 @@ These proofs select an adapter path; they do not reopen the core architecture.
 6. Verify cancellation, client disconnect, document-version, and result
    correlation semantics.
 7. Verify the Agent Plugin plus VSIX installation and version handshake.
-8. Record each native capability as supported, wrapped, excluded,
+8. Verify target-specific behavior for Local, Copilot, Claude, Codex, and
+   Cloud without assuming one target's result applies to another.
+9. Record each native capability as supported, wrapped, excluded,
    advisory-only, or unavailable.
 
 If a native capability is unavailable, the controlled chat adapter supplies
@@ -1445,6 +1495,10 @@ limitation.
 - Presence is explicit, bounded, local-first, and independently quietable from
   the current task session.
 - VS Code is the first host, not the owner of product state.
+- Pair Presence is the primary workspace entry; Adaptive Pair is selected under
+  Agent behavior, not registered as a v2.0 Session Target.
+- Local, Copilot, Claude, Codex, and Cloud remain separate execution choices
+  with published capability results.
 - one edit owner is enforced per work unit.
 - Growth, Pair, and Delivery are the stable v2.0 operating modes.
 - Growth keeps AI read-only, uses a hint ladder, and separates product
