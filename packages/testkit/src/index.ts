@@ -12,3 +12,5 @@ export class FakeClock {
     this.current += milliseconds;
   }
 }
+
+export * from "./fakes.js";

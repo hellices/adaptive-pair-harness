@@ -1,5 +1,5 @@
 {
-  "name": "@adaptive-pair/testkit",
+  "name": "@adaptive-pair/harness",
   "version": "0.2.0-preview.1",
   "private": true,
   "type": "module",
@@ -16,6 +16,9 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
-    "@adaptive-pair/protocol": "0.2.0-preview.1"
+    "@adaptive-pair/modes": "0.2.0-preview.1",
+    "@adaptive-pair/protocol": "0.2.0-preview.1",
+    "@adaptive-pair/restraint": "0.2.0-preview.1",
+    "@adaptive-pair/session-core": "0.2.0-preview.1"
   }
 }

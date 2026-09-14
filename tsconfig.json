@@ -6,6 +6,7 @@
     { "path": "packages/modes" },
     { "path": "packages/restraint" },
     { "path": "packages/session-core" },
+    { "path": "packages/harness" },
     { "path": "packages/testkit" }
   ]
 }
