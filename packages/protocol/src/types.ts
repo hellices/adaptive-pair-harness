@@ -29,6 +29,7 @@ export type WorkUnitStatus =
   | "failed";
 
 export type Actor = "human" | "ai" | "host" | "policy";
+export type HintLevel = 0 | 1 | 2 | 3 | 4 | 5;
 
 export type CapabilityCategory =
   | "problem-framing"
@@ -46,6 +47,35 @@ export interface LearningAgreement {
   readonly delegatableWork: readonly string[];
   readonly maximumHintLevel: 0 | 1 | 2 | 3 | 4 | 5;
   readonly independentCheck: string;
+}
+
+export interface AttemptRecord {
+  readonly summary: string;
+  readonly bypassed: boolean;
+  readonly recordedAt: number;
+}
+
+export interface HypothesisRecord {
+  readonly summary: string;
+  readonly bypassed: boolean;
+  readonly recordedAt: number;
+}
+
+export interface HintRecord {
+  readonly level: HintLevel;
+  readonly recordedAt: number;
+}
+
+export interface SolutionRevealRecord {
+  readonly previewOnly: true;
+  readonly recordedAt: number;
+}
+
+export interface AssistanceState {
+  readonly attempt: AttemptRecord | undefined;
+  readonly hypothesis: HypothesisRecord | undefined;
+  readonly hint: HintRecord | undefined;
+  readonly solutionReveal: SolutionRevealRecord | undefined;
 }
 
 export interface EntrySnapshot {
@@ -106,6 +136,7 @@ export interface PairSessionSnapshot {
   readonly learningAgreement: LearningAgreement | undefined;
   readonly entrySnapshot: EntrySnapshot | undefined;
   readonly workUnit: WorkUnit | undefined;
+  readonly assistance: AssistanceState | undefined;
   readonly operations: readonly OperationRecord[];
 }
 

@@ -1,4 +1,5 @@
 import type {
+  AssistanceState,
   PairEvent,
   PairRuntimeSnapshot,
   PairSessionSnapshot,
@@ -7,6 +8,16 @@ import type {
   WorkUnitStatus,
 } from "@adaptive-pair/protocol";
 import { normalizeEntrySnapshot } from "./entrySnapshot.js";
+import {
+  createGrowthAssistance,
+  requireGrowthAgreement,
+  requireGrowthWorkUnit,
+  requireLearningEntry,
+  requireModeChangeWithoutWorkUnit,
+  validateHintLevel,
+  validateProposedWorkUnit,
+  validateSolutionReveal,
+} from "./growth.js";
 import { createSession } from "./initialState.js";
 import { cloneFrozen } from "./immutable.js";
 
@@ -62,15 +73,34 @@ const isTerminalWorkUnitStatus = (status: WorkUnitStatus): boolean =>
   status === "cancelled" ||
   status === "failed";
 
-const requireReconciliationBlock = (
+const requireBriefingSessionForGrowth = (
   session: PairSessionSnapshot | undefined,
-): never => {
-  if (session?.status === "reconciling") {
-    throw new Error("SESSION_RECONCILING");
+): PairSessionSnapshot => {
+  if (session === undefined || session.status !== "briefing") {
+    throw new Error("SESSION_NOT_BRIEFING");
   }
 
-  throw new Error("UNSUPPORTED_EVENT:WorkUnitAgreed");
+  return session;
 };
+
+const requireWorkSession = (
+  session: PairSessionSnapshot | undefined,
+): PairSessionSnapshot => {
+  if (session === undefined) {
+    throw new Error("SESSION_NOT_STARTED");
+  }
+
+  if (session.status === "briefing" || session.status === "ready" || session.status === "active") {
+    return session;
+  }
+
+  throw new Error("WORK_UNIT_NOT_AGREED");
+};
+
+const withAssistance = (
+  session: PairSessionSnapshot,
+  mutate: (assistance: AssistanceState) => AssistanceState,
+): AssistanceState => mutate(session.assistance ?? createGrowthAssistance());
 
 const reconcileWorkUnit = (
   workUnit: WorkUnit | undefined,
@@ -159,6 +189,190 @@ const applyEvent = (
       };
     }
 
+    case "LearningConfirmed": {
+      const session = requireLearningEntry(
+        requireBriefingSessionForGrowth(snapshot.session),
+      );
+
+      return {
+        protocolVersion: 1,
+        revision: event.revision,
+        presence: snapshot.presence,
+        session: {
+          ...session,
+          learningAgreement: event.agreement,
+        },
+      };
+    }
+
+    case "ModeSelected": {
+      const session = requireModeChangeWithoutWorkUnit(
+        requireBriefingSessionForGrowth(snapshot.session),
+      );
+
+      if (event.mode === "growth") {
+        requireGrowthAgreement(session);
+      }
+
+      return {
+        protocolVersion: 1,
+        revision: event.revision,
+        presence: snapshot.presence,
+        session: {
+          ...session,
+          mode: event.mode,
+          assistance: event.mode === "growth" ? createGrowthAssistance() : undefined,
+        },
+      };
+    }
+
+    case "WorkUnitProposed": {
+      const session = requireBriefingSessionForGrowth(snapshot.session);
+      validateProposedWorkUnit(session, event.workUnit);
+
+      return {
+        protocolVersion: 1,
+        revision: event.revision,
+        presence: snapshot.presence,
+        session: {
+          ...session,
+          workUnit: event.workUnit,
+        },
+      };
+    }
+
+    case "WorkUnitAgreed": {
+      if (snapshot.session?.status === "reconciling") {
+        throw new Error("SESSION_RECONCILING");
+      }
+
+      const session = requireBriefingSessionForGrowth(snapshot.session);
+      const workUnit = session.workUnit;
+      if (workUnit === undefined || workUnit.id !== event.workUnitId) {
+        throw new Error("WORK_UNIT_NOT_FOUND");
+      }
+
+      if (workUnit.status !== "proposed") {
+        throw new Error("WORK_UNIT_NOT_PROPOSED");
+      }
+
+      if (workUnit.mode !== session.mode) {
+        throw new Error("WORK_UNIT_MODE_MISMATCH");
+      }
+
+      return {
+        protocolVersion: 1,
+        revision: event.revision,
+        presence: snapshot.presence,
+        session: {
+          ...session,
+          status: "ready",
+          workUnit: {
+            ...workUnit,
+            status: "agreed",
+          },
+          assistance:
+            workUnit.mode === "growth"
+              ? createGrowthAssistance()
+              : session.assistance,
+        },
+      };
+    }
+
+    case "AttemptRecorded": {
+      const session = requireWorkSession(snapshot.session);
+      requireGrowthWorkUnit(session, event.workUnitId);
+
+      return {
+        protocolVersion: 1,
+        revision: event.revision,
+        presence: snapshot.presence,
+        session: {
+          ...session,
+          status: "active",
+          assistance: withAssistance(session, assistance => ({
+            ...assistance,
+            attempt: {
+              summary: event.summary,
+              bypassed: event.bypassed,
+              recordedAt: event.recordedAt,
+            },
+          })),
+        },
+      };
+    }
+
+    case "HypothesisRecorded": {
+      const session = requireWorkSession(snapshot.session);
+      requireGrowthWorkUnit(session, event.workUnitId);
+
+      return {
+        protocolVersion: 1,
+        revision: event.revision,
+        presence: snapshot.presence,
+        session: {
+          ...session,
+          status: "active",
+          assistance: withAssistance(session, assistance => ({
+            ...assistance,
+            hypothesis: {
+              summary: event.summary,
+              bypassed: event.bypassed,
+              recordedAt: event.recordedAt,
+            },
+          })),
+        },
+      };
+    }
+
+    case "HintRequested": {
+      const session = requireWorkSession(snapshot.session);
+      validateHintLevel(session, event.workUnitId, event.level);
+      const level = Math.max(
+        session.assistance?.hint?.level ?? 0,
+        event.level,
+      ) as typeof event.level;
+
+      return {
+        protocolVersion: 1,
+        revision: event.revision,
+        presence: snapshot.presence,
+        session: {
+          ...session,
+          status: "active",
+          assistance: withAssistance(session, assistance => ({
+            ...assistance,
+            hint: {
+              level,
+              recordedAt: event.recordedAt,
+            },
+          })),
+        },
+      };
+    }
+
+    case "SolutionRevealAuthorized": {
+      const session = requireWorkSession(snapshot.session);
+      validateSolutionReveal(session, event.workUnitId, event.previewOnly);
+
+      return {
+        protocolVersion: 1,
+        revision: event.revision,
+        presence: snapshot.presence,
+        session: {
+          ...session,
+          status: "active",
+          assistance: withAssistance(session, assistance => ({
+            ...assistance,
+            solutionReveal: {
+              previewOnly: true,
+              recordedAt: event.recordedAt,
+            },
+          })),
+        },
+      };
+    }
+
     case "SessionResumed": {
       const session = requirePausedSession(snapshot.session);
 
@@ -198,9 +412,6 @@ const applyEvent = (
         },
       };
     }
-
-    case "WorkUnitAgreed":
-      return requireReconciliationBlock(snapshot.session);
 
     default:
       throw new Error(`UNSUPPORTED_EVENT:${event.type}`);

@@ -26,6 +26,7 @@ export const createSession = (sessionId: string): PairSessionSnapshot =>
     learningAgreement: undefined,
     entrySnapshot: undefined,
     workUnit: undefined,
+    assistance: undefined,
     operations: Object.freeze([]),
   });
 

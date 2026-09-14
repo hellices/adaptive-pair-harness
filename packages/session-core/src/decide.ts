@@ -6,6 +6,15 @@ import type {
   SessionStatus,
 } from "@adaptive-pair/protocol";
 import { normalizeEntrySnapshot } from "./entrySnapshot.js";
+import {
+  requireModeChangeWithoutWorkUnit,
+  requireGrowthAgreement,
+  requireGrowthWorkUnit,
+  requireLearningEntry,
+  validateHintLevel,
+  validateProposedWorkUnit,
+  validateSolutionReveal,
+} from "./growth.js";
 import { cloneFrozen } from "./immutable.js";
 
 export interface Decision {
@@ -100,6 +109,140 @@ export const decide = (
         },
       ]);
 
+    case "ConfirmLearning":
+      requireLearningEntry(requireBriefingSession(snapshot.session));
+
+      return freezeDecision([
+        {
+          ...base,
+          type: "LearningConfirmed",
+          agreement: command.agreement,
+        },
+      ]);
+
+    case "SelectMode": {
+      const session = requireModeChangeWithoutWorkUnit(
+        requireBriefingSession(snapshot.session),
+      );
+
+      if (command.mode === "growth") {
+        requireGrowthAgreement(session);
+      }
+
+      return freezeDecision([
+        {
+          ...base,
+          type: "ModeSelected",
+          mode: command.mode,
+        },
+      ]);
+    }
+
+    case "ProposeWorkUnit": {
+      const session = requireBriefingSession(snapshot.session);
+      validateProposedWorkUnit(session, command.workUnit);
+
+      return freezeDecision([
+        {
+          ...base,
+          type: "WorkUnitProposed",
+          workUnit: command.workUnit,
+        },
+      ]);
+    }
+
+    case "AgreeWorkUnit": {
+      if (snapshot.session?.status === "reconciling") {
+        throw new Error("SESSION_RECONCILING");
+      }
+
+      const session = requireBriefingSession(snapshot.session);
+      const workUnit = session.workUnit;
+      if (workUnit === undefined || workUnit.id !== command.workUnitId) {
+        throw new Error("WORK_UNIT_NOT_FOUND");
+      }
+
+      if (workUnit.status !== "proposed") {
+        throw new Error("WORK_UNIT_NOT_PROPOSED");
+      }
+
+      if (workUnit.mode !== session.mode) {
+        throw new Error("WORK_UNIT_MODE_MISMATCH");
+      }
+
+      return freezeDecision([
+        {
+          ...base,
+          type: "WorkUnitAgreed",
+          workUnitId: command.workUnitId,
+        },
+      ]);
+    }
+
+    case "RecordAttempt":
+      requireGrowthWorkUnit(
+        requireBriefingOrActiveSession(snapshot.session),
+        command.workUnitId,
+      );
+
+      return freezeDecision([
+        {
+          ...base,
+          type: "AttemptRecorded",
+          workUnitId: command.workUnitId,
+          summary: command.summary,
+          bypassed: command.bypassed,
+        },
+      ]);
+
+    case "RecordHypothesis":
+      requireGrowthWorkUnit(
+        requireBriefingOrActiveSession(snapshot.session),
+        command.workUnitId,
+      );
+
+      return freezeDecision([
+        {
+          ...base,
+          type: "HypothesisRecorded",
+          workUnitId: command.workUnitId,
+          summary: command.summary,
+          bypassed: command.bypassed,
+        },
+      ]);
+
+    case "RequestHint":
+      validateHintLevel(
+        requireBriefingOrActiveSession(snapshot.session),
+        command.workUnitId,
+        command.level,
+      );
+
+      return freezeDecision([
+        {
+          ...base,
+          type: "HintRequested",
+          workUnitId: command.workUnitId,
+          level: command.level,
+        },
+      ]);
+
+    case "AuthorizeSolutionReveal":
+      validateSolutionReveal(
+        requireBriefingOrActiveSession(snapshot.session),
+        command.workUnitId,
+        command.previewOnly,
+      );
+
+      return freezeDecision([
+        {
+          ...base,
+          type: "SolutionRevealAuthorized",
+          workUnitId: command.workUnitId,
+          previewOnly: true,
+        },
+      ]);
+
     case "ResumeSession":
       return freezeDecision([
         {
@@ -128,14 +271,21 @@ export const decide = (
         },
       ]);
 
-    case "AgreeWorkUnit":
-      if (snapshot.session?.status === "reconciling") {
-        throw new Error("SESSION_RECONCILING");
-      }
-
-      throw new Error(`UNSUPPORTED_COMMAND:${command.type}`);
-
     default:
       throw new Error(`UNSUPPORTED_COMMAND:${command.type}`);
   }
+};
+
+const requireBriefingOrActiveSession = (
+  session: PairSessionSnapshot | undefined,
+): PairSessionSnapshot => {
+  if (session === undefined) {
+    throw new Error("SESSION_NOT_STARTED");
+  }
+
+  if (session.status === "briefing" || session.status === "ready" || session.status === "active") {
+    return session;
+  }
+
+  throw new Error("WORK_UNIT_NOT_AGREED");
 };

@@ -1,6 +1,7 @@
 import type {
   Actor,
   EntrySnapshot,
+  HintLevel,
   LearningAgreement,
   OperatingMode,
   WorkUnit,
@@ -51,6 +52,28 @@ export type PairCommand =
   | (CommandBase & {
       readonly type: "AgreeWorkUnit";
       readonly workUnitId: string;
+    })
+  | (CommandBase & {
+      readonly type: "RecordAttempt";
+      readonly workUnitId: string;
+      readonly summary: string;
+      readonly bypassed: boolean;
+    })
+  | (CommandBase & {
+      readonly type: "RecordHypothesis";
+      readonly workUnitId: string;
+      readonly summary: string;
+      readonly bypassed: boolean;
+    })
+  | (CommandBase & {
+      readonly type: "RequestHint";
+      readonly workUnitId: string;
+      readonly level: HintLevel;
+    })
+  | (CommandBase & {
+      readonly type: "AuthorizeSolutionReveal";
+      readonly workUnitId: string;
+      readonly previewOnly: true;
     })
   | (CommandBase & {
       readonly type: "PauseSession";

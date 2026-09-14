@@ -1,6 +1,7 @@
 import type {
   Actor,
   EntrySnapshot,
+  HintLevel,
   LearningAgreement,
   OperatingMode,
   PresenceStatus,
@@ -53,6 +54,28 @@ export type PairEvent =
   | (EventBase & {
       readonly type: "WorkUnitAgreed";
       readonly workUnitId: string;
+    })
+  | (EventBase & {
+      readonly type: "AttemptRecorded";
+      readonly workUnitId: string;
+      readonly summary: string;
+      readonly bypassed: boolean;
+    })
+  | (EventBase & {
+      readonly type: "HypothesisRecorded";
+      readonly workUnitId: string;
+      readonly summary: string;
+      readonly bypassed: boolean;
+    })
+  | (EventBase & {
+      readonly type: "HintRequested";
+      readonly workUnitId: string;
+      readonly level: HintLevel;
+    })
+  | (EventBase & {
+      readonly type: "SolutionRevealAuthorized";
+      readonly workUnitId: string;
+      readonly previewOnly: true;
     })
   | (EventBase & {
       readonly type: "SessionPaused";

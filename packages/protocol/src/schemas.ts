@@ -43,6 +43,10 @@ const capabilityCategorySchema = {
   ],
 } as const;
 
+const hintLevelSchema = {
+  enum: [0, 1, 2, 3, 4, 5],
+} as const;
+
 const learningAgreementSchema = {
   type: "object",
   properties: {
@@ -208,6 +212,40 @@ const pairCommandSchema = {
       "AgreeWorkUnit",
       { workUnitId: { type: "string" } },
       ["workUnitId"],
+    ),
+    createCommandSchema(
+      "RecordAttempt",
+      {
+        workUnitId: { type: "string" },
+        summary: { type: "string" },
+        bypassed: { type: "boolean" },
+      },
+      ["workUnitId", "summary", "bypassed"],
+    ),
+    createCommandSchema(
+      "RecordHypothesis",
+      {
+        workUnitId: { type: "string" },
+        summary: { type: "string" },
+        bypassed: { type: "boolean" },
+      },
+      ["workUnitId", "summary", "bypassed"],
+    ),
+    createCommandSchema(
+      "RequestHint",
+      {
+        workUnitId: { type: "string" },
+        level: hintLevelSchema,
+      },
+      ["workUnitId", "level"],
+    ),
+    createCommandSchema(
+      "AuthorizeSolutionReveal",
+      {
+        workUnitId: { type: "string" },
+        previewOnly: { const: true },
+      },
+      ["workUnitId", "previewOnly"],
     ),
     createCommandSchema(
       "PauseSession",

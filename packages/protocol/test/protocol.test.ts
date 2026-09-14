@@ -34,7 +34,7 @@ const createWorkUnit = () => ({
   baseline: {
     "packages/protocol/src/index.ts": "abc123",
   },
-  status: "agreed" as const,
+  status: "proposed" as const,
 });
 
 describe("parsePairCommand", () => {
@@ -123,32 +123,89 @@ describe("parsePairCommand", () => {
     },
     {
       protocolVersion: 1,
-      commandId: "cmd-pause",
+      commandId: "cmd-record-attempt",
       expectedRevision: 9,
       actor: "human",
-      type: "PauseSession",
-      reason: "handoff",
+      type: "RecordAttempt",
+      workUnitId: "wu-1",
+      summary: "Tried moving the guard but the test still failed.",
+      bypassed: false,
       observedAt: 109,
     },
     {
       protocolVersion: 1,
-      commandId: "cmd-resume",
+      commandId: "cmd-record-hypothesis",
       expectedRevision: 10,
       actor: "human",
-      type: "ResumeSession",
-      entry: createEntry("feature/v2-growth-foundation"),
+      type: "RecordHypothesis",
+      workUnitId: "wu-1",
+      summary: "The stale branch never updates retryCount.",
+      bypassed: false,
       observedAt: 110,
     },
     {
       protocolVersion: 1,
-      commandId: "cmd-close",
+      commandId: "cmd-request-hint",
       expectedRevision: 11,
+      actor: "human",
+      type: "RequestHint",
+      workUnitId: "wu-1",
+      level: 2,
+      observedAt: 111,
+    },
+    {
+      protocolVersion: 1,
+      commandId: "cmd-authorize-solution-reveal",
+      expectedRevision: 12,
+      actor: "human",
+      type: "AuthorizeSolutionReveal",
+      workUnitId: "wu-1",
+      previewOnly: true,
+      observedAt: 112,
+    },
+    {
+      protocolVersion: 1,
+      commandId: "cmd-pause",
+      expectedRevision: 13,
+      actor: "human",
+      type: "PauseSession",
+      reason: "handoff",
+      observedAt: 113,
+    },
+    {
+      protocolVersion: 1,
+      commandId: "cmd-resume",
+      expectedRevision: 14,
+      actor: "human",
+      type: "ResumeSession",
+      entry: createEntry("feature/v2-growth-foundation"),
+      observedAt: 114,
+    },
+    {
+      protocolVersion: 1,
+      commandId: "cmd-close",
+      expectedRevision: 15,
       actor: "policy",
       type: "CloseSession",
-      observedAt: 111,
+      observedAt: 115,
     },
   ])("accepts the %s command variant", command => {
     expect(parsePairCommand(command)).toMatchObject(command);
+  });
+
+  it("requires solution reveals to stay preview-only", () => {
+    expect(() =>
+      parsePairCommand({
+        protocolVersion: 1,
+        commandId: "cmd-invalid-reveal",
+        expectedRevision: 0,
+        actor: "human",
+        type: "AuthorizeSolutionReveal",
+        workUnitId: "wu-1",
+        previewOnly: false,
+        observedAt: 100,
+      }),
+    ).toThrow("Invalid Pair command");
   });
 
   it("accepts a versioned enable-presence command", () => {

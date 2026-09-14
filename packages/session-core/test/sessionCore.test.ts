@@ -47,6 +47,106 @@ const createWorkUnit = () => ({
   status: "agreed" as const,
 });
 
+const createGrowthAgreement = (
+  overrides: Partial<{
+    learningGoals: readonly string[];
+    familiarAreas: readonly string[];
+    humanOwnedCapabilities: readonly ("implementation" | "verification")[];
+    delegatableWork: readonly string[];
+    maximumHintLevel: 0 | 1 | 2 | 3 | 4 | 5;
+    independentCheck: string;
+  }> = {},
+) => ({
+  learningGoals: ["Practice retry-state debugging"],
+  familiarAreas: ["test harness"],
+  humanOwnedCapabilities: ["implementation", "verification"] as const,
+  delegatableWork: ["search for related tests"],
+  maximumHintLevel: 2 as const,
+  independentCheck: "Solve one similar retry bug without AI edits",
+  ...overrides,
+});
+
+const createGrowthWorkUnit = () => ({
+  id: "growth-wu-1",
+  objective: "Repair the retry guard",
+  mode: "growth" as const,
+  learningValue: "high" as const,
+  capability: "implementation" as const,
+  owner: "human" as const,
+  allowedPaths: ["src/current.ts"],
+  acceptanceChecks: ["npm test -- retry"],
+  verificationPlan: "Run the retry suite",
+  stoppingCondition: "one retry behavior is green",
+  baseline: { "src/current.ts": "abc123" },
+  status: "proposed" as const,
+});
+
+const createGrowthRuntime = (
+  agreement = createGrowthAgreement(),
+): PairRuntimeSnapshot =>
+  reduce(createRuntime("workspace-1"), [
+    {
+      protocolVersion: 1,
+      eventId: "cmd-start:0",
+      commandId: "cmd-start",
+      actor: "human",
+      revision: 1,
+      recordedAt: 10,
+      type: "SessionStarted",
+      sessionId: "session-1",
+    },
+    {
+      protocolVersion: 1,
+      eventId: "cmd-entry:0",
+      commandId: "cmd-entry",
+      actor: "human",
+      revision: 2,
+      recordedAt: 11,
+      type: "EntryCaptured",
+      entry: createEntrySnapshot(),
+    },
+    {
+      protocolVersion: 1,
+      eventId: "cmd-learning:0",
+      commandId: "cmd-learning",
+      actor: "human",
+      revision: 3,
+      recordedAt: 12,
+      type: "LearningConfirmed",
+      agreement,
+    },
+    {
+      protocolVersion: 1,
+      eventId: "cmd-mode:0",
+      commandId: "cmd-mode",
+      actor: "human",
+      revision: 4,
+      recordedAt: 13,
+      type: "ModeSelected",
+      mode: "growth",
+    },
+    {
+      protocolVersion: 1,
+      eventId: "cmd-propose:0",
+      commandId: "cmd-propose",
+      actor: "human",
+      revision: 5,
+      recordedAt: 14,
+      type: "WorkUnitProposed",
+      workUnit: createGrowthWorkUnit(),
+    },
+    {
+      protocolVersion: 1,
+      eventId: "cmd-agree:0",
+      commandId: "cmd-agree",
+      actor: "human",
+      revision: 6,
+      recordedAt: 15,
+      type: "WorkUnitAgreed",
+      workUnitId: "growth-wu-1",
+    },
+  ]);
+
 describe("session core", () => {
   it("creates frozen initial snapshots", () => {
     const presence = createPresence("workspace-1");
@@ -70,6 +170,7 @@ describe("session core", () => {
       learningAgreement: undefined,
       entrySnapshot: undefined,
       workUnit: undefined,
+      assistance: undefined,
     });
     expect(session.criteria).toEqual([]);
     expect(session.operations).toEqual([]);
@@ -151,6 +252,7 @@ describe("session core", () => {
         learningAgreement: undefined,
         entrySnapshot: undefined,
         workUnit: undefined,
+        assistance: undefined,
         operations: [],
       },
     });
@@ -584,6 +686,535 @@ describe("session core", () => {
     ).toThrow("SESSION_RECONCILING");
   });
 
+  it("rejects confirming learning before an entry snapshot in decisions and direct events", () => {
+    const runtime = reduce(createRuntime("workspace-1"), [
+      {
+        protocolVersion: 1,
+        eventId: "cmd-start:0",
+        commandId: "cmd-start",
+        actor: "human",
+        revision: 1,
+        recordedAt: 10,
+        type: "SessionStarted",
+        sessionId: "session-1",
+      },
+    ]);
+
+    expect(() =>
+      decide(runtime, {
+        protocolVersion: 1,
+        commandId: "cmd-learning",
+        expectedRevision: 1,
+        actor: "human",
+        type: "ConfirmLearning",
+        agreement: createGrowthAgreement(),
+        observedAt: 11,
+      }),
+    ).toThrow("LEARNING_REQUIRES_ENTRY");
+
+    expect(() =>
+      reduce(runtime, [
+        {
+          protocolVersion: 1,
+          eventId: "cmd-learning:0",
+          commandId: "cmd-learning",
+          actor: "human",
+          revision: 2,
+          recordedAt: 11,
+          type: "LearningConfirmed",
+          agreement: createGrowthAgreement(),
+        },
+      ]),
+    ).toThrow("LEARNING_REQUIRES_ENTRY");
+  });
+
+  it("rejects selecting Growth mode without a learning agreement", () => {
+    const runtime = reduce(createRuntime("workspace-1"), [
+      {
+        protocolVersion: 1,
+        eventId: "cmd-start:0",
+        commandId: "cmd-start",
+        actor: "human",
+        revision: 1,
+        recordedAt: 10,
+        type: "SessionStarted",
+        sessionId: "session-1",
+      },
+      {
+        protocolVersion: 1,
+        eventId: "cmd-entry:0",
+        commandId: "cmd-entry",
+        actor: "human",
+        revision: 2,
+        recordedAt: 11,
+        type: "EntryCaptured",
+        entry: createEntrySnapshot(),
+      },
+    ]);
+
+    expect(() =>
+      decide(runtime, {
+        protocolVersion: 1,
+        commandId: "cmd-mode",
+        expectedRevision: 2,
+        actor: "human",
+        type: "SelectMode",
+        mode: "growth",
+        observedAt: 12,
+      }),
+    ).toThrow("MODE_REQUIRES_LEARNING_AGREEMENT");
+
+    expect(() =>
+      reduce(runtime, [
+        {
+          protocolVersion: 1,
+          eventId: "cmd-mode:0",
+          commandId: "cmd-mode",
+          actor: "human",
+          revision: 3,
+          recordedAt: 12,
+          type: "ModeSelected",
+          mode: "growth",
+        },
+      ]),
+    ).toThrow("MODE_REQUIRES_LEARNING_AGREEMENT");
+  });
+
+  it("rejects AI-owned Growth work units in decisions and direct events", () => {
+    const runtime = reduce(createRuntime("workspace-1"), [
+      {
+        protocolVersion: 1,
+        eventId: "cmd-start:0",
+        commandId: "cmd-start",
+        actor: "human",
+        revision: 1,
+        recordedAt: 10,
+        type: "SessionStarted",
+        sessionId: "session-1",
+      },
+      {
+        protocolVersion: 1,
+        eventId: "cmd-entry:0",
+        commandId: "cmd-entry",
+        actor: "human",
+        revision: 2,
+        recordedAt: 11,
+        type: "EntryCaptured",
+        entry: createEntrySnapshot(),
+      },
+      {
+        protocolVersion: 1,
+        eventId: "cmd-learning:0",
+        commandId: "cmd-learning",
+        actor: "human",
+        revision: 3,
+        recordedAt: 12,
+        type: "LearningConfirmed",
+        agreement: createGrowthAgreement(),
+      },
+      {
+        protocolVersion: 1,
+        eventId: "cmd-mode:0",
+        commandId: "cmd-mode",
+        actor: "human",
+        revision: 4,
+        recordedAt: 13,
+        type: "ModeSelected",
+        mode: "growth",
+      },
+    ]);
+
+    expect(() =>
+      decide(runtime, {
+        protocolVersion: 1,
+        commandId: "cmd-propose",
+        expectedRevision: 4,
+        actor: "human",
+        type: "ProposeWorkUnit",
+        workUnit: {
+          ...createGrowthWorkUnit(),
+          owner: "ai",
+        },
+        observedAt: 14,
+      }),
+    ).toThrow("GROWTH_REQUIRES_HUMAN_OWNER");
+
+    expect(() =>
+      reduce(runtime, [
+        {
+          protocolVersion: 1,
+          eventId: "cmd-propose:0",
+          commandId: "cmd-propose",
+          actor: "human",
+          revision: 5,
+          recordedAt: 14,
+          type: "WorkUnitProposed",
+          workUnit: {
+            ...createGrowthWorkUnit(),
+            owner: "ai",
+          },
+        },
+      ]),
+    ).toThrow("GROWTH_REQUIRES_HUMAN_OWNER");
+  });
+
+  it("rejects mode changes while a work unit is still attached", () => {
+    const runtime = reduce(
+      reduce(
+        reduce(createRuntime("workspace-1"), [
+          {
+            protocolVersion: 1,
+            eventId: "cmd-start:0",
+            commandId: "cmd-start",
+            actor: "human",
+            revision: 1,
+            recordedAt: 10,
+            type: "SessionStarted",
+            sessionId: "session-1",
+          },
+          {
+            protocolVersion: 1,
+            eventId: "cmd-entry:0",
+            commandId: "cmd-entry",
+            actor: "human",
+            revision: 2,
+            recordedAt: 11,
+            type: "EntryCaptured",
+            entry: createEntrySnapshot(),
+          },
+          {
+            protocolVersion: 1,
+            eventId: "cmd-mode:0",
+            commandId: "cmd-mode",
+            actor: "human",
+            revision: 3,
+            recordedAt: 12,
+            type: "ModeSelected",
+            mode: "pair",
+          },
+        ]),
+        [
+          {
+            protocolVersion: 1,
+            eventId: "cmd-propose:0",
+            commandId: "cmd-propose",
+            actor: "human",
+            revision: 4,
+            recordedAt: 13,
+            type: "WorkUnitProposed",
+            workUnit: {
+              ...createGrowthWorkUnit(),
+              mode: "pair",
+              learningValue: "mixed",
+              owner: "ai",
+            },
+          },
+        ],
+      ),
+      [
+        {
+          protocolVersion: 1,
+          eventId: "cmd-learning:0",
+          commandId: "cmd-learning",
+          actor: "human",
+          revision: 5,
+          recordedAt: 14,
+          type: "LearningConfirmed",
+          agreement: createGrowthAgreement(),
+        },
+      ],
+    );
+
+    expect(() =>
+      decide(runtime, {
+        protocolVersion: 1,
+        commandId: "cmd-mode-2",
+        expectedRevision: 5,
+        actor: "human",
+        type: "SelectMode",
+        mode: "growth",
+        observedAt: 15,
+      }),
+    ).toThrow("MODE_CHANGE_REQUIRES_NEW_WORK_UNIT");
+
+    expect(() =>
+      reduce(runtime, [
+        {
+          protocolVersion: 1,
+          eventId: "cmd-mode-2:0",
+          commandId: "cmd-mode-2",
+          actor: "human",
+          revision: 6,
+          recordedAt: 15,
+          type: "ModeSelected",
+          mode: "growth",
+        },
+      ]),
+    ).toThrow("MODE_CHANGE_REQUIRES_NEW_WORK_UNIT");
+  });
+
+  it("records growth agreement, work-unit, attempt, hypothesis, hint, and reveal state", () => {
+    const runtime = createGrowthRuntime();
+
+    const attempted = reduce(runtime, [
+      {
+        protocolVersion: 1,
+        eventId: "cmd-attempt:0",
+        commandId: "cmd-attempt",
+        actor: "human",
+        revision: 7,
+        recordedAt: 16,
+        type: "AttemptRecorded",
+        workUnitId: "growth-wu-1",
+        summary: "Tried to move the retry increment before the return.",
+        bypassed: false,
+      },
+    ]);
+    const diagnosed = reduce(attempted, [
+      {
+        protocolVersion: 1,
+        eventId: "cmd-hypothesis:0",
+        commandId: "cmd-hypothesis",
+        actor: "human",
+        revision: 8,
+        recordedAt: 17,
+        type: "HypothesisRecorded",
+        workUnitId: "growth-wu-1",
+        summary: "The failure path exits before retryCount changes.",
+        bypassed: false,
+      },
+    ]);
+    const revealAuthorized = reduce(diagnosed, [
+      {
+        protocolVersion: 1,
+        eventId: "cmd-reveal:0",
+        commandId: "cmd-reveal",
+        actor: "human",
+        revision: 9,
+        recordedAt: 18,
+        type: "SolutionRevealAuthorized",
+        workUnitId: "growth-wu-1",
+        previewOnly: true,
+      },
+    ]);
+
+    const decision = decide(revealAuthorized, {
+      protocolVersion: 1,
+      commandId: "cmd-hint",
+      expectedRevision: 9,
+      actor: "human",
+      type: "RequestHint",
+      workUnitId: "growth-wu-1",
+      level: 2,
+      observedAt: 19,
+    });
+
+    expect(decision.events).toEqual([
+      {
+        protocolVersion: 1,
+        eventId: "cmd-hint:0",
+        commandId: "cmd-hint",
+        actor: "human",
+        revision: 10,
+        recordedAt: 19,
+        type: "HintRequested",
+        workUnitId: "growth-wu-1",
+        level: 2,
+      },
+    ]);
+
+    const next = reduce(revealAuthorized, decision.events);
+
+    expect(next.session).toMatchObject({
+      status: "active",
+      mode: "growth",
+      learningAgreement: createGrowthAgreement(),
+      workUnit: {
+        ...createGrowthWorkUnit(),
+        status: "agreed",
+      },
+      assistance: {
+        attempt: {
+          summary: "Tried to move the retry increment before the return.",
+          bypassed: false,
+          recordedAt: 16,
+        },
+        hypothesis: {
+          summary: "The failure path exits before retryCount changes.",
+          bypassed: false,
+          recordedAt: 17,
+        },
+        hint: {
+          level: 2,
+          recordedAt: 19,
+        },
+        solutionReveal: {
+          previewOnly: true,
+          recordedAt: 18,
+        },
+      },
+    });
+    expect(next.session?.assistance).toBeDefined();
+    expect(Object.isFrozen(next.session?.assistance)).toBe(true);
+  });
+
+  it("rejects hint escalation beyond the learning agreement", () => {
+    const runtime = createGrowthRuntime();
+
+    expect(() =>
+      decide(runtime, {
+        protocolVersion: 1,
+        commandId: "cmd-hint",
+        expectedRevision: 6,
+        actor: "human",
+        type: "RequestHint",
+        workUnitId: "growth-wu-1",
+        level: 3,
+        observedAt: 16,
+      }),
+    ).toThrow("HINT_EXCEEDS_AGREEMENT");
+
+    expect(() =>
+      reduce(runtime, [
+        {
+          protocolVersion: 1,
+          eventId: "cmd-hint:0",
+          commandId: "cmd-hint",
+          actor: "human",
+          revision: 7,
+          recordedAt: 16,
+          type: "HintRequested",
+          workUnitId: "growth-wu-1",
+          level: 3,
+        },
+      ]),
+    ).toThrow("HINT_EXCEEDS_AGREEMENT");
+  });
+
+  it("rejects direct hints before an attempt or bypass", () => {
+    const runtime = createGrowthRuntime();
+
+    expect(() =>
+      decide(runtime, {
+        protocolVersion: 1,
+        commandId: "cmd-hint",
+        expectedRevision: 6,
+        actor: "human",
+        type: "RequestHint",
+        workUnitId: "growth-wu-1",
+        level: 2,
+        observedAt: 16,
+      }),
+    ).toThrow("HINT_REQUIRES_ATTEMPT");
+
+    expect(() =>
+      reduce(runtime, [
+        {
+          protocolVersion: 1,
+          eventId: "cmd-hint:0",
+          commandId: "cmd-hint",
+          actor: "human",
+          revision: 7,
+          recordedAt: 16,
+          type: "HintRequested",
+          workUnitId: "growth-wu-1",
+          level: 2,
+        },
+      ]),
+    ).toThrow("HINT_REQUIRES_ATTEMPT");
+  });
+
+  it("rejects level 5 hints without explicit reveal authorization", () => {
+    const runtime = reduce(createGrowthRuntime(createGrowthAgreement({ maximumHintLevel: 5 })), [
+      {
+        protocolVersion: 1,
+        eventId: "cmd-attempt:0",
+        commandId: "cmd-attempt",
+        actor: "human",
+        revision: 7,
+        recordedAt: 16,
+        type: "AttemptRecorded",
+        workUnitId: "growth-wu-1",
+        summary: "Tried one failing branch already.",
+        bypassed: false,
+      },
+    ]);
+
+    expect(() =>
+      decide(runtime, {
+        protocolVersion: 1,
+        commandId: "cmd-hint",
+        expectedRevision: 7,
+        actor: "human",
+        type: "RequestHint",
+        workUnitId: "growth-wu-1",
+        level: 5,
+        observedAt: 17,
+      }),
+    ).toThrow("HINT_REQUIRES_REVEAL");
+
+    expect(() =>
+      reduce(runtime, [
+        {
+          protocolVersion: 1,
+          eventId: "cmd-hint:0",
+          commandId: "cmd-hint",
+          actor: "human",
+          revision: 8,
+          recordedAt: 17,
+          type: "HintRequested",
+          workUnitId: "growth-wu-1",
+          level: 5,
+        },
+      ]),
+    ).toThrow("HINT_REQUIRES_REVEAL");
+  });
+
+  it("still requires an attempt or explicit bypass after reveal authorization", () => {
+    const runtime = reduce(createGrowthRuntime(createGrowthAgreement({ maximumHintLevel: 5 })), [
+      {
+        protocolVersion: 1,
+        eventId: "cmd-reveal:0",
+        commandId: "cmd-reveal",
+        actor: "human",
+        revision: 7,
+        recordedAt: 16,
+        type: "SolutionRevealAuthorized",
+        workUnitId: "growth-wu-1",
+        previewOnly: true,
+      },
+    ]);
+
+    expect(() =>
+      decide(runtime, {
+        protocolVersion: 1,
+        commandId: "cmd-hint-after-reveal",
+        expectedRevision: 7,
+        actor: "human",
+        type: "RequestHint",
+        workUnitId: "growth-wu-1",
+        level: 3,
+        observedAt: 17,
+      }),
+    ).toThrow("HINT_REQUIRES_ATTEMPT");
+
+    expect(() =>
+      reduce(runtime, [
+        {
+          protocolVersion: 1,
+          eventId: "cmd-hint-after-reveal:0",
+          commandId: "cmd-hint-after-reveal",
+          actor: "human",
+          revision: 8,
+          recordedAt: 17,
+          type: "HintRequested",
+          workUnitId: "growth-wu-1",
+          level: 3,
+        },
+      ]),
+    ).toThrow("HINT_REQUIRES_ATTEMPT");
+  });
+
   it("rejects paused events that do not advance authority", () => {
     const runtime: PairRuntimeSnapshot = {
       ...createActiveRuntime(),
@@ -759,6 +1390,26 @@ describe("session core", () => {
           baseline: { "src/a.ts": "abc" },
           status: "agreed",
         },
+        assistance: {
+          attempt: {
+            summary: "Tried editing the guard",
+            bypassed: false,
+            recordedAt: 11,
+          },
+          hypothesis: {
+            summary: "The return happens too early",
+            bypassed: false,
+            recordedAt: 12,
+          },
+          hint: {
+            level: 2,
+            recordedAt: 13,
+          },
+          solutionReveal: {
+            previewOnly: true,
+            recordedAt: 14,
+          },
+        },
         operations,
       },
     };
@@ -800,9 +1451,30 @@ describe("session core", () => {
     ]);
     expect(next.session?.learningAgreement?.learningGoals).toEqual(["goal-1"]);
     expect(next.session?.workUnit?.allowedPaths).toEqual(["src"]);
+    expect(next.session?.assistance).toEqual({
+      attempt: {
+        summary: "Tried editing the guard",
+        bypassed: false,
+        recordedAt: 11,
+      },
+      hypothesis: {
+        summary: "The return happens too early",
+        bypassed: false,
+        recordedAt: 12,
+      },
+      hint: {
+        level: 2,
+        recordedAt: 13,
+      },
+      solutionReveal: {
+        previewOnly: true,
+        recordedAt: 14,
+      },
+    });
     expect(Object.isFrozen(next.session?.entrySnapshot)).toBe(true);
     expect(Object.isFrozen(next.session?.learningAgreement)).toBe(true);
     expect(Object.isFrozen(next.session?.workUnit)).toBe(true);
+    expect(Object.isFrozen(next.session?.assistance)).toBe(true);
     expect(Object.isFrozen(next.session?.operations[0])).toBe(true);
   });
 });

@@ -3,6 +3,8 @@
   "references": [
     { "path": "packages/protocol" },
     { "path": "packages/presence" },
+    { "path": "packages/modes" },
+    { "path": "packages/restraint" },
     { "path": "packages/session-core" },
     { "path": "packages/testkit" }
   ]
