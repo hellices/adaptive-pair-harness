@@ -170,7 +170,8 @@ surfaces.
 
 | Capability | Current platform evidence | Architectural decision |
 |---|---|---|
-| Session Target | VS Code documents Local, Copilot, Claude, Codex, and Cloud as execution harness or target choices, separately from Agent, model, permissions, and isolation controls. [32] | Keep the underlying execution harness user-selectable; do not place Adaptive Pair's product modes in this selector. |
+| Session Target | VS Code documents Local, Copilot, Claude, Codex, and Cloud as execution harness or target choices, separately from Agent, model, permissions, and isolation controls. [32] | Keep Growth, Pair, and Delivery as mode contracts even if Adaptive Pair gains its own target. |
+| Contributed Session Target | The proposed `chatSessionsProvider` API and `contributes.chatSessions` can register an extension-owned session type with native history, streaming, request handling, and provider option groups. VS Code's service adds contributed types to the new-session UI. [33] | Build an Insiders proof of concept; do not make Stable or Marketplace delivery depend on it. |
 | Chat participant | The Chat Participant API provides an `@`-mentioned assistant that owns its request flow and receives the model selected in Chat. [17][18] | Keep `@pair` as a controlled, model-selecting fallback surface. |
 | Extension tools | Language Model Tools can be contributed by Marketplace extensions, included in custom agents, restricted with `when` clauses, and given confirmation behavior. [19] | Expose Pair Runtime operations through mode-aware extension tools and revalidate every call. |
 | Custom agents | `.agent.md` files define instructions, model choice, tools, visibility in the agent picker, and agent-to-agent handoffs. [20] | Use an Agent Plugin for the native picker surface. Keep human-to-AI edit handoff in the Pair Runtime. |
@@ -198,12 +199,16 @@ The architecture does not wait on these answers. A capability gate selects the
 native adapter only when it passes. The controlled VSIX surface remains the
 complete fallback.
 
-Current public documentation describes first-party Agent Host adapters and
-extension points for tools, MCP, custom agents, and chat participants. It does
-not document a stable Marketplace contribution point for registering an
-arbitrary third-party Session Target beside Copilot, Claude, and Codex. AHP is
-open and agent-agnostic, but Agent Host integration is still under active
-development.
+Current stable public documentation describes first-party Agent Host adapters
+and extension points for tools, MCP, custom agents, and chat participants. The
+third-party Session Target path is proposed: VS Code registers `chatSessions`
+contributions only when the `chatSessionsProvider` proposal is enabled.
+Proposed APIs are Insiders-only for third-party development, subject to change,
+and should not be used in Marketplace-published extensions [34].
+
+AHP is open and agent-agnostic, but Agent Host integration is still under
+active development. The TypeScript AHP package is currently a 0.9 client and
+wire-types library, while VS Code's Agent Host is the reference server.
 
 ## 6. Design decisions derived from the evidence
 
@@ -256,12 +261,13 @@ native UI hid the tool correctly.
 ### Presence, target, agent, and mode are separate choices
 
 Pair Presence is the workspace-level lifecycle. Session Target selects the
-execution harness. The Adaptive Pair custom agent selects its instructions and
-tools. Growth, Pair, or Delivery selects the capability contract.
+execution harness. On the stable path, the Adaptive Pair custom agent selects
+its instructions and tools. Growth, Pair, or Delivery selects the capability
+contract.
 
-Combining these into one harness dropdown would couple the product value to an
-execution provider and prevent the same Pair state from spanning supported
-targets.
+An experimental Adaptive Pair target can own the complete agent loop without
+changing those distinctions. Pair Presence and the mode contracts remain
+portable state rather than becoming incidental chat-provider state.
 
 ### Local, low-noise observation
 
@@ -407,3 +413,7 @@ Future documentation must:
     https://doi.org/10.1207/s15326985ep4102_1
 32. VS Code. *Choose and use an agent harness.*
     https://code.visualstudio.com/docs/agents/run/agent-harnesses
+33. VS Code. *Proposed Chat Sessions Provider API.*
+    https://github.com/microsoft/vscode/blob/main/src/vscode-dts/vscode.proposed.chatSessionsProvider.d.ts
+34. VS Code. *Using Proposed API.*
+    https://code.visualstudio.com/api/advanced-topics/using-proposed-api

@@ -17,6 +17,32 @@ not just a narrow calculation. Learning to prompt, review, and select AI output
 is valuable, but it does not automatically replace the ability to create and
 debug software directly.
 
+## Why it exists
+
+Coding agents can now interpret a problem, choose an approach, generate code,
+find errors, debug, write tests, and explain the result. Used only for task
+completion, they can remove most of the attempt-feedback-repair loop through
+which developers form practical skill.
+
+This does not mean developers learn nothing with AI. They can become better at
+request decomposition, agent steering, code review, and choosing among
+proposals. Adaptive Pair exists because those capabilities do not automatically
+replace direct code generation, debugging, language fluency, design
+internalization, or confidence built by resolving a block.
+
+A 2026 randomized experiment with 52 experienced Python users who were new to
+Trio found a roughly 17-percentage-point lower immediate assessment score for
+the AI-assisted group and no statistically significant main-task acceleration.
+Observed participants who emphasized conceptual questions or explanations
+scored better than those who relied on code and debugging completion, but those
+usage patterns were not separately randomized. The result is a warning to
+preserve direct practice, not proof that one Adaptive Pair mode causes learning.
+See the [research and limitations](docs/research.md#coding-specific-support).
+
+Adaptive Pair is therefore pro-AI and pro-capability: use delegation when it is
+valuable, pair when shared work is valuable, and protect direct practice when
+the developer wants to learn or remain fluent.
+
 ## Product direction
 
 v2 is a complete redesign around a host-agnostic open core:
@@ -117,7 +143,8 @@ to Human Driver / AI Navigator instead of claiming unsupported AI edit control.
 ## VS Code entry
 
 The `Copilot / Claude / Codex / Local` **Session Target** control chooses the
-execution harness. Adaptive Pair does not replace that choice.
+execution harness. On the stable integration path, Adaptive Pair does not
+replace that choice.
 
 1. Enable **Pair Presence** for the workspace or select **Pair here** while
    already working.
@@ -129,6 +156,17 @@ execution harness. Adaptive Pair does not replace that choice.
 
 This separation lets the same Pair state and learning contract work across
 supported agents instead of binding the product to one harness.
+
+An **Adaptive Pair** Session Target is also technically possible through VS
+Code's proposed `chatSessionsProvider` API. The v2 plan includes an Insiders
+proof of concept because a dedicated target could give Adaptive Pair direct
+control over instructions, tools, restraint, and session handling. The API is
+not yet suitable as the only Stable or Marketplace entry: third-party proposed
+APIs require Insiders and explicit `--enable-proposed-api` activation.
+
+Follow the time-boxed
+[Session Target technical spike](docs/spikes/platform-adaptive-pair-session-target-spike.md)
+for the prototype criteria and current evidence.
 
 Read the complete initial [product and system design](docs/design.md).
 The first executable milestone is specified in the

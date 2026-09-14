@@ -49,6 +49,15 @@ This value is independent of execution method. Prompt configuration, skills,
 permissions, plugins, extensions, and custom runtimes are implementation
 options evaluated by the same observable mode contracts.
 
+The motivation does not depend on an interview, product endorsement, or a
+claim that AI always harms learning. The closest direct evidence in the
+current review is a 2026 randomized study of 52 experienced Python users new to
+Trio: the AI-assisted group scored about 17 percentage points lower on an
+immediate assessment, without statistically significant main-task
+acceleration. Higher-scoring conceptual-question and explanation patterns were
+observational subgroups, not randomized treatments. The product response is to
+preserve and measure direct practice, not to claim a proven learning effect.
+
 In Growth and Pair modes, one developer and one AI share:
 
 - an explicit goal;
@@ -820,42 +829,67 @@ VS Code exposes separate controls that must remain separate in Adaptive Pair:
 | Control | Meaning | Adaptive Pair decision |
 |---|---|---|
 | Workspace / folder | Where development is happening | Pair Presence is enabled here and can outlive one task |
-| Session Target | Which execution harness runs the agent: Local, Copilot, Claude, Codex, or Cloud | User choice; Adaptive Pair is not this selector |
+| Session Target | Which execution harness runs the agent: Local, Copilot, Claude, Codex, Cloud, or an experimental contributed type | Keep provider targets selectable; evaluate an Adaptive Pair target without making Stable depend on proposed API |
 | Agent | Which instructions and tools shape behavior | Select the Adaptive Pair custom agent when the target supports it |
 | Adaptive Pair mode | Whether the work is Growth, Pair, or Delivery | Stored and enforced by Pair Runtime |
 | Language model | Which model reasons | User choice within the selected target |
 | Permissions and isolation | Native approval and workspace boundary | Reused in addition to Pair authority |
 
 The primary workspace entry is **Enable Pair Presence** or **Pair here**, not
-the Session Target selector. The chat entry is the **Adaptive Pair custom
-agent** under the Agent control. Selecting it attaches the conversation to the
-existing workspace Presence and Pair Runtime state, then asks for or restores
-the Growth, Pair, or Delivery mode.
+the Session Target selector. On the stable integration path, the chat entry is
+the **Adaptive Pair custom agent** under the Agent control. Selecting it
+attaches the conversation to the existing workspace Presence and Pair Runtime
+state, then asks for or restores the Growth, Pair, or Delivery mode.
 
 If the selected target does not expose the custom agent or required extension
 tools, `@pair` opens the controlled surface against the same state. The user
 does not need to restart or reconstruct the task.
 
-Adaptive Pair is not implemented as a new Session Target in v2.0 because:
+An Adaptive Pair Session Target is technically possible today through the
+proposed `chatSessionsProvider` extension API:
 
-- Session Target chooses an execution runtime, while Adaptive Pair defines
-  cross-runtime collaboration behavior;
-- making the product a harness would bind its identity to one agent loop and
-  duplicate provider-specific execution;
-- current public extension documentation exposes custom agents, tools, MCP,
-  and chat participants, but not a stable Marketplace contribution point for a
-  third-party target beside Copilot, Claude, and Codex;
-- the product value should survive a change of harness or model.
+- `contributes.chatSessions` adds an extension-contributed session type to the
+  native target UI;
+- `createChatSessionItemController` manages new and existing sessions plus
+  provider option groups;
+- `registerChatSessionContentProvider` supplies native history, streaming, and
+  a request handler;
+- the provider can offer model, agent, permission, and other session options.
 
-An Adaptive Pair AHP adapter may become an optional Session Target only if a
-stable third-party registration and distribution contract appears and native
-targets cannot preserve the Pair mode contracts. It is not the primary entry
-or a v2.0 dependency.
+This route is attractive because Adaptive Pair can own the complete
+instruction, tool, restraint, and state loop while still using native chat UI.
+It is not yet a Stable or Marketplace foundation: the API is proposed,
+subject to change, supported for third-party development in VS Code Insiders,
+and explicitly not recommended for published extensions. A shared VSIX also
+requires launching Insiders with `--enable-proposed-api`.
+
+The v2 strategy is therefore dual-track:
+
+1. build a focused Insiders proof of concept for an `Adaptive Pair` Session
+   Target;
+2. retain the stable custom-agent/tool and controlled `@pair` adapters;
+3. promote the target to the primary chat entry if the API stabilizes and the
+   proof satisfies mode, Presence, tool, cancellation, and distribution
+   contracts.
+
+The test matrix and current evidence are tracked in the
+[Session Target technical spike](spikes/platform-adaptive-pair-session-target-spike.md).
+
+Pair Presence remains the primary workspace lifecycle even if the Session
+Target becomes the preferred way to start a chat. The Pair Runtime remains
+model- and provider-agnostic inside the target.
+
+A full standalone AHP server is a separate option. AHP defines an open,
+agent-agnostic protocol and publishes client SDKs, but its TypeScript package is
+currently a 0.9 client and wire-types library; the VS Code Agent Host is the
+reference server. Building and discovering a third-party persistent host is
+substantially larger than the proposed extension-host target and is deferred.
 
 Target compatibility is capability-based:
 
 | Session Target | Intended v2 use |
 |---|---|
+| Adaptive Pair (proposed) | Insiders proof of concept; candidate primary chat entry after API stabilization |
 | Local | Baseline full local experience because VS Code and extension tools run in the extension host |
 | Copilot | Full experience when client extension tools, custom agent, cancellation, and context boundaries pass conformance |
 | Claude or Codex | Full or controlled experience only after target-specific tool and customization conformance |
@@ -1466,18 +1500,22 @@ These proofs select an adapter path; they do not reopen the core architecture.
 2. Run the Growth restraint conformance suite against each proposed agent,
    model, and host adapter and record premature solution, diagnosis, and
    takeover failures.
-3. Build the complete native capability matrix and identify every capability
+3. Build an Insiders proof of concept using `contributes.chatSessions`,
+   `createChatSessionItemController`, and
+   `registerChatSessionContentProvider`; verify that `Adaptive Pair` appears in
+   Session Target and owns request handling.
+4. Build the complete native capability matrix and identify every capability
    that is reused, wrapped, excluded, or deferred by mode.
-4. Verify that a custom agent can exclude built-in workspace tools, apply
+5. Verify that a custom agent can exclude built-in workspace tools, apply
    dynamic `when` visibility, and route extension tools through the Agent Host.
-5. Verify instruction and tool snapshots remain correlated across mode,
+6. Verify instruction and tool snapshots remain correlated across mode,
    handoff, goal, and consent changes.
-6. Verify cancellation, client disconnect, document-version, and result
+7. Verify cancellation, client disconnect, document-version, and result
    correlation semantics.
-7. Verify the Agent Plugin plus VSIX installation and version handshake.
-8. Verify target-specific behavior for Local, Copilot, Claude, Codex, and
-   Cloud without assuming one target's result applies to another.
-9. Record each native capability as supported, wrapped, excluded,
+8. Verify the Agent Plugin plus VSIX installation and version handshake.
+9. Verify target-specific behavior for Adaptive Pair, Local, Copilot, Claude,
+   Codex, and Cloud without assuming one target's result applies to another.
+10. Record each native capability as supported, wrapped, excluded,
    advisory-only, or unavailable.
 
 If a native capability is unavailable, the controlled chat adapter supplies
@@ -1495,8 +1533,11 @@ limitation.
 - Presence is explicit, bounded, local-first, and independently quietable from
   the current task session.
 - VS Code is the first host, not the owner of product state.
-- Pair Presence is the primary workspace entry; Adaptive Pair is selected under
-  Agent behavior, not registered as a v2.0 Session Target.
+- Pair Presence is the primary workspace entry.
+- the stable chat path selects Adaptive Pair under Agent behavior; an
+  Adaptive Pair Session Target is an Insiders experiment and candidate primary
+  chat entry after API stabilization.
+- Stable v2.0 does not depend on a proposed VS Code API.
 - Local, Copilot, Claude, Codex, and Cloud remain separate execution choices
   with published capability results.
 - one edit owner is enforced per work unit.
