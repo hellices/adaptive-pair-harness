@@ -373,6 +373,7 @@ describe("Pair runtime support", () => {
       ): void;
       previousText(uri: string): string | undefined;
       lastAnalyzedText(uri: string): string | undefined;
+      analysisBaselineText(uri: string): string | undefined;
       latestEvidence(uri: string): readonly Evidence[];
       close(uri: string): void;
     };
@@ -388,6 +389,7 @@ describe("Pair runtime support", () => {
 
     expect(state.previousText("file:///pair.ts")).toBeUndefined();
     expect(state.lastAnalyzedText("file:///pair.ts")).toBeUndefined();
+    expect(state.analysisBaselineText("file:///pair.ts")).toBeUndefined();
     expect(state.latestEvidence("file:///pair.ts")).toEqual([]);
   });
 
@@ -417,6 +419,49 @@ describe("Pair runtime support", () => {
       "export const value: number = 1;",
     );
     expect(state.latestEvidence(uri)).toEqual([evidence]);
+  });
+
+  it("retains the first observed edit baseline until an episode is analyzed", async () => {
+    const { PairDocumentState } = await import(
+      "../src/vscode/pairRuntimeSupport"
+    );
+    const state = new PairDocumentState();
+    const uri = "file:///pair.ts";
+    state.seed(uri, "export function load(", false);
+    state.updateText(uri, "export function load(id:");
+    expect(state.analysisBaselineText(uri)).toBe(
+      "export function load(",
+    );
+
+    state.recordAnalysis(uri, "export function load(id:", {
+      stability: "unstable",
+      evidence: [],
+    });
+    state.updateText(
+      uri,
+      "export function load(id: string): string { return id; }",
+    );
+    expect(state.analysisBaselineText(uri)).toBe(
+      "export function load(id:",
+    );
+  });
+
+  it("prefers the last stable text over a later unstable episode baseline", async () => {
+    const { PairDocumentState } = await import(
+      "../src/vscode/pairRuntimeSupport"
+    );
+    const state = new PairDocumentState();
+    const uri = "file:///pair.ts";
+    const stable = "export const value: string = 'before';";
+
+    state.seed(uri, stable);
+    state.updateText(uri, "export const value:");
+    state.recordAnalysis(uri, "export const value:", {
+      stability: "unstable",
+      evidence: [],
+    });
+
+    expect(state.analysisBaselineText(uri)).toBe(stable);
   });
 
   it("extracts the public diagnostic code value without forwarding its target", async () => {

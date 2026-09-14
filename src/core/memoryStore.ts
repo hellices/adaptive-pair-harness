@@ -327,7 +327,12 @@ function validateDismissedEvidenceIds(
   retainedNewestFirst.reverse();
   return {
     evidenceIds: Object.freeze(retainedNewestFirst),
-    compacted: retain && retainedNewestFirst.length !== value.length,
+    compacted:
+      retain &&
+      (retainedNewestFirst.length !== value.length ||
+        retainedNewestFirst.some(
+          (evidenceId, index) => evidenceId !== value[index],
+        )),
   };
 }
 
@@ -523,9 +528,23 @@ function validateApprovedEvidence(
   }
 
   retainedNewestFirst.reverse();
+  const normalizedEntryChanged = retainedNewestFirst.some(
+    (entry, index) => {
+      const persisted = value[index];
+      return (
+        !isRecord(persisted) ||
+        entry.id !== persisted.id ||
+        entry.kind !== persisted.kind ||
+        entry.title !== persisted.title ||
+        entry.approvedAt !== persisted.approvedAt
+      );
+    },
+  );
   return {
     approvedEvidence: Object.freeze(retainedNewestFirst),
-    compacted: retainedNewestFirst.length !== value.length,
+    compacted:
+      retainedNewestFirst.length !== value.length ||
+      normalizedEntryChanged,
   };
 }
 

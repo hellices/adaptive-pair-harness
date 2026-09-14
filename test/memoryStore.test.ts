@@ -84,6 +84,37 @@ class ControlledUpdateKeyValueStore extends InMemoryKeyValueStore {
   }
 }
 
+class DeferredReadKeyValueStore extends InMemoryKeyValueStore {
+  private deferredRead: Promise<void> | undefined;
+  private releaseRead: (() => void) | undefined;
+  public deferredReadStarted = false;
+
+  public deferNextRead(): void {
+    let release!: () => void;
+    this.deferredRead = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.releaseRead = release;
+    this.deferredReadStarted = false;
+  }
+
+  public releaseDeferredRead(): void {
+    this.releaseRead?.();
+  }
+
+  public override async get<T>(key: string): Promise<T | undefined> {
+    const value = await super.get<T>(key);
+    const deferredRead = this.deferredRead;
+    if (deferredRead !== undefined) {
+      this.deferredRead = undefined;
+      this.deferredReadStarted = true;
+      await deferredRead;
+      this.releaseRead = undefined;
+    }
+    return value;
+  }
+}
+
 class FailingUpdateKeyValueStore extends InMemoryKeyValueStore {
   public constructor(private remainingFailures: number) {
     super();
@@ -250,6 +281,202 @@ describe("PairMemoryStore", () => {
         },
       ],
     });
+  });
+
+  it("writes back a normalized one-entry legacy dismissal on load", async () => {
+    const store = new InMemoryKeyValueStore();
+    await store.update("adaptive-pair.memory", {
+      version: 1,
+      preferences: {
+        interventionStyle: "balanced",
+        interventionStyleExplicit: false,
+        pauseThresholdMs: 1_000,
+      },
+      dismissedEvidenceByRepository: {
+        [repositoryA]: [evidence.id],
+      },
+      dismissedRepositoryOrder: [repositoryA],
+      approvedEvidence: [],
+    });
+    const update = vi.spyOn(store, "update");
+    update.mockClear();
+    const memoryStore = new PairMemoryStore({
+      store,
+      repositoryId: repositoryA,
+    });
+
+    await expect(memoryStore.load()).resolves.toMatchObject({
+      dismissedEvidenceByRepository: {
+        [repositoryA]: [evidenceHash],
+      },
+    });
+
+    expect(update).toHaveBeenCalledOnce();
+    expect(
+      (
+        store.snapshot("adaptive-pair.memory") as PersistedMemory
+      ).dismissedEvidenceByRepository?.[repositoryA],
+    ).toEqual([evidenceHash]);
+  });
+
+  it("does not rewrite an already-normalized one-entry dismissal", async () => {
+    const store = new InMemoryKeyValueStore();
+    await store.update("adaptive-pair.memory", {
+      version: 1,
+      preferences: {
+        interventionStyle: "balanced",
+        interventionStyleExplicit: false,
+        pauseThresholdMs: 1_000,
+      },
+      dismissedEvidenceByRepository: {
+        [repositoryA]: [evidenceHash],
+      },
+      dismissedRepositoryOrder: [repositoryA],
+      approvedEvidence: [],
+    });
+    const update = vi.spyOn(store, "update");
+    update.mockClear();
+    const memoryStore = new PairMemoryStore({
+      store,
+      repositoryId: repositoryA,
+    });
+
+    await memoryStore.load();
+
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("does not let stale legacy dismissal write-back overwrite a newer revision", async () => {
+    const store = new DeferredReadKeyValueStore();
+    await store.update("adaptive-pair.memory", {
+      version: 1,
+      preferences: {
+        interventionStyle: "balanced",
+        interventionStyleExplicit: false,
+        pauseThresholdMs: 1_000,
+      },
+      dismissedEvidenceByRepository: {
+        [repositoryA]: [evidence.id],
+      },
+      dismissedRepositoryOrder: [repositoryA],
+      approvedEvidence: [],
+    });
+    store.deferNextRead();
+    const update = vi.spyOn(store, "update");
+    update.mockClear();
+    const memoryStore = new PairMemoryStore({
+      store,
+      repositoryId: repositoryA,
+    });
+
+    const staleLoad = memoryStore.load();
+    await vi.waitFor(() => {
+      expect(store.deferredReadStarted).toBe(true);
+    });
+    await memoryStore.dismissEvidence("newer-evidence");
+    store.releaseDeferredRead();
+    await staleLoad;
+
+    expect(update).toHaveBeenCalledOnce();
+    expect(
+      (
+        store.snapshot("adaptive-pair.memory") as PersistedMemory
+      ).dismissedEvidenceByRepository?.[repositoryA],
+    ).toEqual([
+      evidenceHash,
+      hashEvidenceIdentity("newer-evidence"),
+    ]);
+  });
+
+  it("writes back a normalized one-entry legacy approval on load", async () => {
+    const privatePath =
+      "/Users/example/private-workspace/src/credential.ts";
+    const legacyTitle =
+      `Review ${privatePath} ${"x".repeat(200)}`;
+    const normalizedTitle =
+      `Review [path] ${"x".repeat(200)}`.slice(0, 120);
+    const store = new InMemoryKeyValueStore();
+    await store.update("adaptive-pair.memory", {
+      version: 1,
+      preferences: {
+        interventionStyle: "balanced",
+        interventionStyleExplicit: false,
+        pauseThresholdMs: 1_000,
+      },
+      dismissedEvidenceByRepository: {},
+      dismissedRepositoryOrder: [],
+      approvedEvidence: [
+        {
+          id: evidence.id,
+          kind: evidence.kind,
+          title: legacyTitle,
+          approvedAt: 1_717_171_717,
+        },
+      ],
+    });
+    const update = vi.spyOn(store, "update");
+    update.mockClear();
+    const memoryStore = new PairMemoryStore({
+      store,
+      repositoryId: repositoryA,
+    });
+
+    await expect(memoryStore.load()).resolves.toMatchObject({
+      approvedEvidence: [
+        {
+          id: evidenceHash,
+          kind: evidence.kind,
+          title: normalizedTitle,
+          approvedAt: 1_717_171_717,
+        },
+      ],
+    });
+
+    expect(update).toHaveBeenCalledOnce();
+    expect(
+      (
+        store.snapshot("adaptive-pair.memory") as PersistedMemory
+      ).approvedEvidence,
+    ).toEqual([
+      {
+        id: evidenceHash,
+        kind: evidence.kind,
+        title: normalizedTitle,
+        approvedAt: 1_717_171_717,
+      },
+    ]);
+  });
+
+  it("does not rewrite an already-normalized one-entry approval", async () => {
+    const store = new InMemoryKeyValueStore();
+    await store.update("adaptive-pair.memory", {
+      version: 1,
+      preferences: {
+        interventionStyle: "balanced",
+        interventionStyleExplicit: false,
+        pauseThresholdMs: 1_000,
+      },
+      dismissedEvidenceByRepository: {},
+      dismissedRepositoryOrder: [],
+      approvedEvidence: [
+        {
+          id: evidenceHash,
+          kind: evidence.kind,
+          title: evidence.title,
+          approvedAt: 1_717_171_717,
+        },
+      ],
+    });
+    const update = vi.spyOn(store, "update");
+    update.mockClear();
+    const memoryStore = new PairMemoryStore({
+      store,
+      repositoryId: repositoryA,
+    });
+
+    await memoryStore.load();
+
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("writes deterministic repository order metadata for in-bounds legacy records", async () => {

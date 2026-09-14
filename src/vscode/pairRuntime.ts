@@ -582,12 +582,14 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     const selection = toPairRange(range);
     const currentText = editor.document.getText();
     const previousStableText = this.documentState.lastStableText(key);
+    const analysisBaselineText =
+      this.documentState.analysisBaselineText(key) ?? currentText;
     const hasUnanalyzedChanges = previousStableText !== currentText;
     const analysis = hasUnanalyzedChanges
       ? this.analyzer.analyze({
             uri: key,
             languageId: editor.document.languageId,
-            previousText: previousStableText ?? currentText,
+            previousText: analysisBaselineText,
             currentText,
             version: editor.document.version,
             observedAt: Date.now(),

@@ -3887,3 +3887,73 @@
 - No live VS Code extension-host or live Copilot request was run. Real
   TypeScript checker tests, deterministic provider adapters, runtime lifecycle
   coverage, and packaged-byte checks exercise the changed boundaries.
+
+---
+
+## Legacy compaction and manual baseline follow-up (2026-09-14)
+
+### Corrections implemented
+
+- Dismissal validation now compares the complete retained normalized sequence
+  with the persisted sequence. A one-entry legacy raw identity therefore marks
+  the record compacted even though its length is unchanged, and load writes the
+  SHA-256 identity back through the existing adapter revision fence.
+- Approved-evidence validation now compares every retained normalized ID, kind,
+  sanitized bounded title, and approval timestamp with its persisted entry.
+  Same-length legacy summaries are rewritten with hashed IDs and sanitized
+  120-character titles, while already-normalized records cause no write.
+- Document state now tracks the latest completed edit-episode baseline
+  independently from the last stable source. Manual review prefers the last
+  stable source when one exists and otherwise compares the first repaired text
+  with the retained pre-edit baseline.
+- Stable and unstable analyses advance the edit-episode baseline, while
+  per-change observation continues to preserve the first baseline until the
+  episode is analyzed. Close and full clear remove the additional state.
+
+### TDD evidence
+
+- Dismissal RED: a one-entry raw dismissal loaded as a hash but made zero
+  write-back calls. GREEN: load persists the hash once; an already-normalized
+  control performs no write.
+- Approval RED: a one-entry raw ID and unsanitized overlong path-bearing title
+  loaded normalized but made zero write-back calls. GREEN: load persists the
+  hashed ID and sanitized bounded title once; an already-normalized control
+  performs no write.
+- Revision-fence coverage delays the legacy read, commits a newer dismissal,
+  and verifies that stale compaction cannot overwrite the newer revision.
+- Manual-review RED: all six dependency/API/complexity change and no-change
+  cases received `currentText` as both analyzer inputs. GREEN: the retained
+  pre-edit text is supplied and only the three real changes render evidence.
+- Self-review RED: an unchanged unstable seed skipped analysis. GREEN:
+  last-stable currentness remains the reanalysis predicate, preserving the
+  stabilization path while the retained edit baseline supplies
+  `previousText`.
+- Focused memory/runtime verification: **3 files, 155 tests passed**.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **20 files, 614 tests passed**
+- `npm run test:coverage`: **PASS — 20 files, 614 tests**
+  - statements 90.68%, branches 83.58%, functions 93.62%, lines 90.81%
+- `npm run package`: **PASS — 161 files, 4.37 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX inclusion/exclusion and compiled JavaScript byte-integrity scans:
+  **PASS**
+- Source/public-document and packaged-runtime Secretlint scans: **PASS**
+- Production/compiled runtime URL scan: **PASS — documented loopback default
+  only**
+- Packaged repository metadata, conflict-marker, and `git diff --check` scans:
+  **PASS**
+
+### Self-review and residual concerns
+
+- Reviewed retained-sequence comparison, normalization idempotence, stale-load
+  fencing, no-write controls, edit-episode advancement, last-stable
+  precedence, repeated unstable review, cleanup, and package contents.
+- A live VS Code extension host was unavailable. Deterministic document-event,
+  analyzer, persistence-race, and packaged-byte tests cover the changed
+  boundaries; no high-confidence defect remains in scope.

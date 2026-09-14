@@ -599,11 +599,13 @@ export class PairInactiveError extends Error {
 
 export class PairDocumentState {
   private readonly previousTextByUri = new Map<string, string>();
+  private readonly editBaselineTextByUri = new Map<string, string>();
   private readonly lastStableTextByUri = new Map<string, string>();
   private readonly latestEvidenceByUri = new Map<string, readonly Evidence[]>();
 
   public seed(uri: string, text: string, stable = true): void {
     this.previousTextByUri.set(uri, text);
+    this.editBaselineTextByUri.set(uri, text);
     if (stable) {
       this.lastStableTextByUri.set(uri, text);
     } else {
@@ -622,6 +624,7 @@ export class PairDocumentState {
     text: string,
     analysis: SemanticAnalysisResult,
   ): void {
+    this.editBaselineTextByUri.set(uri, text);
     if (analysis.stability === "unstable") {
       this.latestEvidenceByUri.delete(uri);
       return;
@@ -642,6 +645,13 @@ export class PairDocumentState {
     return this.lastStableTextByUri.get(uri);
   }
 
+  public analysisBaselineText(uri: string): string | undefined {
+    return (
+      this.lastStableTextByUri.get(uri) ??
+      this.editBaselineTextByUri.get(uri)
+    );
+  }
+
   public latestEvidence(uri: string): readonly Evidence[] {
     return this.latestEvidenceByUri.get(uri) ?? [];
   }
@@ -652,12 +662,14 @@ export class PairDocumentState {
 
   public close(uri: string): void {
     this.previousTextByUri.delete(uri);
+    this.editBaselineTextByUri.delete(uri);
     this.lastStableTextByUri.delete(uri);
     this.latestEvidenceByUri.delete(uri);
   }
 
   public clear(): void {
     this.previousTextByUri.clear();
+    this.editBaselineTextByUri.clear();
     this.lastStableTextByUri.clear();
     this.latestEvidenceByUri.clear();
   }

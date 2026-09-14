@@ -4334,6 +4334,153 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
+  it.each([
+    [
+      "dependency change",
+      "export const value = 1;",
+      'import { save } from "./repository";\nexport const value = save;',
+      "new-dependency",
+    ],
+    [
+      "dependency no-change control",
+      'import { save } from "./repository";\nvoid save;',
+      '// repaired formatting\nimport { save } from "./repository";\nvoid save;',
+      undefined,
+    ],
+    [
+      "unstable text no-change control",
+      "export function load(",
+      "export function load(",
+      undefined,
+    ],
+    [
+      "public API change",
+      "export function load(id: string): string { return id; }",
+      "export function load(id: number): string { return String(id); }",
+      "public-api-change",
+    ],
+    [
+      "public API no-change control",
+      "export function load(id: string): string { return id; }",
+      [
+        "export function load(id: string): string {",
+        "  return id;",
+        "}",
+      ].join("\n"),
+      undefined,
+    ],
+    [
+      "complexity change",
+      [
+        "export function decide(input: number): number {",
+        "  if (input > 0) return input;",
+        "  if (input < 0) return -input;",
+        "  return 0;",
+        "}",
+      ].join("\n"),
+      [
+        "export function decide(input: number): number {",
+        "  if (input > 10) return 10;",
+        "  if (input > 0 && input < 10) return input;",
+        "  for (const item of [input]) {",
+        "    if (item === 0) return 0;",
+        "  }",
+        "  return input < 0 ? -input : input;",
+        "}",
+      ].join("\n"),
+      "complexity-growth",
+    ],
+    [
+      "complexity no-change control",
+      [
+        "export function decide(input: number): number {",
+        "  if (input > 0) return input;",
+        "  if (input < 0) return -input;",
+        "  return 0;",
+        "}",
+      ].join("\n"),
+      [
+        "export function decide(input: number): number {",
+        "  if (input > 0) { return input; }",
+        "  if (input < 0) { return -input; }",
+        "  return 0;",
+        "}",
+      ].join("\n"),
+      undefined,
+    ],
+  ] as const)(
+    "uses an unstable seed as the first repaired manual-review baseline for %s",
+    async (_scenario, previousText, currentText, expectedKind) => {
+      const uri = "file:///workspace/manual-first-stable.ts";
+      const seededDocument = document(uri, previousText, 1);
+      vscodeState.textDocuments = [seededDocument];
+      const shared = sharedContext();
+      const runtime = new PairRuntime({
+        config: config(),
+        extensionContext,
+        sharedContext: shared,
+        languageModelApi: languageModelApi(),
+        apiKey: undefined,
+      });
+      const analyzer = (
+        runtime as unknown as {
+          analyzer: {
+            isStable(
+              uri: string,
+              languageId: string,
+              text: string,
+            ): boolean;
+            analyze(input: {
+              previousText: string;
+              currentText: string;
+            }): unknown;
+          };
+        }
+      ).analyzer;
+      const isStable = vi.spyOn(analyzer, "isStable").mockReturnValue(false);
+      const analyze = vi.spyOn(analyzer, "analyze");
+      await runtime.startSession();
+      isStable.mockRestore();
+
+      const repairedDocument = document(uri, currentText, 2);
+      vscodeState.textDocuments = [repairedDocument];
+      vscodeState.activeTextEditor = {
+        document: repairedDocument,
+        selection: {
+          isEmpty: false,
+          active: { line: 0, character: 0 },
+          start: { line: 0, character: 0 },
+          end: {
+            line: repairedDocument.lineCount - 1,
+            character: 10_000,
+          },
+        },
+      };
+      vscodeState.changeListeners[0]!({
+        document: repairedDocument,
+        contentChanges: [{ text: currentText }],
+      });
+
+      await runtime.reviewCurrentBlock();
+
+      expect(analyze).toHaveBeenCalledOnce();
+      expect(analyze).toHaveBeenCalledWith(
+        expect.objectContaining({
+          previousText,
+          currentText,
+        }),
+      );
+      if (expectedKind === undefined) {
+        expect(shared.snapshot().latest).toBeUndefined();
+        expect(vscodeState.commentThreads).toHaveLength(0);
+      } else {
+        expect(shared.snapshot().latest?.evidence.kind).toBe(expectedKind);
+        expect(vscodeState.commentThreads).toHaveLength(1);
+      }
+      runtime.dispose();
+    },
+  );
+
   it("publishes current Chat output after its own budget snapshot updates", async () => {
     vi.stubGlobal(
       "fetch",
