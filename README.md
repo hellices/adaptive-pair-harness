@@ -164,9 +164,17 @@ control over instructions, tools, restraint, and session handling. The API is
 not yet suitable as the only Stable or Marketplace entry: third-party proposed
 APIs require Insiders and explicit `--enable-proposed-api` activation.
 
+The executable POC now confirms native target-action registration,
+target-scoped model selection, session materialization, content-provider
+loading, and dynamic-participant request completion in an isolated VS Code
+Insiders Extension Host. Persisted history, Pair tool routing, native
+interruption, and visual coexistence review remain open.
+
 Follow the time-boxed
 [Session Target technical spike](docs/spikes/platform-adaptive-pair-session-target-spike.md)
 for the prototype criteria and current evidence.
+The POC source and reproduction steps are under
+[poc/session-target](poc/session-target/).
 
 The same extension codebase produces two channel packages:
 

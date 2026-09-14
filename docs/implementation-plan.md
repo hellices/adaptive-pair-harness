@@ -76,8 +76,10 @@ This is the first of four implementation plans:
 3. **Delivery Mode and mode switching** - adds explicit delegation and honest
    cross-mode outcome reporting.
 4. **Native adapters and v2.0 release** - adds Adaptive Pair under the Agent
-   control, builds a proposed `chatSessionsProvider` Session Target proof of
-   concept, validates Adaptive Pair/Local/Copilot/Claude/Codex target
+   control, hardens the proven `chatSessionsProvider` plus target-scoped
+   `chatProvider` Session Target POC with history, Pair tools, interruption,
+   and coexistence, validates
+   Adaptive Pair/Local/Copilot/Claude/Codex target
    compatibility, adds the shared Stable/Insiders manifest build, and completes
    stable release gates without making Stable depend on the proposed API.
 

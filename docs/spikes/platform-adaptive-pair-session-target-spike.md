@@ -54,30 +54,34 @@ Session Target using supported VS Code mechanisms?
 - [x] Inspect the Copilot extension's contributed session manifest.
 - [x] Inspect proposed-API distribution restrictions.
 - [x] Inspect AHP documentation and available TypeScript package.
-- [ ] Build a minimal Adaptive Pair target extension for VS Code Insiders.
-- [ ] Verify target picker visibility in a clean Insiders profile.
-- [ ] Verify one streamed request, model option, Pair tool call, cancellation,
-  and restored session.
-- [ ] Record screenshots, logs, API incompatibilities, and recommendation.
+- [x] Build a minimal Adaptive Pair target extension for VS Code Insiders.
+- [x] Verify contributed target action, target-scoped model selection, and
+  native session materialization in a clean Insiders profile.
+- [x] Verify one request reaches the dynamic participant and completes through
+  native Chat streaming.
+- [ ] Verify one Pair tool call, native interruption, and restored history.
+- [x] Record logs, API incompatibilities, and recommendation.
 
 ### Success Criteria
 
 **This spike is complete when:**
 
-- [ ] `Adaptive Pair` appears in the Session Target control in a clean Insiders
-  profile.
+- [x] VS Code registers the native `Adaptive Pair` target action and opens an
+  `adaptive-pair:` target session in a clean Insiders profile.
 - [ ] Existing Local, Copilot, Claude, Codex, and Cloud entries remain present,
   ordered as before, and retain the prior default.
-- [ ] A new target session is created through
+- [x] A new target session is created through
   `ChatSessionItemController.newChatSessionItemHandler`.
-- [ ] `ChatSessionContentProvider` restores history and handles a new request.
+- [x] `ChatSessionContentProvider` is invoked and the dynamic participant
+  handles a submitted request.
+- [ ] `ChatSessionContentProvider` restores persisted history.
 - [ ] The target calls one Pair extension tool and reports its observed result.
 - [ ] Growth Mode rejects an edit request through the target.
 - [ ] Stop or interruption leaves no late state mutation.
 - [ ] Install, target selection, deselection, and uninstall do not modify user
   settings, another session, participant routing, or native Chat behavior.
-- [ ] Stable, Insiders, VSIX, and Marketplace limitations are documented.
-- [ ] A clear promote, retain-experimental, or reject decision is recorded.
+- [x] Stable, Insiders, VSIX, and Marketplace limitations are documented.
+- [x] A clear promote, retain-experimental, or reject decision is recorded.
 
 ## Technical Context
 
@@ -188,11 +192,53 @@ answer the target-picker question.
 
 ### Prototype and Testing Notes
 
-Static source inspection confirms the extension contribution and request
-provider path. No runtime prototype has been executed in this environment
-because a compatible VS Code executable is not installed. The spike remains
-in progress until a clean Insiders profile demonstrates target visibility and
-the request/tool/cancellation flow.
+The executable POC lives at `poc/session-target/`.
+
+Validated environment:
+
+- VS Code Insiders commit
+  `07b4ff1883f94da91f6d698744fc7c3638b59720`;
+- isolated temporary workspace, user-data, and extensions directories;
+- extension proposal enablement limited to
+  `adaptive-pair.adaptive-pair`;
+- Node.js 22.22.1 test runner.
+
+Observed results:
+
+- generated command
+  `workbench.action.chat.openNewChatSessionInPlace.adaptive-pair` exists;
+- target-scoped model `adaptive-pair-poc/echo` is selected for
+  `modelTarget="adaptive-pair"`; the host test does not independently inspect
+  the general model picker to prove exclusion there;
+- an `adaptive-pair:/untitled-*` resource materializes into
+  `adaptive-pair:/sessions/*`;
+- the content provider is invoked;
+- a submitted request reaches the default dynamic participant and the stored
+  session becomes `completed`;
+- the existing Local target action remains registered and inspected Chat/Codex
+  settings are unchanged across the request;
+- four unit-test files pass six tests;
+- one Extension Host test passes;
+- an eight-file, 6.85-KiB VSIX packages without source maps or test code.
+
+Critical proposed-API rules discovered from documentation and confirmed by
+the POC:
+
+1. activation uses `onChatSession:<type>`;
+2. the dynamic participant ID must equal the session `type`;
+3. the current implementation registers that dynamic participant only when
+   `canDelegate: true`;
+4. a clean target needs an actual selectable model, not only option metadata;
+5. a model can be scoped to the target with
+   `LanguageModelChatInformation.targetChatSessionType`;
+6. the content provider's default participant handles requests; returning a
+   second request handler is unnecessary for this flow.
+7. `supportsInterruptions` must remain false until native interruption and
+   side-effect-free resume are tested.
+
+The spike remains in progress because persisted history, Pair tool routing,
+native cancellation, full target-list coexistence, and visual review have not
+yet passed.
 
 ### External Resources
 
@@ -252,8 +298,14 @@ The proof uses:
 
 ```json
 {
-  "enabledApiProposals": ["chatSessionsProvider"],
+  "enabledApiProposals": ["chatProvider", "chatSessionsProvider"],
   "contributes": {
+    "languageModelChatProviders": [
+      {
+        "vendor": "adaptive-pair-poc",
+        "displayName": "Adaptive Pair POC"
+      }
+    ],
     "chatSessions": [
       {
         "type": "adaptive-pair",
@@ -261,10 +313,10 @@ The proof uses:
         "displayName": "Adaptive Pair",
         "description": "Capability-preserving AI pair programming",
         "icon": "$(git-compare)",
-        "order": 1,
-        "canDelegate": false,
-        "requiresCustomModels": false,
-        "supportsAutoModel": true,
+        "order": 100,
+        "canDelegate": true,
+        "requiresCustomModels": true,
+        "supportsAutoModel": false,
         "requiresCopilotSignIn": false
       }
     ]
@@ -275,13 +327,16 @@ The proof uses:
 Activation must:
 
 1. create the `adaptive-pair` session item controller;
-2. provide an `Adaptive Pair` chat participant;
-3. register the `adaptive-pair` content provider;
-4. expose Growth, Pair, and Delivery as Pair Runtime state;
-5. expose model and permission choices as provider input options only when
+2. create the dynamic chat participant with ID `adaptive-pair`, matching the
+   session type;
+3. register a target-scoped language model or expose compatible configured
+   models;
+4. register the `adaptive-pair` content provider;
+5. expose Growth, Pair, and Delivery as Pair Runtime state;
+6. expose model and permission choices as provider input options only when
    their semantics are supported;
-6. route every workspace action through the Pair tool catalog;
-7. use a temporary in-memory store for the first picker test, then the real
+7. route every workspace action through the Pair tool catalog;
+8. use a temporary in-memory store for the first picker test, then the real
    Pair journal for cancellation and restore tests.
 
 The clean-profile test records Session Targets, selected defaults, settings,
@@ -304,6 +359,7 @@ additional Adaptive Pair contribution.
 |---|---|---|
 | 2026-09-14 | 🔴 Not Started | Spike question created |
 | 2026-09-14 | 🟡 In Progress | Static API and source research complete; Insiders proof pending |
+| 2026-09-14 | 🟡 In Progress | Target registration and native request flow proven; conformance hardening remains |
 
 ---
 

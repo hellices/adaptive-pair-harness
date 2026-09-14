@@ -884,10 +884,24 @@ subject to change, supported for third-party development in VS Code Insiders,
 and explicitly not recommended for published extensions. A shared VSIX also
 requires launching Insiders with `--enable-proposed-api`.
 
+The first executable POC has confirmed:
+
+- extension-contributed target action registration;
+- `onChatSession:<type>` activation;
+- dynamic participant routing when participant ID equals the session type and
+  `canDelegate` enables registration;
+- a target-scoped custom model through the proposed `chatProvider` API;
+- untitled-to-real session materialization;
+- content-provider loading;
+- request completion through the default dynamic participant.
+
+The POC has not yet confirmed persisted history, Pair tool routing, native
+interruption, complete target-list coexistence, or visual quality.
+
 The v2 strategy is therefore dual-track:
 
-1. build a focused Insiders proof of concept for an `Adaptive Pair` Session
-   Target;
+1. harden the working Insiders `Adaptive Pair` Session Target POC through Pair
+   tool, history, cancellation, and coexistence tests;
 2. retain the Stable Pair Presence, Pair tools, and controlled `@pair`
    adapter in the same extension;
 3. promote the target to the primary chat entry if the API stabilizes and the
@@ -911,7 +925,7 @@ Target compatibility is capability-based:
 
 | Session Target | Intended v2 use |
 |---|---|
-| Adaptive Pair (proposed) | Insiders proof of concept; candidate primary chat entry after API stabilization |
+| Adaptive Pair (proposed) | Target and native request flow proven in Insiders; conformance hardening required before promotion |
 | Local | Baseline full local experience because VS Code and extension tools run in the extension host |
 | Copilot | Full experience when client extension tools, custom agent, cancellation, and context boundaries pass conformance |
 | Claude or Codex | Full or controlled experience only after target-specific tool and customization conformance |
@@ -1664,10 +1678,9 @@ These proofs select an adapter path; they do not reopen the core architecture.
 2. Run the Growth restraint conformance suite against each proposed agent,
    model, and host adapter and record premature solution, diagnosis, and
    takeover failures.
-3. Build an Insiders proof of concept using `contributes.chatSessions`,
-   `createChatSessionItemController`, and
-   `registerChatSessionContentProvider`; verify that `Adaptive Pair` appears in
-   Session Target and owns request handling.
+3. Extend the working Insiders Session Target proof with persisted history,
+   Pair tool routing, native interruption, target coexistence, and visual
+   review.
 4. Build the complete native capability matrix and identify every capability
    that is reused, wrapped, excluded, or deferred by mode.
 5. Verify that a custom agent can exclude built-in workspace tools, apply

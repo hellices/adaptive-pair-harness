@@ -1,0 +1,14 @@
+.vscode-test/**
+.gitignore
+node_modules/**
+src/**
+test/**
+dist/test/**
+**/*.map
+*.ts
+*.mts
+tsconfig.json
+vscode.d.ts
+vscode.proposed.*.d.ts
+package-lock.json
+adaptive-pair-session-target-poc.vsix
