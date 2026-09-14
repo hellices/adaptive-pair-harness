@@ -12,6 +12,7 @@
     { "path": "../../packages/presence" },
     { "path": "../../packages/evidence" },
     { "path": "../../packages/harness" },
+    { "path": "../../packages/restraint" },
     { "path": "../../packages/runtime" },
     { "path": "../../packages/testkit" }
   ],

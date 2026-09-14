@@ -81,4 +81,35 @@ describe("guardGrowthResponse", () => {
       reason: "TARGET_SOLUTION_WITHHELD",
     });
   });
+
+  it("withholds any diff or patch fence even without known identifiers", () => {
+    const result = guardGrowthResponse(
+      {
+        level: 3,
+        kind: "hint",
+        text: "```patch\n+ do the thing\n```",
+      },
+      { revealAuthorized: false, targetIdentifiers: [] },
+    );
+
+    expect(result).toEqual({
+      accepted: false,
+      reason: "TARGET_SOLUTION_WITHHELD",
+    });
+  });
+
+  it("emits a level-5 solution only after an explicit reveal authorization", () => {
+    const response = {
+      level: 5,
+      kind: "solution-preview",
+      text: "function retry() { return 3; }",
+    } as const;
+
+    expect(
+      guardGrowthResponse(response, {
+        revealAuthorized: true,
+        targetIdentifiers: ["retry"],
+      }),
+    ).toEqual({ accepted: true, response });
+  });
 });

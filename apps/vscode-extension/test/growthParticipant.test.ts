@@ -1,0 +1,824 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  compileInstructions,
+  nativeToolName,
+  toolsFor,
+  type PairToolDescriptor,
+  type PairToolView,
+} from "@adaptive-pair/harness";
+import type { PairRuntimeSnapshot } from "@adaptive-pair/protocol";
+import type {
+  InvokeToolOptions,
+  PairCoordinatorPort,
+  PairToolResult,
+  PrepareTurnInput,
+  PreparedTurn,
+} from "@adaptive-pair/runtime";
+import { growthRuntime } from "@adaptive-pair/testkit";
+
+const vscodeMock = vi.hoisted(() => {
+  class LanguageModelTextPart {
+    public constructor(public readonly value: string) {}
+  }
+  class LanguageModelToolCallPart {
+    public constructor(
+      public readonly callId: string,
+      public readonly name: string,
+      public readonly input: object,
+    ) {}
+  }
+  class LanguageModelToolResultPart {
+    public constructor(
+      public readonly callId: string,
+      public readonly content: readonly unknown[],
+    ) {}
+  }
+  class MarkdownString {
+    public value = "";
+    public appendText(text: string): this {
+      this.value += text;
+      return this;
+    }
+  }
+  const LanguageModelChatMessage = {
+    User: (content: unknown) => ({ role: 1, content }),
+    Assistant: (content: unknown) => ({ role: 2, content }),
+  };
+  const LanguageModelChatToolMode = { Auto: 1, Required: 2 } as const;
+
+  return {
+    module: {
+      LanguageModelTextPart,
+      LanguageModelToolCallPart,
+      LanguageModelToolResultPart,
+      MarkdownString,
+      LanguageModelChatMessage,
+      LanguageModelChatToolMode,
+    },
+  };
+});
+
+vi.mock("vscode", () => vscodeMock.module);
+
+// Imports that depend on the vscode mock must come after vi.mock.
+const {
+  createGrowthModel,
+  toGrowthChatTools,
+  GrowthModelFailure,
+  GROWTH_TURN_CAPS,
+} = await import("../src/modelAdapter.js");
+const {
+  GrowthParticipant,
+  GrowthEvaluationLog,
+  ModelConsentRegistry,
+  WITHHELD_RESPONSE_MESSAGE,
+  interpretGrowthIntent,
+} = await import("../src/growthParticipant.js");
+
+type ScriptedTurn = {
+  readonly text?: string;
+  readonly toolCalls?: readonly {
+    readonly callId: string;
+    readonly name: string;
+    readonly input: object;
+  }[];
+};
+
+class FakeModel {
+  public readonly name = "Fake Model";
+  public readonly id = "fake-model-id";
+  public readonly vendor = "test-vendor";
+  public readonly family = "test-family";
+  public readonly version = "1.0";
+  public readonly maxInputTokens = 100_000;
+
+  public sendCount = 0;
+  public readonly sentMessages: unknown[][] = [];
+
+  public constructor(
+    private readonly turns: readonly ScriptedTurn[],
+    private readonly opts: {
+      readonly countText?: (text: string) => number;
+    } = {},
+  ) {}
+
+  public countTokens(text: string | { readonly content?: unknown }): Promise<number> {
+    if (typeof text === "string") {
+      return Promise.resolve(this.opts.countText?.(text) ?? text.length);
+    }
+    return Promise.resolve(1);
+  }
+
+  public sendRequest(
+    messages: unknown[],
+    options?: unknown,
+    token?: unknown,
+  ): Promise<{
+    readonly stream: AsyncIterable<unknown>;
+    readonly text: AsyncIterable<string>;
+  }> {
+    void options;
+    void token;
+    this.sentMessages.push(messages);
+    const turn = this.turns[this.sendCount] ?? {};
+    this.sendCount += 1;
+    const parts: unknown[] = [];
+    for (const call of turn.toolCalls ?? []) {
+      parts.push(
+        new vscodeMock.module.LanguageModelToolCallPart(
+          call.callId,
+          call.name,
+          call.input,
+        ),
+      );
+    }
+    if (turn.text !== undefined) {
+      parts.push(new vscodeMock.module.LanguageModelTextPart(turn.text));
+    }
+
+    async function* streamGen(): AsyncIterable<unknown> {
+      await Promise.resolve();
+      for (const part of parts) {
+        yield part;
+      }
+    }
+    async function* textGen(): AsyncIterable<string> {
+      await Promise.resolve();
+      if (turn.text !== undefined) {
+        yield turn.text;
+      }
+    }
+
+    return Promise.resolve({ stream: streamGen(), text: textGen() });
+  }
+}
+
+const asModel = (model: FakeModel): import("vscode").LanguageModelChat =>
+  model;
+
+const confirmedResult = (
+  snapshot: PairRuntimeSnapshot,
+  name: string,
+): PairToolResult =>
+  Object.freeze({
+    operationId: `op-${name}`,
+    runtimeRevision: snapshot.revision,
+    authorityEpoch: snapshot.session?.authorityEpoch,
+    status: "confirmed",
+    summary: `applied ${name}`,
+    observation: Object.freeze({}),
+    sensitiveData: false,
+    partial: false,
+  });
+
+type InvokeCall = {
+  readonly name: string;
+  readonly input: Readonly<Record<string, unknown>>;
+  readonly options: InvokeToolOptions | undefined;
+};
+
+class FakeCoordinator implements PairCoordinatorPort {
+  public readonly prepareInputs: PrepareTurnInput[] = [];
+  public readonly invokeCalls: InvokeCall[] = [];
+  public readonly grantCalls: string[] = [];
+  public snapshotProvider: () => PairRuntimeSnapshot;
+
+  public constructor(
+    private baseSnapshot: PairRuntimeSnapshot,
+    private readonly hooks: {
+      readonly onInvoke?: (call: InvokeCall) => void;
+    } = {},
+  ) {
+    this.snapshotProvider = () => this.baseSnapshot;
+  }
+
+  public setSnapshot(snapshot: PairRuntimeSnapshot): void {
+    this.baseSnapshot = snapshot;
+  }
+
+  public snapshot(): Promise<PairRuntimeSnapshot> {
+    return Promise.resolve(this.snapshotProvider());
+  }
+
+  public dispatch(): Promise<PairRuntimeSnapshot> {
+    return Promise.resolve(this.snapshotProvider());
+  }
+
+  public grantUserAction(name: string): Promise<string> {
+    this.grantCalls.push(name);
+    return Promise.resolve(`grant-${name}`);
+  }
+
+  public prepareTurn(input: PrepareTurnInput): Promise<PreparedTurn> {
+    this.prepareInputs.push(input);
+    const snapshot = this.snapshotProvider();
+    return Promise.resolve(
+      Object.freeze({
+        instructions: compileInstructions({
+          snapshot,
+          ...(input.userRequest === undefined
+            ? {}
+            : { userRequest: input.userRequest }),
+          ...(input.repositoryContext === undefined
+            ? {}
+            : { repositoryContext: input.repositoryContext }),
+          ...(input.presenceSummary === undefined
+            ? {}
+            : { presenceSummary: input.presenceSummary }),
+          ...(input.toolResults === undefined
+            ? {}
+            : { toolResults: input.toolResults }),
+        }),
+        tools: toolsFor(snapshot),
+      }),
+    );
+  }
+
+  public invokeTool(
+    name: string,
+    input: Readonly<Record<string, unknown>>,
+    _signal: AbortSignal,
+    options?: InvokeToolOptions,
+  ): Promise<PairToolResult> {
+    const call: InvokeCall = { name, input, options };
+    this.invokeCalls.push(call);
+    this.hooks.onInvoke?.(call);
+    return Promise.resolve(confirmedResult(this.snapshotProvider(), name));
+  }
+
+  public reconcile(): Promise<PairRuntimeSnapshot> {
+    return Promise.resolve(this.snapshotProvider());
+  }
+}
+
+type CollectedResponse = {
+  readonly markdown: string[];
+};
+
+const createResponseStream = (): {
+  readonly stream: import("vscode").ChatResponseStream;
+  readonly collected: CollectedResponse;
+} => {
+  const collected: CollectedResponse = { markdown: [] };
+  const stream = {
+    markdown: (value: string | { readonly value: string }) => {
+      collected.markdown.push(typeof value === "string" ? value : value.value);
+    },
+    progress: () => undefined,
+    button: () => undefined,
+    anchor: () => undefined,
+    reference: () => undefined,
+    push: () => undefined,
+    filetree: () => undefined,
+  } as unknown as import("vscode").ChatResponseStream;
+  return { stream, collected };
+};
+
+const createToken = (): import("vscode").CancellationToken =>
+  ({
+    isCancellationRequested: false,
+    onCancellationRequested: () => ({ dispose: () => undefined }),
+  });
+
+const createRequest = (
+  model: FakeModel,
+  overrides: {
+    readonly prompt?: string;
+    readonly command?: string;
+  } = {},
+): import("vscode").ChatRequest =>
+  ({
+    prompt: overrides.prompt ?? "",
+    command: overrides.command,
+    references: [],
+    toolReferences: [],
+    toolInvocationToken: undefined,
+    model: asModel(model),
+  }) as unknown as import("vscode").ChatRequest;
+
+const createContext = (
+  history: readonly unknown[] = [],
+): import("vscode").ChatContext =>
+  ({ history }) as unknown as import("vscode").ChatContext;
+
+const growthSnapshot = (
+  overrides: Parameters<typeof growthRuntime>[0] = {},
+): PairRuntimeSnapshot => growthRuntime(overrides);
+
+const buildParticipant = (
+  coordinator: PairCoordinatorPort,
+  overrides: {
+    readonly consent?: InstanceType<typeof ModelConsentRegistry>;
+    readonly evaluations?: InstanceType<typeof GrowthEvaluationLog>;
+    readonly requestWorkspaceConsent?: (
+      model: import("vscode").LanguageModelChat,
+    ) => Promise<boolean>;
+    readonly confirmSolutionReveal?: (
+      model: import("vscode").LanguageModelChat,
+    ) => Promise<boolean>;
+    readonly model?: FakeModel;
+  } = {},
+): {
+  readonly participant: InstanceType<typeof GrowthParticipant>;
+  readonly consent: InstanceType<typeof ModelConsentRegistry>;
+  readonly evaluations: InstanceType<typeof GrowthEvaluationLog>;
+} => {
+  const consent = overrides.consent ?? new ModelConsentRegistry();
+  const evaluations = overrides.evaluations ?? new GrowthEvaluationLog();
+  const participant = new GrowthParticipant({
+    coordinator,
+    consent,
+    evaluations,
+    createModel: model => createGrowthModel(model, coordinator),
+    requestWorkspaceConsent:
+      overrides.requestWorkspaceConsent ?? (() => Promise.resolve(true)),
+    confirmSolutionReveal:
+      overrides.confirmSolutionReveal ?? (() => Promise.resolve(true)),
+    now: () => 1_000,
+  });
+  return { participant, consent, evaluations };
+};
+
+const mutationDescriptor: PairToolDescriptor = Object.freeze({
+  name: "pair_apply_edit",
+  effectClass: "mutation",
+  modes: ["pair", "delivery"] as const,
+  requiredEditOwner: "ai",
+  requiresExplicitUserAction: false,
+  requiresConsent: true,
+  retry: "never",
+  maximumResultCharacters: 8_000,
+});
+
+const readDescriptor: PairToolDescriptor = Object.freeze({
+  name: "pair_read_scope",
+  effectClass: "read",
+  modes: ["growth", "pair", "delivery"] as const,
+  requiredEditOwner: "either",
+  requiresExplicitUserAction: false,
+  requiresConsent: true,
+  retry: "bounded-read",
+  maximumResultCharacters: 8_000,
+});
+
+const viewWith = (
+  tools: readonly PairToolDescriptor[],
+): PairToolView =>
+  Object.freeze({
+    catalogVersion: 1,
+    runtimeRevision: 7,
+    authorityEpoch: 0,
+    tools: Object.freeze([...tools]),
+  });
+
+describe("interpretGrowthIntent", () => {
+  it("maps natural language to the same core intents as slash commands", () => {
+    expect(interpretGrowthIntent(createRequest(new FakeModel([]), { command: "hint" })).intent).toBe(
+      "hint",
+    );
+    expect(
+      interpretGrowthIntent(
+        createRequest(new FakeModel([]), { prompt: "give me a hint on this" }),
+      ).intent,
+    ).toBe("hint");
+    expect(
+      interpretGrowthIntent(
+        createRequest(new FakeModel([]), { prompt: "I think the cause is the retry guard" }),
+      ).intent,
+    ).toBe("hypothesis");
+    expect(
+      interpretGrowthIntent(
+        createRequest(new FakeModel([]), { prompt: "show me the answer please" }),
+      ).intent,
+    ).toBe("reveal");
+    expect(
+      interpretGrowthIntent(
+        createRequest(new FakeModel([]), { prompt: "join me here" }),
+      ).intent,
+    ).toBe("join");
+    expect(
+      interpretGrowthIntent(
+        createRequest(new FakeModel([]), { prompt: "please stay quiet for now" }),
+      ).intent,
+    ).toBe("quiet");
+  });
+});
+
+describe("GrowthModel adapter", () => {
+  it("never exposes an edit or command tool to the model", () => {
+    const tools = toGrowthChatTools(viewWith([mutationDescriptor, readDescriptor]));
+    const names = tools.map(tool => tool.name);
+    expect(names).not.toContain(nativeToolName("pair_apply_edit"));
+    expect(names).toContain(nativeToolName("pair_read_scope"));
+  });
+
+  it("derives native tool names from the same harness mapping", () => {
+    const tools = toGrowthChatTools(viewWith([readDescriptor]));
+    expect(tools[0]?.name).toBe(nativeToolName("pair_read_scope"));
+  });
+
+  it("translates native tool calls back through the coordinator", async () => {
+    const snapshot = growthSnapshot({ runtimeRevision: 4 });
+    const coordinator = new FakeCoordinator(snapshot);
+    const model = new FakeModel([
+      {
+        toolCalls: [
+          {
+            callId: "call-1",
+            name: nativeToolName("pair_read_scope"),
+            input: { path: "src/retry.ts" },
+          },
+        ],
+      },
+      { text: JSON.stringify({ level: 1, kind: "question", text: "What have you tried?" }) },
+    ]);
+    const prepared = await coordinator.prepareTurn({});
+    const growthModel = createGrowthModel(asModel(model), coordinator);
+    const response = await growthModel.request(
+      prepared.instructions,
+      prepared.tools,
+      new AbortController().signal,
+    );
+
+    expect(response.kind).toBe("question");
+    expect(coordinator.invokeCalls[0]?.name).toBe("pair_read_scope");
+    expect(coordinator.invokeCalls[0]?.input).toEqual({ path: "src/retry.ts" });
+  });
+
+  it("rejects markdown outside the JSON envelope", async () => {
+    const snapshot = growthSnapshot({ runtimeRevision: 4 });
+    const coordinator = new FakeCoordinator(snapshot);
+    const model = new FakeModel([
+      { text: "Here is a hint:\n```json\n{\"level\":1,\"kind\":\"hint\",\"text\":\"x\"}\n```" },
+    ]);
+    const prepared = await coordinator.prepareTurn({});
+    const growthModel = createGrowthModel(asModel(model), coordinator);
+
+    await expect(
+      growthModel.request(
+        prepared.instructions,
+        prepared.tools,
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "GROWTH_NON_JSON_RESPONSE" });
+  });
+
+  it("enforces the input token cap before dispatch", async () => {
+    const snapshot = growthSnapshot({ runtimeRevision: 4 });
+    const coordinator = new FakeCoordinator(snapshot);
+    const model = new FakeModel(
+      [{ text: JSON.stringify({ level: 1, kind: "question", text: "ok" }) }],
+      { countText: () => GROWTH_TURN_CAPS.maxInputTokens + 1 },
+    );
+    const prepared = await coordinator.prepareTurn({});
+    const growthModel = createGrowthModel(asModel(model), coordinator);
+
+    await expect(
+      growthModel.request(
+        prepared.instructions,
+        prepared.tools,
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "GROWTH_INPUT_TOKEN_CAP" });
+    expect(model.sendCount).toBe(0);
+  });
+
+  it("enforces the output token cap", async () => {
+    const snapshot = growthSnapshot({ runtimeRevision: 4 });
+    const coordinator = new FakeCoordinator(snapshot);
+    const big = JSON.stringify({ level: 1, kind: "question", text: "ok" });
+    const model = new FakeModel([{ text: big }], {
+      countText: text =>
+        text === big ? GROWTH_TURN_CAPS.maxOutputTokens + 1 : text.length,
+    });
+    const prepared = await coordinator.prepareTurn({});
+    const growthModel = createGrowthModel(asModel(model), coordinator);
+
+    await expect(
+      growthModel.request(
+        prepared.instructions,
+        prepared.tools,
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "GROWTH_OUTPUT_TOKEN_CAP" });
+  });
+
+  it("caps the number of model calls per turn", async () => {
+    const snapshot = growthSnapshot({ runtimeRevision: 4 });
+    const coordinator = new FakeCoordinator(snapshot);
+    const toolTurn: ScriptedTurn = {
+      toolCalls: [
+        {
+          callId: "call-1",
+          name: nativeToolName("pair_read_scope"),
+          input: {},
+        },
+      ],
+    };
+    const model = new FakeModel([toolTurn, toolTurn, toolTurn, toolTurn, toolTurn]);
+    const prepared = await coordinator.prepareTurn({});
+    const growthModel = createGrowthModel(asModel(model), coordinator);
+
+    await expect(
+      growthModel.request(
+        prepared.instructions,
+        prepared.tools,
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "GROWTH_MODEL_CALL_CAP" });
+    expect(model.sendCount).toBe(GROWTH_TURN_CAPS.maxModelCalls);
+  });
+
+  it("propagates cancellation without substituting an answer", async () => {
+    const snapshot = growthSnapshot({ runtimeRevision: 4 });
+    const coordinator = new FakeCoordinator(snapshot);
+    const model = new FakeModel([
+      { text: JSON.stringify({ level: 1, kind: "question", text: "ok" }) },
+    ]);
+    const controller = new AbortController();
+    controller.abort();
+    const prepared = await coordinator.prepareTurn({});
+    const growthModel = createGrowthModel(asModel(model), coordinator);
+
+    await expect(
+      growthModel.request(prepared.instructions, prepared.tools, controller.signal),
+    ).rejects.toBeInstanceOf(GrowthModelFailure);
+    expect(model.sendCount).toBe(0);
+  });
+});
+
+describe("GrowthParticipant", () => {
+  it("does not send task context before model-specific workspace consent", async () => {
+    const snapshot = growthSnapshot({ runtimeRevision: 4 });
+    const coordinator = new FakeCoordinator(snapshot);
+    const model = new FakeModel([
+      { text: JSON.stringify({ level: 1, kind: "question", text: "What have you tried?" }) },
+    ]);
+    const { participant } = buildParticipant(coordinator, {
+      requestWorkspaceConsent: () => Promise.resolve(false),
+    });
+    const { stream } = createResponseStream();
+
+    await participant.handle(
+      createRequest(model, { prompt: "walk me through this bug" }),
+      createContext([{ prompt: "prior repository detail leaks here" }]),
+      stream,
+      createToken(),
+    );
+
+    expect(coordinator.prepareInputs).toHaveLength(1);
+    expect(coordinator.prepareInputs[0]?.repositoryContext).toBeUndefined();
+    expect(coordinator.prepareInputs[0]?.toolResults).toBeUndefined();
+  });
+
+  it("sends task context once consent is granted for the model", async () => {
+    const snapshot = growthSnapshot({ runtimeRevision: 4 });
+    const coordinator = new FakeCoordinator(snapshot);
+    const model = new FakeModel([
+      { text: JSON.stringify({ level: 1, kind: "question", text: "What have you tried?" }) },
+    ]);
+    const { participant } = buildParticipant(coordinator, {
+      requestWorkspaceConsent: () => Promise.resolve(true),
+    });
+    const { stream } = createResponseStream();
+
+    await participant.handle(
+      createRequest(model, { prompt: "walk me through this bug" }),
+      createContext([{ prompt: "prior conversation detail" }]),
+      stream,
+      createToken(),
+    );
+
+    expect(coordinator.prepareInputs[0]?.repositoryContext).toContain(
+      "prior conversation detail",
+    );
+  });
+
+  it("withholds a level-3 hint response that contains a target patch", async () => {
+    const snapshot = growthSnapshot({
+      runtimeRevision: 4,
+      session: {
+        status: "active",
+        mode: "growth",
+        assistance: {
+          attempt: { summary: "tried", bypassed: false, recordedAt: 0 },
+          hypothesis: undefined,
+          hint: { level: 2, recordedAt: 0 },
+          solutionReveal: undefined,
+        },
+      },
+    });
+    const coordinator = new FakeCoordinator(snapshot);
+    const model = new FakeModel([
+      {
+        text: JSON.stringify({
+          level: 3,
+          kind: "hint",
+          text: "```diff\n+export function retry() { return 3; }\n```",
+        }),
+      },
+    ]);
+    const consent = new ModelConsentRegistry();
+    consent.grant(asModel(model));
+    const { participant, evaluations } = buildParticipant(coordinator, { consent });
+    const { stream, collected } = createResponseStream();
+
+    await participant.handle(
+      createRequest(model, { prompt: "give me a hint" }),
+      createContext(),
+      stream,
+      createToken(),
+    );
+
+    expect(collected.markdown.join("\n")).toContain(WITHHELD_RESPONSE_MESSAGE);
+    const record = evaluations.records.at(-1);
+    expect(record?.outcome).toBe("withheld");
+    expect(JSON.stringify(evaluations.records)).not.toContain("export function retry");
+  });
+
+  it("surfaces invalid JSON as a restraint failure without raw text", async () => {
+    const snapshot = growthSnapshot({ runtimeRevision: 4 });
+    const coordinator = new FakeCoordinator(snapshot);
+    const model = new FakeModel([{ text: "Sure! Here is the whole fixed file for you." }]);
+    const consent = new ModelConsentRegistry();
+    consent.grant(asModel(model));
+    const { participant, evaluations } = buildParticipant(coordinator, { consent });
+    const { stream, collected } = createResponseStream();
+
+    await participant.handle(
+      createRequest(model, { prompt: "walk me through it" }),
+      createContext(),
+      stream,
+      createToken(),
+    );
+
+    const record = evaluations.records.at(-1);
+    expect(record?.outcome).toBe("restraint-failure");
+    expect(JSON.stringify(evaluations.records)).not.toContain("whole fixed file");
+    expect(collected.markdown.join("\n")).not.toContain("whole fixed file");
+  });
+
+  it("requires a human attempt before escalating to level 2 or higher", async () => {
+    const snapshot = growthSnapshot({
+      runtimeRevision: 4,
+      session: {
+        status: "active",
+        mode: "growth",
+        assistance: {
+          attempt: undefined,
+          hypothesis: undefined,
+          hint: { level: 1, recordedAt: 0 },
+          solutionReveal: undefined,
+        },
+      },
+    });
+    const coordinator = new FakeCoordinator(snapshot, {
+      onInvoke: call => {
+        if (call.name === "pair_request_hint") {
+          throw new Error("HINT_REQUIRES_ATTEMPT");
+        }
+      },
+    });
+    const model = new FakeModel([
+      { text: JSON.stringify({ level: 2, kind: "hint", text: "clue" }) },
+    ]);
+    const consent = new ModelConsentRegistry();
+    consent.grant(asModel(model));
+    const { participant } = buildParticipant(coordinator, { consent });
+    const { stream, collected } = createResponseStream();
+
+    await participant.handle(
+      createRequest(model, { prompt: "give me a hint" }),
+      createContext(),
+      stream,
+      createToken(),
+    );
+
+    expect(model.sendCount).toBe(0);
+    expect(collected.markdown.join("\n").toLowerCase()).toContain("attempt");
+  });
+
+  it("records an explicit reveal before requesting a level-5 solution", async () => {
+    const snapshot = growthSnapshot({
+      runtimeRevision: 4,
+      session: {
+        status: "active",
+        mode: "growth",
+        learningAgreement: {
+          learningGoals: ["retry"],
+          familiarAreas: [],
+          humanOwnedCapabilities: ["implementation"],
+          delegatableWork: [],
+          maximumHintLevel: 5,
+          independentCheck: "vary the retry",
+        },
+        assistance: {
+          attempt: { summary: "tried", bypassed: false, recordedAt: 0 },
+          hypothesis: undefined,
+          hint: { level: 4, recordedAt: 0 },
+          solutionReveal: { previewOnly: true, recordedAt: 0 },
+        },
+      },
+    });
+    const coordinator = new FakeCoordinator(snapshot);
+    const model = new FakeModel([
+      {
+        text: JSON.stringify({
+          level: 5,
+          kind: "solution-preview",
+          text: "The full transition looks like this.",
+        }),
+      },
+    ]);
+    const consent = new ModelConsentRegistry();
+    consent.grant(asModel(model));
+    const confirmReveal = vi.fn(() => Promise.resolve(true));
+    const { participant } = buildParticipant(coordinator, {
+      consent,
+      confirmSolutionReveal: confirmReveal,
+    });
+    const { stream } = createResponseStream();
+
+    await participant.handle(
+      createRequest(model, { command: "reveal", prompt: "show me the answer" }),
+      createContext(),
+      stream,
+      createToken(),
+    );
+
+    expect(confirmReveal).toHaveBeenCalledTimes(1);
+    const revealIndex = coordinator.invokeCalls.findIndex(
+      call => call.name === "pair_reveal_solution",
+    );
+    const level5Index = coordinator.invokeCalls.findIndex(
+      call => call.name === "pair_request_hint" && call.input.level === 5,
+    );
+    expect(revealIndex).toBeGreaterThanOrEqual(0);
+    expect(level5Index).toBeGreaterThan(revealIndex);
+  });
+
+  it("does not reveal a solution without explicit confirmation", async () => {
+    const snapshot = growthSnapshot({ runtimeRevision: 4 });
+    const coordinator = new FakeCoordinator(snapshot);
+    const model = new FakeModel([
+      { text: JSON.stringify({ level: 5, kind: "solution-preview", text: "answer" }) },
+    ]);
+    const consent = new ModelConsentRegistry();
+    consent.grant(asModel(model));
+    const { participant } = buildParticipant(coordinator, {
+      consent,
+      confirmSolutionReveal: () => Promise.resolve(false),
+    });
+    const { stream } = createResponseStream();
+
+    await participant.handle(
+      createRequest(model, { command: "reveal", prompt: "show me the answer" }),
+      createContext(),
+      stream,
+      createToken(),
+    );
+
+    expect(
+      coordinator.invokeCalls.some(call => call.name === "pair_reveal_solution"),
+    ).toBe(false);
+    expect(model.sendCount).toBe(0);
+  });
+
+  it("rejects a response and its tool view when the mode changes during generation", async () => {
+    const before = growthSnapshot({ runtimeRevision: 4 });
+    const after: PairRuntimeSnapshot = {
+      ...before,
+      revision: 9,
+      session: before.session
+        ? { ...before.session, mode: "pair", authorityEpoch: 1 }
+        : undefined,
+    };
+    const coordinator = new FakeCoordinator(before);
+    const model = new FakeModel([
+      {
+        text: JSON.stringify({ level: 1, kind: "question", text: "What have you tried?" }),
+      },
+    ]);
+    // Flip the snapshot only after the model has produced its response.
+    coordinator.snapshotProvider = () => (model.sendCount === 0 ? before : after);
+    const consent = new ModelConsentRegistry();
+    consent.grant(asModel(model));
+    const { participant, evaluations } = buildParticipant(coordinator, { consent });
+    const { stream, collected } = createResponseStream();
+
+    await participant.handle(
+      createRequest(model, { prompt: "walk me through this" }),
+      createContext(),
+      stream,
+      createToken(),
+    );
+
+    expect(collected.markdown.join("\n")).not.toContain("What have you tried?");
+    expect(evaluations.records.at(-1)?.outcome).toBe("restraint-failure");
+    expect(evaluations.records.at(-1)?.reason).toBe("STALE_TURN");
+  });
+});
+
+beforeEach(() => {
+  // no shared vscode state to reset for these fakes
+});

@@ -112,6 +112,7 @@ const fakeVscode = vi.hoisted(() => {
     commandHandlers: new Map<string, (...args: unknown[]) => unknown>(),
     contextKeys: new Map<string, unknown>(),
     registeredTools: [] as RegisteredTool[],
+    chatParticipants: [] as { readonly id: string; readonly handler: unknown }[],
     documentListeners: new Set<DocumentListener>(),
     statusItems: [] as FakeStatusBarItem[],
     workspaceReads: 0,
@@ -138,6 +139,7 @@ const fakeVscode = vi.hoisted(() => {
     state.commandHandlers.clear();
     state.contextKeys.clear();
     state.registeredTools.length = 0;
+    state.chatParticipants.length = 0;
     state.documentListeners.clear();
     state.statusItems.length = 0;
     state.workspaceReads = 0;
@@ -210,6 +212,23 @@ const fakeVscode = vi.hoisted(() => {
       selectChatModels: (): Promise<readonly unknown[]> => {
         state.modelRequests += 1;
         return Promise.resolve([]);
+      },
+    },
+    chat: {
+      createChatParticipant: (
+        id: string,
+        handler: unknown,
+      ): { readonly id: string; dispose(): void } => {
+        state.chatParticipants.push({ id, handler });
+        return {
+          id,
+          dispose: () => {
+            const index = state.chatParticipants.findIndex(item => item.id === id);
+            if (index >= 0) {
+              state.chatParticipants.splice(index, 1);
+            }
+          },
+        };
       },
     },
     window: {
