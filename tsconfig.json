@@ -11,6 +11,12 @@
       "path": "packages/evidence"
     },
     {
+      "path": "packages/evaluation"
+    },
+    {
+      "path": "packages/profile"
+    },
+    {
       "path": "packages/modes"
     },
     {

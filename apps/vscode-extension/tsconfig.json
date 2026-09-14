@@ -11,6 +11,8 @@
     { "path": "../../packages/protocol" },
     { "path": "../../packages/presence" },
     { "path": "../../packages/evidence" },
+    { "path": "../../packages/evaluation" },
+    { "path": "../../packages/profile" },
     { "path": "../../packages/harness" },
     { "path": "../../packages/restraint" },
     { "path": "../../packages/runtime" },
