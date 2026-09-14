@@ -666,6 +666,45 @@ describe("PairRuntime lifecycle ownership", () => {
     runtime.dispose();
   });
 
+  it("shares document-driven startup guidance when a session starts", async () => {
+    vscodeState.findFiles.mockResolvedValue([
+      {
+        relativePath: "docs/superpowers/plans/2026-09-12-plan.md",
+        toString: () =>
+          "file:///workspace/docs/superpowers/plans/2026-09-12-plan.md",
+      },
+      {
+        relativePath: "README.md",
+        toString: () => "file:///workspace/README.md",
+      },
+      {
+        relativePath: "../private.md",
+        toString: () => "file:///private.md",
+      },
+    ]);
+    const shared = sharedContext();
+    const runtime = new PairRuntime({
+      config: config(),
+      extensionContext,
+      sharedContext: shared,
+      languageModelApi: languageModelApi(),
+      apiKey: undefined,
+    });
+
+    const result = await runtime.startSession();
+
+    expect(result.message).toContain(
+      "Start here: Project context found in README.md, docs/superpowers/plans/2026-09-12-plan.md.",
+    );
+    expect(shared.snapshot().session.startupGuidance).toContain(
+      "Use those docs to identify the product goal, acceptance criteria, and next implementation slice",
+    );
+    expect(shared.snapshot().session.startupGuidance).not.toContain(
+      "private.md",
+    );
+    runtime.dispose();
+  });
+
   it("persists personal memory through global state, not workspace state", async () => {
     const globalUpdate = vi.fn(async () => undefined);
     const workspaceUpdate = vi.fn(async () => undefined);
@@ -973,7 +1012,7 @@ describe("PairRuntime lifecycle ownership", () => {
     expect(fetchCallsDuringPersistence).toBe(0);
     expect(threadCountDuringPersistence).toBe(1);
     expect(markdown).toHaveBeenCalledWith(
-      "No active evidence yet. Select code or run **Adaptive Pair: Review Current Block**.",
+      "No active code evidence yet. Select code or run **Adaptive Pair: Review Current Block**.",
     );
     expect(text).not.toHaveBeenCalled();
     expect(shared.snapshot().latest).toBeUndefined();

@@ -144,7 +144,40 @@ describe("pair chat planning", () => {
         {
           kind: "markdown",
           value:
-            "No active evidence yet. Select code or run **Adaptive Pair: Review Current Block**.",
+            "No active code evidence yet. Select code or run **Adaptive Pair: Review Current Block**.",
+        },
+      ],
+    });
+  });
+
+  it("surfaces startup guidance before code evidence exists", () => {
+    const context = new PairSharedContext({
+      enabled: true,
+      active: true,
+      goal: "Navigate with evidence-backed questions.",
+      role: "navigator",
+      provider: "local-template",
+      remainingCalls: 4,
+      remainingInputTokens: 6_000,
+      controlNotice: undefined,
+      configurationWarning: undefined,
+      startupGuidance:
+        "Project context found in README.md. Identify the goal and next implementation slice.",
+    });
+
+    expect(buildPairChatPlan("why", context.snapshot())).toEqual({
+      kind: "message",
+      parts: [
+        {
+          kind: "markdown",
+          value:
+            "No active code evidence yet. Select code or run **Adaptive Pair: Review Current Block**.",
+        },
+        { kind: "markdown", value: "\n\n**Start Here:** " },
+        {
+          kind: "text",
+          value:
+            "Project context found in README.md. Identify the goal and next implementation slice.",
         },
       ],
     });

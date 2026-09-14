@@ -29,6 +29,7 @@ export interface PairSessionSnapshot {
   readonly remainingOutputTokens?: number;
   readonly controlNotice: string | undefined;
   readonly configurationWarning: string | undefined;
+  readonly startupGuidance?: string;
 }
 
 export interface PairPublishedEvidence {
@@ -348,7 +349,22 @@ const sameSessionSnapshot = (
   left.remainingInputTokens === right.remainingInputTokens &&
   left.remainingOutputTokens === right.remainingOutputTokens &&
   left.controlNotice === right.controlNotice &&
-  left.configurationWarning === right.configurationWarning;
+  left.configurationWarning === right.configurationWarning &&
+  left.startupGuidance === right.startupGuidance;
+
+const appendStartupGuidanceParts = (
+  parts: ChatResponseDisplayPart[],
+  startupGuidance: string | undefined,
+): void => {
+  if (startupGuidance === undefined) {
+    return;
+  }
+
+  parts.push(
+    { kind: "markdown", value: "\n\n**Start Here:** " },
+    { kind: "text", value: startupGuidance },
+  );
+};
 
 export type PairChatPlan =
   | {
@@ -433,6 +449,7 @@ export const buildPairChatPlan = (
         { kind: "text", value: context.session.configurationWarning },
       );
     }
+    appendStartupGuidanceParts(parts, context.session.startupGuidance);
     return {
       kind: "message",
       parts,
@@ -441,15 +458,17 @@ export const buildPairChatPlan = (
 
   const latest = context.latest;
   if (latest === undefined) {
+    const parts: ChatResponseDisplayPart[] = [
+      {
+        kind: "markdown",
+        value:
+          "No active code evidence yet. Select code or run **Adaptive Pair: Review Current Block**.",
+      },
+    ];
+    appendStartupGuidanceParts(parts, context.session.startupGuidance);
     return {
       kind: "message",
-      parts: [
-        {
-          kind: "markdown",
-          value:
-            "No active evidence yet. Select code or run **Adaptive Pair: Review Current Block**.",
-        },
-      ],
+      parts,
     };
   }
   if (command === "trace" && requestContext.symbol === undefined) {

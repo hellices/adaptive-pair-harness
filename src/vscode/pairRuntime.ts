@@ -73,6 +73,9 @@ import type {
 } from "./pairRuntimeSupport";
 
 const PAIR_GOAL = "Navigate with concise, evidence-backed, ask-first questions.";
+const STARTUP_CONTEXT_GLOB =
+  "{README.md,readme.md,docs/**/*.md,AGENTS.md,**/AGENTS.md}";
+const STARTUP_GUIDANCE_REFERENCE_LIMIT = 5;
 const SUPPORTED_LANGUAGE_IDS = new Set([
   "typescript",
   "typescriptreact",
@@ -86,6 +89,11 @@ interface WorkspaceRootSnapshot {
   readonly revision: string;
 }
 
+interface WorkspaceStartupContext {
+  readonly controlNotice: string | undefined;
+  readonly startupGuidance: string;
+}
+
 const captureWorkspaceRootSnapshot = (): WorkspaceRootSnapshot => {
   const repositoryIds = [
     "no-workspace",
@@ -97,6 +105,59 @@ const captureWorkspaceRootSnapshot = (): WorkspaceRootSnapshot => {
     repositoryIds,
     revision: JSON.stringify(repositoryIds),
   };
+};
+
+const normalizeStartupReference = (workspacePath: string): string | undefined => {
+  const normalized = workspacePath.replaceAll("\\", "/").replace(/^\.\//u, "");
+  if (
+    normalized.length === 0 ||
+    normalized.startsWith("/") ||
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    /^[a-z]:\//iu.test(normalized)
+  ) {
+    return undefined;
+  }
+  return normalized;
+};
+
+const startupReferenceRank = (reference: string): number => {
+  const lower = reference.toLowerCase();
+  if (lower === "readme.md") {
+    return 0;
+  }
+  if (/^docs\/superpowers\/plans\/[^/]+\.md$/u.test(lower)) {
+    return 1;
+  }
+  if (/^docs\/superpowers\/specs\/[^/]+\.md$/u.test(lower)) {
+    return 2;
+  }
+  if (lower.endsWith("/agents.md") || lower === "agents.md") {
+    return 3;
+  }
+  if (lower.startsWith("docs/") && lower.endsWith(".md")) {
+    return 4;
+  }
+  return 5;
+};
+
+const buildStartupGuidance = (workspacePaths: readonly string[]): string => {
+  const references = [...new Set(
+    workspacePaths
+      .map(normalizeStartupReference)
+      .filter((reference): reference is string => reference !== undefined),
+  )]
+    .sort((left, right) =>
+      startupReferenceRank(left) - startupReferenceRank(right) ||
+      left.localeCompare(right),
+    )
+    .slice(0, STARTUP_GUIDANCE_REFERENCE_LIMIT);
+
+  if (references.length === 0) {
+    return "No README or planning docs were found. Create README.md or docs/plan.md with the product goal, target user, acceptance criteria, and next implementation slice, then ask @pair /session again.";
+  }
+
+  return `Project context found in ${references.join(", ")}. Use those docs to identify the product goal, acceptance criteria, and next implementation slice; then open the target TypeScript or JavaScript file or run Adaptive Pair: Review Current Block.`;
 };
 
 export interface PairRuntimeOptions {
@@ -188,6 +249,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     Map<string, number>
   >();
   private controlNotice: string | undefined;
+  private startupGuidance: string | undefined;
   private statusDetail: string | undefined;
   private memoryWarning: string | undefined;
   private disposed = false;
@@ -310,7 +372,12 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       : this.inactiveStatusDetail();
     this.publishSession();
     this.renderStatus();
-    return result;
+    return active && this.startupGuidance !== undefined
+      ? {
+          ...result,
+          message: `${result.message}\n\nStart here: ${this.startupGuidance}`,
+        }
+      : result;
   }
 
   public registerChatRequest(
@@ -337,6 +404,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     this.invocationGate.setActive(false);
     this.effectiveProvider = this.options.config.provider;
     this.controlNotice = undefined;
+    this.startupGuidance = undefined;
     this.statusDetail = this.inactiveStatusDetail();
     let result!: PairSessionActionResult;
     runCleanupSteps(
@@ -395,7 +463,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     if (!context.isCurrent() || memorySnapshot === undefined) {
       return undefined;
     }
-    const controlNotice = await this.discoverCoexistence();
+    const startupContext = await this.discoverWorkspaceStartupContext();
     if (!context.isCurrent()) {
       return undefined;
     }
@@ -468,7 +536,8 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
             seed.stable,
           );
         }
-        this.controlNotice = controlNotice;
+        this.controlNotice = startupContext.controlNotice;
+        this.startupGuidance = startupContext.startupGuidance;
         if (recoveredMemory.warning !== undefined) {
           void vscode.window.showWarningMessage(recoveredMemory.warning);
         }
@@ -1624,23 +1693,27 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     }
   }
 
-  private async discoverCoexistence(): Promise<string | undefined> {
+  private async discoverWorkspaceStartupContext(): Promise<WorkspaceStartupContext> {
     const workspaceUris = await vscode.workspace.findFiles(
-      "{AGENTS.md,**/AGENTS.md,docs/superpowers/plans/*.md}",
+      STARTUP_CONTEXT_GLOB,
       "**/node_modules/**",
       50,
     );
+    const workspacePaths = workspaceUris.map((uri) =>
+      vscode.workspace.asRelativePath(uri, false),
+    );
     const signals = discoverHarnessSignals({
       extensionIds: vscode.extensions.all.map((extension) => extension.id),
-      workspacePaths: workspaceUris.map((uri) =>
-        vscode.workspace.asRelativePath(uri, false),
-      ),
+      workspacePaths,
     });
-    if (signals.length === 0) {
-      return undefined;
-    }
 
-    return `${signals.map((signal) => signal.label).join(", ")}; observing only`;
+    return {
+      controlNotice:
+        signals.length === 0
+          ? undefined
+          : `${signals.map((signal) => signal.label).join(", ")}; observing only`,
+      startupGuidance: buildStartupGuidance(workspacePaths),
+    };
   }
 
   public refreshSession(now = Date.now()): void {
@@ -1664,6 +1737,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       remainingOutputTokens: remainingBudget.remainingOutputTokens,
       controlNotice: this.controlNotice,
       configurationWarning: this.configurationWarning(),
+      startupGuidance: this.startupGuidance,
     };
     return this.options.sharedContext.updateSession(
       session,
@@ -1696,6 +1770,7 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
     this.invocationGate.setActive(false);
     this.effectiveProvider = this.options.config.provider;
     this.controlNotice = undefined;
+    this.startupGuidance = undefined;
     this.statusDetail = this.inactiveStatusDetail();
     runCleanupSteps(
       [

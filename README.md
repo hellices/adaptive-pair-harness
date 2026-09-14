@@ -209,6 +209,10 @@ How it works today:
   notice are interpreted as Markdown.
 - `@pair` reads the same shared session/evidence state as the inline question;
   it does not create a separate hidden chat-specific session.
+- When a session starts, `@pair /start` and `@pair /session` include a
+  **Start Here** hint based on discovered project docs such as `README.md`,
+  `docs/**/*.md`, and `AGENTS.md`. If none exist, Pair suggests creating a
+  README or plan with the product goal, acceptance criteria, and next slice.
 - Use `@pair /why` to expand the latest inline question.
 - Use `@pair /trace` to ask for control/data-flow context when VS Code can
   resolve a current symbol.
