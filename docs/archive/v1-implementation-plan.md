@@ -1,6 +1,9 @@
-# Realtime Pair Vertical Slice Implementation Plan
+# v1 Realtime Pair Implementation Plan (Historical)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> Historical reference from September 12, 2026, associated with the
+> [v1 design](v1-design.md). This is not an execution plan for the
+> [current v2 design](../design.md). Tool-specific paths and requirements in
+> examples below describe the earlier version, not the current repository layout.
 
 **Goal:** Build an installable VS Code extension that turns stable TypeScript and JavaScript edits into local semantic evidence, applies a personalized intervention policy, and renders an inline pair comment without allowing stale writes or uncontrolled model usage.
 

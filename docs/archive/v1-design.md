@@ -1,7 +1,11 @@
-# Adaptive AI Pair Harness Design
+# v1 Product and System Design (Historical)
+
+> Historical reference only. The [current v2 design](../design.md) supersedes
+> this version. Its approval status, architecture, constraints, and product
+> comparisons are retained as historical material, not current v2 claims.
 
 - Date: 2026-09-11
-- Status: Approved design, pending written-spec review
+- Status at the time of writing: Approved design, pending written-spec review
 - Primary surface: Visual Studio Code
 - Initial ecosystem: TypeScript and JavaScript
 - Distribution: Fully open source
