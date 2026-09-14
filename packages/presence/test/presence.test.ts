@@ -24,6 +24,42 @@ describe("Pair Presence", () => {
     expect(snapshot[0]).not.toHaveProperty("rawBuffer");
   });
 
+  it("keeps retained edit episodes free of raw buffers and unknown fields", () => {
+    const window = new ObservationWindow(3);
+
+    window.record({
+      kind: "edit-episode",
+      range: {
+        start: { line: 4, character: 0 },
+        end: { line: 8, character: 12 },
+      },
+      summary: "changed retry branch",
+      observedAt: 1,
+      rawBuffer: "const leaked = true;",
+      scratch: "debug-only",
+    } as Parameters<ObservationWindow["record"]>[0] & {
+      rawBuffer: string;
+      scratch: string;
+    });
+    window.record({ kind: "diagnostic", summary: "one type error", observedAt: 2 });
+    window.record({ kind: "navigation", summary: "opened payment test", observedAt: 3 });
+
+    const snapshot = window.snapshot();
+
+    expect(snapshot.map(item => item.observedAt)).toEqual([1, 2, 3]);
+    expect(snapshot[0]).toEqual({
+      kind: "edit-episode",
+      range: {
+        start: { line: 4, character: 0 },
+        end: { line: 8, character: 12 },
+      },
+      summary: "changed retry branch",
+      observedAt: 1,
+    });
+    expect(snapshot[0]).not.toHaveProperty("rawBuffer");
+    expect(snapshot[0]).not.toHaveProperty("scratch");
+  });
+
   it("clones and freezes recorded range summaries", () => {
     const window = new ObservationWindow(1);
     const episode = {
