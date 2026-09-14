@@ -8,7 +8,8 @@
 // produced — instead of chaining npm scripts that could run out of order or
 // recurse.
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { readFile, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +44,7 @@ export class PackagingError extends Error {
  * @property {() => Promise<string[]>} [inspect] defaults to the real staging check
  * @property {(vsixPath: string) => Promise<unknown>} [runVsce] defaults to the real `vsce`
  * @property {(vsixPath: string) => Promise<string[]>} [verify] defaults to the real verifier
+ * @property {string} [vsixPath] overrides the artifact target for isolated tests
  */
 
 /**
@@ -123,7 +125,7 @@ export const prepareExtensionPackage = async (options = {}) => {
     );
   }
 
-  return { vsixPath: RELEASE_VSIX_PATH, extensionRoot };
+  return { vsixPath: options.vsixPath ?? RELEASE_VSIX_PATH, extensionRoot };
 };
 
 /**
@@ -137,7 +139,13 @@ export const packageExtension = async (options = {}) => {
   const runVsce = options.runVsce ?? runVsceDefault;
   const verify = options.verify ?? verifyDefault;
 
+  await rm(prepared.vsixPath, { force: true });
   await runVsce(prepared.vsixPath);
+  if (!existsSync(prepared.vsixPath)) {
+    throw new PackagingError("The packaging tool did not produce the requested VSIX:", [
+      prepared.vsixPath,
+    ]);
+  }
 
   const violations = await verify(prepared.vsixPath);
   if (violations.length > 0) {

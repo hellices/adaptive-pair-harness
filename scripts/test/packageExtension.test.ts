@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   PackagingError,
   packageExtension,
   prepareExtensionPackage,
-  RELEASE_VSIX_PATH,
 } from "../package-extension.mjs";
 import { STAGED_PACKAGE_FILES } from "../build-extension.mjs";
 import { releaseVsixFixture } from "./zipFixture.js";
@@ -16,6 +16,17 @@ import { releaseVsixFixture } from "./zipFixture.js";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const extensionRoot = resolve(repoRoot, "apps/vscode-extension");
 const bundlePath = resolve(extensionRoot, "dist/extension.cjs");
+let packageTemp = "";
+
+beforeAll(async () => {
+  packageTemp = await mkdtemp(join(tmpdir(), "adaptive-pair-package-"));
+});
+
+afterAll(async () => {
+  if (packageTemp !== "") {
+    await rm(packageTemp, { recursive: true, force: true });
+  }
+});
 
 const hashOf = async (path: string): Promise<string> =>
   createHash("sha256").update(await readFile(path)).digest("hex");
@@ -91,23 +102,26 @@ describe("packageExtension", () => {
 
   it("verifies the archive that the packaging tool produced", async () => {
     const produced: string[] = [];
+    const vsixPath = join(packageTemp, "verified.vsix");
 
     const result = await packageExtension({
       ...prepared,
+      vsixPath,
       runVsce: (vsixPath: string) => {
         produced.push(vsixPath);
         return writeFile(vsixPath, releaseVsixFixture());
       },
     });
 
-    expect(produced).toEqual([RELEASE_VSIX_PATH]);
+    expect(produced).toEqual([vsixPath]);
     expect(result.violations).toEqual([]);
-    await rm(RELEASE_VSIX_PATH, { force: true });
   });
 
   it("fails when the produced archive would ship an unexpected entry", async () => {
+    const vsixPath = join(packageTemp, "unexpected-entry.vsix");
     const attempt = packageExtension({
       ...prepared,
+      vsixPath,
       runVsce: (vsixPath: string) =>
         writeFile(
           vsixPath,
@@ -116,9 +130,8 @@ describe("packageExtension", () => {
           }),
         ),
     });
-
     await expect(attempt).rejects.toThrow(/extension\.cjs\.map/u);
-    await rm(RELEASE_VSIX_PATH, { force: true });
+    await expect(attempt).rejects.toThrow(/extension\.cjs\.map/u);
   });
 
   it("never runs the packaging tool when preparation fails", async () => {
@@ -135,6 +148,26 @@ describe("packageExtension", () => {
       }),
     ).rejects.toBeInstanceOf(PackagingError);
     expect(ran).toBe(false);
+  });
+
+  it("removes a stale target and fails if the packaging tool produces nothing", async () => {
+    const vsixPath = join(packageTemp, "missing-output.vsix");
+    await writeFile(vsixPath, releaseVsixFixture());
+    let verified = false;
+
+    await expect(
+      packageExtension({
+        ...prepared,
+        vsixPath,
+        runVsce: () => Promise.resolve(),
+        verify: () => {
+          verified = true;
+          return Promise.resolve([]);
+        },
+      }),
+    ).rejects.toThrow(/did not produce/u);
+    expect(existsSync(vsixPath)).toBe(false);
+    expect(verified).toBe(false);
   });
 });
 

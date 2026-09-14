@@ -180,6 +180,8 @@ const MAX_ARCHIVE_COMMENT = 0xffff;
 const ZIP64_SENTINEL = 0xffffffff;
 const DEFLATED = 8;
 const STORED = 0;
+const ENCRYPTION_FLAGS = 0x0001 | 0x0040;
+const MAX_ENTRY_UNCOMPRESSED_BYTES = 16 * 1024 * 1024;
 
 /**
  * A structural problem in the archive itself. Carrying a stable `code` keeps
@@ -228,10 +230,19 @@ const eocdCandidates = (buffer) => {
  * @returns {{ name: string, data: Buffer, text: string }[]}
  */
 const readCentralDirectory = (buffer, eocd) => {
+  const disk = buffer.readUInt16LE(eocd + 4);
+  const centralDirectoryDisk = buffer.readUInt16LE(eocd + 6);
+  const entriesOnDisk = buffer.readUInt16LE(eocd + 8);
   const count = buffer.readUInt16LE(eocd + 10);
   const size = buffer.readUInt32LE(eocd + 12);
   const start = buffer.readUInt32LE(eocd + 16);
 
+  if (disk !== 0 || centralDirectoryDisk !== 0 || entriesOnDisk !== count) {
+    throw new VsixArchiveError(
+      "multi-disk-unsupported",
+      "The archive declares multiple disks, which this verifier does not read.",
+    );
+  }
   if (start === ZIP64_SENTINEL || size === ZIP64_SENTINEL || count === 0xffff) {
     throw new VsixArchiveError(
       "zip64-unsupported",
@@ -263,8 +274,10 @@ const readCentralDirectory = (buffer, eocd) => {
       );
     }
 
+    const flags = buffer.readUInt16LE(position + 8);
     const method = buffer.readUInt16LE(position + 10);
     const compressedSize = buffer.readUInt32LE(position + 20);
+    const uncompressedSize = buffer.readUInt32LE(position + 24);
     const nameLength = buffer.readUInt16LE(position + 28);
     const extraLength = buffer.readUInt16LE(position + 30);
     const commentLength = buffer.readUInt16LE(position + 32);
@@ -285,6 +298,19 @@ const readCentralDirectory = (buffer, eocd) => {
     );
     const label = sanitizeForMessage(name);
 
+    if ((flags & ENCRYPTION_FLAGS) !== 0) {
+      throw new VsixArchiveError(
+        "entry-encrypted",
+        `Entry ${label} is encrypted, so its content cannot be verified.`,
+      );
+    }
+    if (uncompressedSize > MAX_ENTRY_UNCOMPRESSED_BYTES) {
+      throw new VsixArchiveError(
+        "entry-too-large",
+        `Entry ${label} declares ${uncompressedSize} uncompressed bytes, exceeding the ${MAX_ENTRY_UNCOMPRESSED_BYTES}-byte release bound.`,
+      );
+    }
+
     if (localOffset + LOCAL_HEADER_LENGTH > start) {
       throw new VsixArchiveError(
         "entry-header-out-of-bounds",
@@ -295,6 +321,13 @@ const readCentralDirectory = (buffer, eocd) => {
       throw new VsixArchiveError(
         "entry-header-signature",
         `Entry ${label} has no local header signature at offset ${localOffset}.`,
+      );
+    }
+    const localFlags = buffer.readUInt16LE(localOffset + 6);
+    if ((localFlags & ENCRYPTION_FLAGS) !== 0) {
+      throw new VsixArchiveError(
+        "entry-encrypted",
+        `Entry ${label} is encrypted, so its content cannot be verified.`,
       );
     }
 
@@ -315,7 +348,9 @@ const readCentralDirectory = (buffer, eocd) => {
     let data;
     if (method === DEFLATED) {
       try {
-        data = inflateRawSync(stored);
+        data = inflateRawSync(stored, {
+          maxOutputLength: MAX_ENTRY_UNCOMPRESSED_BYTES,
+        });
       } catch {
         throw new VsixArchiveError(
           "entry-inflate-failed",

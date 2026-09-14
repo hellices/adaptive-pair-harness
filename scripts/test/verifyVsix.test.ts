@@ -8,7 +8,12 @@ import {
   readZipEntries,
   verifyVsix,
 } from "../verify-vsix.mjs";
-import { makeZip, releaseVsixFixture, validManifest } from "./zipFixture.js";
+import {
+  makeZip,
+  releaseEntries,
+  releaseVsixFixture,
+  validManifest,
+} from "./zipFixture.js";
 
 const EOCD_SIGNATURE = 0x06054b50;
 
@@ -78,6 +83,19 @@ describe("readZipEntries", () => {
     ).toBe("central-directory-out-of-bounds");
   });
 
+  it("rejects multi-disk archive records", () => {
+    expect(
+      archiveError(() =>
+        readZipEntries(
+          releaseVsixFixture(
+            {},
+            { diskNumber: 1, centralDirectoryDisk: 1, entriesOnDisk: 1 },
+          ),
+        ),
+      ).code,
+    ).toBe("multi-disk-unsupported");
+  });
+
   it("rejects a central directory that does not hold the declared entries", () => {
     expect(archiveError(() => readZipEntries(releaseVsixFixture({}, { entryCount: 64 }))).code).toBe(
       "central-directory-truncated",
@@ -97,6 +115,52 @@ describe("readZipEntries", () => {
         readZipEntries(releaseVsixFixture({}, { firstCompressedSize: 0xfffffff0 })),
       ).code,
     ).toBe("entry-data-out-of-bounds");
+  });
+
+  it("rejects encrypted entries before treating ciphertext as inspected content", () => {
+    const entries = releaseEntries().map((entry) =>
+      entry.name === "extension/dist/extension.cjs"
+        ? { ...entry, deflate: false, flags: 0x0001 }
+        : entry,
+    );
+
+    expect(archiveError(() => readZipEntries(makeZip(entries))).code).toBe(
+      "entry-encrypted",
+    );
+  });
+
+  it("rejects encryption declared only by the local header", () => {
+    const archive = releaseVsixFixture();
+    archive.writeUInt16LE(0x0040, 6);
+
+    expect(archiveError(() => readZipEntries(archive)).code).toBe("entry-encrypted");
+  });
+
+  it("rejects a compressed entry that expands beyond the release bound", () => {
+    const oversized = "x".repeat(16 * 1024 * 1024 + 1);
+
+    expect(
+      archiveError(() =>
+        readZipEntries(
+          makeZip([{ name: "extension/dist/extension.cjs", content: oversized }]),
+        ),
+      ).code,
+    ).toBe("entry-too-large");
+  });
+
+  it("bounds inflation even when the central directory lies about output size", () => {
+    const oversized = "x".repeat(16 * 1024 * 1024 + 1);
+
+    expect(
+      archiveError(() =>
+        readZipEntries(
+          makeZip(
+            [{ name: "extension/dist/extension.cjs", content: oversized }],
+            { firstUncompressedSize: 1 },
+          ),
+        ),
+      ).code,
+    ).toBe("entry-inflate-failed");
   });
 
   it("rejects a truncated archive without leaking a RangeError", () => {

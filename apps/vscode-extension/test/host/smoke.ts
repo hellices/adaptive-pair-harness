@@ -391,6 +391,7 @@ suite("Adaptive Pair — isolated Extension Host smoke", () => {
     const uri = vscode.Uri.file(join(workspaceRoot, "src/retry.ts"));
     const document = await vscode.workspace.openTextDocument(uri);
     const editor = await vscode.window.showTextDocument(document);
+    const timersBefore = api.activity().timersScheduled;
     await editor.edit((builder) =>
       builder.insert(new vscode.Position(0, 0), "// developer work in progress\n"),
     );
@@ -411,11 +412,11 @@ suite("Adaptive Pair — isolated Extension Host smoke", () => {
     // The developer's own edit drives the real observation path, so the shared
     // production scheduler counter must move off zero too.
     await waitFor(
-      () => api.activity().timersScheduled >= 1,
+      () => api.activity().timersScheduled > timersBefore,
       "the observed edit to schedule an episode timer",
     );
     assert.ok(
-      api.activity().timersScheduled >= 1,
+      api.activity().timersScheduled > timersBefore,
       "Observing a developer edit scheduled no timer.",
     );
   });

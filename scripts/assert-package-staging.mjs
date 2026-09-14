@@ -1,9 +1,10 @@
 // Packaging staging invariant.
 //
 // `vsce package` only archives what is already staged inside the extension
-// folder, so invoking the workspace `package` script directly could silently
-// ship a VSIX without the license, README, or Growth preview documentation.
-// This runs as the workspace `prepackage` script and fails loudly instead.
+// folder, so a packaging entry point that skips the build could silently ship
+// a VSIX without the license, README, or Growth preview documentation. The
+// packaging orchestrator calls this after building; it is also executable
+// directly for diagnosis.
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";

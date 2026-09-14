@@ -2568,7 +2568,7 @@ Create `apps/vscode-extension/package.json` with:
   "scripts": {
     "clean": "rm -rf dist *.vsix",
     "typecheck": "tsc -b",
-    "package": "vsce package --no-dependencies --out ../../adaptive-pair-0.2.0-preview.1-stable.vsix"
+    "package": "node ../../scripts/package-extension.mjs"
   },
   "dependencies": {
     "@adaptive-pair/harness": "0.2.0-preview.1",
@@ -3295,8 +3295,8 @@ Add root scripts:
 ```json
 {
   "build": "node scripts/build-extension.mjs",
-  "test:host": "npm run build && node scripts/test-extension-host.mjs",
-  "package": "npm run build && npm --workspace apps/vscode-extension run package"
+  "test:host": "node scripts/test-extension-host.mjs",
+  "package": "node scripts/package-extension.mjs"
 }
 ```
 

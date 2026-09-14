@@ -157,6 +157,7 @@ describe("release scripts in a checkout whose path needs URL decoding", () => {
       "build-extension.mjs",
       "assert-package-staging.mjs",
       "verify-vsix.mjs",
+      "package-extension.mjs",
     ]) {
       await copyFile(join(scriptsDir, name), join(checkout, "scripts", name));
     }
@@ -169,7 +170,12 @@ describe("release scripts in a checkout whose path needs URL decoding", () => {
       `${JSON.stringify(
         {
           name: "adaptive-pair",
+          publisher: "adaptive-pair",
+          displayName: "Adaptive Pair",
+          description: "Adaptive Pair release-script fixture",
           version: "0.2.0-preview.1",
+          license: "Apache-2.0",
+          engines: { vscode: "^1.136.0" },
           main: "./dist/extension.cjs",
           files: ["dist/extension.cjs", "LICENSE", "README.md", "docs/growth-preview.md"],
         },
@@ -189,6 +195,7 @@ describe("release scripts in a checkout whose path needs URL decoding", () => {
         'await import("./build-extension.mjs");',
         'await import("./assert-package-staging.mjs");',
         'await import("./verify-vsix.mjs");',
+        'await import("./package-extension.mjs");',
         'console.log("imported with no side effect");',
         "",
       ].join("\n"),
@@ -232,6 +239,17 @@ describe("release scripts in a checkout whose path needs URL decoding", () => {
     expect(result.code).toBe(0);
   }, 60_000);
 
+  it("executes the package entry point instead of silently succeeding", async () => {
+    const license = join(checkout, "LICENSE");
+    await rm(license);
+    const result = await nodeRun([join(checkout, "scripts/package-extension.mjs")], checkout);
+    await writeFile(license, "Apache-2.0\n", "utf8");
+
+    expect(result.stdout + result.stderr).toContain("[package]");
+    expect(result.stdout + result.stderr).toContain("ENOENT");
+    expect(result.code).toBe(1);
+  }, 60_000);
+
   it("runs nothing when the scripts are imported instead of executed", async () => {
     const result = await nodeRun([join(checkout, "scripts/import-probe.mjs")], checkout);
 
@@ -249,6 +267,7 @@ describe("release script sources", () => {
       "build-extension.mjs",
       "assert-package-staging.mjs",
       "verify-vsix.mjs",
+      "package-extension.mjs",
       "test-extension-host.mjs",
       "host-test-support.mjs",
     ];
@@ -262,7 +281,12 @@ describe("release script sources", () => {
   });
 
   it("guards every executable release script with the shared helper", async () => {
-    for (const name of ["build-extension.mjs", "assert-package-staging.mjs", "verify-vsix.mjs"]) {
+    for (const name of [
+      "build-extension.mjs",
+      "assert-package-staging.mjs",
+      "verify-vsix.mjs",
+      "package-extension.mjs",
+    ]) {
       const text = await readFile(join(scriptsDir, name), "utf8");
       expect(text, `${name} does not use isMainModule`).toContain("isMainModule(import.meta.url)");
     }
