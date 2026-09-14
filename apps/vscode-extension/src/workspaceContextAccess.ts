@@ -52,14 +52,22 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
     };
   }
 
-  public isCurrent(folder: WorkspaceFolderIdentity): boolean {
-    return (
-      vscode.workspace.workspaceFolders?.[0]?.uri.toString() === folder.workspaceId
-    );
+  public isCurrent(
+    folder: WorkspaceFolderIdentity,
+    branch: string | undefined,
+  ): boolean {
+    if (
+      vscode.workspace.workspaceFolders?.[0]?.uri.toString() !== folder.workspaceId
+    ) {
+      return false;
+    }
+
+    const repository = this.gitRepositoryForRoot(folder.rootPath);
+    return (repository?.state.HEAD?.name ?? undefined) === branch;
   }
 
-  public readGitMetadata(): Promise<GitMetadata> {
-    const repository = this.gitRepository();
+  public readGitMetadata(folder: WorkspaceFolderIdentity): Promise<GitMetadata> {
+    const repository = this.gitRepositoryForRoot(folder.rootPath);
     if (repository === undefined) {
       return Promise.resolve({
         branch: undefined,
@@ -186,7 +194,40 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
       .map(document => vscode.workspace.asRelativePath(document.uri, false));
   }
 
-  private gitRepository(): GitRepository | undefined {
+  private gitRepositoryForRoot(rootPath: string): GitRepository | undefined {
+    const repositories = this.gitRepositories();
+    if (repositories.length === 0) {
+      return undefined;
+    }
+
+    const target = resolve(rootPath);
+    const exact = repositories.find(
+      repository => resolve(repository.rootUri.fsPath) === target,
+    );
+    if (exact !== undefined) {
+      return exact;
+    }
+
+    let ancestor: GitRepository | undefined;
+    let ancestorLength = -1;
+    for (const repository of repositories) {
+      const repositoryRoot = resolve(repository.rootUri.fsPath);
+      const relativePath = relative(repositoryRoot, target);
+      const withinRepository =
+        relativePath !== "" &&
+        !relativePath.startsWith(`..${sep}`) &&
+        relativePath !== ".." &&
+        !isAbsolute(relativePath);
+      if (withinRepository && repositoryRoot.length > ancestorLength) {
+        ancestor = repository;
+        ancestorLength = repositoryRoot.length;
+      }
+    }
+
+    return ancestor;
+  }
+
+  private gitRepositories(): readonly GitRepository[] {
     try {
       const gitExtension = vscode.extensions?.getExtension?.<{
         getAPI(version: number): GitApi;
@@ -194,12 +235,12 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
       const exports =
         gitExtension?.isActive === true ? gitExtension.exports : undefined;
       if (exports === undefined) {
-        return undefined;
+        return [];
       }
 
-      return exports.getAPI(1).repositories[0];
+      return exports.getAPI(1).repositories;
     } catch {
-      return undefined;
+      return [];
     }
   }
 }

@@ -268,6 +268,12 @@ const fakeVscode = vi.hoisted(() => {
         const text = typeof value === "string" ? value : value.fsPath;
         return text.replace(/^\/workspace\//, "");
       },
+      getWorkspaceFolder: (value: FakeUri): unknown => {
+        const path = typeof value === "string" ? value : value.fsPath;
+        return path.startsWith("/workspace")
+          ? state.workspaceFolders[0]
+          : undefined;
+      },
       onDidChangeTextDocument: (listener: DocumentListener): FakeDisposable => {
         state.documentListeners.add(listener);
         return createDisposable(() => {

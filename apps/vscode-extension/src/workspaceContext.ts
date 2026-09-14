@@ -106,8 +106,8 @@ export interface PathInspection {
 
 export interface WorkspaceContextAccess {
   workspaceFolder(): WorkspaceFolderIdentity | undefined;
-  isCurrent(folder: WorkspaceFolderIdentity): boolean;
-  readGitMetadata(): Promise<GitMetadata>;
+  isCurrent(folder: WorkspaceFolderIdentity, branch: string | undefined): boolean;
+  readGitMetadata(folder: WorkspaceFolderIdentity): Promise<GitMetadata>;
   openDocuments(): readonly OpenDocumentInfo[];
   diagnostics(): readonly DiagnosticInfo[];
   validationResults(): readonly string[];
@@ -181,8 +181,8 @@ export class WorkspaceContext {
       });
     }
 
-    const git = await this.access.readGitMetadata();
-    this.ensureCurrent(folder);
+    const git = await this.access.readGitMetadata(folder);
+    this.ensureCurrent(folder, git.branch);
 
     const openDirtyByPath = new Map<string, OpenDocumentInfo>();
     const openPaths: string[] = [];
@@ -200,17 +200,19 @@ export class WorkspaceContext {
     const dirtyPaths = await this.acceptPaths(
       [...git.dirtyPaths, ...git.stagedPaths, ...openDirtyByPath.keys()],
       folder,
+      git.branch,
       openDirtyByPath,
     );
     const untrackedPaths = await this.acceptPaths(
       git.untrackedPaths,
       folder,
+      git.branch,
       openDirtyByPath,
     );
 
     const diagnostics = this.collectDiagnostics();
 
-    this.ensureCurrent(folder);
+    this.ensureCurrent(folder, git.branch);
 
     return buildEntrySnapshot({
       workspaceId: folder.workspaceId,
@@ -226,6 +228,7 @@ export class WorkspaceContext {
   private async acceptPaths(
     candidates: readonly string[],
     folder: WorkspaceFolderIdentity,
+    branch: string | undefined,
     openDirtyByPath: ReadonlyMap<string, OpenDocumentInfo>,
   ): Promise<string[]> {
     const accepted: string[] = [];
@@ -251,7 +254,7 @@ export class WorkspaceContext {
       }
 
       const inspection = await this.access.inspectPath(canonical);
-      this.ensureCurrent(folder);
+      this.ensureCurrent(folder, branch);
 
       if (
         inspection.exists &&
@@ -287,10 +290,13 @@ export class WorkspaceContext {
     return summaries;
   }
 
-  private ensureCurrent(folder: WorkspaceFolderIdentity): void {
+  private ensureCurrent(
+    folder: WorkspaceFolderIdentity,
+    branch: string | undefined,
+  ): void {
     if (
       this.access.workspaceFolder()?.workspaceId !== folder.workspaceId ||
-      !this.access.isCurrent(folder)
+      !this.access.isCurrent(folder, branch)
     ) {
       throw new WorkspaceContextChangedError();
     }

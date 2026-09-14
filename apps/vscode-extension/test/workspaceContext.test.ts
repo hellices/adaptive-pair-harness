@@ -52,8 +52,9 @@ class FakeWorkspaceAccess implements WorkspaceContextAccess {
     return this.config.folder;
   }
 
-  public isCurrent(folder: WorkspaceFolderIdentity): boolean {
+  public isCurrent(folder: WorkspaceFolderIdentity, branch: string | undefined): boolean {
     void folder;
+    void branch;
     return this.current;
   }
 
@@ -296,6 +297,44 @@ const event = (type: string, payload: Record<string, unknown>): JournalEvent => 
   payload,
 });
 
+class DeferredJournalFileSystem implements JournalFileSystem {
+  public readonly files = new Map<string, string>();
+
+  private async tick(): Promise<void> {
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+
+  public async ensureDir(dir: string): Promise<void> {
+    void dir;
+    await this.tick();
+  }
+
+  public async readFile(path: string): Promise<string | undefined> {
+    await this.tick();
+    return this.files.get(path);
+  }
+
+  public async writeFile(path: string, data: string): Promise<void> {
+    await this.tick();
+    this.files.set(path, data);
+  }
+
+  public async fsync(path: string): Promise<void> {
+    void path;
+    await this.tick();
+  }
+
+  public async rename(from: string, to: string): Promise<void> {
+    await this.tick();
+    const data = this.files.get(from);
+    if (data !== undefined) {
+      this.files.set(to, data);
+      this.files.delete(from);
+    }
+  }
+}
+
 describe("LocalJournal", () => {
   let fs: MemoryJournalFileSystem;
 
@@ -387,5 +426,40 @@ describe("LocalJournal", () => {
     await expect(
       journal.append(event("entry-captured", { transcript: "line one\nline two" })),
     ).rejects.toBeInstanceOf(JournalIntegrityError);
+  });
+});
+
+describe("LocalJournal — concurrent appends", () => {
+  it("serializes Promise.all appends into contiguous records with both events", async () => {
+    const fs = new DeferredJournalFileSystem();
+    const journal = new LocalJournal(fs, "/storage");
+
+    await Promise.all([
+      journal.append(event("entry-captured", { branch: "main" })),
+      journal.append(event("edit-episode", { uri: "src/a.ts" })),
+    ]);
+
+    const records = await journal.load();
+    expect(records.map(record => record.seq)).toEqual([1, 2]);
+    expect(records.map(record => record.event.type).sort()).toEqual([
+      "edit-episode",
+      "entry-captured",
+    ]);
+  });
+
+  it("lets replay observe the committed order without racing an in-flight append", async () => {
+    const fs = new DeferredJournalFileSystem();
+    const journal = new LocalJournal(fs, "/storage");
+    await journal.append(event("entry-captured", { branch: "main" }));
+
+    const [, replayed] = await Promise.all([
+      journal.append(event("edit-episode", { uri: "src/a.ts" })),
+      journal.replay(),
+    ]);
+
+    expect(replayed.map(record => record.type)).toEqual([
+      "entry-captured",
+      "edit-episode",
+    ]);
   });
 });

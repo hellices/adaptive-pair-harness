@@ -105,6 +105,7 @@ const assertSerializable = (value: unknown): void => {
 export class LocalJournal {
   private readonly journalPath: string;
   private readonly tempPath: string;
+  private tail: Promise<unknown> = Promise.resolve();
 
   public constructor(
     private readonly fs: JournalFileSystem,
@@ -114,35 +115,52 @@ export class LocalJournal {
     this.tempPath = `${this.journalPath}.tmp`;
   }
 
-  public async append(event: JournalEvent): Promise<void> {
-    assertSerializable(event);
+  public append(event: JournalEvent): Promise<void> {
+    return this.enqueue(async () => {
+      assertSerializable(event);
 
-    const records = await this.load();
-    const previous = records.at(-1);
-    const seq = (previous?.seq ?? 0) + 1;
-    const prevHash = previous?.hash ?? GENESIS_HASH;
-    const record: JournalRecord = {
-      seq,
-      prevHash,
-      hash: chainHash(prevHash, seq, event),
-      event,
-    };
+      const records = await this.readRecords();
+      const previous = records.at(-1);
+      const seq = (previous?.seq ?? 0) + 1;
+      const prevHash = previous?.hash ?? GENESIS_HASH;
+      const record: JournalRecord = {
+        seq,
+        prevHash,
+        hash: chainHash(prevHash, seq, event),
+        event,
+      };
 
-    const serialized = [...records, record]
-      .map(entry => JSON.stringify(entry))
-      .join("\n");
+      const serialized = [...records, record]
+        .map(entry => JSON.stringify(entry))
+        .join("\n");
 
-    await this.fs.ensureDir(this.directory);
-    await this.fs.writeFile(this.tempPath, `${serialized}\n`);
-    await this.fs.fsync(this.tempPath);
-    await this.fs.rename(this.tempPath, this.journalPath);
+      await this.fs.ensureDir(this.directory);
+      await this.fs.writeFile(this.tempPath, `${serialized}\n`);
+      await this.fs.fsync(this.tempPath);
+      await this.fs.rename(this.tempPath, this.journalPath);
+    });
   }
 
-  public async replay(): Promise<readonly JournalEvent[]> {
-    return (await this.load()).map(record => record.event);
+  public replay(): Promise<readonly JournalEvent[]> {
+    return this.enqueue(async () =>
+      (await this.readRecords()).map(record => record.event),
+    );
   }
 
-  public async load(): Promise<readonly JournalRecord[]> {
+  public load(): Promise<readonly JournalRecord[]> {
+    return this.enqueue(() => this.readRecords());
+  }
+
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.tail.then(operation, operation);
+    this.tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async readRecords(): Promise<readonly JournalRecord[]> {
     const raw = await this.fs.readFile(this.journalPath);
     if (raw === undefined || raw.trim().length === 0) {
       return [];
@@ -219,8 +237,15 @@ export class NodeJournalFileSystem implements JournalFileSystem {
   public async readFile(path: string): Promise<string | undefined> {
     try {
       return await readFile(path, "utf8");
-    } catch {
-      return undefined;
+    } catch (error: unknown) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        (error as NodeJS.ErrnoException).code === "ENOENT"
+      ) {
+        return undefined;
+      }
+      throw error;
     }
   }
 

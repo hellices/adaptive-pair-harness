@@ -13,6 +13,7 @@ import {
   JournalIntegrityError,
   NodeJournalFileSystem,
   type JournalEvent,
+  type JournalFileSystem,
 } from "./storageAdapter.js";
 import {
   PairToolContext,
@@ -32,26 +33,36 @@ export interface AdaptivePairExtensionApi {
 
 const OBSERVATION_CAPACITY = 50;
 
+export interface PresenceControllerOptions {
+  readonly scheduler?: Scheduler;
+  readonly journalFileSystem?: JournalFileSystem;
+}
+
 export class PresenceController implements vscode.Disposable {
   private observationWindow = new ObservationWindow(OBSERVATION_CAPACITY);
   private documentListener: vscode.Disposable | undefined;
   private disposed = false;
   private journal: LocalJournal | undefined;
   private editAggregator: EditEpisodeAggregator | undefined;
-  private readonly scheduler: Scheduler = {
-    schedule: (delayMs, callback) => setTimeout(callback, delayMs),
-    cancel: handle => {
-      if (handle !== undefined) {
-        clearTimeout(handle as ReturnType<typeof setTimeout>);
-      }
-    },
-  };
+  private readonly journalFileSystem: JournalFileSystem;
+  private readonly scheduler: Scheduler;
 
   public constructor(
     private readonly sessionController: SessionController,
     private readonly statusView: StatusView,
     private readonly toolContext: PairToolContext,
+    options: PresenceControllerOptions = {},
   ) {
+    this.journalFileSystem =
+      options.journalFileSystem ?? new NodeJournalFileSystem();
+    this.scheduler = options.scheduler ?? {
+      schedule: (delayMs, callback) => setTimeout(callback, delayMs),
+      cancel: handle => {
+        if (handle !== undefined) {
+          clearTimeout(handle as ReturnType<typeof setTimeout>);
+        }
+      },
+    };
     this.toolContext.clear();
     this.statusView.render("off");
   }
@@ -136,6 +147,7 @@ export class PresenceController implements vscode.Disposable {
   }
 
   private async pausePresence(): Promise<void> {
+    this.editAggregator?.clear();
     this.toolContext.clear();
     this.detachObservationListener();
     const snapshot = await this.sessionController.pausePresence();
@@ -153,6 +165,7 @@ export class PresenceController implements vscode.Disposable {
       return;
     }
 
+    this.editAggregator?.clear();
     this.toolContext.clear();
     this.detachObservationListener();
     this.observationWindow = new ObservationWindow(OBSERVATION_CAPACITY);
@@ -217,6 +230,10 @@ export class PresenceController implements vscode.Disposable {
         return;
       }
 
+      if (vscode.workspace.getWorkspaceFolder(event.document.uri) === undefined) {
+        return;
+      }
+
       this.observationWindow.record({
         kind: "edit-episode",
         summary: `Observed local change in ${vscode.workspace.asRelativePath(event.document.uri)}.`,
@@ -238,7 +255,7 @@ export class PresenceController implements vscode.Disposable {
       return;
     }
 
-    this.journal = new LocalJournal(new NodeJournalFileSystem(), storagePath);
+    this.journal = new LocalJournal(this.journalFileSystem, storagePath);
     this.editAggregator = new EditEpisodeAggregator(
       500,
       this.scheduler,
@@ -246,9 +263,7 @@ export class PresenceController implements vscode.Disposable {
     );
 
     void this.journal.replay().catch((error: unknown) => {
-      if (error instanceof JournalIntegrityError) {
-        void this.failClosed(error);
-      }
+      this.handleJournalFailure(error);
     });
   }
 
@@ -301,20 +316,27 @@ export class PresenceController implements vscode.Disposable {
     }
 
     void journal.append(event).catch((error: unknown) => {
-      if (error instanceof JournalIntegrityError) {
-        void this.failClosed(error);
-      }
+      this.handleJournalFailure(error);
     });
   }
 
-  private async failClosed(error: JournalIntegrityError): Promise<void> {
+  private handleJournalFailure(error: unknown): void {
+    const reason =
+      error instanceof JournalIntegrityError
+        ? `integrity:${error.reason}`
+        : "io-error";
+    void this.failClosed(reason);
+  }
+
+  private async failClosed(reason: string): Promise<void> {
+    this.editAggregator?.clear();
     this.toolContext.clear();
     this.detachObservationListener();
     const snapshot = await this.sessionController.pausePresence();
     this.statusView.render(snapshot.presence.status);
     await this.toolContext.accept(snapshot);
     await vscode.window.showWarningMessage(
-      `Adaptive Pair paused: local journal integrity check failed (${error.reason}).`,
+      `Adaptive Pair paused: local journal unavailable (${reason}).`,
     );
   }
 }
