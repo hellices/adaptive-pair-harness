@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   authorizeVisibleTool,
+  issuePairUserActionGrant,
   nativeToolName,
   PAIR_NATIVE_TOOL_NAMES,
   type PairToolView,
@@ -171,13 +172,11 @@ describe("Pair tool policy", () => {
         runtimeRevision: view.runtimeRevision,
         authorityEpoch: view.authorityEpoch,
         owner: "human",
-        userAction: {
-          id: "grant-1",
-          nativeToolName: nativeToolName("pair_reveal_solution"),
+        userAction: issuePairUserActionGrant({
+          name: "pair_reveal_solution",
           runtimeRevision: view.runtimeRevision,
           authorityEpoch: view.authorityEpoch,
-          consumed: false,
-        },
+        }),
       }),
     ).toEqual({
       allowed: false,
@@ -191,13 +190,11 @@ describe("Pair tool policy", () => {
         runtimeRevision: view.runtimeRevision,
         authorityEpoch: view.authorityEpoch,
         owner: "human",
-        userAction: {
-          id: "grant-2",
-          nativeToolName: nativeToolName("pair_request_hint"),
+        userAction: issuePairUserActionGrant({
+          name: "pair_request_hint",
           runtimeRevision: view.runtimeRevision + 1,
           authorityEpoch: view.authorityEpoch,
-          consumed: false,
-        },
+        }),
       }),
     ).toEqual({
       allowed: false,
@@ -211,18 +208,20 @@ describe("Pair tool policy", () => {
         runtimeRevision: view.runtimeRevision,
         authorityEpoch: view.authorityEpoch,
         owner: "human",
-        userAction: {
-          id: "grant-3",
-          nativeToolName: nativeToolName("pair_request_hint"),
+        userAction: issuePairUserActionGrant({
+          name: "pair_request_hint",
           runtimeRevision: view.runtimeRevision,
           authorityEpoch: (view.authorityEpoch ?? 0) + 1,
-          consumed: false,
-        },
+        }),
       }),
     ).toEqual({
       allowed: false,
       reason: "USER_ACTION_REQUIRED",
     });
+  });
+
+  it("rejects caller-forged lookalike grants", () => {
+    const view = toolsFor(growthRuntime());
 
     expect(
       authorizeVisibleTool(view, {
@@ -232,12 +231,14 @@ describe("Pair tool policy", () => {
         authorityEpoch: view.authorityEpoch,
         owner: "human",
         userAction: {
-          id: "grant-4",
+          id: "grant-model-lookalike",
           nativeToolName: nativeToolName("pair_request_hint"),
           runtimeRevision: view.runtimeRevision,
           authorityEpoch: view.authorityEpoch,
-          consumed: true,
-        },
+          consumed: false,
+        } as unknown as NonNullable<
+          Parameters<typeof authorizeVisibleTool>[1]["userAction"]
+        >,
       }),
     ).toEqual({
       allowed: false,
@@ -247,19 +248,18 @@ describe("Pair tool policy", () => {
 
   it("accepts a current matching one-shot user action", () => {
     const view = toolsFor(growthRuntime());
+    const grant = issuePairUserActionGrant({
+      name: "pair_request_hint",
+      runtimeRevision: view.runtimeRevision,
+      authorityEpoch: view.authorityEpoch,
+    });
     const decision = authorizeVisibleTool(view, {
       catalogVersion: PAIR_TOOL_CATALOG_VERSION,
       name: "pair_request_hint",
       runtimeRevision: view.runtimeRevision,
       authorityEpoch: view.authorityEpoch,
       owner: "human",
-      userAction: {
-        id: "grant-5",
-        nativeToolName: nativeToolName("pair_request_hint"),
-        runtimeRevision: view.runtimeRevision,
-        authorityEpoch: view.authorityEpoch,
-        consumed: false,
-      },
+      userAction: grant,
     });
 
     expect(decision.allowed).toBe(true);
@@ -268,6 +268,20 @@ describe("Pair tool policy", () => {
       descriptor: {
         name: "pair_request_hint",
       },
+    });
+
+    expect(
+      authorizeVisibleTool(view, {
+        catalogVersion: PAIR_TOOL_CATALOG_VERSION,
+        name: "pair_request_hint",
+        runtimeRevision: view.runtimeRevision,
+        authorityEpoch: view.authorityEpoch,
+        owner: "human",
+        userAction: grant,
+      }),
+    ).toEqual({
+      allowed: false,
+      reason: "USER_ACTION_REQUIRED",
     });
   });
 

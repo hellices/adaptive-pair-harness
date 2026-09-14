@@ -1,23 +1,54 @@
 import { nativeToolName } from "./nativeMappings.js";
 import {
+  type IssuePairUserActionGrantInput,
   PAIR_TOOL_CATALOG_VERSION,
+  type PairUserActionGrant,
   type PairToolView,
   type ToolPolicyDecision,
   type VisibleToolInvocation,
 } from "./types.js";
 
-const requiresMatchingUserAction = (
+type PairUserActionGrantMetadata = {
+  readonly nativeToolName: ReturnType<typeof nativeToolName>;
+  readonly runtimeRevision: number;
+  readonly authorityEpoch: number | undefined;
+};
+
+const grantMetadata = new WeakMap<PairUserActionGrant, PairUserActionGrantMetadata>();
+
+export const issuePairUserActionGrant = (
+  input: IssuePairUserActionGrantInput,
+): PairUserActionGrant => {
+  const grant = Object.freeze({}) as PairUserActionGrant;
+
+  grantMetadata.set(grant, {
+    nativeToolName: nativeToolName(input.name),
+    runtimeRevision: input.runtimeRevision,
+    authorityEpoch: input.authorityEpoch,
+  });
+
+  return grant;
+};
+
+const matchingUserActionGrant = (
   invocation: VisibleToolInvocation,
-): boolean => {
+): PairUserActionGrant | undefined => {
   const userAction = invocation.userAction;
 
+  if (typeof userAction !== "object" || userAction === null) {
+    return undefined;
+  }
+
+  const metadata = grantMetadata.get(userAction);
+
   return (
-    userAction === undefined ||
-    userAction.consumed ||
-    userAction.nativeToolName !== nativeToolName(invocation.name) ||
-    userAction.runtimeRevision !== invocation.runtimeRevision ||
-    userAction.authorityEpoch !== invocation.authorityEpoch
-  );
+    metadata !== undefined &&
+    metadata.nativeToolName === nativeToolName(invocation.name) &&
+    metadata.runtimeRevision === invocation.runtimeRevision &&
+    metadata.authorityEpoch === invocation.authorityEpoch
+  )
+    ? userAction
+    : undefined;
 };
 
 export const authorizeVisibleTool = (
@@ -53,11 +84,16 @@ export const authorizeVisibleTool = (
     return { allowed: false, reason: "WRONG_OWNER" };
   }
 
-  if (
-    descriptor.requiresExplicitUserAction &&
-    requiresMatchingUserAction(invocation)
-  ) {
+  const matchingGrant = descriptor.requiresExplicitUserAction
+    ? matchingUserActionGrant(invocation)
+    : undefined;
+
+  if (descriptor.requiresExplicitUserAction && matchingGrant === undefined) {
     return { allowed: false, reason: "USER_ACTION_REQUIRED" };
+  }
+
+  if (matchingGrant !== undefined) {
+    grantMetadata.delete(matchingGrant);
   }
 
   return { allowed: true, descriptor };

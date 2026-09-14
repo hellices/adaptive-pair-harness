@@ -72,12 +72,16 @@ export interface CompiledInstructionEnvelope {
   readonly layers: readonly InstructionLayer[];
 }
 
-export interface PairUserActionGrant {
-  readonly id: string;
-  readonly nativeToolName: NativePairToolName;
+declare const pairUserActionGrantBrand: unique symbol;
+
+export type PairUserActionGrant = {
+  readonly [pairUserActionGrantBrand]: "PairUserActionGrant";
+};
+
+export interface IssuePairUserActionGrantInput {
+  readonly name: PairToolName;
   readonly runtimeRevision: number;
   readonly authorityEpoch: number | undefined;
-  readonly consumed: boolean;
 }
 
 export interface VisibleToolInvocation {
