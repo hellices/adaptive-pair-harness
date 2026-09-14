@@ -2,12 +2,17 @@
  * A small activity ledger that proves Adaptive Pair does nothing observable
  * before the developer explicitly enables Pair Presence.
  *
- * Each boundary that could touch the developer's environment (a document
- * listener, a timer, a workspace read, a model request, or a network request)
- * reports to this ledger. Inactive state must show every counter at zero; the
- * host smoke test asserts exactly that before enablement and then watches the
- * counters move once Presence is enabled, which proves the counters are wired
- * to real boundaries rather than hard-coded.
+ * Every boundary counted here is a real one this extension can cross: a
+ * document listener, a timer, a workspace read, or a language-model request.
+ * Inactive state must show every counter at zero; the host smoke test asserts
+ * exactly that before enablement and then watches the counters move once
+ * Presence is enabled, which proves they are wired to real boundaries rather
+ * than hard-coded.
+ *
+ * There is deliberately no network counter: the extension has no outbound
+ * network boundary to instrument, so outbound absence is proved at runtime by
+ * the Extension Host network probe (test/host/networkProbe.ts) rather than by a
+ * counter that nothing could ever increment.
  */
 export interface ActivitySnapshot {
   /** Currently attached text-document change listeners. */
@@ -18,8 +23,6 @@ export interface ActivitySnapshot {
   readonly workspaceReads: number;
   /** Cumulative language-model requests dispatched from a Growth turn. */
   readonly modelRequests: number;
-  /** Cumulative outbound network requests (none exist in this preview). */
-  readonly networkRequests: number;
 }
 
 export class ActivityLedger {
@@ -27,7 +30,6 @@ export class ActivityLedger {
   private timers = 0;
   private workspace = 0;
   private model = 0;
-  private network = 0;
 
   public recordListenerAttached(): void {
     this.documentListenersActive += 1;
@@ -49,17 +51,12 @@ export class ActivityLedger {
     this.model += 1;
   }
 
-  public recordNetworkRequest(): void {
-    this.network += 1;
-  }
-
   public snapshot(): ActivitySnapshot {
     return Object.freeze({
       documentListeners: this.documentListenersActive,
       timersScheduled: this.timers,
       workspaceReads: this.workspace,
       modelRequests: this.model,
-      networkRequests: this.network,
     });
   }
 
@@ -68,8 +65,7 @@ export class ActivityLedger {
       this.documentListenersActive === 0 &&
       this.timers === 0 &&
       this.workspace === 0 &&
-      this.model === 0 &&
-      this.network === 0
+      this.model === 0
     );
   }
 }

@@ -1,9 +1,14 @@
 import type * as vscode from "vscode";
-import type { HintLevel, PairRuntimeSnapshot } from "@adaptive-pair/protocol";
-import type { PairCoordinatorPort } from "@adaptive-pair/runtime";
+import type {
+  HintLevel,
+  PairRuntimeSnapshot,
+  PairSessionSnapshot,
+} from "@adaptive-pair/protocol";
+import type { PairCoordinatorPort, PairToolResult } from "@adaptive-pair/runtime";
 import type { PairToolName } from "@adaptive-pair/harness";
 import { guardGrowthResponse, type GrowthResponse } from "@adaptive-pair/restraint";
 import { createGrowthModel, GrowthModelFailure, type GrowthModel } from "./modelAdapter.js";
+import { parseVerificationScript } from "./verificationPlan.js";
 
 export const WITHHELD_RESPONSE_MESSAGE = [
   "Adaptive Pair withheld this response because it exceeded the current Growth",
@@ -26,6 +31,24 @@ const REVEAL_REQUIRED_MESSAGE =
 const CONSENT_DECLINED_MESSAGE =
   "Adaptive Pair kept your workspace private. Grant workspace consent for this model to receive grounded, in-boundary hints about your task.";
 
+const NO_SESSION_MESSAGE =
+  "No Adaptive Pair session is active. Run \"Adaptive Pair: Start a Session\" or \"Adaptive Pair: Join Work in Progress\" first; nothing is observed until you do.";
+
+const NO_WORK_UNIT_MESSAGE =
+  "No Growth work unit is agreed yet. Confirm the learning agreement and agree a work unit before asking for this.";
+
+const TRANSFER_NOT_DISTINCT_MESSAGE = [
+  "Adaptive Pair withheld this transfer task because it restated your current",
+  "work unit instead of a distinct independent variation. Your work was not",
+  "changed. Ask again for a different variation.",
+].join("\n");
+
+const TRANSFER_NOT_DEMONSTRATED_NOTE = [
+  "Starting a transfer task demonstrates nothing on its own. This variation is",
+  "recorded as **started, not demonstrated**; it counts only after you complete",
+  "it independently and the result is observed.",
+].join("\n");
+
 export type GrowthIntent =
   | "brief"
   | "join"
@@ -44,16 +67,22 @@ export interface GrowthIntentResult {
   readonly level: HintLevel | undefined;
 }
 
-const COMMAND_INTENTS: Record<string, GrowthIntent> = {
-  brief: "brief",
-  attempt: "attempt",
-  hypothesis: "hypothesis",
-  hint: "hint",
-  reveal: "reveal",
-  check: "check",
-  transfer: "transfer",
-  session: "session",
-};
+/**
+ * The advertised slash commands and the deterministic intent each one routes
+ * to. The manifest's `chatParticipants` commands must match these keys exactly;
+ * there is no generic fallthrough for an advertised command.
+ */
+export const GROWTH_COMMAND_INTENTS: Readonly<Record<string, GrowthIntent>> =
+  Object.freeze({
+    brief: "brief",
+    attempt: "attempt",
+    hypothesis: "hypothesis",
+    hint: "hint",
+    reveal: "reveal",
+    check: "check",
+    transfer: "transfer",
+    session: "session",
+  });
 
 const parseExplicitLevel = (prompt: string): HintLevel | undefined => {
   const match = /\blevel\s*([0-5])\b/u.exec(prompt);
@@ -93,17 +122,30 @@ const naturalIntent = (prompt: string): GrowthIntent => {
   if (/\bjoin (me|in|here)\b/u.test(text) || /\bjoin my\b/u.test(text)) {
     return "join";
   }
-  if (/\b(hint|clue|nudge)\b/u.test(text) || /\bpoint me\b/u.test(text)) {
-    return "hint";
-  }
-  if (/\b(run|do) (the )?(check|verification|tests?)\b/u.test(text)) {
-    return "check";
-  }
-  if (/\b(on my own|independent|transfer|variation)\b/u.test(text)) {
+  // Deterministic core-state routes are matched before the model-backed hint
+  // route so an explicit request never falls through to generic guidance.
+  if (/\b(on my own|independent(ly)?|transfer|variation)\b/u.test(text)) {
     return "transfer";
+  }
+  if (
+    /\b(run|do) (the )?(check|verification|tests?)\b/u.test(text) ||
+    /\bverify (my|the) (work|change|fix)\b/u.test(text)
+  ) {
+    return "check";
   }
   if (/\b(what mode|current mode|show (mode|status)|session status)\b/u.test(text)) {
     return "session";
+  }
+  if (
+    /\bwhat (is|are) (my|the) (current )?(task|objective|goal|brief|work unit)\b/u.test(
+      text,
+    ) ||
+    /\b(recap|brief) (me|the task|the work unit)\b/u.test(text)
+  ) {
+    return "brief";
+  }
+  if (/\b(hint|clue|nudge)\b/u.test(text) || /\bpoint me\b/u.test(text)) {
+    return "hint";
   }
 
   return "chat";
@@ -113,8 +155,12 @@ export const interpretGrowthIntent = (
   request: vscode.ChatRequest,
 ): GrowthIntentResult => {
   const level = parseExplicitLevel(request.prompt ?? "");
-  if (typeof request.command === "string" && request.command in COMMAND_INTENTS) {
-    return { intent: COMMAND_INTENTS[request.command]!, level };
+  const commandIntent =
+    typeof request.command === "string"
+      ? GROWTH_COMMAND_INTENTS[request.command]
+      : undefined;
+  if (commandIntent !== undefined) {
+    return { intent: commandIntent, level };
   }
   return { intent: naturalIntent(request.prompt ?? ""), level };
 };
@@ -122,14 +168,41 @@ export const interpretGrowthIntent = (
 export type GrowthEvaluationOutcome =
   | "delivered"
   | "withheld"
-  | "restraint-failure";
+  | "restraint-failure"
+  | "transfer-started";
 
+/**
+ * A bounded, non-raw record of one Growth turn. It carries only the response
+ * class, hint level, and a stable reason code; no prompt, repository, or model
+ * text is ever retained here.
+ */
 export interface GrowthEvaluationRecord {
   readonly outcome: GrowthEvaluationOutcome;
   readonly level: HintLevel | undefined;
   readonly kind: GrowthResponse["kind"] | undefined;
   readonly reason: string | undefined;
   readonly recordedAt: number;
+}
+
+/**
+ * The state of the independent transfer task for the current work unit. A
+ * started transfer is never a demonstrated one: `demonstrated` stays `false`
+ * until an independent completion is separately observed and recorded.
+ */
+export interface GrowthTransferState {
+  readonly status: "started";
+  readonly workUnitId: string;
+  readonly independentCheck: string;
+  readonly demonstrated: false;
+  readonly startedAt: number;
+}
+
+/** The last observed product check, recorded only from a real run result. */
+export interface GrowthCheckState {
+  readonly script: string;
+  readonly status: PairToolResult["status"];
+  readonly passed: boolean | undefined;
+  readonly observedAt: number;
 }
 
 export interface GrowthEvaluationInput {
@@ -201,6 +274,69 @@ export interface GrowthParticipantDependencies {
 
 const MAX_CONTEXT_CHARS = 6_000;
 const MAX_RECORD_SUMMARY = 500;
+const MAX_FIELD_CHARS = 300;
+const MAX_LIST_ITEMS = 5;
+const MAX_CHECK_SUMMARY = 800;
+
+/** Bound a developer-authored core-state field before echoing it back. */
+const bounded = (
+  value: string | undefined,
+  limit: number = MAX_FIELD_CHARS,
+): string | undefined => {
+  const trimmed = (value ?? "").trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+  return trimmed.length > limit ? `${trimmed.slice(0, limit)}…` : trimmed;
+};
+
+const boundedList = (values: readonly string[] | undefined): string => {
+  const items = (values ?? [])
+    .map(value => bounded(value))
+    .filter((value): value is string => value !== undefined)
+    .slice(0, MAX_LIST_ITEMS);
+  return items.length === 0 ? "none" : items.join(", ");
+};
+
+const normalizeForComparison = (value: string): string =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, " ")
+    .trim();
+
+/**
+ * A transfer variation must be a genuinely different exercise, so a response
+ * that merely restates the agreed objective is rejected rather than delivered.
+ */
+export const isDistinctVariation = (text: string, objective: string): boolean => {
+  const target = normalizeForComparison(objective);
+  if (target.length === 0) {
+    return true;
+  }
+  return !normalizeForComparison(text).includes(target);
+};
+
+/**
+ * The deterministic, trusted request used for a transfer turn. It names the
+ * current objective only so the model can avoid repeating it.
+ */
+const transferRequest = (
+  session: PairSessionSnapshot,
+  objective: string,
+  independentCheck: string,
+): string =>
+  [
+    "Propose one independent transfer task for the developer to attempt alone.",
+    `It must be distinct from the current work-unit objective: "${
+      bounded(objective) ?? ""
+    }".`,
+    `Keep it within the same capability (${
+      session.workUnit?.capability ?? "implementation"
+    }) and aligned with the agreed independent check: "${
+      bounded(independentCheck) ?? ""
+    }".`,
+    "State the variation and its success condition only. Do not include a solution, patch, or implementation of either task.",
+  ].join(" ");
 
 const stem = (path: string): string | undefined => {
   const base = path.split(/[\\/]/u).pop() ?? "";
@@ -252,7 +388,15 @@ const failureReason = (error: unknown): string => {
 };
 
 export class GrowthParticipant {
+  private transfer: GrowthTransferState | undefined;
+  private lastCheck: GrowthCheckState | undefined;
+
   public constructor(private readonly deps: GrowthParticipantDependencies) {}
+
+  /** The current independent transfer state, or `undefined` when none started. */
+  public transferStatus(): GrowthTransferState | undefined {
+    return this.transfer;
+  }
 
   public handler(): vscode.ChatRequestHandler {
     return (request, context, response, token) =>
@@ -283,6 +427,18 @@ export class GrowthParticipant {
         case "join":
           this.handleJoin(response);
           return;
+        case "brief":
+          await this.handleBrief(response);
+          return;
+        case "session":
+          await this.handleSession(response);
+          return;
+        case "check":
+          await this.handleCheck(response, signal);
+          return;
+        case "transfer":
+          await this.handleTransfer(request, context, model, response, signal);
+          return;
         case "reveal":
           await this.handleReveal(request, context, model, response, signal);
           return;
@@ -306,6 +462,256 @@ export class GrowthParticipant {
       });
       response.markdown(RESTRAINT_FAILURE_MESSAGE);
     }
+  }
+
+  /**
+   * Report the agreed brief from current core state. This route is entirely
+   * deterministic: it reads the runtime snapshot and never compiles a turn or
+   * dispatches a language-model request.
+   */
+  private async handleBrief(response: vscode.ChatResponseStream): Promise<void> {
+    const snapshot = await this.deps.coordinator.snapshot();
+    const session = snapshot.session;
+    if (session === undefined || session.status === "inactive") {
+      response.markdown(NO_SESSION_MESSAGE);
+      return;
+    }
+
+    const lines: string[] = [
+      "**Adaptive Pair brief — current agreed state**",
+      `- Presence: ${snapshot.presence.status}`,
+      `- Session: ${session.status}${
+        session.mode === undefined ? "" : ` (mode: ${session.mode})`
+      }`,
+      `- Goal: ${bounded(session.goal) ?? "not confirmed yet"}`,
+      `- Acceptance criteria: ${boundedList(session.criteria)}`,
+    ];
+
+    const workUnit = session.workUnit;
+    if (workUnit === undefined) {
+      lines.push("- Work unit: none agreed yet");
+    } else {
+      lines.push(
+        `- Work unit: ${bounded(workUnit.objective) ?? "(none)"} (${workUnit.status})`,
+        `- Owner: ${workUnit.owner === "human" ? "you" : "the assistant"}`,
+        `- Scope: ${boundedList(workUnit.allowedPaths)}`,
+        `- Verification plan: ${bounded(workUnit.verificationPlan) ?? "not agreed"}`,
+        `- Stopping condition: ${bounded(workUnit.stoppingCondition) ?? "not agreed"}`,
+      );
+    }
+
+    const agreement = session.learningAgreement;
+    if (agreement !== undefined) {
+      lines.push(
+        `- Hint ceiling: level ${agreement.maximumHintLevel}`,
+        `- Learning goals: ${boundedList(agreement.learningGoals)}`,
+        `- Independent check: ${bounded(agreement.independentCheck) ?? "not agreed"}`,
+      );
+    }
+
+    response.markdown(lines.join("\n"));
+  }
+
+  /**
+   * Report mode, work unit, assistance, and the five Growth outcome fields.
+   * Product verification is reported separately from Growth, and no outcome is
+   * ever inferred from a delivered hint.
+   */
+  private async handleSession(response: vscode.ChatResponseStream): Promise<void> {
+    const snapshot = await this.deps.coordinator.snapshot();
+    const session = snapshot.session;
+    if (session === undefined || session.status === "inactive") {
+      response.markdown(NO_SESSION_MESSAGE);
+      return;
+    }
+
+    const assistance = session.assistance;
+    const ceiling = session.learningAgreement?.maximumHintLevel ?? 0;
+    const lines: string[] = [
+      "**Adaptive Pair session state**",
+      `- Mode: ${session.mode ?? "not selected"}`,
+      `- Work unit: ${bounded(session.workUnit?.objective) ?? "none agreed"}${
+        session.workUnit === undefined ? "" : ` (${session.workUnit.status})`
+      }`,
+      `- Owner: ${session.workUnit?.owner === "ai" ? "the assistant" : "you"}`,
+      `- Hint level: ${assistance?.hint?.level ?? 0} of ceiling ${ceiling}`,
+      `- Attempt recorded: ${assistance?.attempt === undefined ? "no" : "yes"}`,
+      `- Hypothesis recorded: ${assistance?.hypothesis === undefined ? "no" : "yes"}`,
+      `- Solution reveal authorized: ${
+        assistance?.solutionReveal === undefined ? "no" : "yes"
+      }`,
+      `- Transfer: ${this.transferSummary()}`,
+      "",
+      "**Outcomes — reported independently**",
+      `- Product verification: ${this.productSummary()}`,
+      "- Similar generation: not assessed",
+      "- Varied debugging: not assessed",
+      "- Explanation: not assessed",
+      "- Meaningful authorship: not assessed",
+      "- Next-assistance proposal: not assessed",
+      "",
+      "Product verification is separate from Growth: a passing check never marks a Growth outcome, and each Growth field needs its own recorded demonstration.",
+    ];
+
+    response.markdown(lines.join("\n"));
+  }
+
+  private transferSummary(): string {
+    if (this.transfer === undefined) {
+      return "not started";
+    }
+    return `started — not demonstrated (independent check: ${
+      bounded(this.transfer.independentCheck) ?? "agreed variation"
+    })`;
+  }
+
+  private productSummary(): string {
+    if (this.lastCheck === undefined) {
+      return "no check observed in this session";
+    }
+    if (this.lastCheck.status !== "confirmed" || this.lastCheck.passed === undefined) {
+      return `last check \`${this.lastCheck.script}\` was not observed (${this.lastCheck.status})`;
+    }
+    return `last check \`${this.lastCheck.script}\` ${
+      this.lastCheck.passed ? "passed" : "failed"
+    }`;
+  }
+
+  /**
+   * Run the agreed verification plan through the real coordinator and effect
+   * port. The run needs an explicit user-action grant here, and the effect port
+   * still asks its own separate confirmation before any process starts.
+   */
+  private async handleCheck(
+    response: vscode.ChatResponseStream,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const snapshot = await this.deps.coordinator.snapshot();
+    const workUnit = snapshot.session?.workUnit;
+    if (workUnit === undefined) {
+      response.markdown(NO_WORK_UNIT_MESSAGE);
+      return;
+    }
+
+    const script = parseVerificationScript(workUnit.verificationPlan);
+    if (script === undefined) {
+      response.markdown(
+        [
+          `The agreed verification plan is \`${
+            bounded(workUnit.verificationPlan) ?? "(empty)"
+          }\`, which names no allowlisted package script.`,
+          "Adaptive Pair only runs an existing root package script (test, check, lint, typecheck, or build).",
+          "Agree a plan such as `npm test`, then ask again.",
+        ].join("\n"),
+      );
+      return;
+    }
+
+    const grantId = await this.deps.coordinator.grantUserAction(
+      "pair_run_verification",
+      signal,
+    );
+    const result = await this.deps.coordinator.invokeTool(
+      "pair_run_verification",
+      { script, targetPaths: [...workUnit.allowedPaths] },
+      signal,
+      { userActionId: grantId },
+    );
+
+    const passed = result.observation["passed"];
+    this.lastCheck = Object.freeze({
+      script,
+      status: result.status,
+      passed: typeof passed === "boolean" ? passed : undefined,
+      observedAt: this.now(),
+    });
+
+    const outcome =
+      result.status !== "confirmed"
+        ? `not observed (${result.status})`
+        : passed === true
+          ? "**passed**"
+          : passed === false
+            ? "**failed**"
+            : "not observed (the runner reported no result)";
+
+    response.markdown(
+      [
+        `Ran the agreed check \`${script}\` on ${boundedList(workUnit.allowedPaths)}.`,
+        `Product result: ${outcome}.`,
+        bounded(result.summary, MAX_CHECK_SUMMARY) ?? "",
+        "This is a product result only; it demonstrates no Growth outcome.",
+      ]
+        .filter(line => line.length > 0)
+        .join("\n"),
+    );
+  }
+
+  /**
+   * Start an independent transfer task: a bounded variation that must be
+   * distinct from the current work-unit objective. Starting one records a
+   * non-raw `transfer-started` evaluation and never claims a demonstration.
+   */
+  private async handleTransfer(
+    request: vscode.ChatRequest,
+    context: vscode.ChatContext,
+    model: vscode.LanguageModelChat,
+    response: vscode.ChatResponseStream,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const snapshot = await this.deps.coordinator.snapshot();
+    const session = snapshot.session;
+    const workUnit = session?.workUnit;
+    if (session === undefined || workUnit === undefined || session.mode !== "growth") {
+      response.markdown(NO_WORK_UNIT_MESSAGE);
+      return;
+    }
+
+    const consent = await this.gatherConsentedContext(
+      model,
+      request,
+      context,
+      response,
+    );
+    if (consent.status === "declined") {
+      return;
+    }
+
+    const independentCheck =
+      session.learningAgreement?.independentCheck ?? "an independent variation";
+    const accepted = await this.runGuardedTurn(
+      model,
+      request,
+      consent.taskContext,
+      response,
+      signal,
+      {
+        userRequest: transferRequest(session, workUnit.objective, independentCheck),
+        acceptedOutcome: "transfer-started",
+        validate: result =>
+          isDistinctVariation(result.text, workUnit.objective)
+            ? undefined
+            : "TRANSFER_NOT_DISTINCT",
+        withheldMessage: TRANSFER_NOT_DISTINCT_MESSAGE,
+      },
+    );
+
+    if (accepted === undefined) {
+      return;
+    }
+
+    this.transfer = Object.freeze({
+      status: "started" as const,
+      workUnitId: workUnit.id,
+      independentCheck,
+      demonstrated: false as const,
+      startedAt: this.now(),
+    });
+    response.markdown(TRANSFER_NOT_DEMONSTRATED_NOTE);
+  }
+
+  private now(): number {
+    return (this.deps.now ?? Date.now)();
   }
 
   private async handleQuiet(
@@ -478,9 +884,17 @@ export class GrowthParticipant {
     taskContext: string | undefined,
     response: vscode.ChatResponseStream,
     signal: AbortSignal,
-  ): Promise<void> {
+    options: {
+      /** Replaces the developer prompt as the trusted user-request layer. */
+      readonly userRequest?: string;
+      readonly acceptedOutcome?: GrowthEvaluationOutcome;
+      /** Returns a stable reason code to withhold an otherwise valid response. */
+      readonly validate?: (result: GrowthResponse) => string | undefined;
+      readonly withheldMessage?: string;
+    } = {},
+  ): Promise<GrowthResponse | undefined> {
     const before = await this.deps.coordinator.snapshot();
-    const prompt = request.prompt ?? "";
+    const prompt = options.userRequest ?? request.prompt ?? "";
     const prepared = await this.deps.coordinator.prepareTurn({
       ...(prompt.length > 0 ? { userRequest: prompt } : {}),
       ...(taskContext === undefined ? {} : { repositoryContext: taskContext }),
@@ -492,7 +906,7 @@ export class GrowthParticipant {
       prepared.instructions.runtimeRevision !== before.revision
     ) {
       this.rejectStale(response);
-      return;
+      return undefined;
     }
 
     const growthModel = (this.deps.createModel ??
@@ -511,7 +925,7 @@ export class GrowthParticipant {
         reason: failureReason(error),
       });
       response.markdown(RESTRAINT_FAILURE_MESSAGE);
-      return;
+      return undefined;
     }
 
     const after = await this.deps.coordinator.snapshot();
@@ -521,7 +935,7 @@ export class GrowthParticipant {
       after.session?.mode !== before.session?.mode
     ) {
       this.rejectStale(response);
-      return;
+      return undefined;
     }
 
     const guard = guardGrowthResponse(result, {
@@ -537,15 +951,28 @@ export class GrowthParticipant {
         reason: guard.reason,
       });
       response.markdown(WITHHELD_RESPONSE_MESSAGE);
-      return;
+      return undefined;
+    }
+
+    const rejection = options.validate?.(guard.response);
+    if (rejection !== undefined) {
+      this.deps.evaluations.record({
+        outcome: "withheld",
+        level: guard.response.level,
+        kind: guard.response.kind,
+        reason: rejection,
+      });
+      response.markdown(options.withheldMessage ?? WITHHELD_RESPONSE_MESSAGE);
+      return undefined;
     }
 
     this.deps.evaluations.record({
-      outcome: "delivered",
+      outcome: options.acceptedOutcome ?? "delivered",
       level: guard.response.level,
       kind: guard.response.kind,
     });
     response.markdown(guard.response.text);
+    return guard.response;
   }
 
   private rejectStale(response: vscode.ChatResponseStream): void {

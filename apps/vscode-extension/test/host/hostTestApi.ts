@@ -1,27 +1,34 @@
-import * as vscode from "vscode";
+import type * as vscode from "vscode";
 import type { PairCoordinatorPort } from "@adaptive-pair/runtime";
 import type { PairRuntimeSnapshot } from "@adaptive-pair/protocol";
-import type { GrowthModel } from "./modelAdapter.js";
+import type { GrowthModel } from "../../src/modelAdapter.js";
 import {
   GrowthEvaluationLog,
   GrowthParticipant,
   ModelConsentRegistry,
   type GrowthEvaluationRecord,
-} from "./growthParticipant.js";
-import type { ActivityLedger, ActivitySnapshot } from "./activityLedger.js";
-import { PresenceController } from "./presenceController.js";
-import { SessionController } from "./sessionController.js";
-import { StatusView } from "./statusView.js";
-import { PairToolContext } from "./tools/pairToolContext.js";
-import type { JournalFileSystem } from "./storageAdapter.js";
+  type GrowthTransferState,
+} from "../../src/growthParticipant.js";
+import type {
+  ActivityLedger,
+  ActivitySnapshot,
+} from "../../src/activityLedger.js";
+import { PresenceController } from "../../src/presenceController.js";
+import { SessionController } from "../../src/sessionController.js";
+import { StatusView } from "../../src/statusView.js";
+import { PairToolContext } from "../../src/tools/pairToolContext.js";
+import type { JournalFileSystem } from "../../src/storageAdapter.js";
 
 /**
- * A namespaced, host-test-only surface exposed from `activate()` when the
- * `ADAPTIVE_PAIR_HOST_TEST` environment flag is set. It exposes the real
- * runtime coordinator, activity ledger, and presence controller so the isolated
- * Extension Host smoke test can drive genuine runtime behavior deterministically
- * without a live language model. It contributes no command, view, or other
- * production UX and is never attached to a released build.
+ * A namespaced surface that exists only in the host-test entry point
+ * (`test/host/extension.host.ts`). It is compiled into the throwaway
+ * `.host-test` development extension, never into `dist/extension.cjs`, so no
+ * released build can reach it.
+ *
+ * It exposes the real runtime coordinator, activity ledger, and presence
+ * controller so the isolated Extension Host smoke can drive genuine runtime
+ * behavior deterministically without a live language model. It contributes no
+ * command, view, or other production UX.
  */
 export interface HostTestApi {
   readonly coordinator: PairCoordinatorPort;
@@ -46,6 +53,7 @@ export interface DriveGrowthTurnOptions {
 export interface DriveGrowthTurnResult {
   readonly emitted: readonly string[];
   readonly evaluations: readonly GrowthEvaluationRecord[];
+  readonly transfer: GrowthTransferState | undefined;
   readonly snapshotBefore: PairRuntimeSnapshot;
   readonly snapshotAfter: PairRuntimeSnapshot;
 }
@@ -54,8 +62,29 @@ export interface HostTestApiDependencies {
   readonly coordinator: PairCoordinatorPort;
   readonly ledger: ActivityLedger;
   readonly presenceController: PresenceController;
+  readonly sessionController: SessionController;
   readonly context: vscode.ExtensionContext;
   readonly journalFileSystem?: JournalFileSystem;
+}
+
+/** The subset of `vscode.ChatRequest` the Growth participant actually reads. */
+interface HostChatRequest {
+  readonly prompt: string;
+  readonly command: string | undefined;
+  readonly references: readonly { readonly id: string; readonly value: string }[];
+  readonly model: vscode.LanguageModelChat;
+  readonly toolReferences: readonly never[];
+}
+
+/** The subset of `vscode.ChatResponseStream` the Growth participant writes to. */
+interface HostChatResponseStream {
+  markdown(value: string | { readonly value: string }): void;
+  progress(value: string): void;
+  button(value: unknown): void;
+  anchor(value: unknown): void;
+  filetree(value: unknown): void;
+  reference(value: unknown): void;
+  push(value: unknown): void;
 }
 
 const tokenFromSignal = (signal: AbortSignal): vscode.CancellationToken => ({
@@ -75,8 +104,13 @@ const tokenFromSignal = (signal: AbortSignal): vscode.CancellationToken => ({
   },
 });
 
-const modelStub = () =>
-  ({
+/**
+ * A stand-in chat model identity. The host test never calls the real model
+ * service: every turn is answered by the injected {@link GrowthModel}, so any
+ * `sendRequest` here is a programming error rather than a silent fallback.
+ */
+const modelStub = (): vscode.LanguageModelChat => {
+  const stub = {
     id: "adaptive-pair-host-test-model",
     name: "Adaptive Pair Host Test Model",
     vendor: "adaptive-pair-host-test",
@@ -87,7 +121,9 @@ const modelStub = () =>
     sendRequest: () => {
       throw new Error("The host test model is driven through an injected GrowthModel.");
     },
-  }) as unknown as vscode.LanguageModelChat;
+  };
+  return stub;
+};
 
 export const createHostTestApi = (deps: HostTestApiDependencies): HostTestApi => {
   const driveGrowthTurn = async (
@@ -107,16 +143,14 @@ export const createHostTestApi = (deps: HostTestApiDependencies): HostTestApi =>
       }),
       requestWorkspaceConsent: () => Promise.resolve(options.grantConsent ?? true),
       confirmSolutionReveal: () => Promise.resolve(options.confirmReveal ?? false),
+      // The production quiet route, wired exactly as the shipped entry wires it.
+      stayQuiet: () => deps.sessionController.stayQuiet(),
     });
 
     const emitted: string[] = [];
-    const response = {
-      markdown: (value: unknown) => {
-        emitted.push(
-          typeof value === "string"
-            ? value
-            : String((value as { readonly value?: unknown })?.value ?? value),
-        );
+    const responseShape: HostChatResponseStream = {
+      markdown: value => {
+        emitted.push(typeof value === "string" ? value : value.value);
       },
       progress: () => undefined,
       button: () => undefined,
@@ -124,19 +158,20 @@ export const createHostTestApi = (deps: HostTestApiDependencies): HostTestApi =>
       filetree: () => undefined,
       reference: () => undefined,
       push: () => undefined,
-    } as unknown as vscode.ChatResponseStream;
+    };
+    const response = responseShape as unknown as vscode.ChatResponseStream;
 
-    const references =
-      options.repositoryContext === undefined
-        ? []
-        : [{ id: "host-test-repository", value: options.repositoryContext }];
-    const request = {
+    const requestShape: HostChatRequest = {
       prompt: options.prompt,
       command: options.command,
-      references,
+      references:
+        options.repositoryContext === undefined
+          ? []
+          : [{ id: "host-test-repository", value: options.repositoryContext }],
       model: modelStub(),
       toolReferences: [],
-    } as unknown as vscode.ChatRequest;
+    };
+    const request = requestShape as unknown as vscode.ChatRequest;
     const context = { history: [] } as unknown as vscode.ChatContext;
     const token = tokenFromSignal(options.signal ?? new AbortController().signal);
 
@@ -147,18 +182,23 @@ export const createHostTestApi = (deps: HostTestApiDependencies): HostTestApi =>
     return {
       emitted,
       evaluations: evaluations.records,
+      transfer: participant.transferStatus(),
       snapshotBefore,
       snapshotAfter,
     };
   };
 
+  /**
+   * Reconcile a brand-new presence controller from the durable on-disk journal,
+   * exactly as a fresh activation would. The shared ledger is reused so the
+   * reconciliation's own boundary activity stays visible to the smoke test.
+   */
   const restartReconcile = async (): Promise<{ readonly observationCount: number }> => {
     const storagePath = deps.context.globalStorageUri?.fsPath ?? "";
-    const freshLedger: ActivityLedger = deps.ledger;
     const controllerOptions =
       deps.journalFileSystem === undefined
-        ? { ledger: freshLedger }
-        : { ledger: freshLedger, journalFileSystem: deps.journalFileSystem };
+        ? { ledger: deps.ledger }
+        : { ledger: deps.ledger, journalFileSystem: deps.journalFileSystem };
     const controller = new PresenceController(
       new SessionController(),
       new StatusView(),

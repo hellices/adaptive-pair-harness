@@ -5,9 +5,12 @@
 - **Implementation:** Stable Growth Mode preview implemented (Tasks 1–12):
   host-agnostic protocol, durable runtime, versioned harness kernel, Growth
   restraint, Pair Presence with join-in-progress capture, observed verification,
-  and a clean-profile Extension Host smoke with deterministic packaging and CI.
-  Pair Mode AI edits, Delivery Mode commands, and the native Agent Plugin remain
-  out of scope for this preview.
+  deterministic `/brief`, `/session`, `/check`, and `/transfer` participant
+  routes, and a clean-profile Extension Host smoke with deterministic packaging,
+  automated VSIX release verification, and CI. Transfer is implemented only as a
+  *started* independent variation: completing a transfer, and any resulting
+  Growth demonstration, is not implemented. Pair Mode AI edits, Delivery Mode
+  commands, and the native Agent Plugin remain out of scope for this preview.
 
 This document is the first complete product and architecture specification for
 Adaptive Pair v2. Every v2 behavior starts here as an initial design decision;
@@ -1775,6 +1778,9 @@ limitation.
 
 This document is a complete initial v2 specification. The Stable Growth Mode
 preview (Tasks 1–12) is now implemented and validated by unit, property,
-contract, and clean-profile Extension Host tests; the remaining Pair and
+contract, and clean-profile Extension Host tests, including a runtime
+outbound-network probe and automated release-artifact verification. Product
+verification and the five Growth fields are reported independently, and no
+Growth outcome is claimed from a started transfer. The remaining Pair and
 Delivery behavior stays specified-but-unimplemented and empirically unvalidated
 pending its own plans.

@@ -44,4 +44,28 @@ describe("VS Code manifest", () => {
       ]),
     );
   });
+
+  it("packages a deny-by-default allowlist with no proposed API or chat session", () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve("apps/vscode-extension/package.json"), "utf8"),
+    ) as {
+      main: string;
+      files: string[];
+      enabledApiProposals?: unknown;
+      contributes: Record<string, unknown>;
+    };
+
+    // vsce refuses to combine a .vscodeignore with "files", so this allowlist is
+    // the single packaging gate: only these paths can ever reach the VSIX.
+    expect(manifest.files).toEqual([
+      "dist/extension.cjs",
+      "LICENSE",
+      "README.md",
+      "docs/growth-preview.md",
+    ]);
+    expect(manifest.main).toBe("./dist/extension.cjs");
+    expect(manifest.enabledApiProposals).toBeUndefined();
+    expect(manifest.contributes["chatSessions"]).toBeUndefined();
+    expect(manifest.contributes["keybindings"]).toBeUndefined();
+  });
 });

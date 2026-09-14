@@ -420,6 +420,40 @@ describe("PresenceController — continuity clearing on disable", () => {
   });
 });
 
+describe("PresenceController — untrusted workspace gate", () => {
+  it("refuses to enable, observe, or join until the workspace is trusted", async () => {
+    const scheduler = new FakeScheduler();
+    const fs = new MemoryFs();
+    const { controller } = buildController(scheduler, fs);
+    harness.state.workspaceTrusted = false;
+
+    await run("adaptivePair.enablePresence");
+    await flush();
+
+    expect(controller.getState().presenceStatus).toBe("off");
+    expect(controller.getState().documentListenerActive).toBe(false);
+    expect(controller.getState().contextKeys["adaptivePair.presenceEnabled"]).toBe(false);
+    expect(harness.state.warnings.join("\n")).toContain("trusted workspace");
+
+    // An edit in an untrusted workspace is never observed.
+    harness.emitChange("/workspace/src/pair.ts");
+    scheduler.advanceBy(1_000);
+    await flush();
+    expect(controller.getState().observationCount).toBe(0);
+    expect(fs.writes).toBe(0);
+
+    await run("adaptivePair.joinInProgress");
+    await flush();
+    expect(controller.getState().sessionStatus).toBe("inactive");
+
+    // Once the developer trusts the workspace, the same command succeeds.
+    harness.state.workspaceTrusted = true;
+    await run("adaptivePair.enablePresence");
+    await flush();
+    expect(controller.getState().presenceStatus).toBe("observing");
+  });
+});
+
 describe("PresenceController — journal I/O failures", () => {
   it("fails closed with a sanitized warning when a journal write throws", async () => {
     const scheduler = new FakeScheduler();

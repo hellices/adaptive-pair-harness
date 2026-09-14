@@ -36,6 +36,12 @@
     },
     {
       "path": "apps/vscode-extension"
+    },
+    {
+      "path": "apps/vscode-extension/tsconfig.host.json"
+    },
+    {
+      "path": "scripts"
     }
   ]
 }

@@ -32,9 +32,25 @@ Pair Presence is driven by namespaced commands (Command Palette):
 | Start | `Adaptive Pair: Start a Session` | Starts a Pair session for a fresh piece of work. |
 | Disable | `Adaptive Pair: Disable Presence and Clear Continuity` | Disables Presence and deletes the local Pair journal. |
 
-Growth guidance is requested through the `@pair` chat participant and its slash
-commands: `/brief`, `/attempt`, `/hypothesis`, `/hint`, `/reveal`, `/check`,
-`/transfer`, and `/session`.
+Growth guidance is requested through the `@pair` chat participant. Every slash
+command below has an implemented, deterministic route, and each one also has a
+natural-language equivalent:
+
+| Command | Natural phrasing | What it actually does |
+| --- | --- | --- |
+| `/brief` | "what is my current task?" | Reports the agreed goal, criteria, work unit, scope, verification plan, and hint ceiling from current core state. No model call. |
+| `/attempt` | "I tried …" | Records your attempt, which is required before hint level 2 or higher. |
+| `/hypothesis` | "I think the cause is …" | Records your diagnosis. Diagnosis stays yours. |
+| `/hint` | "give me a hint" | Escalates one bounded hint level and returns a guarded response. |
+| `/reveal` | "show me the solution" | Asks for explicit confirmation, records the authorization, then returns a level-5 response. |
+| `/check` | "run the verification" | Runs the agreed verification plan through the real effect port and reports only the observed product result. No model call. |
+| `/transfer` | "give me something to try on my own" | Requests one bounded independent variation that must be distinct from the current work-unit objective, and records it as **started, not demonstrated**. |
+| `/session` | "show the session status" | Reports mode, work unit, assistance, transfer state, and every outcome field from current core state. No model call. |
+
+`/check` needs an explicit action grant, and the verification runner asks its
+own separate confirmation before any process starts. Only an existing root
+package script named `test`, `check`, `lint`, `typecheck`, or `build` (with an
+optional `:suffix`) can be run; anything else is refused rather than guessed.
 
 ## Walkthroughs
 
@@ -66,21 +82,29 @@ left unchanged. Repository text, tool output, or conversation content cannot
 change the mode, owner, scope, consent, or hint ceiling — it is treated as
 untrusted data.
 
-## The five independent Growth outcomes
+## Product verification and the five Growth fields
 
-Product verification and Growth are reported **independently**. The preview
-records five separate outcomes and never merges them into a single score:
+**Product verification is separate from Growth.** The product verdict is derived
+only from an observed verification result (a real process exit code), never from
+model prose — and a passing check never marks any Growth outcome.
 
-1. **Product verified** — derived only from an observed verification result
-   (an exit code), never from model prose.
-2. **Similar generation demonstrated** — you produced comparable work.
-3. **Varied debugging demonstrated** — you diagnosed a variation independently.
-4. **Explanation demonstrated** — you explained the result.
-5. **Meaningful authorship demonstrated** — the work is genuinely yours.
+Growth is reported as exactly five fields, each recorded independently:
 
-A separate, correctable "next assistance" proposal (less / unchanged / more) is
-recorded but never affects either verdict. A skipped transfer check is recorded
-as "not assessed" and never counts as success.
+1. **Similar generation** — demonstrated / not demonstrated / not assessed.
+2. **Varied debugging** — demonstrated / not demonstrated / not assessed.
+3. **Explanation** — demonstrated / not demonstrated / not assessed.
+4. **Meaningful authorship** — demonstrated / not demonstrated / not assessed.
+5. **Next-assistance proposal** — less / unchanged / more / not assessed.
+
+The Growth verdict is `verified` only when the four demonstration fields are all
+`demonstrated`. The fifth field, the next-assistance proposal, is a separate and
+correctable suggestion that never changes the product or Growth verdict.
+
+Every field starts as **not assessed** and stays that way until its own
+demonstration is recorded. In particular, **starting a transfer task
+demonstrates nothing**: `/transfer` records a `transfer-started` state that is
+explicitly `demonstrated: false`, and a skipped or merely started transfer check
+is reported as "not assessed" rather than as success.
 
 ## Local storage, export, and deletion
 
@@ -138,6 +162,9 @@ Stable VSIX intentionally contains no `enabledApiProposals` and no
   verification path.
 - Pair continuity is local only. There is no cloud sync, telemetry, or network
   activity.
+- `/transfer` starts an independent variation and records only that it started.
+  Completing a transfer, and any resulting Growth demonstration, is not
+  implemented in this preview and is never claimed.
 - The `adaptive_pair_accept_handoff` and `adaptive_pair_record_transfer` tools
   are contributed for forward compatibility but are not routable in this
   preview; the policy hides them in every current mode.

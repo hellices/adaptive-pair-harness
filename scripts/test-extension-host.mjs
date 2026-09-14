@@ -1,58 +1,81 @@
 // Isolated Extension Host smoke-test runner for the Adaptive Pair Stable
 // preview. It never uses the developer's VS Code profile: it creates unique,
-// throwaway user-data, extensions, logs, and fixture directories, disables
-// Settings Sync and unrelated extensions, preserves artifacts on failure, and
-// cleans only its own directories on success.
-import { build } from "esbuild";
-import {
-  cp,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-} from "node:fs/promises";
+// throwaway user-data, extensions, logs, and fixture directories, seeds a
+// deterministic coexistence baseline, disables Settings Sync and unrelated
+// extensions, preserves artifacts on failure, and cleans only its own
+// directories on success.
+//
+// The host runs the separate host-test entry point staged in
+// `apps/vscode-extension/.host-test`, never the production bundle, so no
+// released build can contain a test hook.
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { downloadAndUnzipVSCode, runTests } from "@vscode/test-electron";
+import { parseJsonObject, stringField } from "./json.mjs";
 import {
-  downloadAndUnzipVSCode,
-  runTests,
-} from "@vscode/test-electron";
+  buildHostTestExtension,
+  PRODUCTION_MANIFEST_PATH,
+  selectStaleRunDirectories,
+} from "./host-test-support.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extensionRoot = resolve(repoRoot, "apps/vscode-extension");
 const hostTestDir = resolve(extensionRoot, "test/host");
-const compiledDir = resolve(extensionRoot, "dist/host-test");
 // The isolated user-data directory holds a Unix domain socket whose absolute
 // path must stay under the platform limit (~103 chars on macOS). A deep
 // in-repo path overflows it, so runs live under a short, throwaway home-based
 // root — never the developer's VS Code profile and never /tmp.
 const runsRoot = resolve(homedir(), ".ap-host");
+const RUN_RETENTION_MS = 24 * 60 * 60 * 1000;
 const REQUIRED_MAJOR = 1;
 const REQUIRED_MINOR = 136;
 
-const compileHostTests = async () => {
-  await rm(compiledDir, { recursive: true, force: true });
-  await mkdir(compiledDir, { recursive: true });
-  await build({
-    absWorkingDir: repoRoot,
-    entryPoints: {
-      index: join(hostTestDir, "index.ts"),
-      smoke: join(hostTestDir, "smoke.ts"),
-    },
-    outdir: compiledDir,
-    outExtension: { ".js": ".cjs" },
-    bundle: true,
-    platform: "node",
-    format: "cjs",
-    target: "node20",
-    external: ["vscode", "mocha"],
-    sourcemap: false,
-    logLevel: "warning",
-  });
+/**
+ * The clean-profile coexistence baseline seeded before activation. These are
+ * real, registered VS Code settings plus an isolated keybinding and a mock
+ * existing session-history file; the smoke test hashes all of them before
+ * activation, after activation, and after disable.
+ */
+const SEEDED_SETTINGS = {
+  "editor.fontSize": 15,
+  "editor.tabSize": 3,
+  "editor.defaultFormatter": null,
+  "editor.suggestSelection": "recentlyUsed",
+  "workbench.colorTheme": "Default Dark Modern",
+  "workbench.editorAssociations": { "*.apfixture": "default" },
+  "git.enabled": true,
+  "chat.commandCenter.enabled": false,
+  "chat.detectParticipant.enabled": false,
 };
 
+const SEEDED_KEYBINDINGS = [
+  {
+    key: "ctrl+alt+shift+f9",
+    command: "workbench.action.chat.open",
+    when: "editorTextFocus",
+  },
+  {
+    key: "ctrl+alt+shift+f10",
+    command: "workbench.action.files.save",
+  },
+];
+
+const SEEDED_SESSION_HISTORY = {
+  version: 1,
+  sessions: [
+    {
+      id: "pre-existing-session",
+      title: "Existing chat session from before Adaptive Pair",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      messages: [{ role: "user", text: "unchanged history entry" }],
+    },
+  ],
+};
+
+/** @param {string | undefined} version */
 const isCompatible = (version) => {
   const match = /^(\d+)\.(\d+)\./u.exec(version ?? "");
   if (match === null) {
@@ -88,7 +111,11 @@ const detectInstalled = async () => {
       continue;
     }
     try {
-      const version = JSON.parse(await readFile(candidate.manifest, "utf8")).version;
+      const parsed = parseJsonObject(
+        await readFile(candidate.manifest, "utf8"),
+        `The VS Code manifest at ${candidate.manifest}`,
+      );
+      const version = stringField(parsed, "version");
       if (isCompatible(version)) {
         return { executable: candidate.executable, source: `installed VS Code ${version}` };
       }
@@ -127,14 +154,78 @@ const resolveVsCode = async () => {
       "No compatible VS Code executable found. Set VSCODE_EXECUTABLE_PATH, set " +
         "ADAPTIVE_PAIR_HOST_VERSION to download a version, or install VS Code " +
         `>= ${REQUIRED_MAJOR}.${REQUIRED_MINOR}. Download failed: ${String(error)}`,
+      { cause: error },
     );
   }
 };
 
+/**
+ * Remove only this runner's own abandoned run directories: entries named
+ * `run-*` directly under `~/.ap-host`, older than one day. Each candidate is
+ * re-resolved and re-inspected before deletion, and anything that resolves
+ * outside `~/.ap-host` or is not a directory is skipped.
+ */
+const pruneStaleRuns = async () => {
+  if (!existsSync(runsRoot)) {
+    return;
+  }
+  const entries = await readdir(runsRoot, { withFileTypes: true });
+  const inspected = [];
+  for (const entry of entries) {
+    const candidate = resolve(runsRoot, entry.name);
+    if (dirname(candidate) !== runsRoot || basename(candidate) !== entry.name) {
+      continue;
+    }
+    const info = await stat(candidate);
+    inspected.push({
+      name: entry.name,
+      isDirectory: info.isDirectory(),
+      mtimeMs: info.mtimeMs,
+    });
+  }
+
+  const stale = selectStaleRunDirectories(inspected, {
+    now: Date.now(),
+    maxAgeMs: RUN_RETENTION_MS,
+  });
+  for (const name of stale) {
+    const target = resolve(runsRoot, name);
+    if (dirname(target) !== runsRoot) {
+      continue;
+    }
+    await rm(target, { recursive: true, force: true });
+    console.log(`[host-test] Pruned stale run directory: ${target}`);
+  }
+};
+
+/** @param {string} userDataDir */
+const seedCoexistenceBaseline = async (userDataDir) => {
+  const userDir = join(userDataDir, "User");
+  const historyPath = join(userDir, "adaptive-pair-host-test", "session-history.json");
+  await mkdir(dirname(historyPath), { recursive: true });
+  await writeFile(
+    join(userDir, "settings.json"),
+    `${JSON.stringify(SEEDED_SETTINGS, undefined, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(userDir, "keybindings.json"),
+    `${JSON.stringify(SEEDED_KEYBINDINGS, undefined, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    historyPath,
+    `${JSON.stringify(SEEDED_SESSION_HISTORY, undefined, 2)}\n`,
+    "utf8",
+  );
+  return { settingsPath: join(userDir, "settings.json"), historyPath };
+};
+
 const main = async () => {
-  await compileHostTests();
+  const { stagingDir, testsPath } = await buildHostTestExtension();
 
   await mkdir(runsRoot, { recursive: true });
+  await pruneStaleRuns();
   const runDir = await mkdtemp(join(runsRoot, "run-"));
   const fixtureDir = join(runDir, "fixture");
   const userDataDir = join(runDir, "user-data");
@@ -142,10 +233,11 @@ const main = async () => {
   const logsDir = join(runDir, "logs");
   await Promise.all([
     cp(join(hostTestDir, "fixture"), fixtureDir, { recursive: true }),
-    mkdir(userDataDir, { recursive: true }),
+    mkdir(join(userDataDir, "User"), { recursive: true }),
     mkdir(extensionsDir, { recursive: true }),
     mkdir(logsDir, { recursive: true }),
   ]);
+  const { historyPath } = await seedCoexistenceBaseline(userDataDir);
 
   const { executable, source } = await resolveVsCode();
   console.log(`[host-test] Using ${source}`);
@@ -154,14 +246,17 @@ const main = async () => {
   try {
     await runTests({
       vscodeExecutablePath: executable,
-      extensionDevelopmentPath: extensionRoot,
-      extensionTestsPath: join(compiledDir, "index.cjs"),
+      extensionDevelopmentPath: stagingDir,
+      extensionTestsPath: testsPath,
       launchArgs: [
         fixtureDir,
         `--user-data-dir=${userDataDir}`,
         `--extensions-dir=${extensionsDir}`,
         `--logsPath=${logsDir}`,
         "--disable-extensions",
+        // Deterministically establishes the trusted fixture for this run; the
+        // untrusted gate is covered separately by the presence-controller unit
+        // tests, which drive the real `ensureTrustedWorkspace` path.
         "--disable-workspace-trust",
         "--skip-welcome",
         "--skip-release-notes",
@@ -171,6 +266,9 @@ const main = async () => {
       ],
       extensionTestsEnv: {
         ADAPTIVE_PAIR_HOST_TEST: "1",
+        ADAPTIVE_PAIR_HOST_USER_DATA: userDataDir,
+        ADAPTIVE_PAIR_HOST_SESSION_HISTORY: historyPath,
+        ADAPTIVE_PAIR_PRODUCTION_MANIFEST: PRODUCTION_MANIFEST_PATH,
       },
     });
   } catch (error) {

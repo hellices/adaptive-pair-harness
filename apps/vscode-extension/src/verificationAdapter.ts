@@ -5,6 +5,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import * as vscode from "vscode";
 import type { EffectResult } from "@adaptive-pair/runtime";
+import { ALLOWED_VERIFICATION_SCRIPT } from "./verificationPlan.js";
 
 export const MAX_OUTPUT_BYTES = 128 * 1024;
 export const DISPLAY_LIMIT = 16_000;
@@ -13,9 +14,10 @@ export const VERIFICATION_TIMEOUT_MS = 120_000;
 /**
  * Only an agreed VS Code Testing selection, or an existing root package script
  * named test/check/lint/typecheck/build (with an optional colon suffix) may be
- * run. No raw arbitrary shell is ever accepted.
+ * run. No raw arbitrary shell is ever accepted. The allowlist is shared with
+ * the participant's `/check` route so both gates cannot drift apart.
  */
-const ALLOWED_SCRIPT = /^(?:test|check|lint|typecheck|build)(?::[A-Za-z0-9._-]+)?$/u;
+const ALLOWED_SCRIPT = ALLOWED_VERIFICATION_SCRIPT;
 
 export type VerificationPlan =
   | {

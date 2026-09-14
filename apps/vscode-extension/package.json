@@ -26,6 +26,12 @@
     "onChatParticipant:adaptivePair.chat"
   ],
   "main": "./dist/extension.cjs",
+  "files": [
+    "dist/extension.cjs",
+    "LICENSE",
+    "README.md",
+    "docs/growth-preview.md"
+  ],
   "contributes": {
     "commands": [
       {
@@ -416,7 +422,7 @@
         "commands": [
           {
             "name": "brief",
-            "description": "Confirm task and learning value"
+            "description": "Report the agreed brief from current state"
           },
           {
             "name": "attempt",
@@ -436,24 +442,25 @@
           },
           {
             "name": "check",
-            "description": "Run the agreed verification"
+            "description": "Run the agreed verification plan and report the product result"
           },
           {
             "name": "transfer",
-            "description": "Start the independent variation"
+            "description": "Start an independent variation distinct from this work unit"
           },
           {
             "name": "session",
-            "description": "Show mode, work unit, and outcomes"
+            "description": "Show mode, work unit, transfer, and outcome fields"
           }
         ]
       }
     ]
   },
   "scripts": {
-    "clean": "rm -rf dist *.vsix LICENSE README.md docs",
+    "clean": "rm -rf dist .host-test *.vsix LICENSE README.md docs",
     "typecheck": "tsc -b",
-    "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --outfile=dist/extension.cjs --external:vscode",
+    "build": "node ../../scripts/build-extension.mjs",
+    "prepackage": "node ../../scripts/assert-package-staging.mjs",
     "package": "vsce package --no-dependencies --out ../../adaptive-pair-0.2.0-preview.1-stable.vsix"
   },
   "dependencies": {

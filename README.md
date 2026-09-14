@@ -33,15 +33,25 @@ Controls (Command Palette, all namespaced under `Adaptive Pair:`):
 - **Start a Session** — begin a Pair session for fresh work.
 - **Disable Presence and Clear Continuity** — disable and delete the local journal.
 
-Growth guidance is requested through `@pair` and its slash commands (`/brief`,
-`/attempt`, `/hypothesis`, `/hint`, `/reveal`, `/check`, `/transfer`,
-`/session`). The AI never edits your files in Growth Mode.
+Growth guidance is requested through `@pair` and its slash commands, each of
+which has an implemented route and a natural-language equivalent: `/brief` and
+`/session` report current core state without any model call, `/attempt` and
+`/hypothesis` record your work, `/hint` and `/reveal` return bounded guidance,
+`/check` runs the agreed verification plan and reports only the observed product
+result, and `/transfer` requests one independent variation distinct from the
+current work unit. The AI never edits your files in Growth Mode.
+
+Product verification is reported separately from Growth. Growth itself is
+reported as five independent fields — similar generation, varied debugging,
+explanation, meaningful authorship, and the next-assistance proposal — and each
+stays "not assessed" until its own demonstration is recorded. Starting a
+transfer task demonstrates none of them.
 
 See **[docs/growth-preview.md](docs/growth-preview.md)** for the greenfield and
-join-in-progress walkthroughs, hint and reveal behavior, the five independent
-Growth outcomes, local storage/export/deletion, supported languages and host
-versions, the experimental Session Target and its Insiders proposed-API
-limitation, and the exact known limitations. The Stable VSIX
+join-in-progress walkthroughs, hint and reveal behavior, product verification
+and the five Growth fields, local storage/export/deletion, supported languages
+and host versions, the experimental Session Target and its Insiders
+proposed-API limitation, and the exact known limitations. The Stable VSIX
 (`adaptive-pair-0.2.0-preview.1-stable.vsix`) contains no `enabledApiProposals`
 and no `contributes.chatSessions`.
 
