@@ -76,6 +76,13 @@ export type PairCommand =
       readonly previewOnly: true;
     })
   | (CommandBase & {
+      readonly type: "RequestEditOperation";
+      readonly workUnitId: string;
+      readonly operationId: string;
+      readonly targetPath: string;
+      readonly description: string;
+    })
+  | (CommandBase & {
       readonly type: "PauseSession";
       readonly reason: string;
     })

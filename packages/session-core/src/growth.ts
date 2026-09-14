@@ -55,6 +55,16 @@ export const requireGrowthAgreement = (
   return session;
 };
 
+export const requireWorkUnitEntry = (
+  session: PairSessionSnapshot,
+): PairSessionSnapshot => {
+  if (session.entrySnapshot === undefined) {
+    throw new Error("WORK_UNIT_REQUIRES_ENTRY");
+  }
+
+  return session;
+};
+
 export const requireModeChangeWithoutWorkUnit = (
   session: PairSessionSnapshot,
 ): PairSessionSnapshot => {

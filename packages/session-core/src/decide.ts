@@ -11,6 +11,7 @@ import {
   requireGrowthAgreement,
   requireGrowthWorkUnit,
   requireLearningEntry,
+  requireWorkUnitEntry,
   validateHintLevel,
   validateProposedWorkUnit,
   validateSolutionReveal,
@@ -139,7 +140,9 @@ export const decide = (
     }
 
     case "ProposeWorkUnit": {
-      const session = requireBriefingSession(snapshot.session);
+      const session = requireWorkUnitEntry(
+        requireBriefingSession(snapshot.session),
+      );
       validateProposedWorkUnit(session, command.workUnit);
 
       return freezeDecision([
@@ -156,7 +159,9 @@ export const decide = (
         throw new Error("SESSION_RECONCILING");
       }
 
-      const session = requireBriefingSession(snapshot.session);
+      const session = requireWorkUnitEntry(
+        requireBriefingSession(snapshot.session),
+      );
       const workUnit = session.workUnit;
       if (workUnit === undefined || workUnit.id !== command.workUnitId) {
         throw new Error("WORK_UNIT_NOT_FOUND");
@@ -242,6 +247,13 @@ export const decide = (
           previewOnly: true,
         },
       ]);
+
+    case "RequestEditOperation":
+      if (snapshot.session?.mode === "growth") {
+        throw new Error("GROWTH_AI_MUTATION_FORBIDDEN");
+      }
+
+      throw new Error("EDIT_OPERATION_UNSUPPORTED");
 
     case "ResumeSession":
       return freezeDecision([

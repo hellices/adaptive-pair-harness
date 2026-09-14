@@ -14,6 +14,7 @@ import {
   requireGrowthWorkUnit,
   requireLearningEntry,
   requireModeChangeWithoutWorkUnit,
+  requireWorkUnitEntry,
   validateHintLevel,
   validateProposedWorkUnit,
   validateSolutionReveal,
@@ -227,7 +228,9 @@ const applyEvent = (
     }
 
     case "WorkUnitProposed": {
-      const session = requireBriefingSessionForGrowth(snapshot.session);
+      const session = requireWorkUnitEntry(
+        requireBriefingSessionForGrowth(snapshot.session),
+      );
       validateProposedWorkUnit(session, event.workUnit);
 
       return {
@@ -246,7 +249,9 @@ const applyEvent = (
         throw new Error("SESSION_RECONCILING");
       }
 
-      const session = requireBriefingSessionForGrowth(snapshot.session);
+      const session = requireWorkUnitEntry(
+        requireBriefingSessionForGrowth(snapshot.session),
+      );
       const workUnit = session.workUnit;
       if (workUnit === undefined || workUnit.id !== event.workUnitId) {
         throw new Error("WORK_UNIT_NOT_FOUND");

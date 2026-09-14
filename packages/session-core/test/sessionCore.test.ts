@@ -81,6 +81,31 @@ const createGrowthWorkUnit = () => ({
   status: "proposed" as const,
 });
 
+const createEditOperationRequest = (
+  overrides: Partial<{
+    commandId: string;
+    expectedRevision: number;
+    actor: "human" | "ai";
+    workUnitId: string;
+    operationId: string;
+    targetPath: string;
+    description: string;
+    observedAt: number;
+  }> = {},
+) => ({
+  protocolVersion: 1 as const,
+  commandId: "cmd-edit-operation",
+  expectedRevision: 0,
+  actor: "ai" as const,
+  type: "RequestEditOperation" as const,
+  workUnitId: "growth-wu-1",
+  operationId: "op-1",
+  targetPath: "src/current.ts",
+  description: "Apply the agreed retry-guard edit",
+  observedAt: 16,
+  ...overrides,
+});
+
 const createGrowthRuntime = (
   agreement = createGrowthAgreement(),
 ): PairRuntimeSnapshot =>
@@ -858,6 +883,114 @@ describe("session core", () => {
     ).toThrow("GROWTH_REQUIRES_HUMAN_OWNER");
   });
 
+  it.each(["growth", "pair", "delivery"] as const)(
+    "rejects work-unit proposals before an entry snapshot in %s mode",
+    mode => {
+      const workUnit =
+        mode === "growth"
+          ? createGrowthWorkUnit()
+          : {
+              ...createGrowthWorkUnit(),
+              mode,
+              learningValue: "mixed" as const,
+              owner: "ai" as const,
+            };
+      const runtime: PairRuntimeSnapshot = {
+        ...createRuntime("workspace-1"),
+        presence: {
+          workspaceId: "workspace-1",
+          observationRevision: 0,
+          status: "engaged",
+          activeSessionId: "session-1",
+        },
+        session: {
+          ...createSession("session-1"),
+          status: "briefing",
+          mode,
+          learningAgreement:
+            mode === "growth" ? createGrowthAgreement() : undefined,
+        },
+      };
+
+      expect(() =>
+        decide(runtime, {
+          protocolVersion: 1,
+          commandId: `cmd-propose-before-entry-${mode}`,
+          expectedRevision: 0,
+          actor: "human",
+          type: "ProposeWorkUnit",
+          workUnit,
+          observedAt: 14,
+        }),
+      ).toThrow("WORK_UNIT_REQUIRES_ENTRY");
+
+      expect(() =>
+        reduce(runtime, [
+          {
+            protocolVersion: 1,
+            eventId: `cmd-propose-before-entry-${mode}:0`,
+            commandId: `cmd-propose-before-entry-${mode}`,
+            actor: "human",
+            revision: 1,
+            recordedAt: 14,
+            type: "WorkUnitProposed",
+            workUnit,
+          },
+        ]),
+      ).toThrow("WORK_UNIT_REQUIRES_ENTRY");
+    },
+  );
+
+  it("rejects work-unit agreement without an entry snapshot on malformed sessions", () => {
+    const runtime: PairRuntimeSnapshot = {
+      ...createRuntime("workspace-1"),
+      presence: {
+        workspaceId: "workspace-1",
+        observationRevision: 0,
+        status: "engaged",
+        activeSessionId: "session-1",
+      },
+      session: {
+        ...createSession("session-1"),
+        status: "briefing",
+        mode: "pair",
+        workUnit: {
+          ...createGrowthWorkUnit(),
+          mode: "pair",
+          learningValue: "mixed",
+          owner: "ai",
+        },
+      },
+    };
+
+    expect(() =>
+      decide(runtime, {
+        protocolVersion: 1,
+        commandId: "cmd-agree-before-entry",
+        expectedRevision: 0,
+        actor: "human",
+        type: "AgreeWorkUnit",
+        workUnitId: "growth-wu-1",
+        observedAt: 15,
+      }),
+    ).toThrow("WORK_UNIT_REQUIRES_ENTRY");
+
+    expect(() =>
+      reduce(runtime, [
+        {
+          protocolVersion: 1,
+          eventId: "cmd-agree-before-entry:0",
+          commandId: "cmd-agree-before-entry",
+          actor: "human",
+          revision: 1,
+          recordedAt: 15,
+          type: "WorkUnitAgreed",
+          workUnitId: "growth-wu-1",
+        },
+      ]),
+    ).toThrow("WORK_UNIT_REQUIRES_ENTRY");
+  });
+
   it("rejects mode changes while a work unit is still attached", () => {
     const runtime = reduce(
       reduce(
@@ -1169,6 +1302,60 @@ describe("session core", () => {
       ]),
     ).toThrow("HINT_REQUIRES_REVEAL");
   });
+
+  it("rejects AI edit-operation requests in Growth before state changes", () => {
+    const runtime = createGrowthRuntime();
+
+    for (const actor of ["ai", "human"] as const) {
+      expect(() =>
+        decide(
+          runtime,
+          createEditOperationRequest({
+            commandId: `cmd-edit-operation-${actor}`,
+            expectedRevision: runtime.revision,
+            actor,
+          }),
+        ),
+      ).toThrow("GROWTH_AI_MUTATION_FORBIDDEN");
+    }
+
+    expect(runtime.revision).toBe(6);
+    expect(runtime.session?.status).toBe("ready");
+    expect(runtime.session?.operations).toEqual([]);
+  });
+
+  it.each([undefined, "pair", "delivery"] as const)(
+    "returns a stable unsupported error for edit-operation requests outside Growth (%s)",
+    mode => {
+      const runtime: PairRuntimeSnapshot =
+        mode === undefined
+          ? createRuntime("workspace-1")
+          : {
+              ...createRuntime("workspace-1"),
+              presence: {
+                workspaceId: "workspace-1",
+                observationRevision: 0,
+                status: "engaged",
+                activeSessionId: "session-1",
+              },
+              session: {
+                ...createSession("session-1"),
+                status: "briefing",
+                mode,
+              },
+            };
+
+      expect(() =>
+        decide(
+          runtime,
+          createEditOperationRequest({
+            commandId: `cmd-edit-operation-${mode ?? "uninitialized"}`,
+            expectedRevision: runtime.revision,
+          }),
+        ),
+      ).toThrow("EDIT_OPERATION_UNSUPPORTED");
+    },
+  );
 
   it("still requires an attempt or explicit bypass after reveal authorization", () => {
     const runtime = reduce(createGrowthRuntime(createGrowthAgreement({ maximumHintLevel: 5 })), [

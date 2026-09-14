@@ -37,6 +37,13 @@ const createWorkUnit = () => ({
   status: "proposed" as const,
 });
 
+const createEditOperation = () => ({
+  workUnitId: "wu-1",
+  operationId: "op-1",
+  targetPath: "packages/protocol/src/index.ts",
+  description: "Apply the agreed protocol export edit",
+});
+
 describe("parsePairCommand", () => {
   it.each([
     {
@@ -165,29 +172,38 @@ describe("parsePairCommand", () => {
     },
     {
       protocolVersion: 1,
-      commandId: "cmd-pause",
+      commandId: "cmd-request-edit-operation",
       expectedRevision: 13,
-      actor: "human",
-      type: "PauseSession",
-      reason: "handoff",
+      actor: "ai",
+      type: "RequestEditOperation",
+      ...createEditOperation(),
       observedAt: 113,
     },
     {
       protocolVersion: 1,
-      commandId: "cmd-resume",
+      commandId: "cmd-pause",
       expectedRevision: 14,
       actor: "human",
-      type: "ResumeSession",
-      entry: createEntry("feature/v2-growth-foundation"),
+      type: "PauseSession",
+      reason: "handoff",
       observedAt: 114,
     },
     {
       protocolVersion: 1,
-      commandId: "cmd-close",
+      commandId: "cmd-resume",
       expectedRevision: 15,
+      actor: "human",
+      type: "ResumeSession",
+      entry: createEntry("feature/v2-growth-foundation"),
+      observedAt: 115,
+    },
+    {
+      protocolVersion: 1,
+      commandId: "cmd-close",
+      expectedRevision: 16,
       actor: "policy",
       type: "CloseSession",
-      observedAt: 115,
+      observedAt: 116,
     },
   ])("accepts the %s command variant", command => {
     expect(parsePairCommand(command)).toMatchObject(command);
@@ -233,6 +249,21 @@ describe("parsePairCommand", () => {
         workspaceId: "workspace-1",
         observedAt: 100,
         permission: "write",
+      }),
+    ).toThrow("Invalid Pair command");
+  });
+
+  it("rejects unknown fields on RequestEditOperation", () => {
+    expect(() =>
+      parsePairCommand({
+        protocolVersion: 1,
+        commandId: "cmd-edit-unknown",
+        expectedRevision: 0,
+        actor: "ai",
+        type: "RequestEditOperation",
+        ...createEditOperation(),
+        unexpected: true,
+        observedAt: 100,
       }),
     ).toThrow("Invalid Pair command");
   });

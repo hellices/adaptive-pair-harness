@@ -248,6 +248,16 @@ const pairCommandSchema = {
       ["workUnitId", "previewOnly"],
     ),
     createCommandSchema(
+      "RequestEditOperation",
+      {
+        workUnitId: { type: "string" },
+        operationId: { type: "string" },
+        targetPath: { type: "string" },
+        description: { type: "string" },
+      },
+      ["workUnitId", "operationId", "targetPath", "description"],
+    ),
+    createCommandSchema(
       "PauseSession",
       { reason: { type: "string" } },
       ["reason"],
