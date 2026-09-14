@@ -1737,7 +1737,9 @@ export class PairRuntime implements vscode.Disposable, PairChatGenerator {
       remainingOutputTokens: remainingBudget.remainingOutputTokens,
       controlNotice: this.controlNotice,
       configurationWarning: this.configurationWarning(),
-      startupGuidance: this.startupGuidance,
+      ...(this.startupGuidance === undefined
+        ? {}
+        : { startupGuidance: this.startupGuidance }),
     };
     return this.options.sharedContext.updateSession(
       session,

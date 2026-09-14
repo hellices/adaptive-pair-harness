@@ -1014,7 +1014,10 @@ describe("PairRuntime lifecycle ownership", () => {
     expect(markdown).toHaveBeenCalledWith(
       "No active code evidence yet. Select code or run **Adaptive Pair: Review Current Block**.",
     );
-    expect(text).not.toHaveBeenCalled();
+    expect(text).toHaveBeenCalledTimes(1);
+    expect(text.mock.calls[0]?.[0]).toContain(
+      "No README or planning docs were found.",
+    );
     expect(shared.snapshot().latest).toBeUndefined();
     runtime.dispose();
   });
