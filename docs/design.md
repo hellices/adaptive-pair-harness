@@ -1,238 +1,1129 @@
 # Adaptive Pair v2: Product and System Design
 
 - **Updated:** September 14, 2026
-- **Status:** Working design, awaiting review; v2 implementation has not started.
+- **Status:** Complete initial v2 architecture; awaiting written-spec review.
+- **Implementation:** Not started on the v2 branch.
 
-This is the current design document. It combines the established product
-requirements, the research-informed proposal, and the remaining decisions in
-one place. The [research brief](research.md) separates empirical findings from
-practitioner experience and product hypotheses.
+This document is the first complete product and architecture specification for
+Adaptive Pair v2. Every v2 behavior starts here as an initial design decision;
+no earlier v2 note is treated as an inherited or already-validated
+requirement. It incorporates the evidence summarized in
+[research.md](research.md), the current VS Code platform, the product values
+defined in this planning cycle, and the lessons from the historical v1
+implementation.
 
-The behavior and architecture below are proposals unless explicitly identified
-as confirmed requirements. Publishing this checkpoint is not design approval.
+## 1. Product thesis
 
-## 1. Purpose
+Adaptive Pair is a complete open-source capability-preserving programming
+runtime, not a prompt bundle and not an autonomous ticket-to-code agent.
 
-Help developers complete real work with AI while retaining understanding and
-control. Pairing should extend from brainstorming and planning through
-implementation, rather than starting only after the AI has produced a solution.
+Its defining value is:
 
-The intended experience is collaborative: both participants help shape the next
-step, either can execute an agreed step, and the developer can change direction
-without waiting for an entire task to finish.
+> Even when AI can perform the whole development task, protect deliberate
+> opportunities for people to form and maintain the ability to develop
+> software themselves.
 
-## 2. Confirmed requirements
+Default coding agents can outsource the entire learning loop:
 
-- **Real-time, bidirectional collaboration.** Human and AI work together during
-  design, planning, and implementation. Upfront generation followed only by
-  human review is not the target experience.
-- **Both participants can edit.** Handoffs concern meaningful units of work,
-  which may span multiple files. The v1 prohibition on project-file writes does
-  not apply to v2.
-- **Individualized support.** Adjust guidance and participation to the person
-  and task. A short task briefing and subsequent observation can inform changes.
-- **Individual account boundary.** Personal preferences and familiarity belong
-  to the individual, not the shared repository.
-- **External project knowledge.** Other skills, wikis, and harnesses own domain
-  knowledge, conventions, and architecture information. Pair consumes that
-  context rather than becoming its authoritative store.
-- **Multiple pairing patterns.** Developers should be able to experience and
-  learn different collaboration patterns, informed by evidence and practice.
-- **A fresh v2 direction.** Continue in the same repository on the main-based
-  `v2/adaptive-pair` branch while preserving the earlier implementation.
+```text
+interpret the problem
+  -> choose an approach
+  -> generate code
+  -> encounter a failure
+  -> form a diagnosis
+  -> repair the code
+  -> verify the result
+```
 
-The VS Code Coding Agent picker is the desired product entry point. Supported
-APIs and distribution constraints have not been verified. An alternative entry
-point would require a separate design decision.
+The developer may still learn to decompose requests, read generated code,
+review an agent's diagnosis, and select among proposals. Those are valuable
+skills, but they do not automatically replace code generation, debugging,
+language fluency, design internalization, or confidence built by overcoming a
+block.
 
-## 3. Recommended initial scope
+Understanding an explanation or agreeing with AI-generated code is not the
+same capability as producing, failing, diagnosing, and repairing code without
+the answer already present.
 
-**One human, one AI, one shared session core, three selectable patterns.**
+This value is independent of execution method. Prompt configuration, skills,
+permissions, plugins, extensions, and custom runtimes are implementation
+options evaluated by the same observable mode contracts.
 
-| Approach | Benefit | Limitation | Recommendation |
+In Growth and Pair modes, one developer and one AI share:
+
+- an explicit goal;
+- one agreed work unit at a time;
+- clear driver and navigator responsibilities;
+- one active edit owner;
+- observable verification;
+- negotiated handoffs, pause, takeover, and resume;
+- a short, correctable reflection at the end of the session.
+
+Both participants may propose direction, question assumptions, and edit code.
+The developer can interrupt at any time. The AI never gains edit authority from
+a model response alone.
+
+### What "complete" means
+
+Development previews may build one mode at a time, but v2.0 stable is complete
+only when the product can honestly distinguish and run all three operating
+modes:
+
+1. **Practice/Growth Mode** protects human code generation, failure, diagnosis,
+   repair, and independent transfer.
+2. **Pair Mode** alternates meaningful work between human and AI without
+   allowing either participant to monopolize the whole development loop.
+3. **Delivery Mode** permits explicit delegation when learning value is low and
+   optimizes verified delivery without calling it growth or pairing.
+
+Each mode must move from briefing through implementation, verification,
+interruption, recovery, and close without hidden state or undocumented manual
+repair. The implementation sequence starts with Growth, then Pair, then
+Delivery; stable release waits for all three mode contracts.
+
+### Open-source boundary
+
+The following are Apache-2.0 open-source product code:
+
+- the protocol and schemas;
+- session and work-unit state machines;
+- edit-authority and recovery rules;
+- mode and collaboration-cadence policies;
+- learning agreements, hint progression, and restraint rules;
+- deterministic evidence processing;
+- model, host, storage, and profile ports;
+- the VS Code extension and fallback chat surface;
+- the Copilot-compatible Agent Plugin;
+- the test kit and local evaluation tooling.
+
+VS Code, GitHub Copilot, hosted models, and account-sync services are optional
+adapters. No proprietary service is the source of truth for pairing state or
+required to exercise the core in tests.
+
+## 2. Product principles
+
+1. **Protect capability formation.** When an activity has current learning
+   value, the developer must have a real opportunity to generate, fail,
+   diagnose, repair, and verify.
+2. **Name delegation honestly.** Delivery Mode may delegate broadly; Growth and
+   Pair modes may not behave like Delivery while retaining a learning label.
+3. **Attempt before rescue.** In Growth Mode, the AI escalates through bounded
+   help only after a human attempt or explicit bypass.
+4. **One edit owner, two active participants.** Conversational initiative is
+   shared; mutation authority is explicit.
+5. **Human control is monotonic.** Pause or takeover immediately removes future
+   AI mutation authority. No later result can silently restore it.
+6. **Evidence outranks prose.** Applied file state and observed check results
+   outrank model claims.
+7. **The model proposes; deterministic code authorizes.** Mode prompts,
+   custom agents, and model output never bypass the session core.
+8. **Local observation, selective disclosure.** Editor and compiler signals are
+   processed locally. Remote context is destination-disclosed and consented.
+9. **Adapt to learning value, not an inferred rank.** Preferences and
+   familiarity are correctable hypotheses, never a permanent ability score.
+10. **No universal mode claim.** The modes are product choices to
+   evaluate, not an evidence-backed leaderboard.
+11. **Host capabilities are replaceable.** Native Agent features are used when
+   they preserve the product invariants; otherwise the controlled adapter runs.
+12. **No telemetry by default.** Evaluation data stays local unless the
+    developer explicitly exports it.
+
+## 3. Scope and release strategy
+
+### First stable release
+
+The stable v2.0 release includes:
+
+- VS Code as the first host;
+- complete Growth, Pair, and Delivery mode contracts;
+- a per-session learning agreement that distinguishes new capabilities,
+  already-familiar work, human-owned practice, and delegatable mechanical work;
+- a Growth Mode hint ladder, answer-reveal boundary, and independent transfer
+  check;
+- a Pair Mode Driver/Navigator workflow with meaningful role rotation;
+- an explicitly labeled Delivery Mode;
+- human-driver and AI-driver work units;
+- local TypeScript and JavaScript evidence sensors;
+- language-agnostic interactive file and verification tools where the host can
+  safely operate;
+- native Agent picker integration when its capability gate passes;
+- an extension-owned `@pair` fallback using the same runtime;
+- local session recovery and explicit deletion;
+- explicit, local personal preferences;
+- offline deterministic tests and a local evaluation export.
+
+### Experimental after v2.0
+
+- Ping-Pong TDD;
+- additional language-specific sensors;
+- optional profile synchronization;
+- remote or multi-client pairing hosts.
+
+Guided questions, hints, demonstrations, and reflection are part of Growth Mode
+in v2.0 rather than a separate experimental product mode. Experimental features
+use designed extension points and do not redefine the three mode contracts.
+
+### Outside the product
+
+- unattended issue-to-pull-request execution;
+- multi-agent swarms;
+- multi-person Mob sessions;
+- a repository knowledge platform;
+- automatic novice, intermediate, or expert classification;
+- default mining of commit or pull-request history for personal assessment;
+- a requirement to use GitHub Copilot or any single model vendor.
+
+## 4. Repository and package structure
+
+v2 uses npm workspaces so dependency direction is visible and enforceable.
+
+```text
+packages/
+  protocol/          Versioned commands, events, snapshots, and JSON schemas
+  session-core/      Pure reducers, state machines, and authority decisions
+  runtime/           Effect coordinator, journal, reconciliation, and ports
+  modes/             Growth, Pair, Delivery, and optional cadence policies
+  restraint/         Tool gates, hint ladder, answer boundary, transfer checks
+  evidence/          Evidence contracts, ranking, freshness, and TS/JS sensors
+  profile/           Explicit preferences, profile proposals, and store ports
+  evaluation/        Local metrics, experiment records, and export schemas
+  testkit/           Fake clock, host, model, store, and fault-injection tools
+apps/
+  vscode-extension/  VS Code host, tools, inline UI, status, and @pair adapter
+plugins/
+  copilot/           Agent Plugin, custom agents, skills, and handoffs
+```
+
+Dependency rules:
+
+- `protocol` has no product dependencies.
+- `session-core` depends only on `protocol` and injected deterministic
+  utilities.
+- `modes` reads protocol snapshots and emits policy proposals; it cannot
+  invoke effects.
+- `restraint` applies mode-specific capability and response policies without
+  owning session state.
+- `runtime` depends inward on `session-core`, `modes`, `restraint`, and port
+  interfaces.
+- `evidence`, `profile`, and `evaluation` communicate through protocol types.
+- host, model, storage, and UI adapters depend on the runtime, never the other
+  way around.
+- no package under `packages/` imports `vscode`, Copilot SDK types, or a
+  model-vendor SDK.
+
+This layout permits an alternate host later without creating a second pairing
+engine. No alternate UI is implemented in the first release.
+
+## 5. Architecture
+
+```text
+VS Code Agent Plugin -----+
+                          |
+@pair Chat participant ---+--> Surface adapter
+                                |
+                                v
+                      Pair Runtime coordinator
+                                |
+       +----------------+-------+---------+----------------+
+       |                |                 |                |
+       v                v                 v                v
+ Session core      Mode policy     Restraint engine   Evidence engine
+ (source of truth) (proposals)     (capability gate)  (local observations)
+            |
+            v
+       Authorized effects
+            |
+    +-------+---------+-----------+------------+
+    |                 |           |            |
+ Host port        Model port   Store port   Consent/profile ports
+    |                 |           |            |
+ VS Code         selected LM,   local       local profile,
+ adapter         local model,   journal     optional sync
+                 OpenAI-compatible
+```
+
+In native Agent mode, the Agent Host owns the conversational model loop and
+calls Pair Runtime tools. The `ModelPort` is used by the controlled chat
+adapter and by explicitly configured local or OpenAI-compatible providers. The
+session core does not depend on either path.
+
+### 5.1 Protocol
+
+`protocol` defines JSON-serializable, versioned types for:
+
+- commands submitted by a human, model, host, or policy;
+- accepted domain events;
+- immutable session snapshots;
+- effect requests and observed effect results;
+- evidence and privacy classifications;
+- local evaluation records.
+
+Every command and event has an opaque ID, session ID, expected revision, actor,
+and timestamp supplied by an injected clock. Schemas reject unknown fields.
+Protocol evolution is additive within a major version and uses explicit
+migrations across major versions.
+
+### 5.2 Session core
+
+The session core is a pure reducer and command decider. Given the current
+snapshot and a command, it returns either:
+
+- a rejection with a stable reason code; or
+- ordered domain events and authorized effect descriptions.
+
+It does not read files, call models, store state, render UI, or inspect VS Code.
+This is the only component allowed to change edit ownership, work-unit status,
+or session authority.
+
+### 5.3 Runtime coordinator
+
+The coordinator:
+
+1. validates a command against the current revision;
+2. asks the core for a decision;
+3. appends accepted events to the local journal;
+4. dispatches authorized effects through ports;
+5. records the observed result as a new command;
+6. reconciles the actual workspace before claiming completion.
+
+Effects never mutate the snapshot directly. An adapter result becomes true
+pairing state only after the core accepts the corresponding observation.
+
+### 5.4 Mode policies
+
+A policy receives an immutable snapshot and recent event. It may emit:
+
+- a question;
+- a proposed next work unit;
+- a handoff proposal;
+- a suggested scaffold level;
+- a recommendation to pause, verify, reflect, or switch mode or cadence.
+
+Policies cannot grant authority, write files, run checks, persist profile data,
+or override a human command.
+
+### 5.5 Restraint engine
+
+The restraint engine converts the active mode and learning agreement into
+enforceable capabilities:
+
+- whether AI mutation is permitted;
+- which work-unit scopes it may touch;
+- the current hint ceiling;
+- whether target code, a complete patch, or a direct diagnosis may be shown;
+- whether a human attempt or hypothesis is required before escalation;
+- whether a transfer check must run before a growth claim.
+
+How an adapter realizes these rules is an implementation choice. Instructions,
+tool restrictions, structured responses, or other controls may contribute, but
+the observable mode contract is the product boundary. No adapter may advertise
+a mode it cannot preserve.
+
+### 5.6 Evidence engine
+
+The evidence engine accepts local observations from host-specific sensors and
+normalizes them into bounded evidence:
+
+- editor diagnostics;
+- new dependency or boundary crossings;
+- public declaration changes;
+- substantial complexity growth;
+- test and build results;
+- stale baseline or conflicting edits.
+
+Evidence records include provenance, confidence, freshness, affected range,
+privacy classification, and the work unit that owned the observation. The
+engine may recommend an intervention; the runtime and active policy decide
+whether it is timely.
+
+### 5.7 Profile boundary
+
+The profile contains only explicit preferences and developer-approved
+reflections, for example:
+
+- preferred intervention intensity;
+- preferred explanation depth;
+- task- or language-specific familiarity stated by the developer;
+- operating modes or collaboration cadences the developer wants to practice;
+- corrected or deleted prior summaries.
+
+Raw code, file paths, diagnostics, prompts, conversation transcripts, timing
+traces, and inferred global ability scores are not profile fields.
+
+The first release uses a local profile scoped to the OS/VS Code user. A
+`ProfileStore` port permits optional account synchronization later without
+changing the session core. Profile sync is not required for a complete local
+pairing session.
+
+## 6. Domain model
+
+### 6.1 Pair session
+
+A `PairSession` snapshot contains:
+
+- protocol version, session ID, revision, and authority epoch;
+- status and pause reason;
+- confirmed goal and observable completion criteria;
+- active operating mode and mode configuration;
+- optional Pair Mode collaboration cadence;
+- the learning agreement and current hint ceiling;
+- current work unit, if any;
+- consent scopes and model destination;
+- local project-context references;
+- last confirmed checkpoint;
+- bounded event and evaluation summaries.
+
+Chat history is presentation context, not authoritative state.
+
+### 6.2 Learning agreement
+
+At session start, the developer confirms a `LearningAgreement`:
+
+- what they want to learn or keep fluent;
+- what they already know well enough for delegation;
+- which code generation, test design, debugging, or design decisions they will
+  perform personally;
+- which mechanical work the AI may own;
+- how help may escalate;
+- the independent variation or debugging check that can verify transfer.
+
+The AI may propose this split, but it never infers or confirms it from behavior
+alone. The developer can change it at any work-unit boundary.
+
+### 6.3 Work unit
+
+Every code-changing activity belongs to one `WorkUnit`:
+
+- objective;
+- active mode and declared learning value;
+- capability category: problem framing, design, test, implementation,
+  diagnosis, repair, or verification;
+- observable acceptance checks;
+- allowed workspace root, paths, and optional symbols;
+- edit owner: `human` or `ai`;
+- navigator: the other participant;
+- verification plan;
+- baseline document versions or content hashes;
+- stopping condition;
+- status and result.
+
+Only one participant owns edits within the unit. The human can always edit, but
+a human edit that intersects an AI-owned scope invalidates affected pending AI
+operations and requires reconciliation. Adaptive Pair never locks the developer
+out of the editor.
+
+### 6.4 Assistance state
+
+Growth Mode records:
+
+- the developer's attempt or explicit bypass;
+- their failure prediction or diagnosis hypothesis when applicable;
+- current hint level;
+- whether a target solution was revealed;
+- the independent check and its observed result.
+
+These records describe the chosen process. They are not a global ability score.
+
+### 6.5 Operation ledger
+
+Every read, edit, check, or external action has an operation record:
+
+```text
+planned
+  -> authorized
+  -> started
+  -> confirmed | failed | declined | cancelled | unknown
+```
+
+Only `confirmed` operations support success claims. `unknown` means an effect
+may have occurred but its final state was not observed; it is never
+automatically replayed when state-changing.
+
+### 6.6 Evidence and reflection
+
+Evidence describes an observation, not a verdict about the developer. A
+reflection is a proposed summary at session close. It enters the profile only
+after the developer reviews and accepts it.
+
+## 7. State machines
+
+### 7.1 Session state
+
+```text
+inactive
+  -> briefing
+  -> ready
+  -> active
+  -> paused
+  -> reconciling
+  -> active
+  -> closing
+  -> closed
+```
+
+Allowed variations:
+
+- `active <-> paused`;
+- `paused -> reconciling -> active`;
+- `active -> reconciling` after a conflict or reconnect;
+- any non-closed state may move to `closing`;
+- `closed` is terminal.
+
+A fatal adapter error pauses the session with an explicit reason. It does not
+silently close the session or fabricate recovery.
+
+### 7.2 Work-unit state
+
+```text
+proposed
+  -> agreed
+  -> executing
+  -> verifying
+  -> completed
+```
+
+Nonterminal units may become:
+
+- `paused`;
+- `needs-reconcile`;
+- `cancelled`;
+- `failed`.
+
+`needs-reconcile` can return to `agreed` with refreshed scope and baselines, or
+move to `cancelled`. A unit is completed only after its required verification
+has an observed result or the agreement explicitly defined a non-executable
+review method.
+
+### 7.3 Handoff
+
+A handoff proposal has no authority effect. Acceptance:
+
+1. stops admission of new mutating operations;
+2. cancels operations that have not started;
+3. waits for or reconciles started operations;
+4. increments the authority epoch;
+5. records the new owner and refreshed baseline;
+6. resumes the unit or creates its successor.
+
+An explicit human pause or takeover outranks every pending proposal.
+
+## 8. Operating modes and collaboration techniques
+
+The top-level choice is not which style sounds best. It is whether doing this
+work personally has current learning value for the developer.
+
+| Mode | Primary outcome | Default AI authority | Honest completion claim |
 |---|---|---|---|
-| Shared core with three patterns | Supports different pairing experiences with consistent editing, handoff, and cancellation rules. | Requires pattern-specific guidance and transition design. | Recommended initial product scope. |
-| Driver/Navigator only | Smallest way to validate natural bidirectional interaction. | Does not fulfill the multi-pattern experience requirement by itself. | Useful as a core-validation stage, not the complete proposed scope. |
-| Automatically assign patterns from inferred ability | Could automate personalization later. | Risks restricting user choice before inference quality, consent, and effectiveness are validated. | Defer. |
+| Practice/Growth | Form or retain a development capability | Read-only navigator | Work verified and transfer checked, or learning left unverified |
+| Pair | Deliver while both participants perform meaningful development work | Only the agreed AI-owned work unit | Product result verified and role history reported |
+| Delivery | Complete familiar or low-learning-value work efficiently | Broad agreed work-unit ownership | Product result verified; no pairing or growth claim |
 
-This is a product-fit recommendation, not a research ranking. The reviewed
-evidence does not establish a universally best pairing style.
+The developer selects the mode from a short learning agreement. Adaptive Pair
+may recommend a mode from the stated goal, but it never assigns one from an
+inferred ability tier.
 
-### Driver/Navigator: default
+### 8.1 Practice/Growth Mode
 
-Agree on the current small goal. One participant executes while the other helps
-check direction, assumptions, and results. Conversational initiative is separate
-from edit ownership: navigating does not require silence or delayed questions.
+Use Growth Mode for an unfamiliar technology, a capability the developer wants
+to form, or a skill they want to keep fluent.
 
-Propose handoffs when a goal is complete, someone is stuck, a short demonstration
-would help, or the developer explicitly requests a turn. Do not enforce a fixed
-timer or a target share of keystrokes. During brainstorming, participants can
-alternate who leads the discussion without treating that as file-edit authority.
+Required behavior:
 
-### Guided Pairing: optional
+- the human is the only project-file edit owner;
+- the AI is a read-only navigator;
+- the human writes an initial approach from an empty or current starting point;
+- the human observes their code fail when a failure is part of the task;
+- the human initiates the relevant verification by default and sees its actual
+  result;
+- before a direct diagnosis, the human records a hypothesis or explicitly
+  bypasses that step;
+- the human performs the repair and observes the new result;
+- the session ends with a small analogous or varied task without AI mutation or
+  a target solution.
 
-Adapt ideas from Strong-Style pairing rather than claiming to reproduce it
-exactly. The AI can guide a developer who wants hands-on practice; the developer
-can also explain an intended design while the AI edits. Neither participant is
-permanently assigned the expert role by an ability tier.
+The AI uses a progressive hint ladder:
 
-Adjust hints, explanations, and demonstrations to the situation, then reduce
-direction as understanding develops. A brief demonstration may lead to a human
-attempt and reflection. Do not require blind trust in AI guidance, delayed
-objections, or a quiz on every turn. Learning effectiveness remains a hypothesis
-to test.
+1. ask the developer to restate the goal, prediction, or current evidence;
+2. point to the relevant concept, boundary, or source location;
+3. provide a strategic hint or question;
+4. provide pseudocode, a partial skeleton, or an analogous example;
+5. reveal a target-specific solution only after an explicit developer action.
 
-### Ping-Pong TDD: conditional opt-in
+Before level 5, the AI cannot emit a complete target patch, complete the target
+function, or use an edit tool. A solution reveal is preview-only. Applying it
+requires switching to Pair or Delivery Mode with a new work-unit agreement.
 
-One participant writes a failing test; the other makes it pass. After joint
-refactoring, the implementer writes the next failing test. The human should have
-opportunities to take both roles rather than receiving a completed test-and-code
-package from the AI.
+The developer can always bypass an attempt or request the answer. The UI then
+states that the work may still be completed, but independent growth has not
+been verified. A new variation, not the revealed target, is used for any later
+transfer check.
 
-Use this pattern when tests can run reliably and failures can be attributed to
-the intended behavior. A broken test environment is not a successful handoff.
-When TDD is unsuitable, return to Driver/Navigator while preserving the current
-goal and changes.
+A Growth session reports five outcomes separately:
 
-### Outside the initial scope
+1. whether the developer generated a similar implementation without AI
+   mutation;
+2. whether they diagnosed and repaired a varied failure;
+3. whether they explained the important behavior and design decision;
+4. whether they authored meaningful code during the session;
+5. whether the evidence supports offering less help next time.
 
-- Multi-person Mob sessions.
-- A separate engine for Expert–Expert collaboration; lower guidance can be a
-  setting of the base interaction.
-- Forced novice/expert-to-pattern mappings or automatic ability-based assignment.
-- A separate repository knowledge platform or an autonomous task-to-PR product.
+Skipping an outcome is allowed and recorded as `not-assessed`, never converted
+to success. Any recommendation to reduce help is a correctable proposal, not an
+ability classification.
 
-## 4. Shared interaction flow
+### 8.2 Pair Mode
 
-1. **Brief the task.** Establish the goal, unfamiliar areas, time constraints,
-   and what the developer wants to try personally. Avoid turning onboarding into
-   a general ability test.
-2. **Agree on the next work unit.** Share its purpose, edit scope, current owner,
-   and verification method. A coherent unit may include several files.
-3. **Work together.** When the AI owns the unit, it may make real edits within
-   the agreed scope. Avoid both whole-task generation and per-keystroke approval
-   bureaucracy. Renegotiate scope before expanding it.
-4. **Observe and propose.** Prefer explicit requests and task context when
-   suggesting guidance, next actions, or handoffs. Silence, vocabulary, one error,
-   or commit counts alone must not determine ability or edit authority.
-5. **Hand off or pause.** Share the changes, verification results, and remaining
-   goal. An explicit human pause or takeover overrides an automatic suggestion.
-6. **Close with a short reflection.** Identify what is understood, what remains,
-   and where to resume. Let the developer review and correct any proposed
-   personal-profile summary.
+Use Pair Mode when delivery and active participation both matter.
 
-Observation can be an agreed, useful phase. Check whether someone has lost the
-thread when that matters to the learning goal; do not treat every quiet interval
-as failure or disengagement.
+- Every work unit has one explicit driver and the other participant navigates.
+- The navigator checks direction, assumptions, evidence, and the next step.
+- Both participants may ask questions and challenge a decision immediately.
+- AI work on a learning-relevant unit is followed by a related human-owned unit
+  unless the developer explicitly reclassifies the sequence as Delivery.
+- Across a learning-relevant sequence, one side must not silently own problem
+  framing, design, test, implementation, diagnosis, repair, and verification
+  end to end.
+- Handoffs occur at a completed goal, a block, a useful demonstration, or an
+  explicit request, not on a fixed timer.
+- Typing share is not a participation or learning score.
 
-## 5. Editing and failure boundaries
+The session can start with either participant driving. AI ownership requires an
+agreed scope and a host capability that the runtime can enforce.
 
-These are proposed invariants, not implemented guarantees:
+### 8.3 Delivery Mode
 
-- Do not silently overwrite conflicting human edits. Pause AI application and
-  reconcile the current state rather than locking the developer out of editing.
-- Do not automatically apply a late AI result after a pause or takeover. Show
-  what was already applied and what remains; do not automatically delete earlier
-  accepted changes.
-- Distinguish model completion, tool execution, and file application. A message
-  saying an operation finished is not proof that the files changed.
-- Do not automatically replay a state-changing operation whose completion is
-  unknown after a connection failure.
-- On resume, compare the last shared goal with the actual workspace state and
-  reconfirm whether AI editing should continue.
+Use Delivery Mode for work the developer already knows well or judges to have
+low current learning value, including:
 
-The formal state machine, cancellation boundary, duplicate-event handling, and
-conflict-detection mechanism still require design work.
+- boilerplate;
+- repetitive transformations;
+- familiar pattern expansion;
+- mechanical documentation;
+- routine tests whose design is already understood.
 
-## 6. Proposed component boundaries
+Delivery Mode may give the AI broader ownership and optimize for verified
+throughput. It retains scope, approval, conflict, privacy, and verification
+invariants, but it does not require human code generation or an independent
+transfer check.
 
-| Component | Responsibility | Boundary |
-|---|---|---|
-| Session core | Shared goal, current unit, edit owner, pattern, handoff, pause, and resume state. | Independent of presentation and personal-storage providers. |
-| Pattern policies | Pattern-specific guidance and proposed next actions or turn changes. | Cannot write files directly or override a human pause. |
-| Host and editing adapter | Editor events, document versions, authorized edits, cancellation, and result presentation. | Must use capabilities actually supported by the host platform. |
-| Personalization and profile boundary | Use declared preferences and limited observations to make recommendations. | Expose uncertainty and support inspection, correction, and deletion. Storage is undecided. |
-| Project-context consumer | Read relevant context from existing skills, wikis, and harnesses. | Does not own project knowledge or mix personal ability data into the repository. |
+The interface labels the session as delegation-oriented. It never describes
+Delivery Mode activity as Practice/Growth or balanced Pair work.
 
-## 7. Personal data and privacy
+### 8.4 Guidance strategy
 
-An account-scoped profile is a confirmed requirement; its backend is not.
-Authentication, access control, encryption, synchronization, retention, and
-deletion remain open decisions. Do not treat a secret Gist as an access-controlled
-private profile store, or the earlier Gist suggestion as an approved choice.
+Questions, hints, instructions, demonstrations, and reflection are assistance
+techniques inside Growth and Pair modes, not separate top-level products.
 
-Treat preferences and task- or language-specific familiarity as correctable
-hypotheses, not a trained model that has measured the person's true ability.
-GitHub commit and pull-request history is not approved default input. Any such
-use needs a consent and minimization decision.
+The strategy can adapt within the developer-approved hint ceiling. It does not
+change edit ownership. Strong-Style provides useful practitioner ideas about
+adjusting abstraction and keeping the learner's hands active, but v2 preserves
+immediate questions, objections, pause, and takeover.
 
-Proposed privacy limits:
+### 8.5 Ping-Pong TDD cadence
 
-- Keep raw code, paths, diagnostics, conversations, and secrets out of a remote
-  personal profile.
-- Keep the profile-storage policy separate from the policy governing task
-  context sent to a model.
-- Explain proposed profile updates and allow the developer to correct them.
-- Consider session-only preferences for an initial interaction prototype, without
-  dropping the eventual individual-account requirement.
+Ping-Pong is an optional Pair Mode cadence after v2.0. It is available only when
+the test environment has been observed to run reliably.
 
-## 8. Decisions changed by the evidence review
+```text
+owner A writes one intended failing test
+  -> pair observes the expected red
+  -> owner B makes that test pass
+  -> pair observes green
+  -> pair refactors while green
+  -> owner B writes the next failing test
+```
 
-The [research brief](research.md#evidence-and-limitations) supplies the sources and
-their limits. The following are design responses, not experimentally proven
-product outcomes.
+An infrastructure failure, unrelated failure, flaky result, or ambiguous red
+does not advance the cadence. The session pauses or returns to ordinary Pair
+Mode while preserving the goal and workspace.
 
-| Earlier assumption | Current proposal |
+### 8.6 Mode switching
+
+Switching mode:
+
+- never changes edit ownership implicitly;
+- preserves the confirmed goal and completed work;
+- closes, pauses, or reconciles the current work unit;
+- records the stated learning-value decision and who accepted it;
+- starts a new work unit under the target mode;
+- resets or tightens the hint ceiling when entering Growth.
+
+Moving to Delivery is always explicit. The runtime never interprets difficulty,
+silence, a slow edit, or repeated failure as permission to take over.
+
+## 9. VS Code integration
+
+### 9.1 Full installation
+
+The full VS Code experience has two coordinated open-source artifacts:
+
+1. a VSIX that contains the runtime, extension tools, local sensors, inline UI,
+   storage adapter, and `@pair` fallback;
+2. an Agent Plugin that contributes the Adaptive Pair custom agent and skills
+   to the Agent picker.
+
+Both declare a compatible protocol version range. The extension displays a
+clear health result when the plugin is absent or incompatible.
+
+### 9.2 Native Agent adapter
+
+The Agent Plugin contributes one visible Adaptive Pair agent. Human-to-AI and
+AI-to-human handoffs are Pair Runtime domain transitions inside that session;
+they are not VS Code agent-to-agent handoffs and native handoff UI never grants
+edit authority.
+
+The custom agent gives the model:
+
+- Adaptive Pair session, context, evidence, edit, and verification tools;
+- explicitly selected non-workspace tools that cannot bypass pairing state.
+
+Built-in workspace read, edit, and terminal tools are excluded because they
+would bypass Pair Runtime scope, consent, budget, and authority checks. Pair
+tools may remain visible in both driver states, but the core rejects mutation
+unless AI owns the current work unit. Tool availability is not the authority
+boundary.
+
+Native mode is enabled only when a startup capability probe verifies:
+
+- custom-agent tool restriction;
+- extension-tool routing;
+- implicit and explicit context-disclosure semantics;
+- Growth Mode response and mutation restraint;
+- workspace identity and document-version observation;
+- cancellation propagation;
+- result correlation;
+- required review or approval behavior.
+
+Preview hooks may provide defense in depth, but are not a correctness or
+security boundary.
+
+### 9.3 Controlled chat adapter
+
+If native mode cannot preserve an invariant, the VSIX offers `@pair` using the
+same session core, mode policies, restraint rules, evidence, journal, and tool
+adapters.
+
+This is an alternate surface, not a second product implementation. The
+controlled adapter owns its model/tool loop and exposes only operations that
+the core authorizes. It can use:
+
+- the exact VS Code Chat model selected by the developer;
+- a configured local model;
+- an OpenAI-compatible provider.
+
+### 9.4 Safe degraded mode
+
+When neither adapter can guarantee AI mutation authority, Adaptive Pair remains
+usable as Human Driver / AI Navigator. It explains the missing capability and
+does not present itself as an AI driver.
+
+### 9.5 Presence
+
+An Agent Host can continue without a connected editor client, but a live pair
+cannot. Losing the VS Code client pauses new pairing mutations. The session may
+retain conversational state in the host, but it must reconcile with the Pair
+Runtime before editing resumes.
+
+### 9.6 Implementation-independent mode conformance
+
+Every host, model, and agent adapter runs the same observable mode-conformance
+suite:
+
+- Growth remains read-only for AI;
+- help does not exceed the authorized hint level;
+- a human attempt or explicit bypass precedes direct rescue;
+- one work unit remains bounded;
+- a complete target solution does not appear before explicit reveal;
+- Pair and Delivery authority follow their agreed contracts.
+
+The design does not prescribe whether an adapter satisfies the contract through
+configuration, permissions, tool mediation, structured output, or another
+mechanism. That belongs to the implementation plan and adapter contract.
+
+When an adapter cannot satisfy a mode, Adaptive Pair disables that mode for the
+adapter and explains why. It does not weaken or rename the product value to fit
+a particular coding agent.
+
+## 10. Interaction flow
+
+1. **Start.** The developer explicitly selects Adaptive Pair or runs its start
+   command. No workspace observation begins before an active session.
+2. **Brief the task and learning value.** Confirm the goal, criteria,
+   constraints, unfamiliar areas, known areas, human-owned practice, and
+   delegatable mechanical work.
+3. **Choose a mode.** Select Growth, Pair, or Delivery explicitly. The system
+   explains the capability and completion contract before work begins.
+4. **Agree on a work unit.** Show objective, capability category, learning
+   value, scope, owner, verification, and stop condition.
+5. **Attempt or work.** Growth waits for a human attempt. Pair follows its
+   explicit driver. Delivery permits the agreed AI ownership.
+6. **Encounter and diagnose.** When a failure is relevant to Growth, record the
+   developer's prediction or explicit bypass before direct diagnosis.
+7. **Verify.** Run the agreed check through an observed host operation. Record
+   exit, result, and relevant bounded output.
+8. **Transfer, hand off, continue, or pause.** Growth runs a varied independent
+   check; Pair reconciles outstanding effects before ownership changes.
+9. **Close.** Report product completion and capability verification
+   separately, summarize unresolved work, and offer a profile reflection for
+   explicit review.
+
+The UI always distinguishes:
+
+- a proposal;
+- an authorized operation;
+- an operation in progress;
+- an applied edit;
+- a saved edit;
+- a check that actually ran;
+- product work that is verified;
+- growth that is verified, unverified, or explicitly skipped;
+- an unknown or failed result.
+
+## 11. Editing, commands, and concurrency
+
+### Edit application
+
+An AI edit request includes:
+
+- session, work-unit, operation, and authority IDs;
+- workspace root and relative target;
+- expected document version or content hash;
+- bounded replacement or patch;
+- the authorized scope.
+
+The host adapter rechecks every field immediately before applying. A mismatch
+does not trigger a best-effort merge; it records a conflict and moves the work
+unit to `needs-reconcile`.
+
+Growth Mode rejects every AI project-file mutation regardless of the model,
+prompt, approval setting, or available host tool. A target-specific solution
+may be previewed only after explicit reveal and cannot be applied without a
+mode switch and new agreement.
+
+### Human edits
+
+Human edits are never blocked. When they intersect pending AI scope:
+
+- pending operations for the affected baseline are cancelled;
+- already-started operations are reconciled;
+- unrelated work can continue;
+- the UI identifies the exact scope requiring agreement.
+
+### Verification
+
+Structured verification uses the safest available host capability in this
+order:
+
+1. VS Code Testing API;
+2. a declared task;
+3. an existing package validation script;
+4. an explicitly approved command adapter.
+
+Arbitrary commands are not inferred from repository prose. A state-changing
+command requires explicit classification and approval.
+
+### Retry policy
+
+- read-only effects may retry within a bound;
+- idempotent effects may retry only with the same operation key and adapter
+  confirmation;
+- state-changing effects with unknown completion never retry automatically.
+
+## 12. Failure and recovery semantics
+
+| Condition | Required behavior |
 |---|---|
-| Novices should always use AI-led Strong-Style; experts should always lead the AI. | Recommend from task goals and user choice, not fixed ability tiers. |
-| Sharing the keyboard guarantees participation and learning. | Include questions, explanations, decisions, and debugging; do not use typing share as the sole proxy. |
-| A silent observer is always an antipattern. | Allow agreed observation and thinking time; distinguish it from losing understanding. |
-| Human Strong-Style rules transfer unchanged to AI. | Preserve immediate questions, objections, pauses, and takeovers. |
-| An early profile-storage suggestion is already a design decision. | Keep the confirmed account boundary while evaluating storage and privacy separately. |
+| Human pauses or takes over | Increment authority epoch, stop new AI mutations, cancel work that has not started |
+| Late model or tool result | Ignore for mutation if its revision or epoch is stale; retain a bounded audit record |
+| Edit baseline changed | Do not merge silently; mark the unit `needs-reconcile` |
+| Connection closes after dispatch | Record `unknown`, inspect actual workspace, never auto-replay a state-changing effect |
+| Duplicate command or event | Return the prior decision by opaque ID; do not apply twice |
+| Client disconnects | Pause mutation authority until client presence and workspace are reconciled |
+| Model fails or exceeds budget | Surface the failure; local evidence remains available |
+| Store write fails | Do not report persistence; keep the session paused if durable ordering is uncertain |
+| Profile write fails | Keep the session result, report profile failure separately, and never invent a saved preference |
+| Resume after restart | Replay/migrate the journal, inspect the workspace, reconfirm goal and edit ownership |
 
-## 9. Validation goals
+Previously confirmed edits are not automatically removed during pause or
+failure. Rollback is a separate, explicit user action.
 
-| Question | Proposed evaluation | Avoid |
+## 13. Persistence
+
+The runtime keeps a local append-only event journal and periodic immutable
+snapshots under the host's extension storage, not in the repository.
+
+The journal stores:
+
+- domain events;
+- operation metadata and outcomes;
+- relative or hashed resource references;
+- bounded evidence summaries;
+- consent and profile decisions.
+
+It does not store raw source buffers, secrets, full diagnostics, terminal
+transcripts, or complete model conversations.
+
+Writes use sequence numbers and atomic snapshot replacement. Startup verifies
+the last durable sequence, migrates supported schema versions, and reconciles
+the workspace before restoring mutation authority.
+
+Developers can inspect, export, and delete session and profile state. Retention
+has finite defaults and configurable local limits.
+
+## 14. Privacy and security
+
+Adaptive Pair separates four data planes:
+
+| Plane | Examples | Default |
 |---|---|---|
-| Does the developer retain initiative and want to continue? | Brief feedback on naturalness, fatigue, unwanted interventions, and handoffs. | Counting handoffs as satisfaction. |
-| Does understanding develop or remain intact? | Consensual explanation, variation, or debugging tasks; later independent tasks when appropriate. | Treating typing share, confidence alone, or an AI-generated ability score as learning. |
-| Is the work useful at an acceptable cost? | Evaluate output quality, verification results, elapsed time, and effort separately. | Calling speed alone an overall benefit. |
-| Are editing and recovery controls trustworthy? | Test late results, conflicting edits, duplicate events, cancellation, and reconnection. | Equating a conversational success message with applied changes. |
+| Workspace-local | source, paths, diagnostics, editor events | local only |
+| Model-bound | approved excerpts, goal, tool results | session- and destination-scoped consent |
+| Session journal | state transitions, operation outcomes | local, bounded retention |
+| Portable profile | explicit preferences, accepted reflections | local; optional sync adapter |
 
-These are future evaluation and implementation-test directions. They have not
-been executed or passed. Long-term growth needs consented follow-up evaluation,
-not just a post-session impression.
+Additional rules:
 
-## 10. Open decisions and next steps
+- identify the model vendor, model, root, and purpose before disclosure;
+- treat repository text and tool output as untrusted data, not permissions;
+- detect credentials and private local-resource references before truncation;
+- keep automatic evidence local unless the session consent includes it;
+- keep background remote observation off by default;
+- enforce per-session call, input, output, and time budgets;
+- store provider credentials through the host secret store;
+- do not derive a personal profile from Git history by default;
+- allow correction and deletion without penalizing future recommendations;
+- publish a threat model and security policy with the first release.
 
-1. Review the proposed initial pattern set: default Driver/Navigator with optional
-   Guided Pairing and Ping-Pong TDD.
-2. Define the handoff experience: work-unit agreement, proposed switches,
-   takeover, pause, and observation in conversation and the editor. Use visual
-   comparisons when they help make a real design decision.
-3. Verify the supported entry point, real-time events, edit/cancellation APIs,
-   and distribution constraints. Review alternatives where the desired picker
-   integration is not supported.
-4. Specify session and editing state transitions, including late responses,
-   conflicts, uncertain completion, and reconnects.
-5. Decide profile storage, consent, access control, retention, correction, and
-   deletion policies.
-6. Review an implementation-ready specification for the first bounded scope,
-   then write its implementation plan. Neither this draft nor the historical
-   v1 plan authorizes starting implementation.
+VS Code approvals and sandboxing are useful host controls, but the Pair Runtime
+still enforces work-unit authority. Preview hooks are not trusted as the sole
+gate.
 
-## 11. Development context and provenance
+## 15. Evaluation
 
-The v2 branch started from the minimal main revision
-`52ccda3ffff77d30576d0f652a9e2bf0d0c79b3b`. The earlier implementation remains on
-`feature/realtime-pair-vertical-slice`; starting v2 did not delete that code.
+Evaluation is a product component, not post-release telemetry.
 
-The [v1 design](archive/v1-design.md) and
-[v1 implementation plan](archive/v1-implementation-plan.md) are historical
-references. Their scope, constraints, and approval status do not transfer to v2.
+### Local metrics
 
-The [initial v2 planning checkpoint](https://github.com/hellices/adaptive-pair-harness/tree/23959c5ef152cb6ad2e49471c33deb0316c7e558/docs)
-preserves the original Korean drafts, collection audit, and session diagnostics.
-This document is an English consolidation of the applicable requirements and
-decisions, not a verbatim translation of every historical statement. Obsolete
-claims are superseded explicitly rather than silently promoted into requirements.
+The runtime can record locally:
+
+- accepted completion criteria and observed verification results;
+- mode, declared learning value, and human-owned capability categories;
+- human attempts, diagnosis hypotheses, hint escalation, and solution reveals;
+- independently generated solutions and varied debugging outcomes;
+- explanation checks, meaningful human-authored work, and correctable
+  assistance-reduction proposals;
+- applied, rejected, reverted, and conflicting edits;
+- handoff proposals and outcomes;
+- pause and takeover latency;
+- interventions accepted, dismissed, or marked unwanted;
+- active task time and waiting time separately;
+- voluntary ratings of naturalness, fatigue, confidence, and initiative;
+- results of consensual explanation, variation, or debugging checks.
+
+No event is uploaded by default. Developers may inspect and export a
+privacy-reviewed JSON bundle that omits source, paths, prompts, and direct
+identifiers.
+
+### Product experiments
+
+1. Compare default coding-agent use with Growth, Pair, and Delivery Mode in
+   counterbalanced studies appropriate to each mode's intended outcome.
+2. Separate familiar tasks from tasks involving an unfamiliar library or
+   codebase.
+3. Measure output quality, verified correctness, elapsed time, effort, review
+   burden, and understanding separately.
+4. Add delayed independent tasks when making learning or retention claims.
+5. Compare hint levels and answer-reveal behavior within Growth Mode without
+   treating observational usage patterns as randomized effects.
+6. Pre-register hypotheses and perform a power analysis before confirmatory
+   studies.
+
+Typing share, number of handoffs, confidence alone, and an AI-generated ability
+score are not outcome measures.
+
+## 16. Testing strategy
+
+### Pure core
+
+- table-driven tests for every allowed and rejected transition;
+- property tests for authority monotonicity, event idempotency, and terminal
+  states;
+- mode-contract tests that prevent Growth from writing, Pair from bypassing
+  ownership, and Delivery from making a growth claim;
+- model-based tests that generate long event sequences;
+- journal replay and schema-migration tests;
+- deterministic fake clock and ID source.
+
+### Adapter contracts
+
+Every host, model, store, and profile adapter runs the same contract suite for:
+
+- cancellation;
+- stale revisions;
+- duplicate results;
+- bounded input and output;
+- explicit failure reporting;
+- disposal and reconnect;
+- sensitive-data handling.
+
+### Fault injection
+
+Tests interrupt each boundary:
+
+- before dispatch;
+- after dispatch but before acknowledgement;
+- after edit application but before save confirmation;
+- during persistence;
+- during handoff;
+- during client disconnect and reconnect.
+
+### VS Code validation
+
+- Extension Host tests on the oldest supported Stable and current Stable;
+- an Insiders compatibility job that may warn without blocking release;
+- native Agent capability tests;
+- a published restraint conformance suite covering premature patches, direct
+  diagnoses, skipped attempts, oversized work units, and takeover attempts;
+- Agent Plugin and VSIX compatibility tests;
+- package-content and clean-profile installation tests;
+- manual authenticated model and consent smoke tests before release.
+
+No CI test consumes a production model quota.
+
+## 17. Release gates
+
+A stable v2 release requires all of the following:
+
+### Functional
+
+- complete Growth, Pair, and Delivery sessions;
+- Pair Mode with both possible edit owners;
+- planning, attempt where required, edit, diagnosis, verification, handoff,
+  pause, resume, reflection, independent check where required, and close;
+- local persistence, inspection, export, and deletion.
+
+### Capability preservation
+
+- Growth enforces read-only AI behavior and the configured hint ceiling;
+- a complete target solution cannot appear before explicit reveal;
+- bypass and solution reveal are visible in the session result;
+- product completion and independent growth verification are separate states;
+- Growth reports similar-generation, varied-debugging, explanation,
+  meaningful-authorship, and next-assistance outcomes independently;
+- Pair reports which participant owned design, test, implementation, diagnosis,
+  repair, and verification work;
+- Delivery never emits a growth or balanced-pair claim.
+
+### Safety and recovery
+
+- all authority and late-result invariants pass;
+- conflict and unknown-completion scenarios are covered;
+- no model claim is presented as an observed tool result;
+- profile and model privacy boundaries pass contract tests.
+
+### Platform
+
+- VSIX works independently through the controlled surface;
+- native Agent mode passes its capability gate where advertised;
+- missing or incompatible plugins degrade explicitly;
+- installation succeeds in a clean VS Code profile.
+
+### User experience
+
+- developers can identify the goal, work-unit owner, scope, verification state,
+  and pause control without reading documentation;
+- pilot users can complete and resume a session;
+- unwanted interventions and fatigue are measured and reviewed.
+
+### Open source
+
+- source, build, tests, release workflow, protocol schemas, and evaluation
+  tooling are public;
+- dependency licenses are compatible;
+- release artifacts include checksums and a software bill of materials;
+- contribution, security, privacy, and governance documentation is present.
+
+The project does not claim superior productivity, learning, or satisfaction
+until an appropriate study supports that claim.
+
+## 18. Relationship to v1
+
+The historical implementation on
+`feature/realtime-pair-vertical-slice` is a tested reference and comparison
+baseline, not the v2 architecture.
+
+Port with their tests where their contracts fit:
+
+- edit-episode aggregation;
+- TypeScript/JavaScript semantic evidence;
+- evidence normalization and inline presentation;
+- project-context parsing;
+- privacy classification and bounded projections;
+- token-budget and cancellation techniques;
+- lifecycle and fault-injection test cases.
+
+Do not carry forward as v2 core:
+
+- a VS Code-specific monolithic runtime;
+- chat history as session authority;
+- a model or tool loop coupled directly to the presentation surface;
+- v1's navigator-only product constraint;
+- repository-scoped personal ability data;
+- duplicated native Agent behavior without a capability reason.
+
+The v2 implementation starts in the v2 workspace structure. A reusable v1
+module moves together with its relevant tests and receives a v2 contract test
+before use. The v1 branch remains runnable as an evaluation baseline until the
+v2.0 mode and release gates pass.
+
+## 19. Pre-implementation proofs
+
+These proofs select an adapter path; they do not reopen the core architecture.
+
+1. Run the v1 Extension Host and a real-model session to establish the behavior
+   baseline.
+2. Run the Growth restraint conformance suite against each proposed agent,
+   model, and host adapter and record premature solution, diagnosis, and
+   takeover failures.
+3. Verify that a custom agent can exclude built-in workspace tools and route
+   extension tools through the Agent Host.
+4. Verify cancellation, client disconnect, document-version, and result
+   correlation semantics.
+5. Verify the Agent Plugin plus VSIX installation and version handshake.
+6. Record each native capability as supported, advisory-only, or unavailable.
+
+If a native capability is unavailable, the controlled chat adapter supplies
+the full pairing behavior. If safe AI mutation is unavailable in both
+adapters, the product runs Human Driver / AI Navigator and states the
+limitation.
+
+## 20. Initial v2 architecture baseline
+
+- v2 is a fresh, host-agnostic open-source core.
+- the core value is preserving opportunities to form and maintain direct
+  development capability when AI could otherwise outsource the whole loop.
+- VS Code is the first host, not the owner of product state.
+- one edit owner is enforced per work unit.
+- Growth, Pair, and Delivery are the stable v2.0 operating modes.
+- Growth keeps AI read-only, uses a hint ladder, and separates product
+  completion from independent transfer.
+- Pair uses explicit Driver/Navigator ownership and prevents silent
+  whole-loop monopolization.
+- Delivery permits explicit delegation and makes no pairing or growth claim.
+- guidance is a mode-level strategy; Ping-Pong is an optional later cadence.
+- mode contracts are implementation-independent; Codex, Copilot, local models,
+  and future agents are examples of adapters, not product definitions.
+- native Agent integration is capability-gated.
+- `@pair` is a supported fallback surface using the same runtime.
+- local deterministic observation is on only during an explicit session.
+- remote background observation is off by default.
+- state-changing operations with unknown completion are never auto-replayed.
+- personal data is local, explicit, correctable, inspectable, and deletable;
+  optional account sync is an adapter.
+- evaluation is local-first and present in the first release.
+- the v1 implementation remains a baseline and tested source of compatible
+  modules, not a codebase to merge wholesale.
+
+This is a complete initial v2 specification, not a report of implemented or
+empirically validated behavior. It is ready for written review and, after
+approval, a detailed implementation plan.
