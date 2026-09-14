@@ -1,0 +1,270 @@
+{
+  "name": "adaptive-pair",
+  "displayName": "Adaptive Pair",
+  "description": "Protect direct development capability while working with AI.",
+  "version": "0.2.0-preview.1",
+  "publisher": "adaptive-pair",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "vscode": "^1.136.0",
+    "node": ">=24"
+  },
+  "categories": ["AI", "Programming Languages", "Other"],
+  "activationEvents": [
+    "onCommand:adaptivePair.enablePresence",
+    "onCommand:adaptivePair.startSession",
+    "onCommand:adaptivePair.joinInProgress",
+    "onChatParticipant:adaptivePair.chat"
+  ],
+  "main": "./dist/extension.cjs",
+  "contributes": {
+    "commands": [
+      { "command": "adaptivePair.enablePresence", "title": "Adaptive Pair: Enable Presence" },
+      { "command": "adaptivePair.stayQuiet", "title": "Adaptive Pair: Stay Quiet" },
+      { "command": "adaptivePair.pausePresence", "title": "Adaptive Pair: Pause Presence" },
+      { "command": "adaptivePair.disablePresence", "title": "Adaptive Pair: Disable Presence and Clear Continuity" },
+      { "command": "adaptivePair.startSession", "title": "Adaptive Pair: Start a Session" },
+      { "command": "adaptivePair.joinInProgress", "title": "Adaptive Pair: Join Work in Progress" }
+    ],
+    "languageModelTools": [
+      {
+        "name": "adaptive_pair_get_state",
+        "displayName": "Get Adaptive Pair State",
+        "modelDescription": "Read the current Pair Presence, mode, owner, work unit, hint ceiling, and verification state. Call before grounded project guidance.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "pairState",
+        "when": "adaptivePair.presenceEnabled",
+        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+      },
+      {
+        "name": "adaptive_pair_capture_entry",
+        "displayName": "Capture Pair Entry",
+        "modelDescription": "Capture a bounded local entry snapshot before joining existing or in-progress work. This never grants edit authority.",
+        "when": "adaptivePair.presenceEnabled",
+        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+      },
+      {
+        "name": "adaptive_pair_read_scope",
+        "displayName": "Read Pair Scope",
+        "modelDescription": "Read a bounded line range inside the agreed work-unit scope after consent.",
+        "when": "adaptivePair.sessionActive",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string", "minLength": 1, "maxLength": 1024 },
+            "startLine": { "type": "integer", "minimum": 1 },
+            "endLine": { "type": "integer", "minimum": 1 }
+          },
+          "required": ["path"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "adaptive_pair_search_scope",
+        "displayName": "Search Pair Scope",
+        "modelDescription": "Search bounded eligible text inside the agreed workspace and work-unit scope.",
+        "when": "adaptivePair.sessionActive",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": { "type": "string", "minLength": 1, "maxLength": 2000 },
+            "pattern": { "type": "string", "minLength": 1, "maxLength": 256 }
+          },
+          "required": ["query"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "adaptive_pair_record_attempt",
+        "displayName": "Record Growth Attempt",
+        "modelDescription": "Record the developer's own attempt or explicit bypass before escalating Growth help.",
+        "when": "adaptivePair.mode == growth",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "summary": { "type": "string", "minLength": 1, "maxLength": 1000 },
+            "bypassed": { "type": "boolean" }
+          },
+          "required": ["summary", "bypassed"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "adaptive_pair_record_hypothesis",
+        "displayName": "Record Diagnosis Hypothesis",
+        "modelDescription": "Record the developer's diagnosis hypothesis before direct AI diagnosis.",
+        "when": "adaptivePair.mode == growth",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "hypothesis": { "type": "string", "minLength": 1, "maxLength": 1000 }
+          },
+          "required": ["hypothesis"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "adaptive_pair_request_hint",
+        "displayName": "Request Growth Hint",
+        "modelDescription": "Request a hint no stronger than the current Growth hint ceiling.",
+        "when": "adaptivePair.mode == growth",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "requestedLevel": { "type": "integer", "minimum": 0, "maximum": 4 }
+          },
+          "required": ["requestedLevel"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "adaptive_pair_reveal_solution",
+        "displayName": "Reveal Target Solution",
+        "modelDescription": "Request the explicit level-5 target solution boundary. The result is preview-only in Growth Mode.",
+        "when": "adaptivePair.mode == growth",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
+          },
+          "required": ["reason"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "adaptive_pair_propose_work_unit",
+        "displayName": "Propose Pair Work Unit",
+        "modelDescription": "Propose one bounded objective, capability category, scope, owner, verification plan, and stopping condition. The developer must accept it.",
+        "when": "adaptivePair.sessionActive",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "objective": { "type": "string", "minLength": 1, "maxLength": 1000 },
+            "capability": { "type": "string", "enum": ["problem-framing", "design", "test", "implementation", "diagnosis", "repair", "verification"] },
+            "allowedPaths": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 1024 }, "maxItems": 32 },
+            "verificationPlan": { "type": "string", "minLength": 1, "maxLength": 1000 },
+            "stoppingCondition": { "type": "string", "minLength": 1, "maxLength": 1000 }
+          },
+          "required": ["objective", "capability", "allowedPaths", "verificationPlan", "stoppingCondition"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "adaptive_pair_accept_handoff",
+        "displayName": "Accept Pair Handoff",
+        "modelDescription": "Accept a proposed edit-owner handoff after outstanding operations reconcile.",
+        "when": "adaptivePair.mode == pair || adaptivePair.mode == delivery",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "workUnitId": { "type": "string", "minLength": 1, "maxLength": 200 }
+          },
+          "required": ["workUnitId"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "adaptive_pair_apply_edit",
+        "displayName": "Apply Authorized Pair Edit",
+        "modelDescription": "Apply an AI-owned edit only inside the current work-unit scope and expected document baseline.",
+        "when": "adaptivePair.aiCanEdit",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string", "minLength": 1, "maxLength": 1024 },
+            "expectedHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "patch": { "type": "string", "minLength": 1, "maxLength": 131072 }
+          },
+          "required": ["path", "expectedHash", "patch"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "adaptive_pair_run_verification",
+        "displayName": "Run Pair Verification",
+        "modelDescription": "Run only the verification already agreed in the current work unit and return its observed result.",
+        "when": "adaptivePair.sessionActive",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "plan": { "type": "string", "minLength": 1, "maxLength": 1000 }
+          },
+          "required": ["plan"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "adaptive_pair_run_command",
+        "displayName": "Run Authorized Delivery Command",
+        "modelDescription": "Run one pre-registered bounded Delivery command. Raw shell commands are not accepted.",
+        "when": "adaptivePair.mode == delivery && adaptivePair.aiCanEdit",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "commandId": { "type": "string", "minLength": 1, "maxLength": 200 }
+          },
+          "required": ["commandId"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "adaptive_pair_record_transfer",
+        "displayName": "Record Growth Transfer",
+        "modelDescription": "Record the result of a varied independent generation or debugging check.",
+        "when": "adaptivePair.mode == growth",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "kind": { "type": "string", "enum": ["similar-generation", "varied-debugging", "explanation", "meaningful-authorship"] },
+            "result": { "type": "string", "enum": ["demonstrated", "not-demonstrated", "not-assessed"] }
+          },
+          "required": ["kind", "result"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "adaptive_pair_close_session",
+        "displayName": "Close Pair Session",
+        "modelDescription": "Close the current Pair session and report product and capability outcomes separately.",
+        "when": "adaptivePair.sessionActive",
+        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+      }
+    ],
+    "chatParticipants": [
+      {
+        "id": "adaptivePair.chat",
+        "name": "pair",
+        "fullName": "Adaptive Pair",
+        "description": "Work in Growth Mode with bounded hints and direct practice.",
+        "isSticky": true,
+        "commands": [
+          { "name": "brief", "description": "Confirm task and learning value" },
+          { "name": "attempt", "description": "Record your implementation attempt" },
+          { "name": "hypothesis", "description": "Record your diagnosis before help" },
+          { "name": "hint", "description": "Request the next bounded hint" },
+          { "name": "reveal", "description": "Explicitly reveal a target solution" },
+          { "name": "check", "description": "Run the agreed verification" },
+          { "name": "transfer", "description": "Start the independent variation" },
+          { "name": "session", "description": "Show mode, work unit, and outcomes" }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "clean": "rm -rf dist *.vsix",
+    "typecheck": "tsc -b",
+    "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --outfile=dist/extension.cjs --external:vscode",
+    "package": "npm run build && vsce package --no-dependencies --out ../../adaptive-pair-0.2.0-preview.1-stable.vsix"
+  },
+  "dependencies": {
+    "@adaptive-pair/harness": "0.2.0-preview.1",
+    "@adaptive-pair/presence": "0.2.0-preview.1",
+    "@adaptive-pair/runtime": "0.2.0-preview.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "1.136.0",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "3.9.2"
+  }
+}

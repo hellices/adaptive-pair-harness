@@ -1,13 +1,32 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/protocol" },
-    { "path": "packages/presence" },
-    { "path": "packages/modes" },
-    { "path": "packages/restraint" },
-    { "path": "packages/session-core" },
-    { "path": "packages/harness" },
-    { "path": "packages/runtime" },
-    { "path": "packages/testkit" }
+    {
+      "path": "packages/protocol"
+    },
+    {
+      "path": "packages/presence"
+    },
+    {
+      "path": "packages/modes"
+    },
+    {
+      "path": "packages/restraint"
+    },
+    {
+      "path": "packages/session-core"
+    },
+    {
+      "path": "packages/harness"
+    },
+    {
+      "path": "packages/runtime"
+    },
+    {
+      "path": "packages/testkit"
+    },
+    {
+      "path": "apps/vscode-extension"
+    }
   ]
 }
