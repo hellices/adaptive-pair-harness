@@ -18,6 +18,7 @@ import type {
   PackageScriptPort,
   ProcessRunPort,
   RunOutcome,
+  ScriptManifest,
   TestingRunPort,
   TimeoutScheduler,
   VerificationPlan,
@@ -37,7 +38,6 @@ const okOutcome = (overrides: Partial<RunOutcome> = {}): RunOutcome => ({
   exitCode: 0,
   signal: null,
   output: "All tests passed.\n",
-  timedOut: false,
   terminationConfirmed: true,
   ...overrides,
 });
@@ -48,6 +48,8 @@ const makePorts = (
     readonly dirty?: readonly string[];
     readonly confirm?: boolean;
     readonly scripts?: Readonly<Record<string, string>>;
+    readonly manifest?: ScriptManifest;
+    readonly testingAvailable?: boolean;
   } = {},
 ): { readonly ports: VerificationAdapterPorts; readonly recorder: Recorder } => {
   let lastSignal: AbortSignal | undefined;
@@ -76,8 +78,13 @@ const makePorts = (
       return Promise.resolve(options.confirm ?? true);
     },
   };
+  const manifest: ScriptManifest =
+    options.manifest ?? {
+      status: "ok",
+      scripts: options.scripts ?? { test: "vitest run", "lint:unit": "eslint ." },
+    };
   const scripts: PackageScriptPort = {
-    scripts: () => options.scripts ?? { test: "vitest run", "lint:unit": "eslint ." },
+    scripts: () => manifest,
   };
   const process: ProcessRunPort = {
     run: (_command, signal) => {
@@ -86,6 +93,7 @@ const makePorts = (
     },
   };
   const testing: TestingRunPort = {
+    available: () => options.testingAvailable ?? true,
     run: (_request, signal) => {
       recorder.testingRuns += 1;
       return resolveOutcome(signal);
@@ -161,6 +169,18 @@ describe("VerificationAdapter — allowlisted execution", () => {
     expect(recorder.processRuns).toBe(0);
   });
 
+  it("declines a Testing plan and runs nothing when the host cannot observe results", async () => {
+    const { ports, recorder } = makePorts(okOutcome(), {
+      testingAvailable: false,
+    });
+    const result = await new VerificationAdapter(ports).run(testPlan(), signal);
+    expect(result.status).toBe("declined");
+    expect(result.observation?.reason).toBe("testing-api-unavailable");
+    expect(recorder.testingRuns).toBe(0);
+    expect(recorder.processRuns).toBe(0);
+    expect(recorder.confirmations).toBe(0);
+  });
+
   it("reports a failed check without inferring product success from a passing status", async () => {
     const { ports } = makePorts(
       okOutcome({ exitCode: 1, output: "1 test failed.\n" }),
@@ -198,6 +218,37 @@ describe("VerificationAdapter — rejected commands", () => {
     expect(result.status).toBe("declined");
     expect(result.observation?.reason).toBe("script-not-defined");
     expect(recorder.processRuns).toBe(0);
+  });
+
+  it("declines with script-not-defined when the root package.json is absent", async () => {
+    const { ports, recorder } = makePorts(okOutcome(), {
+      manifest: { status: "absent" },
+    });
+    const result = await new VerificationAdapter(ports).run(
+      scriptPlan("test"),
+      signal,
+    );
+    expect(result.status).toBe("declined");
+    expect(result.observation?.reason).toBe("script-not-defined");
+    expect(recorder.confirmations).toBe(0);
+    expect(recorder.processRuns).toBe(0);
+  });
+
+  it("fails distinctly when the root manifest cannot be read or parsed", async () => {
+    const { ports, recorder } = makePorts(okOutcome(), {
+      manifest: { status: "unreadable" },
+    });
+    const result = await new VerificationAdapter(ports).run(
+      scriptPlan("test"),
+      signal,
+    );
+    expect(result.status).toBe("failed");
+    expect(result.observation?.reason).toBe("manifest-unreadable");
+    // A malformed manifest must not masquerade as an undefined script or run.
+    expect(recorder.confirmations).toBe(0);
+    expect(recorder.processRuns).toBe(0);
+    // No raw path or thrown error text leaks into the user-facing summary.
+    expect(result.summary).not.toContain("/");
   });
 
   it("rejects a raw shell command masquerading as a script name", async () => {
@@ -249,35 +300,106 @@ describe("VerificationAdapter — preconditions", () => {
 });
 
 describe("VerificationAdapter — timeout and termination", () => {
-  it("marks a timed-out run cancelled when termination is confirmed", async () => {
-    const { ports } = makePorts(
-      okOutcome({
-        exitCode: null,
-        signal: "SIGTERM",
-        output: "still running...",
-        timedOut: true,
-        terminationConfirmed: true,
-      }),
-    );
-    const result = await new VerificationAdapter(ports).run(scriptPlan("test"), signal);
+  // A process port whose run resolves only when its signal aborts, reporting the
+  // supplied termination confirmation. This lets tests distinguish the adapter's
+  // 120s deadline (which fires the injected scheduler) from a manual caller
+  // cancellation (which aborts the caller signal) without any real timers.
+  const abortDrivenPorts = (
+    terminationConfirmed: boolean,
+    scheduler: TimeoutScheduler,
+  ): VerificationAdapterPorts => ({
+    buffers: { dirtyTargets: () => [] },
+    confirmation: { confirm: () => Promise.resolve(true) },
+    scripts: { scripts: () => ({ status: "ok", scripts: { test: "vitest run" } }) },
+    process: {
+      run: (_command, sig) =>
+        new Promise<RunOutcome>((resolve) => {
+          sig.addEventListener("abort", () => {
+            resolve(
+              okOutcome({
+                exitCode: null,
+                signal: terminationConfirmed ? "SIGTERM" : null,
+                output: "interrupted",
+                terminationConfirmed,
+              }),
+            );
+          });
+        }),
+    },
+    testing: { available: () => true, run: () => Promise.reject(new Error("unused")) },
+    scheduler,
+  });
+
+  const immediateDeadline = (): {
+    readonly scheduler: TimeoutScheduler;
+    fire(): void;
+  } => {
+    let fire: (() => void) | undefined;
+    return {
+      scheduler: {
+        set: (_ms, callback) => {
+          fire = callback;
+          return () => undefined;
+        },
+      },
+      fire: () => fire?.(),
+    };
+  };
+
+  it("marks a run cancelled and timedOut only when the 120s deadline fires", async () => {
+    const deadline = immediateDeadline();
+    const ports = abortDrivenPorts(true, deadline.scheduler);
+    const pending = new VerificationAdapter(ports).run(scriptPlan("test"), signal);
+    await Promise.resolve();
+    deadline.fire();
+    const result = await pending;
     expect(result.status).toBe("cancelled");
     expect(result.observation?.timedOut).toBe(true);
     expect(result.observation?.signal).toBe("SIGTERM");
     expect(result.partial).toBe(true);
   });
 
-  it("returns unknown when a cancelled run cannot confirm process termination", async () => {
-    const { ports } = makePorts(
-      okOutcome({
-        exitCode: null,
-        signal: null,
-        output: "may still be running",
-        timedOut: true,
-        terminationConfirmed: false,
-      }),
+  it("marks a manual caller cancellation cancelled but not timedOut", async () => {
+    const controller = new AbortController();
+    const deadline = immediateDeadline();
+    const ports = abortDrivenPorts(true, deadline.scheduler);
+    const pending = new VerificationAdapter(ports).run(
+      scriptPlan("test"),
+      controller.signal,
     );
-    const result = await new VerificationAdapter(ports).run(scriptPlan("test"), signal);
+    await Promise.resolve();
+    controller.abort();
+    const result = await pending;
+    expect(result.status).toBe("cancelled");
+    expect(result.observation?.timedOut).toBe(false);
+    expect(result.partial).toBe(true);
+  });
+
+  it("returns unknown when a cancelled run cannot confirm process termination", async () => {
+    const controller = new AbortController();
+    const deadline = immediateDeadline();
+    const ports = abortDrivenPorts(false, deadline.scheduler);
+    const pending = new VerificationAdapter(ports).run(
+      scriptPlan("test"),
+      controller.signal,
+    );
+    await Promise.resolve();
+    controller.abort();
+    const result = await pending;
     expect(result.status).toBe("unknown");
+    expect(result.observation?.timedOut).toBe(false);
+    expect(result.partial).toBe(true);
+  });
+
+  it("returns unknown when a timed-out run cannot confirm termination", async () => {
+    const deadline = immediateDeadline();
+    const ports = abortDrivenPorts(false, deadline.scheduler);
+    const pending = new VerificationAdapter(ports).run(scriptPlan("test"), signal);
+    await Promise.resolve();
+    deadline.fire();
+    const result = await pending;
+    expect(result.status).toBe("unknown");
+    expect(result.observation?.timedOut).toBe(true);
     expect(result.partial).toBe(true);
   });
 
@@ -300,7 +422,6 @@ describe("VerificationAdapter — timeout and termination", () => {
                 exitCode: null,
                 signal: "SIGKILL",
                 output: "killed after deadline",
-                timedOut: true,
                 terminationConfirmed: true,
               }),
             );
@@ -310,9 +431,9 @@ describe("VerificationAdapter — timeout and termination", () => {
     const ports: VerificationAdapterPorts = {
       buffers: { dirtyTargets: () => [] },
       confirmation: { confirm: () => Promise.resolve(true) },
-      scripts: { scripts: () => ({ test: "vitest run" }) },
+      scripts: { scripts: () => ({ status: "ok", scripts: { test: "vitest run" } }) },
       process,
-      testing: { run: () => Promise.reject(new Error("unused")) },
+      testing: { available: () => true, run: () => Promise.reject(new Error("unused")) },
       scheduler,
     };
     const pending = new VerificationAdapter(ports).run(scriptPlan("test"), signal);
@@ -351,5 +472,16 @@ describe("VerificationAdapter — output bounds and sensitivity", () => {
     const result = await new VerificationAdapter(ports).run(scriptPlan("test"), signal);
     expect(result.sensitiveData).toBe(false);
     expect(String(result.observation?.output).length).toBe(DISPLAY_LIMIT);
+  });
+
+  it("bounds multibyte output at 128 KiB without a trailing replacement character", async () => {
+    // "😀" is a 4-byte UTF-8 sequence; repeating it past the byte cap forces a
+    // cut in the middle of a code point unless truncation backs off cleanly.
+    const output = "😀".repeat(Math.ceil(MAX_OUTPUT_BYTES / 4) + 100);
+    const { ports } = makePorts(okOutcome({ output }));
+    const result = await new VerificationAdapter(ports).run(scriptPlan("test"), signal);
+    expect(result.partial).toBe(true);
+    const displayed = String(result.observation?.output);
+    expect(displayed).not.toContain("\uFFFD");
   });
 });

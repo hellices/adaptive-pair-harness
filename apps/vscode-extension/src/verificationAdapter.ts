@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import * as vscode from "vscode";
 import type { EffectResult } from "@adaptive-pair/runtime";
 
@@ -34,7 +36,6 @@ export interface RunOutcome {
   readonly exitCode: number | null;
   readonly signal: string | null;
   readonly output: string;
-  readonly timedOut: boolean;
   readonly terminationConfirmed: boolean;
 }
 
@@ -60,8 +61,19 @@ export interface ConfirmationRequest {
   readonly detail: string;
 }
 
+/**
+ * The result of reading the root package manifest. A genuinely absent manifest
+ * is reported distinctly (`absent`) from one that exists but cannot be read or
+ * parsed (`unreadable`). The two must never collapse into the same outcome: an
+ * unreadable manifest is a typed failure, not a missing script.
+ */
+export type ScriptManifest =
+  | { readonly status: "ok"; readonly scripts: Readonly<Record<string, string>> }
+  | { readonly status: "absent" }
+  | { readonly status: "unreadable" };
+
 export interface PackageScriptPort {
-  scripts(): Readonly<Record<string, string>>;
+  scripts(): ScriptManifest;
 }
 
 export interface ProcessRunPort {
@@ -69,6 +81,13 @@ export interface ProcessRunPort {
 }
 
 export interface TestingRunPort {
+  /**
+   * Whether this host can execute the selected tests and observe their results.
+   * VS Code stable exposes no consumer-side API to run another provider's
+   * selected test IDs and observe completion, so the default port reports
+   * `false`; a future capability-gated host may provide an observing port.
+   */
+  available(): boolean;
   run(request: TestingRunRequest, signal: AbortSignal): Promise<RunOutcome>;
 }
 
@@ -102,7 +121,18 @@ const boundToBytes = (text: string, maxBytes: number): { readonly text: string; 
   if (buffer.byteLength <= maxBytes) {
     return { text, truncated: false };
   }
-  return { text: buffer.subarray(0, maxBytes).toString("utf8"), truncated: true };
+  return { text: boundedUtf8(buffer, maxBytes), truncated: true };
+};
+
+/**
+ * Decode at most `maxBytes` of a UTF-8 buffer without emitting a trailing
+ * replacement character. `StringDecoder` buffers an incomplete trailing
+ * multibyte sequence internally instead of flushing it as U+FFFD, so slicing at
+ * an arbitrary byte boundary drops only the partial code point cleanly.
+ */
+const boundedUtf8 = (buffer: Buffer, maxBytes: number): string => {
+  const decoder = new StringDecoder("utf8");
+  return decoder.write(buffer.subarray(0, Math.min(buffer.byteLength, maxBytes)));
 };
 
 const failed = (
@@ -147,7 +177,17 @@ export class VerificationAdapter {
           { reason: "script-not-allowlisted", script: plan.script },
         );
       }
-      if (!Object.prototype.hasOwnProperty.call(this.ports.scripts.scripts(), plan.script)) {
+      const manifest = this.ports.scripts.scripts();
+      if (manifest.status === "unreadable") {
+        return failed(
+          plan.operationId,
+          "failed",
+          "The root package.json exists but could not be read or parsed.",
+          { reason: "manifest-unreadable" },
+        );
+      }
+      const scripts = manifest.status === "ok" ? manifest.scripts : {};
+      if (!Object.prototype.hasOwnProperty.call(scripts, plan.script)) {
         return failed(
           plan.operationId,
           "declined",
@@ -155,6 +195,15 @@ export class VerificationAdapter {
           { reason: "script-not-defined", script: plan.script },
         );
       }
+    }
+
+    if (plan.kind === "vscode-test" && !this.ports.testing.available()) {
+      return failed(
+        plan.operationId,
+        "declined",
+        "This VS Code host cannot execute the selected tests and observe their results.",
+        { reason: "testing-api-unavailable" },
+      );
     }
 
     const dirty = this.ports.buffers.dirtyTargets(plan.targetPaths);
@@ -235,8 +284,11 @@ export class VerificationAdapter {
       ? "[redacted: potential secret detected in verification output]"
       : bounded.text.slice(0, DISPLAY_LIMIT);
 
-    const interrupted = outcome.timedOut || aborted;
-    const timedOut = outcome.timedOut || deadlineFired;
+    // Only the adapter's own 120s deadline sets timedOut. A manual caller
+    // cancellation aborts the same controller but must never be labelled a
+    // timeout.
+    const interrupted = aborted;
+    const timedOut = deadlineFired;
 
     let status: EffectResult["status"];
     if (interrupted) {
@@ -312,43 +364,99 @@ export class VscodeBufferInspectionPort implements BufferInspectionPort {
 }
 
 export class VscodeConfirmationPort implements ConfirmationPort {
-  public async confirm(request: ConfirmationRequest): Promise<boolean> {
+  public async confirm(
+    request: ConfirmationRequest,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    // Honor cancellation before showing the modal. VS Code exposes no API to
+    // programmatically dismiss an open message, so we cannot close it once
+    // shown; instead we re-check the signal after it resolves so that an abort
+    // that arrives while the modal is open can never lead to execution.
+    if (signal.aborted) {
+      return false;
+    }
     const choice = await vscode.window.showWarningMessage(
       request.summary,
       { modal: true, detail: request.detail },
       "Run Verification",
     );
+    if (signal.aborted) {
+      return false;
+    }
     return choice === "Run Verification";
   }
 }
 
-export class NodePackageScriptPort implements PackageScriptPort {
-  public constructor(private readonly rootPath: string) {}
+export type ReadTextFile = (path: string) => string;
 
-  public scripts(): Readonly<Record<string, string>> {
+const isFileNotFound = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  (error as { readonly code?: unknown }).code === "ENOENT";
+
+const defaultReadText: ReadTextFile = (path) => readFileSync(path, "utf8");
+
+export class NodePackageScriptPort implements PackageScriptPort {
+  public constructor(
+    private readonly rootPath: string,
+    private readonly readText: ReadTextFile = defaultReadText,
+  ) {}
+
+  public scripts(): ScriptManifest {
+    let raw: string;
     try {
-      const raw = readFileSync(join(this.rootPath, "package.json"), "utf8");
-      const parsed = JSON.parse(raw) as { readonly scripts?: Record<string, string> };
-      return parsed.scripts ?? {};
-    } catch {
-      return {};
+      raw = this.readText(join(this.rootPath, "package.json"));
+    } catch (error) {
+      // A genuinely absent root manifest is distinct from one that exists but
+      // cannot be read; only the former is a "no script here" condition.
+      return isFileNotFound(error) ? { status: "absent" } : { status: "unreadable" };
     }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { status: "unreadable" };
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return { status: "unreadable" };
+    }
+
+    const scripts = (parsed as { readonly scripts?: unknown }).scripts;
+    if (scripts === undefined) {
+      return { status: "ok", scripts: {} };
+    }
+    if (typeof scripts !== "object" || scripts === null || Array.isArray(scripts)) {
+      return { status: "unreadable" };
+    }
+    return { status: "ok", scripts: scripts as Record<string, string> };
   }
 }
 
+export type SpawnProcess = (
+  command: string,
+  args: readonly string[],
+  options: { readonly cwd: string; readonly shell: false },
+) => ChildProcessWithoutNullStreams;
+
+const defaultSpawn: SpawnProcess = (command, args, options) =>
+  spawn(command, [...args], options);
+
 export class NodeProcessRunPort implements ProcessRunPort {
-  public constructor(private readonly rootPath: string) {}
+  public constructor(
+    private readonly rootPath: string,
+    private readonly spawnProcess: SpawnProcess = defaultSpawn,
+  ) {}
 
   public run(command: RunCommand, signal: AbortSignal): Promise<RunOutcome> {
     return new Promise<RunOutcome>((resolve) => {
-      const child = spawn("npm", ["run", command.script], {
+      const child = this.spawnProcess("npm", ["run", command.script], {
         cwd: this.rootPath,
         shell: false,
       });
 
       const chunks: Buffer[] = [];
       let byteLength = 0;
-      let timedOut = false;
       let settled = false;
 
       const collect = (data: Buffer): void => {
@@ -362,7 +470,7 @@ export class NodeProcessRunPort implements ProcessRunPort {
       child.stderr?.on("data", collect);
 
       const output = (): string =>
-        Buffer.concat(chunks).subarray(0, MAX_OUTPUT_BYTES).toString("utf8");
+        boundedUtf8(Buffer.concat(chunks), MAX_OUTPUT_BYTES);
 
       const KILL_GRACE_MS = 5_000;
       let graceHandle: ReturnType<typeof setTimeout> | undefined;
@@ -379,7 +487,6 @@ export class NodeProcessRunPort implements ProcessRunPort {
       };
 
       function onAbort(): void {
-        timedOut = true;
         child.kill("SIGTERM");
         // If the process ignores SIGTERM, escalate and then report an
         // unconfirmed termination rather than hanging forever.
@@ -389,7 +496,6 @@ export class NodeProcessRunPort implements ProcessRunPort {
             exitCode: null,
             signal: "SIGKILL",
             output: output(),
-            timedOut: true,
             terminationConfirmed: false,
           });
         }, KILL_GRACE_MS);
@@ -401,7 +507,6 @@ export class NodeProcessRunPort implements ProcessRunPort {
           exitCode: null,
           signal: null,
           output: output(),
-          timedOut,
           terminationConfirmed: false,
         });
       });
@@ -411,7 +516,6 @@ export class NodeProcessRunPort implements ProcessRunPort {
           exitCode: code,
           signal: terminationSignal,
           output: output(),
-          timedOut,
           terminationConfirmed: true,
         });
       });
@@ -427,13 +531,38 @@ const productionScheduler: TimeoutScheduler = {
 };
 
 /**
+ * The default VS Code stable Testing port. VS Code 1.136 stable's public
+ * `vscode.tests` namespace exposes provider-side `createTestController` but no
+ * consumer-side API to execute another provider's selected test IDs and observe
+ * their completion or results. This port therefore reports itself unavailable
+ * and never runs anything: the adapter declines a Testing plan with a typed
+ * `testing-api-unavailable` reason. The `TestingRunPort` seam is retained so a
+ * future capability-gated host can inject a port that provides observed results;
+ * until then, package-script verification remains the complete observed path.
+ */
+export class StableTestingRunPort implements TestingRunPort {
+  public available(): boolean {
+    return false;
+  }
+
+  public run(): Promise<RunOutcome> {
+    return Promise.reject(
+      new Error(
+        "VS Code stable exposes no consumer API to run selected tests and observe results.",
+      ),
+    );
+  }
+}
+
+/**
  * Compose the production adapter from real buffer, confirmation, script, and
- * process ports. The VS Code Testing port is supplied by the host wiring layer,
- * keeping the Testing surface injectable.
+ * process ports. The VS Code Testing port defaults to {@link StableTestingRunPort}
+ * so the factory is host-usable without a fake; a capability-gated host may
+ * inject an observing Testing port instead.
  */
 export const createVerificationAdapter = (
   rootPath: string,
-  testing: TestingRunPort,
+  testing: TestingRunPort = new StableTestingRunPort(),
 ): VerificationAdapter =>
   new VerificationAdapter({
     buffers: new VscodeBufferInspectionPort(),

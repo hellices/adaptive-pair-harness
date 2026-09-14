@@ -308,6 +308,15 @@ Applied files and observed checks are displayed independently from model prose.
 Evaluation compares confidence with correctness instead of treating confidence
 as success.
 
+VS Code 1.136 stable constrains how observed checks can be produced. The public
+`vscode.tests` namespace exposes provider-side `createTestController` but no
+consumer-side API to execute another provider's selected test IDs and observe
+their completion or results, and undocumented `testing.*` commands must not be
+relied upon. The verified Stable path for observed checks is therefore an
+existing root package validation script executed with explicit confirmation and
+observed exit metadata; the concrete selected-test bridge is deferred to the
+native-adapter plan, gated behind a host that can supply observed results.
+
 ### Product quality remains a co-primary outcome
 
 Capability preservation does not compensate for broken software. Every mode

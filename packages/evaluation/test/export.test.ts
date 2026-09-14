@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { exportEvaluation, type EvaluationRecord } from "../src/index.js";
+import {
+  exportEvaluation,
+  EvaluationExportError,
+  type EvaluationRecord,
+} from "../src/index.js";
 
 const baseRecord = (): EvaluationRecord => ({
   protocolVersion: 1,
@@ -64,7 +68,7 @@ describe("Evaluation export", () => {
     );
   });
 
-  it("excludes prohibited workspace, model, path, and profile text even when present on the input", () => {
+  it("rejects prohibited extra properties without leaking their values", () => {
     const contaminated = {
       ...baseRecord(),
       workspaceId: "file:///Users/dev/secret-project",
@@ -76,14 +80,22 @@ describe("Evaluation export", () => {
       sourcePath: "/Users/dev/secret-project/src/secret.ts",
     } as unknown as EvaluationRecord;
 
-    const serialized = exportEvaluation([contaminated]);
-    expect(serialized).not.toContain("secret-project");
-    expect(serialized).not.toContain("acme-model-xl");
-    expect(serialized).not.toContain("feature/private");
-    expect(serialized).not.toContain("deep explanations");
-    expect(serialized).not.toContain("proprietary");
-    expect(serialized).not.toContain("secret.ts");
-    expect(serialized).not.toContain("TS2345");
+    let thrown: unknown;
+    try {
+      exportEvaluation([contaminated]);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(EvaluationExportError);
+    const message = (thrown as Error).message;
+    // The failure names the rejection reason but never echoes the raw values.
+    expect(message).not.toContain("secret-project");
+    expect(message).not.toContain("acme-model-xl");
+    expect(message).not.toContain("feature/private");
+    expect(message).not.toContain("deep explanations");
+    expect(message).not.toContain("proprietary");
+    expect(message).not.toContain("secret.ts");
+    expect(message).not.toContain("TS2345");
   });
 
   it("emits only the categorical growth outcome fields", () => {
@@ -106,5 +118,93 @@ describe("Evaluation export", () => {
         "variedDebugging",
       ].sort(),
     );
+  });
+});
+
+describe("Evaluation export — strict runtime validation", () => {
+  it("rejects an invalid operation-outcome category without leaking its value", () => {
+    const record = {
+      ...baseRecord(),
+      operationOutcomes: ["confirmed", "/Users/dev/secret/path"],
+    } as unknown as EvaluationRecord;
+    let thrown: unknown;
+    try {
+      exportEvaluation([record]);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(EvaluationExportError);
+    expect((thrown as EvaluationExportError).reason).toBe(
+      "invalid-operation-outcome",
+    );
+    expect((thrown as Error).message).not.toContain("secret");
+  });
+
+  it("rejects an invalid mode category", () => {
+    const record = { ...baseRecord(), mode: "smuggled-data" } as unknown as EvaluationRecord;
+    expect(() => exportEvaluation([record])).toThrow(EvaluationExportError);
+  });
+
+  it("rejects an invalid growth demonstration value", () => {
+    const record = {
+      ...baseRecord(),
+      growth: { ...baseRecord().growth, explanation: "leaked text" },
+    } as unknown as EvaluationRecord;
+    let thrown: unknown;
+    try {
+      exportEvaluation([record]);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(EvaluationExportError);
+    expect((thrown as Error).message).not.toContain("leaked text");
+  });
+
+  it("rejects an extra property nested in the growth object", () => {
+    const record = {
+      ...baseRecord(),
+      growth: { ...baseRecord().growth, secretNote: "private" },
+    } as unknown as EvaluationRecord;
+    expect(() => exportEvaluation([record])).toThrow(EvaluationExportError);
+  });
+
+  it.each([
+    ["a non-finite count", { pauseCount: Number.POSITIVE_INFINITY }],
+    ["a NaN count", { conflictCount: Number.NaN }],
+    ["a negative count", { unwantedInterventionCount: -1 }],
+    ["a non-integer count", { pauseCount: 1.5 }],
+    ["an unsafe-integer count", { conflictCount: Number.MAX_SAFE_INTEGER + 1 }],
+  ])("rejects %s", (_label, override) => {
+    const record = { ...baseRecord(), ...override };
+    expect(() => exportEvaluation([record])).toThrow(EvaluationExportError);
+  });
+
+  it.each([
+    ["a non-finite timestamp", { startedAt: Number.POSITIVE_INFINITY }],
+    ["a NaN timestamp", { completedAt: Number.NaN }],
+    ["a negative timestamp", { startedAt: -1 }],
+    ["an unsafe-integer timestamp", { completedAt: Number.MAX_SAFE_INTEGER + 1 }],
+  ])("rejects %s", (_label, override) => {
+    const record = { ...baseRecord(), ...override };
+    expect(() => exportEvaluation([record])).toThrow(EvaluationExportError);
+  });
+
+  it("rejects an out-of-range hint level", () => {
+    const record = { ...baseRecord(), hintLevel: 9 } as unknown as EvaluationRecord;
+    expect(() => exportEvaluation([record])).toThrow(EvaluationExportError);
+  });
+
+  it("rejects a wrong protocol version", () => {
+    const record = { ...baseRecord(), protocolVersion: 2 } as unknown as EvaluationRecord;
+    expect(() => exportEvaluation([record])).toThrow(EvaluationExportError);
+  });
+
+  it("rejects a non-boolean reveal flag", () => {
+    const record = { ...baseRecord(), solutionRevealed: "yes" } as unknown as EvaluationRecord;
+    expect(() => exportEvaluation([record])).toThrow(EvaluationExportError);
+  });
+
+  it("accepts a fully valid record", () => {
+    expect(() => exportEvaluation([baseRecord()])).not.toThrow();
   });
 });

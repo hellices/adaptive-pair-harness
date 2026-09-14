@@ -3131,6 +3131,16 @@ The first adapter supports:
 2. an existing root package script named `test`, `check`, `lint`,
    `typecheck`, or `build`, with an optional colon suffix.
 
+On VS Code 1.136 stable, path 1 is capability-gated: the public `vscode.tests`
+namespace exposes provider-side `createTestController` but no consumer-side API
+to execute another provider's selected test IDs and observe their completion or
+results, and undocumented `testing.*` commands are not used. The stable adapter
+keeps the `TestingRunPort` seam injectable but its default port reports itself
+unavailable, so a Testing plan is declined with a typed `testing-api-unavailable`
+reason and runs nothing. Package-script verification is the complete observed
+Stable path; the concrete selected-test bridge is deferred to the native-adapter
+plan, where a capability-gated host can inject an observing Testing port.
+
 Require:
 
 - clean target buffers or explicit cancellation;

@@ -1025,7 +1025,7 @@ Pair state.
 | Tool confirmation UI | Reuse | Provide mode, owner, scope, effect, and operation ID in `prepareInvocation`; core still decides |
 | Workspace read and search | Wrap | Enforce root, scope, size, count, sensitivity, and consent bounds |
 | File edit | Wrap | Enforce mode, AI ownership, path scope, expected version/hash, authority epoch, and result reconciliation |
-| Testing API and Tasks | Wrap | Run only the agreed verification and return observed status |
+| Testing API and Tasks | Wrap | Run only the agreed verification and return observed status; on Stable the selected-test bridge is capability-gated and declines with `testing-api-unavailable`, so package scripts are the observed path |
 | Terminal | Exclude in Growth; structured check in Pair; explicit bounded command in Delivery | Classify side effects, require consent, record unknown completion, never auto-replay |
 | Web and MCP tools | Opt-in by work unit | Use native URL/tool approval, treat results as untrusted, and keep network effects outside automatic retry |
 | Diff, changes, and checkpoints | Reuse for presentation | Record applied/saved/reverted state independently in the operation ledger |
@@ -1291,6 +1291,17 @@ order:
 
 Arbitrary commands are not inferred from repository prose. A state-changing
 command requires explicit classification and approval.
+
+On VS Code 1.136 stable this order is capability-gated. The public
+`vscode.tests` namespace exposes provider-side `createTestController` but no
+consumer-side API to execute another provider's selected test IDs and observe
+their completion or results, and undocumented `testing.*` commands are not used.
+The stable verification adapter therefore keeps the Testing seam injectable but
+its default port reports itself unavailable: a Testing plan is declined with a
+typed `testing-api-unavailable` reason and runs nothing. An existing root
+package validation script is the complete observed Stable verification path; the
+concrete selected-test bridge is deferred to the native-adapter plan, where a
+capability-gated host can supply observed results.
 
 ### Retry policy
 
