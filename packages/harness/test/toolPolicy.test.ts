@@ -10,6 +10,220 @@ import {
   toolsFor,
 } from "../src/index.js";
 import { growthRuntime } from "@adaptive-pair/testkit";
+import type { PairRuntimeSnapshot, PairSessionSnapshot, WorkUnit } from "@adaptive-pair/protocol";
+
+const createEntrySnapshot = (
+  capturedAt: number,
+): NonNullable<PairSessionSnapshot["entrySnapshot"]> => ({
+  workspaceId: "workspace-1",
+  branch: "feature/v2-growth-foundation",
+  dirtyPaths: [],
+  openPaths: ["packages/runtime/src/coordinator.ts"],
+  diagnostics: [],
+  protectedPaths: [],
+  capturedAt,
+});
+
+const createGrowthAssistance = (): NonNullable<PairSessionSnapshot["assistance"]> => ({
+  attempt: undefined,
+  hypothesis: undefined,
+  hint: undefined,
+  solutionReveal: undefined,
+});
+
+const createLearningAgreement = (): NonNullable<PairSessionSnapshot["learningAgreement"]> => ({
+  learningGoals: ["Validate the runtime tool projection"],
+  familiarAreas: [],
+  humanOwnedCapabilities: ["diagnosis", "implementation"],
+  delegatableWork: [],
+  maximumHintLevel: 2,
+  independentCheck: "Recreate the projection without help",
+});
+
+const createWorkUnit = (
+  overrides: Partial<WorkUnit>,
+): WorkUnit => ({
+  id: "unit-1",
+  objective: "Complete the current bounded task",
+  mode: "pair",
+  learningValue: "mixed",
+  capability: "implementation",
+  owner: "human",
+  allowedPaths: ["packages/runtime/src/coordinator.ts"],
+  acceptanceChecks: ["npm test"],
+  verificationPlan: "npm test",
+  stoppingCondition: "The changed tests stay green",
+  baseline: {},
+  status: "agreed",
+  ...overrides,
+});
+
+const createInactiveRuntime = (): PairRuntimeSnapshot => ({
+  protocolVersion: 1,
+  revision: 0,
+  presence: {
+    workspaceId: "workspace-1",
+    observationRevision: 0,
+    status: "observing",
+    activeSessionId: undefined,
+  },
+  session: undefined,
+});
+
+const createBriefingRuntime = (
+  session: Partial<PairSessionSnapshot> = {},
+): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 4,
+    session: {
+      authorityEpoch: 2,
+      status: "briefing",
+      mode: undefined,
+      learningAgreement: undefined,
+      entrySnapshot: createEntrySnapshot(3),
+      workUnit: undefined,
+      assistance: undefined,
+      operations: [],
+      userActionGrants: [],
+      ...session,
+    },
+  });
+
+const createBriefingPairRuntime = (): PairRuntimeSnapshot =>
+  createBriefingRuntime({
+    mode: "pair",
+  });
+
+const createBriefingGrowthRuntime = (
+  session: Partial<PairSessionSnapshot> = {},
+): PairRuntimeSnapshot =>
+  createBriefingRuntime({
+    mode: "growth",
+    learningAgreement: undefined,
+    ...session,
+  });
+
+const createBriefingProposedRuntime = (): PairRuntimeSnapshot =>
+  createBriefingGrowthRuntime({
+    learningAgreement: createLearningAgreement(),
+    workUnit: createWorkUnit({
+      mode: "growth",
+      learningValue: "high",
+      capability: "diagnosis",
+      owner: "human",
+      status: "proposed",
+    }),
+  });
+
+const createReadyGrowthRuntime = (): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 7,
+    session: {
+      status: "ready",
+      mode: "growth",
+      assistance: createGrowthAssistance(),
+      workUnit: createWorkUnit({
+        mode: "growth",
+        learningValue: "high",
+        capability: "diagnosis",
+        owner: "human",
+      }),
+    },
+  });
+
+const createActivePairAiRuntime = (): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 9,
+    session: {
+      status: "active",
+      mode: "pair",
+      learningAgreement: undefined,
+      assistance: undefined,
+      workUnit: createWorkUnit({
+        mode: "pair",
+        owner: "ai",
+      }),
+    },
+  });
+
+const createActiveDeliveryAiRuntime = (): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 11,
+    session: {
+      status: "active",
+      mode: "delivery",
+      learningAgreement: undefined,
+      assistance: undefined,
+      workUnit: createWorkUnit({
+        mode: "delivery",
+        capability: "verification",
+        owner: "ai",
+      }),
+    },
+  });
+
+const createPausedRuntime = (): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 12,
+    session: {
+      status: "paused",
+      mode: "pair",
+      learningAgreement: undefined,
+      assistance: undefined,
+      workUnit: createWorkUnit({
+        mode: "pair",
+        owner: "ai",
+      }),
+    },
+  });
+
+const createReconcilingRuntime = (): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 13,
+    session: {
+      status: "reconciling",
+      mode: "pair",
+      learningAgreement: undefined,
+      assistance: undefined,
+      workUnit: createWorkUnit({
+        mode: "pair",
+        owner: "ai",
+        status: "needs-reconcile",
+      }),
+    },
+  });
+
+const createClosingRuntime = (): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 14,
+    session: {
+      status: "closing",
+      mode: "delivery",
+      learningAgreement: undefined,
+      assistance: undefined,
+      workUnit: createWorkUnit({
+        mode: "delivery",
+        capability: "verification",
+        owner: "ai",
+      }),
+    },
+  });
+
+const createClosedRuntime = (): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 15,
+    session: {
+      status: "closed",
+      mode: "delivery",
+      learningAgreement: undefined,
+      assistance: undefined,
+      workUnit: createWorkUnit({
+        mode: "delivery",
+        capability: "verification",
+        owner: "ai",
+      }),
+    },
+  });
 
 describe("Pair tool policy", () => {
   it("shows no workspace mutation in Growth Mode", () => {
@@ -18,6 +232,165 @@ describe("Pair tool policy", () => {
     expect(view.tools.map(tool => tool.name)).toContain("pair_request_hint");
     expect(view.tools.map(tool => tool.name)).not.toContain("pair_apply_edit");
     expect(view.tools.map(tool => tool.name)).not.toContain("pair_run_command");
+  });
+
+  it("projects representative phase-aware tool sets", () => {
+    expect(toolsFor(createInactiveRuntime()).tools.map(tool => tool.name)).toEqual([
+      "pair_get_state",
+    ]);
+
+    expect(
+      toolsFor(
+        createBriefingRuntime({
+          mode: undefined,
+          entrySnapshot: undefined,
+        }),
+      ).tools.map(tool => tool.name),
+    ).toEqual([
+      "pair_get_state",
+      "pair_capture_entry",
+      "pair_select_mode",
+      "pair_close_session",
+    ]);
+
+    expect(
+      toolsFor(createBriefingRuntime()).tools.map(tool => tool.name),
+    ).toEqual([
+      "pair_get_state",
+      "pair_capture_entry",
+      "pair_confirm_learning",
+      "pair_select_mode",
+      "pair_close_session",
+    ]);
+
+    expect(
+      toolsFor(createBriefingPairRuntime()).tools.map(tool => tool.name),
+    ).toEqual([
+      "pair_get_state",
+      "pair_capture_entry",
+      "pair_select_mode",
+      "pair_propose_work_unit",
+      "pair_close_session",
+    ]);
+
+    expect(
+      toolsFor(createBriefingGrowthRuntime()).tools.map(tool => tool.name),
+    ).toEqual([
+      "pair_get_state",
+      "pair_capture_entry",
+      "pair_confirm_learning",
+      "pair_select_mode",
+      "pair_close_session",
+    ]);
+
+    expect(
+      toolsFor(
+        createBriefingGrowthRuntime({
+          learningAgreement: createLearningAgreement(),
+        }),
+      ).tools.map(tool => tool.name),
+    ).toEqual([
+      "pair_get_state",
+      "pair_capture_entry",
+      "pair_confirm_learning",
+      "pair_select_mode",
+      "pair_propose_work_unit",
+      "pair_close_session",
+    ]);
+
+    expect(
+      toolsFor(createBriefingProposedRuntime()).tools.map(tool => tool.name),
+    ).toEqual([
+      "pair_get_state",
+      "pair_capture_entry",
+      "pair_confirm_learning",
+      "pair_propose_work_unit",
+      "pair_agree_work_unit",
+      "pair_close_session",
+    ]);
+
+    expect(
+      toolsFor(createReadyGrowthRuntime()).tools.map(tool => tool.name),
+    ).toEqual([
+      "pair_get_state",
+      "pair_read_scope",
+      "pair_search_scope",
+      "pair_record_attempt",
+      "pair_record_hypothesis",
+      "pair_request_hint",
+      "pair_reveal_solution",
+      "pair_run_verification",
+      "pair_close_session",
+    ]);
+
+    expect(
+      toolsFor(createActivePairAiRuntime()).tools.map(tool => tool.name),
+    ).toEqual([
+      "pair_get_state",
+      "pair_read_scope",
+      "pair_search_scope",
+      "pair_apply_edit",
+      "pair_run_verification",
+      "pair_close_session",
+    ]);
+
+    expect(
+      toolsFor(createActiveDeliveryAiRuntime()).tools.map(tool => tool.name),
+    ).toEqual([
+      "pair_get_state",
+      "pair_read_scope",
+      "pair_search_scope",
+      "pair_apply_edit",
+      "pair_run_verification",
+      "pair_run_command",
+      "pair_close_session",
+    ]);
+
+    expect(toolsFor(createPausedRuntime()).tools.map(tool => tool.name)).toEqual([
+      "pair_get_state",
+      "pair_close_session",
+    ]);
+
+    expect(
+      toolsFor(createReconcilingRuntime()).tools.map(tool => tool.name),
+    ).toEqual([
+      "pair_get_state",
+      "pair_close_session",
+    ]);
+
+    expect(
+      toolsFor(createClosingRuntime()).tools.map(tool => tool.name),
+    ).toEqual([
+      "pair_get_state",
+      "pair_close_session",
+    ]);
+
+    expect(toolsFor(createClosedRuntime()).tools.map(tool => tool.name)).toEqual([
+      "pair_get_state",
+    ]);
+  });
+
+  it("hides unimplemented handoff and transfer tools from visible projections", () => {
+    const snapshots = [
+      createBriefingRuntime(),
+      createBriefingPairRuntime(),
+      createBriefingGrowthRuntime(),
+      createBriefingProposedRuntime(),
+      createReadyGrowthRuntime(),
+      createActivePairAiRuntime(),
+      createActiveDeliveryAiRuntime(),
+      createPausedRuntime(),
+      createReconcilingRuntime(),
+      createClosingRuntime(),
+      createClosedRuntime(),
+    ];
+
+    for (const snapshot of snapshots) {
+      const visibleNames = toolsFor(snapshot).tools.map(tool => tool.name);
+
+      expect(visibleNames).not.toContain("pair_accept_handoff");
+      expect(visibleNames).not.toContain("pair_record_transfer");
+    }
   });
 
   it("binds the view to the current revision and authority epoch", () => {
@@ -44,6 +417,8 @@ describe("Pair tool policy", () => {
     expect(PAIR_NATIVE_TOOL_NAMES).toEqual([
       "adaptive_pair_get_state",
       "adaptive_pair_capture_entry",
+      "adaptive_pair_confirm_learning",
+      "adaptive_pair_select_mode",
       "adaptive_pair_read_scope",
       "adaptive_pair_search_scope",
       "adaptive_pair_record_attempt",
@@ -51,6 +426,7 @@ describe("Pair tool policy", () => {
       "adaptive_pair_request_hint",
       "adaptive_pair_reveal_solution",
       "adaptive_pair_propose_work_unit",
+      "adaptive_pair_agree_work_unit",
       "adaptive_pair_accept_handoff",
       "adaptive_pair_apply_edit",
       "adaptive_pair_run_verification",

@@ -1,9 +1,459 @@
 import { describe, expect, it } from "vitest";
+import { toolsFor, type PairToolName } from "@adaptive-pair/harness";
 import { growthRuntime, FakeClock, FakeIdSource } from "@adaptive-pair/testkit";
+import type { PairRuntimeSnapshot, PairSessionSnapshot, WorkUnit } from "@adaptive-pair/protocol";
 import { PairCoordinator } from "../src/index.js";
 import { FakeEffectPort, FakePairStore } from "./fakes.js";
 
+const createEntrySnapshot = (
+  capturedAt: number,
+): NonNullable<PairSessionSnapshot["entrySnapshot"]> => ({
+  workspaceId: "workspace-1",
+  branch: "feature/v2-growth-foundation",
+  dirtyPaths: [],
+  openPaths: ["packages/runtime/src/coordinator.ts"],
+  diagnostics: [],
+  protectedPaths: [],
+  capturedAt,
+});
+
+const createGrowthAssistance = (): NonNullable<PairSessionSnapshot["assistance"]> => ({
+  attempt: undefined,
+  hypothesis: undefined,
+  hint: undefined,
+  solutionReveal: undefined,
+});
+
+const createLearningAgreement = (): NonNullable<PairSessionSnapshot["learningAgreement"]> => ({
+  learningGoals: ["Validate the runtime tool projection"],
+  familiarAreas: [],
+  humanOwnedCapabilities: ["diagnosis", "implementation"],
+  delegatableWork: [],
+  maximumHintLevel: 2,
+  independentCheck: "Recreate the projection without help",
+});
+
+const createWorkUnit = (
+  overrides: Partial<WorkUnit>,
+): WorkUnit => ({
+  id: "unit-1",
+  objective: "Complete the current bounded task",
+  mode: "pair",
+  learningValue: "mixed",
+  capability: "implementation",
+  owner: "human",
+  allowedPaths: ["packages/runtime/src/coordinator.ts"],
+  acceptanceChecks: ["npm test"],
+  verificationPlan: "npm test",
+  stoppingCondition: "The changed tests stay green",
+  baseline: {},
+  status: "agreed",
+  ...overrides,
+});
+
+const createBriefingRuntime = (): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 4,
+    session: {
+      authorityEpoch: 2,
+      status: "briefing",
+      mode: undefined,
+      learningAgreement: undefined,
+      entrySnapshot: createEntrySnapshot(3),
+      workUnit: undefined,
+      assistance: undefined,
+      operations: [],
+      userActionGrants: [],
+    },
+  });
+
+const createBriefingPairRuntime = (): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 4,
+    session: {
+      authorityEpoch: 2,
+      status: "briefing",
+      mode: "pair",
+      learningAgreement: undefined,
+      entrySnapshot: createEntrySnapshot(3),
+      workUnit: undefined,
+      assistance: undefined,
+      operations: [],
+      userActionGrants: [],
+    },
+  });
+
+const createBriefingUninitializedRuntime = (): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 2,
+    session: {
+      authorityEpoch: 1,
+      status: "briefing",
+      mode: undefined,
+      learningAgreement: undefined,
+      entrySnapshot: undefined,
+      workUnit: undefined,
+      assistance: undefined,
+      operations: [],
+      userActionGrants: [],
+    },
+  });
+
+const createBriefingGrowthRuntime = (): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 5,
+    session: {
+      authorityEpoch: 2,
+      status: "briefing",
+      mode: "growth",
+      learningAgreement: undefined,
+      entrySnapshot: createEntrySnapshot(3),
+      workUnit: undefined,
+      assistance: undefined,
+      operations: [],
+      userActionGrants: [],
+    },
+  });
+
+const createBriefingProposedRuntime = (): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 6,
+    session: {
+      authorityEpoch: 2,
+      status: "briefing",
+      mode: "growth",
+      learningAgreement: createLearningAgreement(),
+      entrySnapshot: createEntrySnapshot(3),
+      workUnit: createWorkUnit({
+        mode: "growth",
+        learningValue: "high",
+        capability: "diagnosis",
+        owner: "human",
+        status: "proposed",
+      }),
+      assistance: undefined,
+      operations: [],
+      userActionGrants: [],
+    },
+  });
+
+const createReadyGrowthRuntime = (): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 7,
+    session: {
+      status: "ready",
+      mode: "growth",
+      assistance: createGrowthAssistance(),
+      workUnit: createWorkUnit({
+        mode: "growth",
+        learningValue: "high",
+        capability: "diagnosis",
+        owner: "human",
+      }),
+    },
+  });
+
+const createActivePairAiRuntime = (): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 9,
+    session: {
+      status: "active",
+      mode: "pair",
+      learningAgreement: undefined,
+      assistance: undefined,
+      workUnit: createWorkUnit({
+        mode: "pair",
+        owner: "ai",
+      }),
+    },
+  });
+
+const createActiveDeliveryAiRuntime = (): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 11,
+    session: {
+      status: "active",
+      mode: "delivery",
+      learningAgreement: undefined,
+      assistance: undefined,
+      workUnit: createWorkUnit({
+        mode: "delivery",
+        capability: "verification",
+        owner: "ai",
+      }),
+    },
+  });
+
+const createPausedRuntime = (): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 12,
+    session: {
+      status: "paused",
+      mode: "pair",
+      learningAgreement: undefined,
+      assistance: undefined,
+      workUnit: createWorkUnit({
+        mode: "pair",
+        owner: "ai",
+      }),
+    },
+  });
+
+const createReconcilingRuntime = (): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 13,
+    session: {
+      status: "reconciling",
+      mode: "pair",
+      learningAgreement: undefined,
+      assistance: undefined,
+      workUnit: createWorkUnit({
+        mode: "pair",
+        owner: "ai",
+        status: "needs-reconcile",
+      }),
+    },
+  });
+
+const createClosingRuntime = (): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 14,
+    session: {
+      status: "closing",
+      mode: "delivery",
+      learningAgreement: undefined,
+      assistance: undefined,
+      workUnit: createWorkUnit({
+        mode: "delivery",
+        capability: "verification",
+        owner: "ai",
+      }),
+    },
+  });
+
+const createClosedRuntime = (): PairRuntimeSnapshot =>
+  growthRuntime({
+    runtimeRevision: 15,
+    session: {
+      status: "closed",
+      mode: "delivery",
+      learningAgreement: undefined,
+      assistance: undefined,
+      workUnit: createWorkUnit({
+        mode: "delivery",
+        capability: "verification",
+        owner: "ai",
+      }),
+    },
+  });
+
+const createInactiveRuntime = (): PairRuntimeSnapshot => ({
+  protocolVersion: 1,
+  revision: 0,
+  presence: {
+    workspaceId: "workspace-1",
+    observationRevision: 0,
+    status: "observing",
+    activeSessionId: undefined,
+  },
+  session: undefined,
+});
+
+const inputForTool = (
+  name: PairToolName,
+  snapshot: PairRuntimeSnapshot,
+): Readonly<Record<string, unknown>> => {
+  const workUnitId = snapshot.session?.workUnit?.id ?? "unit-1";
+  const mode = snapshot.session?.mode ?? "pair";
+
+  switch (name) {
+    case "pair_get_state":
+    case "pair_close_session":
+      return {};
+    case "pair_capture_entry":
+      return {
+        entry: {
+          ...createEntrySnapshot(42),
+          branch: "feature/v2-growth-foundation-refreshed",
+          dirtyPaths: ["packages/runtime/src/coordinator.ts"],
+        },
+      };
+    case "pair_confirm_learning":
+      return {
+        agreement: createLearningAgreement(),
+      };
+    case "pair_select_mode":
+      return {
+        mode:
+          snapshot.session?.mode === "growth" &&
+          snapshot.session.learningAgreement === undefined
+            ? "pair"
+            : snapshot.session?.mode ?? "pair",
+      };
+    case "pair_read_scope":
+      return { path: "packages/runtime/src" };
+    case "pair_search_scope":
+      return { query: "grantUserAction" };
+    case "pair_record_attempt":
+      return {
+        workUnitId,
+        summary: "Tried a bounded reproduction.",
+        bypassed: false,
+      };
+    case "pair_record_hypothesis":
+      return {
+        workUnitId,
+        summary: "The visible tool set does not match the current phase.",
+        bypassed: false,
+      };
+    case "pair_request_hint":
+      return { workUnitId, level: 1 };
+    case "pair_reveal_solution":
+      return { workUnitId };
+    case "pair_propose_work_unit":
+      return {
+        workUnit: createWorkUnit({
+          id: "unit-2",
+          mode,
+          capability: mode === "delivery" ? "verification" : "implementation",
+          learningValue: mode === "growth" ? "high" : "mixed",
+          owner: mode === "growth" ? "human" : "ai",
+          status: "proposed",
+        }),
+      };
+    case "pair_agree_work_unit":
+      return { workUnitId };
+    case "pair_apply_edit":
+      return {
+        targetPath: "packages/runtime/src/coordinator.ts",
+        description: "Apply the agreed fix",
+      };
+    case "pair_run_verification":
+      return { plan: "npm test" };
+    case "pair_run_command":
+      return { command: "npm test" };
+    case "pair_accept_handoff":
+    case "pair_record_transfer":
+      throw new Error(`Hidden tool should not be visible: ${name}`);
+  }
+};
+
 describe("PairCoordinator", () => {
+  it("grants and consumes pair_capture_entry during briefing", async () => {
+    const store = new FakePairStore([], createBriefingRuntime());
+    const coordinator = new PairCoordinator({
+      store,
+      effects: new FakeEffectPort([]),
+      clock: new FakeClock(),
+      ids: new FakeIdSource(),
+      streamId: "workspace-1",
+    });
+    const signal = new AbortController().signal;
+
+    const userActionId = await coordinator.grantUserAction(
+      "pair_capture_entry",
+      signal,
+    );
+
+    expect(store.snapshot().session?.userActionGrants).toEqual([
+      {
+        id: userActionId,
+        nativeToolName: "adaptive_pair_capture_entry",
+        runtimeRevision: 5,
+        authorityEpoch: 2,
+        status: "available",
+      },
+    ]);
+
+    const result = await coordinator.invokeTool(
+      "pair_capture_entry",
+      {
+        entry: {
+          ...createEntrySnapshot(42),
+          branch: "feature/v2-growth-foundation-refreshed",
+        },
+      },
+      signal,
+      { userActionId },
+    );
+
+    expect(result.status).toBe("confirmed");
+    expect(store.snapshot().session?.entrySnapshot?.branch).toBe(
+      "feature/v2-growth-foundation-refreshed",
+    );
+    expect(store.snapshot().session?.userActionGrants.at(-1)?.status).toBe(
+      "consumed",
+    );
+  });
+
+  it("rejects hidden operational grants during briefing", async () => {
+    const store = new FakePairStore([], createBriefingRuntime());
+    const coordinator = new PairCoordinator({
+      store,
+      effects: new FakeEffectPort([]),
+      clock: new FakeClock(),
+      ids: new FakeIdSource(),
+      streamId: "workspace-1",
+    });
+    const signal = new AbortController().signal;
+
+    await expect(
+      coordinator.grantUserAction("pair_run_verification", signal),
+    ).rejects.toThrow("TOOL_HIDDEN");
+    expect(store.snapshot().session?.userActionGrants).toEqual([]);
+  });
+
+  it("only exposes visible tools that the coordinator can execute", async () => {
+    const snapshots = [
+      createInactiveRuntime(),
+      createBriefingUninitializedRuntime(),
+      createBriefingRuntime(),
+      createBriefingPairRuntime(),
+      createBriefingGrowthRuntime(),
+      createBriefingProposedRuntime(),
+      createReadyGrowthRuntime(),
+      createActivePairAiRuntime(),
+      createActiveDeliveryAiRuntime(),
+      createPausedRuntime(),
+      createReconcilingRuntime(),
+      createClosingRuntime(),
+      createClosedRuntime(),
+    ];
+
+    for (const snapshot of snapshots) {
+      for (const descriptor of toolsFor(snapshot).tools) {
+        const store = new FakePairStore([], snapshot);
+        const effects = new FakeEffectPort([]);
+        const coordinator = new PairCoordinator({
+          store,
+          effects,
+          clock: new FakeClock(),
+          ids: new FakeIdSource(),
+          streamId: "workspace-1",
+        });
+        const signal = new AbortController().signal;
+        const userActionId = descriptor.requiresExplicitUserAction
+          ? await coordinator.grantUserAction(descriptor.name, signal)
+          : undefined;
+
+        const result = await coordinator.invokeTool(
+          descriptor.name,
+          inputForTool(descriptor.name, snapshot),
+          signal,
+          userActionId === undefined ? undefined : { userActionId },
+        );
+
+        expect([
+          "confirmed",
+          "failed",
+          "declined",
+          "cancelled",
+          "unknown",
+        ]).toContain(result.status);
+      }
+    }
+  });
+
   it("persists grant consumption and authorization before dispatching an effect", async () => {
     const order: string[] = [];
     const store = new FakePairStore(order);
@@ -126,7 +576,7 @@ describe("PairCoordinator", () => {
     expect(effects.calls).toHaveLength(0);
   });
 
-  it("rejects hidden tools, wrong owners, and missing grants before dispatch", async () => {
+  it("rejects hidden tools and missing grants before dispatch", async () => {
     const growthCoordinator = new PairCoordinator({
       store: new FakePairStore([], growthRuntime()),
       effects: new FakeEffectPort([]),
@@ -174,7 +624,7 @@ describe("PairCoordinator", () => {
         { workUnitId: "unit-1", summary: "Tried a fix.", bypassed: false },
         signal,
       ),
-    ).rejects.toThrow("WRONG_OWNER");
+    ).rejects.toThrow("TOOL_HIDDEN");
     await expect(
       growthCoordinator.invokeTool(
         "pair_run_verification",

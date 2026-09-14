@@ -1045,6 +1045,8 @@ The first complete tool catalog uses stable product-level capabilities:
 |---|---|---:|---:|---:|
 | `pair_get_state` | read | yes | yes | yes |
 | `pair_capture_entry` | read | yes | yes | yes |
+| `pair_confirm_learning` | state | briefing only | hidden | hidden |
+| `pair_select_mode` | state | briefing only | briefing only | briefing only |
 | `pair_read_scope` | read | yes | yes | yes |
 | `pair_search_scope` | read | yes | yes | yes |
 | `pair_record_attempt` | state | yes | optional | no |
@@ -1052,17 +1054,20 @@ The first complete tool catalog uses stable product-level capabilities:
 | `pair_request_hint` | response | yes | yes | no |
 | `pair_reveal_solution` | response | explicit | explicit | unnecessary |
 | `pair_propose_work_unit` | state | yes | yes | yes |
-| `pair_accept_handoff` | state | no AI ownership | yes | yes |
+| `pair_agree_work_unit` | state | briefing only | briefing only | briefing only |
+| `pair_accept_handoff` | state | no AI ownership | later task | later task |
 | `pair_apply_edit` | mutation | never | AI-owned unit only | AI-owned unit only |
 | `pair_run_verification` | verification | human-initiated by default | agreed owner | agreed owner |
 | `pair_run_command` | external effect | never | never in v2.0 | explicit bounded unit only |
-| `pair_record_transfer` | state | yes | optional | no |
+| `pair_record_transfer` | state | later task | later task | later task |
 | `pair_close_session` | state | yes | yes | yes |
 
 Tool visibility can use native contribution `when` clauses and mode-specific
 tool sets for a better model and user experience. Tool handlers still query the
 latest Pair snapshot and return a stable denial if the visible view became
-stale.
+stale. Briefing visibility must also stay phase-aware so the agent can move
+from capture to learning confirmation, mode selection, work-unit proposal, and
+work-unit agreement without exposing tools that the coordinator cannot route.
 
 Sensitive state transitions use a one-shot user-action grant bound to the tool,
 Pair runtime revision, and authority epoch. A native confirmation, command, or

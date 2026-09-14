@@ -6,6 +6,8 @@ export const PAIR_INSTRUCTION_VERSION = 1 as const;
 export type PairToolName =
   | "pair_get_state"
   | "pair_capture_entry"
+  | "pair_confirm_learning"
+  | "pair_select_mode"
   | "pair_read_scope"
   | "pair_search_scope"
   | "pair_record_attempt"
@@ -13,6 +15,7 @@ export type PairToolName =
   | "pair_request_hint"
   | "pair_reveal_solution"
   | "pair_propose_work_unit"
+  | "pair_agree_work_unit"
   | "pair_accept_handoff"
   | "pair_apply_edit"
   | "pair_run_verification"

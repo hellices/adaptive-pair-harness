@@ -31,7 +31,93 @@ const createToolRuntime = (): PairRuntimeSnapshot => ({
   },
 });
 
+const createBriefingRuntime = (): PairRuntimeSnapshot => ({
+  ...createRuntime("workspace-1"),
+  revision: 4,
+  presence: {
+    workspaceId: "workspace-1",
+    observationRevision: 0,
+    status: "engaged",
+    activeSessionId: "session-1",
+  },
+  session: {
+    ...createSession("session-1"),
+    authorityEpoch: 2,
+    status: "briefing",
+    mode: "pair",
+    entrySnapshot: {
+      workspaceId: "workspace-1",
+      branch: "feature/v2-growth-foundation",
+      dirtyPaths: [],
+      openPaths: ["packages/runtime/src/coordinator.ts"],
+      diagnostics: [],
+      protectedPaths: [],
+      capturedAt: 3,
+    },
+  },
+});
+
 describe("runtime operation transitions", () => {
+  it("grants briefing capture-entry actions at the next immutable revision", () => {
+    const runtime = createBriefingRuntime();
+
+    const decision = decide(runtime, {
+      protocolVersion: 1,
+      commandId: "cmd-grant-capture",
+      expectedRevision: runtime.revision,
+      actor: "human",
+      type: "GrantUserAction",
+      grantId: "grant-capture-1",
+      nativeToolName: "adaptive_pair_capture_entry",
+      observedAt: 20,
+    });
+
+    expect(decision.events).toEqual([
+      {
+        protocolVersion: 1,
+        eventId: "cmd-grant-capture:0",
+        commandId: "cmd-grant-capture",
+        actor: "human",
+        revision: 5,
+        recordedAt: 20,
+        type: "UserActionGranted",
+        grantId: "grant-capture-1",
+        nativeToolName: "adaptive_pair_capture_entry",
+        runtimeRevision: 5,
+        authorityEpoch: 2,
+      },
+    ]);
+
+    const next = reduce(runtime, decision.events);
+
+    expect(next.session?.userActionGrants).toEqual([
+      {
+        id: "grant-capture-1",
+        nativeToolName: "adaptive_pair_capture_entry",
+        runtimeRevision: 5,
+        authorityEpoch: 2,
+        status: "available",
+      },
+    ]);
+  });
+
+  it("rejects operational user action grants during briefing", () => {
+    const runtime = createBriefingRuntime();
+
+    expect(() =>
+      decide(runtime, {
+        protocolVersion: 1,
+        commandId: "cmd-grant-verification",
+        expectedRevision: runtime.revision,
+        actor: "human",
+        type: "GrantUserAction",
+        grantId: "grant-verification-1",
+        nativeToolName: "adaptive_pair_run_verification",
+        observedAt: 20,
+      }),
+    ).toThrow("SESSION_NOT_OPERATIONAL");
+  });
+
   it("grants one-shot user actions at the next immutable revision", () => {
     const runtime = createToolRuntime();
 

@@ -13,6 +13,8 @@ import {
 import type {
   EntrySnapshot,
   HintLevel,
+  LearningAgreement,
+  OperatingMode,
   OperationRecord,
   PairCommand,
   PairRuntimeSnapshot,
@@ -73,6 +75,18 @@ const isStringArray = (value: unknown): value is readonly string[] =>
 const isHintLevel = (value: unknown): value is HintLevel =>
   typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 5;
 
+const isCapability = (value: unknown): value is LearningAgreement["humanOwnedCapabilities"][number] =>
+  value === "problem-framing" ||
+  value === "design" ||
+  value === "test" ||
+  value === "implementation" ||
+  value === "diagnosis" ||
+  value === "repair" ||
+  value === "verification";
+
+const isOperatingMode = (value: unknown): value is OperatingMode =>
+  value === "growth" || value === "pair" || value === "delivery";
+
 const isEntrySnapshot = (value: unknown): value is EntrySnapshot => {
   if (!isRecord(value)) {
     return false;
@@ -89,6 +103,22 @@ const isEntrySnapshot = (value: unknown): value is EntrySnapshot => {
   );
 };
 
+const isLearningAgreement = (value: unknown): value is LearningAgreement => {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    isStringArray(value.learningGoals) &&
+    isStringArray(value.familiarAreas) &&
+    Array.isArray(value.humanOwnedCapabilities) &&
+    value.humanOwnedCapabilities.every(isCapability) &&
+    isStringArray(value.delegatableWork) &&
+    isHintLevel(value.maximumHintLevel) &&
+    typeof value.independentCheck === "string"
+  );
+};
+
 const isWorkUnit = (value: unknown): value is WorkUnit => {
   if (!isRecord(value) || !isRecord(value.baseline)) {
     return false;
@@ -97,17 +127,9 @@ const isWorkUnit = (value: unknown): value is WorkUnit => {
   return (
     typeof value.id === "string" &&
     typeof value.objective === "string" &&
-    (value.mode === "growth" || value.mode === "pair" || value.mode === "delivery") &&
+    isOperatingMode(value.mode) &&
     (value.learningValue === "high" || value.learningValue === "mixed" || value.learningValue === "low") &&
-    (
-      value.capability === "problem-framing" ||
-      value.capability === "design" ||
-      value.capability === "test" ||
-      value.capability === "implementation" ||
-      value.capability === "diagnosis" ||
-      value.capability === "repair" ||
-      value.capability === "verification"
-    ) &&
+    isCapability(value.capability) &&
     (value.owner === "human" || value.owner === "ai") &&
     isStringArray(value.allowedPaths) &&
     isStringArray(value.acceptanceChecks) &&
@@ -458,6 +480,26 @@ export class PairCoordinator implements PairCoordinatorPort {
           entry: input.entry,
         };
 
+      case "pair_confirm_learning":
+        if (!isLearningAgreement(input.agreement)) {
+          throw new Error("INVALID_CONFIRM_LEARNING_INPUT");
+        }
+        return {
+          ...commandBase,
+          type: "ConfirmLearning",
+          agreement: input.agreement,
+        };
+
+      case "pair_select_mode":
+        if (!isOperatingMode(input.mode)) {
+          throw new Error("INVALID_SELECT_MODE_INPUT");
+        }
+        return {
+          ...commandBase,
+          type: "SelectMode",
+          mode: input.mode,
+        };
+
       case "pair_record_attempt":
         if (
           typeof input.workUnitId !== "string" ||
@@ -520,6 +562,16 @@ export class PairCoordinator implements PairCoordinatorPort {
           ...commandBase,
           type: "ProposeWorkUnit",
           workUnit: input.workUnit,
+        };
+
+      case "pair_agree_work_unit":
+        if (typeof input.workUnitId !== "string") {
+          throw new Error("INVALID_AGREE_WORK_UNIT_INPUT");
+        }
+        return {
+          ...commandBase,
+          type: "AgreeWorkUnit",
+          workUnitId: input.workUnitId,
         };
 
       case "pair_close_session":

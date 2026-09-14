@@ -61,6 +61,20 @@ const requirePausedSession = (
   return session;
 };
 
+const requireClosableSession = (
+  session: PairSessionSnapshot | undefined,
+): PairSessionSnapshot => {
+  if (session === undefined) {
+    throw new Error("SESSION_NOT_STARTED");
+  }
+
+  if (session.status === "closed") {
+    throw new Error("SESSION_ALREADY_CLOSED");
+  }
+
+  return session;
+};
+
 const requireOperationalSession = (
   session: PairSessionSnapshot | undefined,
 ): PairSessionSnapshot => {
@@ -85,6 +99,34 @@ const requireOperationalWorkUnit = (
   }
 
   return workUnit;
+};
+
+const requireOperationalGrowthSession = (
+  session: PairSessionSnapshot | undefined,
+): PairSessionSnapshot => {
+  const operationalSession = requireOperationalSession(session);
+  const workUnit = requireOperationalWorkUnit(operationalSession);
+
+  requireGrowthWorkUnit(operationalSession, workUnit.id);
+
+  return operationalSession;
+};
+
+const requireOperationalDeliveryAiSession = (
+  session: PairSessionSnapshot | undefined,
+): PairSessionSnapshot => {
+  const operationalSession = requireOperationalSession(session);
+  const workUnit = requireOperationalWorkUnit(operationalSession);
+
+  if (
+    operationalSession.mode !== "delivery" ||
+    workUnit.mode !== "delivery" ||
+    workUnit.owner !== "ai"
+  ) {
+    throw new Error("USER_ACTION_NOT_ALLOWED");
+  }
+
+  return operationalSession;
 };
 
 const requireAvailableGrant = (
@@ -189,6 +231,39 @@ const consumeGrantEvents = (
       grantId,
     }),
   ];
+};
+
+const requireGrantableUserActionSession = (
+  snapshot: PairRuntimeSnapshot,
+  nativeToolName: string,
+): PairSessionSnapshot => {
+  switch (nativeToolName) {
+    case "adaptive_pair_capture_entry":
+      return requireBriefingSession(snapshot.session);
+
+    case "adaptive_pair_record_attempt":
+    case "adaptive_pair_record_hypothesis":
+    case "adaptive_pair_reveal_solution":
+      return requireOperationalGrowthSession(snapshot.session);
+
+    case "adaptive_pair_request_hint": {
+      const session = requireOperationalGrowthSession(snapshot.session);
+      requireGrowthAgreement(session);
+      return session;
+    }
+
+    case "adaptive_pair_run_verification":
+      return requireOperationalSession(snapshot.session);
+
+    case "adaptive_pair_run_command":
+      return requireOperationalDeliveryAiSession(snapshot.session);
+
+    case "adaptive_pair_close_session":
+      return requireClosableSession(snapshot.session);
+
+    default:
+      throw new Error("USER_ACTION_NOT_ALLOWED");
+  }
 };
 
 export const decide = (
@@ -414,7 +489,10 @@ export const decide = (
       })());
 
     case "GrantUserAction": {
-      const session = requireOperationalSession(snapshot.session);
+      const session = requireGrantableUserActionSession(
+        snapshot,
+        command.nativeToolName,
+      );
 
       if (command.actor !== "human") {
         throw new Error("USER_ACTION_REQUIRES_HUMAN");
