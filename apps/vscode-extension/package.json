@@ -5,12 +5,20 @@
   "version": "0.2.0-preview.1",
   "publisher": "adaptive-pair",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hellices/adaptive-pair-harness.git"
+  },
   "type": "module",
   "engines": {
     "vscode": "^1.136.0",
     "node": ">=24"
   },
-  "categories": ["AI", "Programming Languages", "Other"],
+  "categories": [
+    "AI",
+    "Programming Languages",
+    "Other"
+  ],
   "activationEvents": [
     "onCommand:adaptivePair.enablePresence",
     "onCommand:adaptivePair.startSession",
@@ -20,12 +28,30 @@
   "main": "./dist/extension.cjs",
   "contributes": {
     "commands": [
-      { "command": "adaptivePair.enablePresence", "title": "Adaptive Pair: Enable Presence" },
-      { "command": "adaptivePair.stayQuiet", "title": "Adaptive Pair: Stay Quiet" },
-      { "command": "adaptivePair.pausePresence", "title": "Adaptive Pair: Pause Presence" },
-      { "command": "adaptivePair.disablePresence", "title": "Adaptive Pair: Disable Presence and Clear Continuity" },
-      { "command": "adaptivePair.startSession", "title": "Adaptive Pair: Start a Session" },
-      { "command": "adaptivePair.joinInProgress", "title": "Adaptive Pair: Join Work in Progress" }
+      {
+        "command": "adaptivePair.enablePresence",
+        "title": "Adaptive Pair: Enable Presence"
+      },
+      {
+        "command": "adaptivePair.stayQuiet",
+        "title": "Adaptive Pair: Stay Quiet"
+      },
+      {
+        "command": "adaptivePair.pausePresence",
+        "title": "Adaptive Pair: Pause Presence"
+      },
+      {
+        "command": "adaptivePair.disablePresence",
+        "title": "Adaptive Pair: Disable Presence and Clear Continuity"
+      },
+      {
+        "command": "adaptivePair.startSession",
+        "title": "Adaptive Pair: Start a Session"
+      },
+      {
+        "command": "adaptivePair.joinInProgress",
+        "title": "Adaptive Pair: Join Work in Progress"
+      }
     ],
     "languageModelTools": [
       {
@@ -35,14 +61,22 @@
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "pairState",
         "when": "adaptivePair.presenceEnabled",
-        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
       },
       {
         "name": "adaptive_pair_capture_entry",
         "displayName": "Capture Pair Entry",
         "modelDescription": "Capture a bounded local entry snapshot before joining existing or in-progress work. This never grants edit authority.",
         "when": "adaptivePair.presenceEnabled",
-        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
       },
       {
         "name": "adaptive_pair_read_scope",
@@ -52,11 +86,23 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "path": { "type": "string", "minLength": 1, "maxLength": 1024 },
-            "startLine": { "type": "integer", "minimum": 1 },
-            "endLine": { "type": "integer", "minimum": 1 }
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "startLine": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "endLine": {
+              "type": "integer",
+              "minimum": 1
+            }
           },
-          "required": ["path"],
+          "required": [
+            "path"
+          ],
           "additionalProperties": false
         }
       },
@@ -68,10 +114,20 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "query": { "type": "string", "minLength": 1, "maxLength": 2000 },
-            "pattern": { "type": "string", "minLength": 1, "maxLength": 256 }
+            "query": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "pattern": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
           },
-          "required": ["query"],
+          "required": [
+            "query"
+          ],
           "additionalProperties": false
         }
       },
@@ -83,10 +139,19 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "summary": { "type": "string", "minLength": 1, "maxLength": 1000 },
-            "bypassed": { "type": "boolean" }
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "bypassed": {
+              "type": "boolean"
+            }
           },
-          "required": ["summary", "bypassed"],
+          "required": [
+            "summary",
+            "bypassed"
+          ],
           "additionalProperties": false
         }
       },
@@ -98,9 +163,15 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "hypothesis": { "type": "string", "minLength": 1, "maxLength": 1000 }
+            "hypothesis": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
           },
-          "required": ["hypothesis"],
+          "required": [
+            "hypothesis"
+          ],
           "additionalProperties": false
         }
       },
@@ -112,9 +183,15 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "requestedLevel": { "type": "integer", "minimum": 0, "maximum": 4 }
+            "requestedLevel": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4
+            }
           },
-          "required": ["requestedLevel"],
+          "required": [
+            "requestedLevel"
+          ],
           "additionalProperties": false
         }
       },
@@ -126,9 +203,15 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            }
           },
-          "required": ["reason"],
+          "required": [
+            "reason"
+          ],
           "additionalProperties": false
         }
       },
@@ -140,13 +223,50 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "objective": { "type": "string", "minLength": 1, "maxLength": 1000 },
-            "capability": { "type": "string", "enum": ["problem-framing", "design", "test", "implementation", "diagnosis", "repair", "verification"] },
-            "allowedPaths": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 1024 }, "maxItems": 32 },
-            "verificationPlan": { "type": "string", "minLength": 1, "maxLength": 1000 },
-            "stoppingCondition": { "type": "string", "minLength": 1, "maxLength": 1000 }
+            "objective": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "capability": {
+              "type": "string",
+              "enum": [
+                "problem-framing",
+                "design",
+                "test",
+                "implementation",
+                "diagnosis",
+                "repair",
+                "verification"
+              ]
+            },
+            "allowedPaths": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "maxItems": 32
+            },
+            "verificationPlan": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "stoppingCondition": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
           },
-          "required": ["objective", "capability", "allowedPaths", "verificationPlan", "stoppingCondition"],
+          "required": [
+            "objective",
+            "capability",
+            "allowedPaths",
+            "verificationPlan",
+            "stoppingCondition"
+          ],
           "additionalProperties": false
         }
       },
@@ -158,9 +278,15 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "workUnitId": { "type": "string", "minLength": 1, "maxLength": 200 }
+            "workUnitId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           },
-          "required": ["workUnitId"],
+          "required": [
+            "workUnitId"
+          ],
           "additionalProperties": false
         }
       },
@@ -172,11 +298,26 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "path": { "type": "string", "minLength": 1, "maxLength": 1024 },
-            "expectedHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-            "patch": { "type": "string", "minLength": 1, "maxLength": 131072 }
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "expectedHash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "patch": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 131072
+            }
           },
-          "required": ["path", "expectedHash", "patch"],
+          "required": [
+            "path",
+            "expectedHash",
+            "patch"
+          ],
           "additionalProperties": false
         }
       },
@@ -188,9 +329,15 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "plan": { "type": "string", "minLength": 1, "maxLength": 1000 }
+            "plan": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
           },
-          "required": ["plan"],
+          "required": [
+            "plan"
+          ],
           "additionalProperties": false
         }
       },
@@ -202,9 +349,15 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "commandId": { "type": "string", "minLength": 1, "maxLength": 200 }
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           },
-          "required": ["commandId"],
+          "required": [
+            "commandId"
+          ],
           "additionalProperties": false
         }
       },
@@ -216,10 +369,28 @@
         "inputSchema": {
           "type": "object",
           "properties": {
-            "kind": { "type": "string", "enum": ["similar-generation", "varied-debugging", "explanation", "meaningful-authorship"] },
-            "result": { "type": "string", "enum": ["demonstrated", "not-demonstrated", "not-assessed"] }
+            "kind": {
+              "type": "string",
+              "enum": [
+                "similar-generation",
+                "varied-debugging",
+                "explanation",
+                "meaningful-authorship"
+              ]
+            },
+            "result": {
+              "type": "string",
+              "enum": [
+                "demonstrated",
+                "not-demonstrated",
+                "not-assessed"
+              ]
+            }
           },
-          "required": ["kind", "result"],
+          "required": [
+            "kind",
+            "result"
+          ],
           "additionalProperties": false
         }
       },
@@ -228,7 +399,11 @@
         "displayName": "Close Pair Session",
         "modelDescription": "Close the current Pair session and report product and capability outcomes separately.",
         "when": "adaptivePair.sessionActive",
-        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
       }
     ],
     "chatParticipants": [
@@ -239,23 +414,47 @@
         "description": "Work in Growth Mode with bounded hints and direct practice.",
         "isSticky": true,
         "commands": [
-          { "name": "brief", "description": "Confirm task and learning value" },
-          { "name": "attempt", "description": "Record your implementation attempt" },
-          { "name": "hypothesis", "description": "Record your diagnosis before help" },
-          { "name": "hint", "description": "Request the next bounded hint" },
-          { "name": "reveal", "description": "Explicitly reveal a target solution" },
-          { "name": "check", "description": "Run the agreed verification" },
-          { "name": "transfer", "description": "Start the independent variation" },
-          { "name": "session", "description": "Show mode, work unit, and outcomes" }
+          {
+            "name": "brief",
+            "description": "Confirm task and learning value"
+          },
+          {
+            "name": "attempt",
+            "description": "Record your implementation attempt"
+          },
+          {
+            "name": "hypothesis",
+            "description": "Record your diagnosis before help"
+          },
+          {
+            "name": "hint",
+            "description": "Request the next bounded hint"
+          },
+          {
+            "name": "reveal",
+            "description": "Explicitly reveal a target solution"
+          },
+          {
+            "name": "check",
+            "description": "Run the agreed verification"
+          },
+          {
+            "name": "transfer",
+            "description": "Start the independent variation"
+          },
+          {
+            "name": "session",
+            "description": "Show mode, work unit, and outcomes"
+          }
         ]
       }
     ]
   },
   "scripts": {
-    "clean": "rm -rf dist *.vsix",
+    "clean": "rm -rf dist *.vsix LICENSE README.md docs",
     "typecheck": "tsc -b",
     "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --outfile=dist/extension.cjs --external:vscode",
-    "package": "npm run build && vsce package --no-dependencies --out ../../adaptive-pair-0.2.0-preview.1-stable.vsix"
+    "package": "vsce package --no-dependencies --out ../../adaptive-pair-0.2.0-preview.1-stable.vsix"
   },
   "dependencies": {
     "@adaptive-pair/evaluation": "0.2.0-preview.1",
@@ -267,8 +466,10 @@
     "@adaptive-pair/runtime": "0.2.0-preview.1"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.10",
     "@types/vscode": "1.136.0",
     "@vscode/test-electron": "3.1.0",
-    "@vscode/vsce": "3.9.2"
+    "@vscode/vsce": "3.9.2",
+    "mocha": "^11.8.0"
   }
 }

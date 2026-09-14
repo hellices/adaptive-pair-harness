@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# Read-only by default: CI never needs write access to the repository.
+permissions:
+  contents: read
+
+# Cancel superseded runs for the same branch or pull request.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-package:
+    name: Check, build, and package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Manifest-to-catalog parity tests
+        run: npx vitest run apps/vscode-extension/test/manifest.test.ts apps/vscode-extension/test/pairTools.test.ts
+
+      - name: Harness conformance tests
+        run: npx vitest run packages/harness packages/protocol/test/toolchain.test.ts
+
+      - name: Typecheck, lint, and full test suite
+        run: npm run check
+
+      - name: Build the deterministic bundle
+        run: npm run build
+
+      - name: Package the Stable VSIX
+        run: npm run package
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptive-pair-stable-vsix
+          path: adaptive-pair-0.2.0-preview.1-stable.vsix
+          if-no-files-found: error
+
+  host-smoke:
+    name: Host smoke (VS Code ${{ matrix.vscode }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        vscode: ["1.136.2", "1.137.0"]
+    env:
+      # Clean-profile coexistence (scenario 2) and idle zero-activity
+      # (scenario 3) are asserted inside this isolated Extension Host smoke.
+      ADAPTIVE_PAIR_HOST_VERSION: ${{ matrix.vscode }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run isolated Extension Host smoke
+        run: xvfb-run -a npm run test:host
+
+  host-insiders:
+    name: Host smoke (Insiders, allowed failure)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      ADAPTIVE_PAIR_HOST_VERSION: insiders
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run isolated Extension Host smoke on Insiders
+        run: xvfb-run -a npm run test:host

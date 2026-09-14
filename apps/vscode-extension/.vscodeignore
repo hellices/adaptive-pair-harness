@@ -1,6 +1,12 @@
+.gitignore
+.vscodeignore
 src/**
 test/**
 tsconfig.json
+tsconfig.*.json
 .vscode/**
+dist/**
+!dist/extension.cjs
+!dist/extension.cjs.LEGAL.txt
 **/*.map
 **/*.tsbuildinfo

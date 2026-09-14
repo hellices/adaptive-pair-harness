@@ -1,0 +1,8 @@
+# Build + packaging artifacts (staged by scripts/build-extension.mjs).
+dist/
+*.vsix
+LICENSE
+README.md
+docs/
+# Isolated Extension Host smoke-test run directories.
+.host-test/

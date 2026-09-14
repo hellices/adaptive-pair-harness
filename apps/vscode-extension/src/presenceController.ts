@@ -19,6 +19,7 @@ import {
   PairToolContext,
   type PairToolContextValues,
 } from "./tools/pairToolContext.js";
+import { ActivityLedger } from "./activityLedger.js";
 
 export interface AdaptivePairExtensionApi {
   getState(): {
@@ -36,6 +37,7 @@ const OBSERVATION_CAPACITY = 50;
 export interface PresenceControllerOptions {
   readonly scheduler?: Scheduler;
   readonly journalFileSystem?: JournalFileSystem;
+  readonly ledger?: ActivityLedger;
 }
 
 export class PresenceController implements vscode.Disposable {
@@ -46,6 +48,7 @@ export class PresenceController implements vscode.Disposable {
   private editAggregator: EditEpisodeAggregator | undefined;
   private readonly journalFileSystem: JournalFileSystem;
   private readonly scheduler: Scheduler;
+  private readonly ledger: ActivityLedger | undefined;
 
   public constructor(
     private readonly sessionController: SessionController,
@@ -53,15 +56,23 @@ export class PresenceController implements vscode.Disposable {
     private readonly toolContext: PairToolContext,
     options: PresenceControllerOptions = {},
   ) {
+    this.ledger = options.ledger;
     this.journalFileSystem =
       options.journalFileSystem ?? new NodeJournalFileSystem();
-    this.scheduler = options.scheduler ?? {
+    const baseScheduler: Scheduler = options.scheduler ?? {
       schedule: (delayMs, callback) => setTimeout(callback, delayMs),
       cancel: handle => {
         if (handle !== undefined) {
           clearTimeout(handle as ReturnType<typeof setTimeout>);
         }
       },
+    };
+    this.scheduler = {
+      schedule: (delayMs, callback) => {
+        this.ledger?.recordTimerScheduled();
+        return baseScheduler.schedule(delayMs, callback);
+      },
+      cancel: handle => baseScheduler.cancel(handle),
     };
     this.toolContext.clear();
     this.statusView.render("off");
@@ -165,13 +176,40 @@ export class PresenceController implements vscode.Disposable {
       return;
     }
 
+    await this.performDisable();
+  }
+
+  /**
+   * Disable Pair Presence and clear local continuity. This is the runtime
+   * effect of the disable command with the interactive confirmation already
+   * resolved; the host smoke test invokes it directly to avoid a blocking modal
+   * while exercising the real clearing and journal-deletion path.
+   */
+  public async performDisable(): Promise<void> {
     this.editAggregator?.clear();
     this.toolContext.clear();
     this.detachObservationListener();
     this.observationWindow = new ObservationWindow(OBSERVATION_CAPACITY);
     const snapshot = this.sessionController.disablePresence();
+    await this.clearJournal();
     this.statusView.render(snapshot.presence.status);
     await this.toolContext.accept(snapshot);
+  }
+
+  /**
+   * Initialize this controller's journal against an existing storage directory
+   * and reconcile the persisted edit episodes, without registering any command
+   * or listener. The host smoke test uses this on a fresh controller to prove
+   * that a restart reconciles the durable on-disk journal.
+   */
+  public async reconcileFromStorage(storagePath: string): Promise<void> {
+    this.journal = new LocalJournal(this.journalFileSystem, storagePath);
+    this.editAggregator = new EditEpisodeAggregator(
+      500,
+      this.scheduler,
+      episode => this.journalEditEpisode(episode),
+    );
+    await this.reconcileJournal();
   }
 
   private async startSession(): Promise<void> {
@@ -242,11 +280,16 @@ export class PresenceController implements vscode.Disposable {
       this.sessionController.bumpObservationRevision();
       this.recordEditObservation(event);
     });
+    this.ledger?.recordListenerAttached();
   }
 
   private detachObservationListener(): void {
-    this.documentListener?.dispose();
+    if (this.documentListener === undefined) {
+      return;
+    }
+    this.documentListener.dispose();
     this.documentListener = undefined;
+    this.ledger?.recordListenerDetached();
   }
 
   private initializeJournal(context: vscode.ExtensionContext): void {
@@ -262,9 +305,53 @@ export class PresenceController implements vscode.Disposable {
       episode => this.journalEditEpisode(episode),
     );
 
-    void this.journal.replay().catch((error: unknown) => {
+    void this.reconcileJournal();
+  }
+
+  /**
+   * Replay the persisted journal after a restart and reconcile durable edit
+   * episodes back into the observation window so Pair continuity survives a host
+   * reload. Reading the extension's own global storage is not a workspace read
+   * and attaches no listener, timer, model, or network activity.
+   */
+  private async reconcileJournal(): Promise<void> {
+    const journal = this.journal;
+    if (journal === undefined) {
+      return;
+    }
+
+    let events: readonly JournalEvent[];
+    try {
+      events = await journal.replay();
+    } catch (error: unknown) {
       this.handleJournalFailure(error);
-    });
+      return;
+    }
+
+    for (const event of events) {
+      if (event.type !== "edit-episode") {
+        continue;
+      }
+      const uri =
+        typeof event.payload.uri === "string" ? event.payload.uri : "a tracked file";
+      this.observationWindow.record({
+        kind: "edit-episode",
+        summary: `Reconciled a persisted local change in ${uri}.`,
+        observedAt: event.capturedAt,
+      });
+    }
+  }
+
+  private async clearJournal(): Promise<void> {
+    const journal = this.journal;
+    if (journal === undefined) {
+      return;
+    }
+    try {
+      await journal.clear();
+    } catch (error: unknown) {
+      this.handleJournalFailure(error);
+    }
   }
 
   private recordEditObservation(event: vscode.TextDocumentChangeEvent): void {

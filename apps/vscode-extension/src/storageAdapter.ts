@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, open, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 
 export interface JournalEvent {
   readonly type: string;
@@ -20,6 +20,7 @@ export interface JournalFileSystem {
   writeFile(path: string, data: string): Promise<void>;
   fsync(path: string): Promise<void>;
   rename(from: string, to: string): Promise<void>;
+  remove(path: string): Promise<void>;
 }
 
 export type JournalIntegrityReason =
@@ -151,6 +152,17 @@ export class LocalJournal {
     return this.enqueue(() => this.readRecords());
   }
 
+  /**
+   * Delete the persisted journal (and any temp file) so disabling Pair
+   * Presence clears local continuity. A missing file is not an error.
+   */
+  public clear(): Promise<void> {
+    return this.enqueue(async () => {
+      await this.fs.remove(this.tempPath);
+      await this.fs.remove(this.journalPath);
+    });
+  }
+
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const run = this.tail.then(operation, operation);
     this.tail = run.then(
@@ -264,5 +276,9 @@ export class NodeJournalFileSystem implements JournalFileSystem {
 
   public async rename(from: string, to: string): Promise<void> {
     await rename(from, to);
+  }
+
+  public async remove(path: string): Promise<void> {
+    await rm(path, { force: true });
   }
 }

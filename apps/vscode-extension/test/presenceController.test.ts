@@ -254,6 +254,14 @@ class MemoryFs implements JournalFileSystem {
     }
     return Promise.resolve();
   }
+
+  public removes = 0;
+
+  public remove(path: string): Promise<void> {
+    this.removes += 1;
+    this.files.delete(path);
+    return Promise.resolve();
+  }
 }
 
 interface FakeContext {
@@ -355,6 +363,60 @@ describe("PresenceController — out-of-workspace changes", () => {
     expect(fs.writes).toBe(0);
     expect(controller.getState().presenceStatus).toBe("observing");
     expect(harness.state.warnings).toEqual([]);
+  });
+});
+
+describe("PresenceController — journal reconciliation across restart", () => {
+  it("reconciles persisted edit episodes into the observation window on a fresh activation", async () => {
+    const scheduler = new FakeScheduler();
+    const fs = new MemoryFs();
+
+    // First activation: enable Presence, observe one local edit, and let the
+    // aggregator flush it to the persisted journal.
+    const first = buildController(scheduler, fs);
+    await run("adaptivePair.enablePresence");
+    harness.emitChange("/workspace/src/pair.ts");
+    scheduler.advanceBy(1_000);
+    await flush();
+    expect(fs.writes).toBeGreaterThan(0);
+    expect(first.controller.getState().observationCount).toBe(1);
+    first.controller.dispose();
+
+    // Restart: a brand-new activation pointed at the SAME persisted journal must
+    // reconcile the durable episode back into its observation window.
+    harness.reset();
+    const second = buildController(new FakeScheduler(), fs);
+    await flush();
+
+    expect(second.controller.getState().observationCount).toBe(1);
+  });
+});
+
+describe("PresenceController — continuity clearing on disable", () => {
+  it("removes the persisted journal so disable clears Pair continuity", async () => {
+    const scheduler = new FakeScheduler();
+    const fs = new MemoryFs();
+    const { controller } = buildController(scheduler, fs);
+
+    await run("adaptivePair.enablePresence");
+    harness.emitChange("/workspace/src/pair.ts");
+    scheduler.advanceBy(1_000);
+    await flush();
+    expect(fs.files.has("/journal-storage/journal.jsonl")).toBe(true);
+
+    harness.state.warningResponses.push("Disable and clear");
+    await run("adaptivePair.disablePresence");
+    await flush();
+
+    expect(fs.removes).toBeGreaterThan(0);
+    expect(fs.files.has("/journal-storage/journal.jsonl")).toBe(false);
+    expect(controller.getState().presenceStatus).toBe("off");
+
+    // A subsequent restart finds no continuity to reconcile.
+    harness.reset();
+    const restarted = buildController(new FakeScheduler(), fs);
+    await flush();
+    expect(restarted.controller.getState().observationCount).toBe(0);
   });
 });
 

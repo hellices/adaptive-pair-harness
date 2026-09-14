@@ -289,6 +289,12 @@ class MemoryJournalFileSystem implements JournalFileSystem {
     }
     return Promise.resolve();
   }
+
+  public remove(path: string): Promise<void> {
+    this.operations.push(`remove:${path}`);
+    this.files.delete(path);
+    return Promise.resolve();
+  }
 }
 
 const event = (type: string, payload: Record<string, unknown>): JournalEvent => ({
@@ -332,6 +338,11 @@ class DeferredJournalFileSystem implements JournalFileSystem {
       this.files.set(to, data);
       this.files.delete(from);
     }
+  }
+
+  public async remove(path: string): Promise<void> {
+    await this.tick();
+    this.files.delete(path);
   }
 }
 

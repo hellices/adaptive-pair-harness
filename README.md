@@ -17,6 +17,34 @@ not just a narrow calculation. Learning to prompt, review, and select AI output
 is valuable, but it does not automatically replace the ability to create and
 debug software directly.
 
+## Growth Mode preview (0.2.0-preview.1)
+
+This branch ships an installable **Stable Growth** preview: an opt-in Pair
+Presence layer and a `@pair` Growth Mode chat participant. It is additive and
+changes no existing VS Code or GitHub Copilot Chat behavior. It makes **no claim
+that it improves learning or productivity**.
+
+Controls (Command Palette, all namespaced under `Adaptive Pair:`):
+
+- **Enable Presence** — turn on the ambient presence layer in a trusted workspace.
+- **Stay Quiet** — keep Presence on but silence proactive nudges.
+- **Pause Presence** — suspend observation and any in-flight work unit.
+- **Join Work in Progress** — capture a bounded local entry snapshot.
+- **Start a Session** — begin a Pair session for fresh work.
+- **Disable Presence and Clear Continuity** — disable and delete the local journal.
+
+Growth guidance is requested through `@pair` and its slash commands (`/brief`,
+`/attempt`, `/hypothesis`, `/hint`, `/reveal`, `/check`, `/transfer`,
+`/session`). The AI never edits your files in Growth Mode.
+
+See **[docs/growth-preview.md](docs/growth-preview.md)** for the greenfield and
+join-in-progress walkthroughs, hint and reveal behavior, the five independent
+Growth outcomes, local storage/export/deletion, supported languages and host
+versions, the experimental Session Target and its Insiders proposed-API
+limitation, and the exact known limitations. The Stable VSIX
+(`adaptive-pair-0.2.0-preview.1-stable.vsix`) contains no `enabledApiProposals`
+and no `contributes.chatSessions`.
+
 ## Why it exists
 
 Coding agents can now interpret a problem, choose an approach, generate code,
@@ -241,8 +269,12 @@ AI universally improves speed, quality, learning, or satisfaction.
 
 ## Project status
 
-This branch contains the first complete v2 design and its first implementation
-plan. Every v2 decision is initial; implementation has not started.
+This branch contains the first complete v2 design, its first implementation
+plan, and the installable **Stable Growth Mode preview** (Tasks 1–12): the Pair
+Presence shell, the versioned harness kernel, the durable runtime, Growth
+restraint, join-in-progress capture, observed verification, and a clean-profile
+Extension Host smoke plus packaging and CI. Pair Mode AI edits, Delivery Mode
+commands, and the native Agent Plugin remain out of scope for this preview.
 
 The earlier runnable experiment remains on
 `feature/realtime-pair-vertical-slice`. It is a test and behavior baseline plus

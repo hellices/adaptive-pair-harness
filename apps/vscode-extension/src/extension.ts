@@ -14,8 +14,32 @@ import {
   ModelConsentRegistry,
 } from "./growthParticipant.js";
 import { createGrowthModel } from "./modelAdapter.js";
+import { ActivityLedger } from "./activityLedger.js";
+import { StableEffectPort, type VerificationRunner } from "./stableEffectPort.js";
+import {
+  createVerificationAdapter,
+  VscodeConfirmationPort,
+  type ConfirmationPort,
+  type ConfirmationRequest,
+} from "./verificationAdapter.js";
+import { createHostTestApi } from "./hostTestApi.js";
 
 const GROWTH_PARTICIPANT_ID = "adaptivePair.chat";
+
+const isHostTest = (): boolean => process.env["ADAPTIVE_PAIR_HOST_TEST"] === "1";
+
+/**
+ * A confirmation port that auto-approves verification during the isolated host
+ * smoke test, where no developer is present to answer a modal. It is only ever
+ * selected when the `ADAPTIVE_PAIR_HOST_TEST` flag is set, and never in a
+ * released build, where {@link VscodeConfirmationPort} shows the real modal.
+ */
+class HostTestAutoConfirmPort implements ConfirmationPort {
+  public confirm(request: ConfirmationRequest, signal: AbortSignal): Promise<boolean> {
+    void request;
+    return Promise.resolve(!signal.aborted);
+  }
+}
 
 const requestWorkspaceConsent = async (
   model: vscode.LanguageModelChat,
@@ -42,13 +66,29 @@ const confirmSolutionReveal = async (
 export const activate = (
   context: ExtensionContext,
 ): AdaptivePairExtensionApi => {
-  const sessionController = new SessionController();
+  const hostTest = isHostTest();
+  const ledger = new ActivityLedger();
+
+  const confirmation: ConfirmationPort = hostTest
+    ? new HostTestAutoConfirmPort()
+    : new VscodeConfirmationPort();
+  const resolveVerification = (): VerificationRunner | undefined => {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (root === undefined) {
+      return undefined;
+    }
+    return createVerificationAdapter(root, undefined, confirmation);
+  };
+  const effects = new StableEffectPort({ resolveVerification });
+
+  const sessionController = new SessionController({ effects, ledger });
   const statusView = new StatusView();
   const toolContext = new PairToolContext();
   const presenceController = new PresenceController(
     sessionController,
     statusView,
     toolContext,
+    { ledger },
   );
 
   presenceController.register(context);
@@ -60,7 +100,15 @@ export const activate = (
     coordinator,
     consent: new ModelConsentRegistry(),
     evaluations: new GrowthEvaluationLog(),
-    createModel: model => createGrowthModel(model, coordinator),
+    createModel: model => {
+      const growthModel = createGrowthModel(model, coordinator);
+      return {
+        request: (instructions, tools, signal) => {
+          ledger.recordModelRequest();
+          return growthModel.request(instructions, tools, signal);
+        },
+      };
+    },
     requestWorkspaceConsent,
     confirmSolutionReveal,
     stayQuiet: () => sessionController.stayQuiet(),
@@ -73,9 +121,20 @@ export const activate = (
     ),
   );
 
-  return Object.freeze({
+  const api: { getState: AdaptivePairExtensionApi["getState"] } & Record<string, unknown> = {
     getState: () => presenceController.getState(),
-  });
+  };
+
+  if (hostTest) {
+    api["__pairHostTest"] = createHostTestApi({
+      coordinator,
+      ledger,
+      presenceController,
+      context,
+    });
+  }
+
+  return Object.freeze(api);
 };
 
 export const deactivate = (): void => {};

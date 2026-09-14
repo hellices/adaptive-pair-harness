@@ -2,7 +2,7 @@ import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["**/dist/**", "coverage/**"] },
+  { ignores: ["**/dist/**", "coverage/**", "apps/vscode-extension/test/host/**", "scripts/*.mjs"] },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {

@@ -2,7 +2,12 @@
 
 - **Updated:** September 14, 2026
 - **Status:** Complete initial v2 architecture; awaiting written-spec review.
-- **Implementation:** Not started on the v2 branch.
+- **Implementation:** Stable Growth Mode preview implemented (Tasks 1–12):
+  host-agnostic protocol, durable runtime, versioned harness kernel, Growth
+  restraint, Pair Presence with join-in-progress capture, observed verification,
+  and a clean-profile Extension Host smoke with deterministic packaging and CI.
+  Pair Mode AI edits, Delivery Mode commands, and the native Agent Plugin remain
+  out of scope for this preview.
 
 This document is the first complete product and architecture specification for
 Adaptive Pair v2. Every v2 behavior starts here as an initial design decision;
@@ -1768,6 +1773,8 @@ limitation.
 - the v1 implementation remains a baseline and tested source of compatible
   modules, not a codebase to merge wholesale.
 
-This is a complete initial v2 specification, not a report of implemented or
-empirically validated behavior. It is ready for written review and, after
-approval, a detailed implementation plan.
+This document is a complete initial v2 specification. The Stable Growth Mode
+preview (Tasks 1–12) is now implemented and validated by unit, property,
+contract, and clean-profile Extension Host tests; the remaining Pair and
+Delivery behavior stays specified-but-unimplemented and empirically unvalidated
+pending its own plans.

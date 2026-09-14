@@ -8,6 +8,7 @@ dist/
 coverage/
 .vscode-test/
 .worktrees/
+*.vsix
 
 .superpowers/
 *.log

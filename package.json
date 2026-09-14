@@ -16,6 +16,9 @@
     "lint": "eslint packages apps scripts",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "build": "node scripts/build-extension.mjs",
+    "test:host": "npm run build && node scripts/test-extension-host.mjs",
+    "package": "npm run build && npm --workspace apps/vscode-extension run package",
     "check": "npm run typecheck && npm run lint && npm run test"
   },
   "devDependencies": {

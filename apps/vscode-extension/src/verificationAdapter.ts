@@ -563,10 +563,11 @@ export class StableTestingRunPort implements TestingRunPort {
 export const createVerificationAdapter = (
   rootPath: string,
   testing: TestingRunPort = new StableTestingRunPort(),
+  confirmation: ConfirmationPort = new VscodeConfirmationPort(),
 ): VerificationAdapter =>
   new VerificationAdapter({
     buffers: new VscodeBufferInspectionPort(),
-    confirmation: new VscodeConfirmationPort(),
+    confirmation,
     scripts: new NodePackageScriptPort(rootPath),
     process: new NodeProcessRunPort(rootPath),
     testing,

@@ -9,6 +9,7 @@ import type {
   WorkspaceContextAccess,
   WorkspaceFolderIdentity,
 } from "./workspaceContext.js";
+import type { ActivityLedger } from "./activityLedger.js";
 
 interface GitRepositoryState {
   readonly HEAD?: { readonly name?: string };
@@ -38,9 +39,13 @@ const documentByteLength = (document: vscode.TextDocument): number => {
 };
 
 export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
-  public constructor(private readonly clock: { now(): number }) {}
+  public constructor(
+    private readonly clock: { now(): number },
+    private readonly ledger?: ActivityLedger,
+  ) {}
 
   public workspaceFolder(): WorkspaceFolderIdentity | undefined {
+    this.ledger?.recordWorkspaceRead();
     const folder = vscode.workspace.workspaceFolders?.[0];
     if (folder === undefined) {
       return undefined;
@@ -56,6 +61,7 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
     folder: WorkspaceFolderIdentity,
     branch: string | undefined,
   ): boolean {
+    this.ledger?.recordWorkspaceRead();
     if (
       vscode.workspace.workspaceFolders?.[0]?.uri.toString() !== folder.workspaceId
     ) {
@@ -67,6 +73,7 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
   }
 
   public readGitMetadata(folder: WorkspaceFolderIdentity): Promise<GitMetadata> {
+    this.ledger?.recordWorkspaceRead();
     const repository = this.gitRepositoryForRoot(folder.rootPath);
     if (repository === undefined) {
       return Promise.resolve({
@@ -95,6 +102,7 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
   }
 
   public openDocuments(): readonly OpenDocumentInfo[] {
+    this.ledger?.recordWorkspaceRead();
     return vscode.workspace.textDocuments.map(document => ({
       relativePath: vscode.workspace.asRelativePath(document.uri, false),
       version: typeof document.version === "number" ? document.version : 0,
@@ -104,6 +112,7 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
   }
 
   public diagnostics(): readonly DiagnosticInfo[] {
+    this.ledger?.recordWorkspaceRead();
     const collected: DiagnosticInfo[] = [];
     for (const [uri, entries] of vscode.languages.getDiagnostics()) {
       const relativePath = vscode.workspace.asRelativePath(uri, false);
@@ -123,6 +132,7 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
   }
 
   public async inspectPath(relativePath: string): Promise<PathInspection> {
+    this.ledger?.recordWorkspaceRead();
     const folder = this.workspaceFolder();
     if (folder === undefined) {
       return {

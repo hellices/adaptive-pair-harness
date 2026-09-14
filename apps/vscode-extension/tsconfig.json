@@ -18,5 +18,6 @@
     { "path": "../../packages/runtime" },
     { "path": "../../packages/testkit" }
   ],
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["test/host/**"]
 }

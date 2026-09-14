@@ -12,12 +12,12 @@ import {
   PairCoordinator,
   type Clock,
   type EffectPort,
-  type EffectRequest,
-  type EffectResult,
   type IdSource,
   type PairCoordinatorPort,
   type PairStore,
 } from "@adaptive-pair/runtime";
+import { ActivityLedger } from "./activityLedger.js";
+import { StableEffectPort } from "./stableEffectPort.js";
 
 const PLACEHOLDER_WORKSPACE_ID = "adaptive-pair:workspace";
 
@@ -145,26 +145,6 @@ class MemoryPairStore implements PairStore {
   }
 }
 
-class StableShellEffectPort implements EffectPort {
-  public execute(
-    request: EffectRequest,
-    signal: AbortSignal,
-  ): Promise<EffectResult> {
-    signal.throwIfAborted();
-    return Promise.resolve({
-      operationId: request.operationId,
-      status: "declined",
-      summary: `${request.toolName} is not implemented in the Stable Pair Presence shell yet.`,
-      observation: {
-        closed: true,
-        kind: request.kind,
-      },
-      sensitiveData: false,
-      partial: false,
-    });
-  }
-}
-
 class SystemClock implements Clock {
   public now(): number {
     return Date.now();
@@ -180,22 +160,34 @@ class IncrementingIds implements IdSource {
   }
 }
 
+export interface SessionControllerOptions {
+  readonly effects?: EffectPort;
+  readonly ledger?: ActivityLedger;
+}
+
 export class SessionController implements vscode.Disposable {
   private readonly store = new MemoryPairStore(
     createRuntimeSnapshot(PLACEHOLDER_WORKSPACE_ID),
   );
   private readonly ids = new IncrementingIds();
   private readonly clock = new SystemClock();
-  private readonly coordinatorPort: PairCoordinatorPort = new PairCoordinator({
-    store: this.store,
-    effects: new StableShellEffectPort(),
-    clock: this.clock,
-    ids: this.ids,
-    streamId: PLACEHOLDER_WORKSPACE_ID,
-  });
-  private readonly workspaceContext = new WorkspaceContext(
-    new VscodeWorkspaceContextAccess(this.clock),
-  );
+  private readonly ledger: ActivityLedger | undefined;
+  private readonly coordinatorPort: PairCoordinatorPort;
+  private readonly workspaceContext: WorkspaceContext;
+
+  public constructor(options: SessionControllerOptions = {}) {
+    this.ledger = options.ledger;
+    this.coordinatorPort = new PairCoordinator({
+      store: this.store,
+      effects: options.effects ?? new StableEffectPort(),
+      clock: this.clock,
+      ids: this.ids,
+      streamId: PLACEHOLDER_WORKSPACE_ID,
+    });
+    this.workspaceContext = new WorkspaceContext(
+      new VscodeWorkspaceContextAccess(this.clock, options.ledger),
+    );
+  }
 
   public coordinator(): PairCoordinatorPort {
     return this.coordinatorPort;
@@ -361,6 +353,7 @@ export class SessionController implements vscode.Disposable {
   }
 
   private resolveWorkspaceId(): string {
+    this.ledger?.recordWorkspaceRead();
     const firstFolder = vscode.workspace.workspaceFolders?.[0];
     return firstFolder?.uri.toString() ?? PLACEHOLDER_WORKSPACE_ID;
   }
