@@ -28,6 +28,7 @@ export const createSession = (sessionId: string): PairSessionSnapshot =>
     workUnit: undefined,
     assistance: undefined,
     operations: Object.freeze([]),
+    userActionGrants: Object.freeze([]),
   });
 
 export const createRuntime = (workspaceId: string): PairRuntimeSnapshot =>

@@ -13,4 +13,13 @@ export class FakeClock {
   }
 }
 
+export class FakeIdSource {
+  private value = 0;
+
+  public next(prefix: string): string {
+    this.value += 1;
+    return `${prefix}-${this.value}`;
+  }
+}
+
 export * from "./fakes.js";

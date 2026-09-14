@@ -103,10 +103,21 @@ export interface WorkUnit {
   readonly status: WorkUnitStatus;
 }
 
+export interface UserActionGrantRecord {
+  readonly id: string;
+  readonly nativeToolName: string;
+  readonly runtimeRevision: number;
+  readonly authorityEpoch: number | undefined;
+  readonly status: "available" | "consumed";
+}
+
 export interface OperationRecord {
   readonly id: string;
   readonly workUnitId: string;
+  readonly toolName: string;
   readonly kind: "read" | "edit" | "check";
+  readonly input: Readonly<Record<string, unknown>>;
+  readonly runtimeRevision: number;
   readonly authorityEpoch: number;
   readonly status:
     | "planned"
@@ -117,6 +128,8 @@ export interface OperationRecord {
     | "declined"
     | "cancelled"
     | "unknown";
+  readonly summary: string | undefined;
+  readonly userActionGrantId: string | undefined;
 }
 
 export interface PairPresence {
@@ -138,6 +151,7 @@ export interface PairSessionSnapshot {
   readonly workUnit: WorkUnit | undefined;
   readonly assistance: AssistanceState | undefined;
   readonly operations: readonly OperationRecord[];
+  readonly userActionGrants: readonly UserActionGrantRecord[];
 }
 
 export interface PairRuntimeSnapshot {

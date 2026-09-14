@@ -49,6 +49,7 @@ export const growthRuntime = (
     },
     assistance: undefined,
     operations: [],
+    userActionGrants: [],
     ...overrides.session,
   };
 

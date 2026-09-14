@@ -3,6 +3,7 @@ import type {
   EntrySnapshot,
   HintLevel,
   LearningAgreement,
+  OperationRecord,
   OperatingMode,
   PresenceStatus,
   WorkUnit,
@@ -76,6 +77,34 @@ export type PairEvent =
       readonly type: "SolutionRevealAuthorized";
       readonly workUnitId: string;
       readonly previewOnly: true;
+    })
+  | (EventBase & {
+      readonly type: "UserActionGranted";
+      readonly grantId: string;
+      readonly nativeToolName: string;
+      readonly runtimeRevision: number;
+      readonly authorityEpoch: number | undefined;
+    })
+  | (EventBase & {
+      readonly type: "UserActionConsumed";
+      readonly grantId: string;
+    })
+  | (EventBase & {
+      readonly type: "OperationAuthorized";
+      readonly operation: OperationRecord;
+    })
+  | (EventBase & {
+      readonly type: "OperationObserved";
+      readonly operationId: string;
+      readonly authorityEpoch: number;
+      readonly status:
+        | "confirmed"
+        | "failed"
+        | "declined"
+        | "cancelled"
+        | "unknown";
+      readonly summary: string;
+      readonly observation?: Readonly<Record<string, unknown>>;
     })
   | (EventBase & {
       readonly type: "SessionPaused";

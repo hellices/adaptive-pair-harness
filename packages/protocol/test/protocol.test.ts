@@ -205,6 +205,46 @@ describe("parsePairCommand", () => {
       type: "CloseSession",
       observedAt: 116,
     },
+    {
+      protocolVersion: 1,
+      commandId: "cmd-grant-user-action",
+      expectedRevision: 17,
+      actor: "human",
+      type: "GrantUserAction",
+      grantId: "grant-1",
+      nativeToolName: "adaptive_pair_run_verification",
+      observedAt: 117,
+    },
+    {
+      protocolVersion: 1,
+      commandId: "cmd-authorize-operation",
+      expectedRevision: 18,
+      actor: "ai",
+      type: "AuthorizeOperation",
+      operationId: "op-1",
+      toolName: "pair_run_verification",
+      kind: "check",
+      input: {
+        plan: "npm test -- packages/runtime/test/coordinator.test.ts",
+      },
+      userActionGrantId: "grant-1",
+      observedAt: 118,
+    },
+    {
+      protocolVersion: 1,
+      commandId: "cmd-observe-operation",
+      expectedRevision: 19,
+      actor: "host",
+      type: "ObserveOperationResult",
+      operationId: "op-1",
+      authorityEpoch: 0,
+      status: "confirmed",
+      summary: "Verification passed.",
+      observation: {
+        exitCode: 0,
+      },
+      observedAt: 119,
+    },
   ])("accepts the %s command variant", command => {
     expect(parsePairCommand(command)).toMatchObject(command);
   });

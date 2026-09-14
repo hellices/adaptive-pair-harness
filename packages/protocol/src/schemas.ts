@@ -102,6 +102,12 @@ const baselineSchema = {
   additionalProperties: false,
 } as const;
 
+const jsonObjectSchema = {
+  type: "object",
+  propertyNames: { type: "string" },
+  additionalProperties: true,
+} as const;
+
 const workUnitSchema = {
   type: "object",
   properties: {
@@ -182,7 +188,10 @@ const pairCommandSchema = {
     ),
     createCommandSchema(
       "CaptureEntry",
-      { entry: entrySnapshotSchema },
+      {
+        entry: entrySnapshotSchema,
+        userActionGrantId: { type: "string" },
+      },
       ["entry"],
     ),
     createCommandSchema(
@@ -219,6 +228,7 @@ const pairCommandSchema = {
         workUnitId: { type: "string" },
         summary: { type: "string" },
         bypassed: { type: "boolean" },
+        userActionGrantId: { type: "string" },
       },
       ["workUnitId", "summary", "bypassed"],
     ),
@@ -228,6 +238,7 @@ const pairCommandSchema = {
         workUnitId: { type: "string" },
         summary: { type: "string" },
         bypassed: { type: "boolean" },
+        userActionGrantId: { type: "string" },
       },
       ["workUnitId", "summary", "bypassed"],
     ),
@@ -236,6 +247,7 @@ const pairCommandSchema = {
       {
         workUnitId: { type: "string" },
         level: hintLevelSchema,
+        userActionGrantId: { type: "string" },
       },
       ["workUnitId", "level"],
     ),
@@ -244,6 +256,7 @@ const pairCommandSchema = {
       {
         workUnitId: { type: "string" },
         previewOnly: { const: true },
+        userActionGrantId: { type: "string" },
       },
       ["workUnitId", "previewOnly"],
     ),
@@ -263,11 +276,47 @@ const pairCommandSchema = {
       ["reason"],
     ),
     createCommandSchema(
+      "GrantUserAction",
+      {
+        grantId: { type: "string" },
+        nativeToolName: { type: "string" },
+      },
+      ["grantId", "nativeToolName"],
+    ),
+    createCommandSchema(
+      "AuthorizeOperation",
+      {
+        operationId: { type: "string" },
+        toolName: { type: "string" },
+        kind: { enum: ["read", "edit", "check"] },
+        input: jsonObjectSchema,
+        userActionGrantId: { type: "string" },
+      },
+      ["operationId", "toolName", "kind", "input"],
+    ),
+    createCommandSchema(
+      "ObserveOperationResult",
+      {
+        operationId: { type: "string" },
+        authorityEpoch: { type: "number" },
+        status: {
+          enum: ["confirmed", "failed", "declined", "cancelled", "unknown"],
+        },
+        summary: { type: "string" },
+        observation: jsonObjectSchema,
+      },
+      ["operationId", "authorityEpoch", "status", "summary"],
+    ),
+    createCommandSchema(
       "ResumeSession",
       { entry: entrySnapshotSchema },
       ["entry"],
     ),
-    createCommandSchema("CloseSession", {}, []),
+    createCommandSchema(
+      "CloseSession",
+      { userActionGrantId: { type: "string" } },
+      [],
+    ),
   ],
 } as const;
 

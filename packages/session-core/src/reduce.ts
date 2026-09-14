@@ -1,5 +1,6 @@
 import type {
   AssistanceState,
+  OperationRecord,
   PairEvent,
   PairRuntimeSnapshot,
   PairSessionSnapshot,
@@ -91,11 +92,25 @@ const requireWorkSession = (
     throw new Error("SESSION_NOT_STARTED");
   }
 
-  if (session.status === "briefing" || session.status === "ready" || session.status === "active") {
+  if (
+    session.status === "briefing" ||
+    session.status === "ready" ||
+    session.status === "active"
+  ) {
     return session;
   }
 
   throw new Error("WORK_UNIT_NOT_AGREED");
+};
+
+const requireStartedSession = (
+  session: PairSessionSnapshot | undefined,
+): PairSessionSnapshot => {
+  if (session === undefined) {
+    throw new Error("SESSION_NOT_STARTED");
+  }
+
+  return session;
 };
 
 const withAssistance = (
@@ -114,6 +129,30 @@ const reconcileWorkUnit = (
     ...workUnit,
     status: "needs-reconcile",
   };
+};
+
+const replaceOperation = (
+  operations: readonly OperationRecord[],
+  operationId: string,
+  mutate: (operation: OperationRecord) => OperationRecord,
+): readonly OperationRecord[] => {
+  const index = operations.findIndex(operation => operation.id === operationId);
+
+  if (index < 0) {
+    throw new Error("OPERATION_NOT_FOUND");
+  }
+
+  const current = operations[index];
+
+  if (current === undefined) {
+    throw new Error("OPERATION_NOT_FOUND");
+  }
+
+  return [
+    ...operations.slice(0, index),
+    mutate(current),
+    ...operations.slice(index + 1),
+  ];
 };
 
 const applyEvent = (
@@ -374,6 +413,131 @@ const applyEvent = (
               recordedAt: event.recordedAt,
             },
           })),
+        },
+      };
+    }
+
+    case "UserActionGranted": {
+      const session = requireStartedSession(snapshot.session);
+
+      if (event.runtimeRevision !== event.revision) {
+        throw new Error("INVALID_GRANT_RUNTIME_REVISION");
+      }
+
+      if (
+        session.userActionGrants.some(grant => grant.id === event.grantId)
+      ) {
+        throw new Error("USER_ACTION_GRANT_EXISTS");
+      }
+
+      return {
+        protocolVersion: 1,
+        revision: event.revision,
+        presence: snapshot.presence,
+        session: {
+          ...session,
+          userActionGrants: [
+            ...session.userActionGrants,
+            {
+              id: event.grantId,
+              nativeToolName: event.nativeToolName,
+              runtimeRevision: event.runtimeRevision,
+              authorityEpoch: event.authorityEpoch,
+              status: "available",
+            },
+          ],
+        },
+      };
+    }
+
+    case "UserActionConsumed": {
+      const session = requireStartedSession(snapshot.session);
+      const grant = session.userActionGrants.find(
+        candidate => candidate.id === event.grantId,
+      );
+
+      if (grant === undefined) {
+        throw new Error("USER_ACTION_GRANT_NOT_FOUND");
+      }
+
+      if (grant.status !== "available") {
+        throw new Error("USER_ACTION_GRANT_ALREADY_CONSUMED");
+      }
+
+      return {
+        protocolVersion: 1,
+        revision: event.revision,
+        presence: snapshot.presence,
+        session: {
+          ...session,
+          userActionGrants: session.userActionGrants.map(candidate =>
+            candidate.id === event.grantId
+              ? {
+                  ...candidate,
+                  status: "consumed",
+                }
+              : candidate,
+          ),
+        },
+      };
+    }
+
+    case "OperationAuthorized": {
+      const session = requireStartedSession(snapshot.session);
+
+      if (event.operation.runtimeRevision !== event.revision) {
+        throw new Error("INVALID_OPERATION_RUNTIME_REVISION");
+      }
+
+      if (event.operation.authorityEpoch !== session.authorityEpoch) {
+        throw new Error("INVALID_OPERATION_AUTHORITY");
+      }
+
+      if (
+        session.operations.some(operation => operation.id === event.operation.id)
+      ) {
+        throw new Error("OPERATION_ALREADY_EXISTS");
+      }
+
+      return {
+        protocolVersion: 1,
+        revision: event.revision,
+        presence: snapshot.presence,
+        session: {
+          ...session,
+          operations: [...session.operations, event.operation],
+        },
+      };
+    }
+
+    case "OperationObserved": {
+      const session = requireStartedSession(snapshot.session);
+
+      return {
+        protocolVersion: 1,
+        revision: event.revision,
+        presence: snapshot.presence,
+        session: {
+          ...session,
+          operations: replaceOperation(session.operations, event.operationId, operation => {
+            if (operation.status === "confirmed" ||
+                operation.status === "failed" ||
+                operation.status === "declined" ||
+                operation.status === "cancelled" ||
+                operation.status === "unknown") {
+              throw new Error("OPERATION_ALREADY_SETTLED");
+            }
+
+            if (operation.authorityEpoch !== event.authorityEpoch) {
+              throw new Error("STALE_OPERATION_OBSERVATION");
+            }
+
+            return {
+              ...operation,
+              status: event.status,
+              summary: event.summary,
+            };
+          }),
         },
       };
     }

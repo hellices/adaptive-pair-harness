@@ -199,9 +199,11 @@ describe("session core", () => {
     });
     expect(session.criteria).toEqual([]);
     expect(session.operations).toEqual([]);
+    expect(session.userActionGrants).toEqual([]);
     expect(Object.isFrozen(session)).toBe(true);
     expect(Object.isFrozen(session.criteria)).toBe(true);
     expect(Object.isFrozen(session.operations)).toBe(true);
+    expect(Object.isFrozen(session.userActionGrants)).toBe(true);
 
     expect(runtime).toEqual({
       protocolVersion: 1,
@@ -279,6 +281,7 @@ describe("session core", () => {
         workUnit: undefined,
         assistance: undefined,
         operations: [],
+        userActionGrants: [],
       },
     });
     expect(Object.isFrozen(next)).toBe(true);
@@ -1527,9 +1530,16 @@ describe("session core", () => {
       {
         id: "op-1",
         workUnitId: "wu-1",
+        toolName: "pair_read_scope",
         kind: "read",
+        input: {
+          path: "src/a.ts",
+        },
+        runtimeRevision: 0,
         authorityEpoch: 0,
         status: "planned",
+        summary: undefined,
+        userActionGrantId: undefined,
       },
     ];
     const learningGoals = ["goal-1"];
@@ -1618,9 +1628,16 @@ describe("session core", () => {
     operations.push({
       id: "op-2",
       workUnitId: "wu-1",
+      toolName: "pair_apply_edit",
       kind: "edit",
+      input: {
+        targetPath: "src/a.ts",
+      },
+      runtimeRevision: 0,
       authorityEpoch: 0,
       status: "authorized",
+      summary: undefined,
+      userActionGrantId: undefined,
     });
     learningGoals.push("goal-2");
     allowedPaths.push("test");
@@ -1631,9 +1648,16 @@ describe("session core", () => {
       {
         id: "op-1",
         workUnitId: "wu-1",
+        toolName: "pair_read_scope",
         kind: "read",
+        input: {
+          path: "src/a.ts",
+        },
+        runtimeRevision: 0,
         authorityEpoch: 0,
         status: "planned",
+        summary: undefined,
+        userActionGrantId: undefined,
       },
     ]);
     expect(next.session?.learningAgreement?.learningGoals).toEqual(["goal-1"]);

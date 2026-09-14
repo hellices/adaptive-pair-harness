@@ -31,6 +31,7 @@ export type PairCommand =
   | (CommandBase & {
       readonly type: "CaptureEntry";
       readonly entry: EntrySnapshot;
+      readonly userActionGrantId?: string;
     })
   | (CommandBase & {
       readonly type: "ConfirmBrief";
@@ -58,22 +59,26 @@ export type PairCommand =
       readonly workUnitId: string;
       readonly summary: string;
       readonly bypassed: boolean;
+      readonly userActionGrantId?: string;
     })
   | (CommandBase & {
       readonly type: "RecordHypothesis";
       readonly workUnitId: string;
       readonly summary: string;
       readonly bypassed: boolean;
+      readonly userActionGrantId?: string;
     })
   | (CommandBase & {
       readonly type: "RequestHint";
       readonly workUnitId: string;
       readonly level: HintLevel;
+      readonly userActionGrantId?: string;
     })
   | (CommandBase & {
       readonly type: "AuthorizeSolutionReveal";
       readonly workUnitId: string;
       readonly previewOnly: true;
+      readonly userActionGrantId?: string;
     })
   | (CommandBase & {
       readonly type: "RequestEditOperation";
@@ -87,9 +92,36 @@ export type PairCommand =
       readonly reason: string;
     })
   | (CommandBase & {
+      readonly type: "GrantUserAction";
+      readonly grantId: string;
+      readonly nativeToolName: string;
+    })
+  | (CommandBase & {
+      readonly type: "AuthorizeOperation";
+      readonly operationId: string;
+      readonly toolName: string;
+      readonly kind: "read" | "edit" | "check";
+      readonly input: Readonly<Record<string, unknown>>;
+      readonly userActionGrantId?: string;
+    })
+  | (CommandBase & {
+      readonly type: "ObserveOperationResult";
+      readonly operationId: string;
+      readonly authorityEpoch: number;
+      readonly status:
+        | "confirmed"
+        | "failed"
+        | "declined"
+        | "cancelled"
+        | "unknown";
+      readonly summary: string;
+      readonly observation?: Readonly<Record<string, unknown>>;
+    })
+  | (CommandBase & {
       readonly type: "ResumeSession";
       readonly entry: EntrySnapshot;
     })
   | (CommandBase & {
       readonly type: "CloseSession";
+      readonly userActionGrantId?: string;
     });
