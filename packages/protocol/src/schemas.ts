@@ -233,7 +233,10 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> =>
 const jsonError = (reason: string) =>
   new Error(`Invalid Pair command: ${reason}`);
 
-const assertJsonCompatible = (value: unknown, seen = new WeakSet<object>()): void => {
+const assertJsonCompatible = (
+  value: unknown,
+  path = new WeakSet<object>(),
+): void => {
   if (
     value === null ||
     typeof value === "string" ||
@@ -262,36 +265,40 @@ const assertJsonCompatible = (value: unknown, seen = new WeakSet<object>()): voi
   }
 
   if (Array.isArray(value)) {
-    if (seen.has(value)) {
+    if (path.has(value)) {
       throw jsonError("circular references are not allowed");
     }
-    seen.add(value);
+    path.add(value);
 
-    for (const symbol of Object.getOwnPropertySymbols(value)) {
-      throw jsonError(`symbol key ${String(symbol)} is not allowed`);
-    }
-
-    for (const name of Object.getOwnPropertyNames(value)) {
-      if (name === "length") {
-        continue;
+    try {
+      for (const symbol of Object.getOwnPropertySymbols(value)) {
+        throw jsonError(`symbol key ${String(symbol)} is not allowed`);
       }
 
-      if (!/^(0|[1-9]\d*)$/.test(name)) {
-        throw jsonError(`non-index array property ${name} is not allowed`);
+      for (const name of Object.getOwnPropertyNames(value)) {
+        if (name === "length") {
+          continue;
+        }
+
+        if (!/^(0|[1-9]\d*)$/.test(name)) {
+          throw jsonError(`non-index array property ${name} is not allowed`);
+        }
+
+        const descriptor = Object.getOwnPropertyDescriptor(value, name);
+        if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) {
+          throw jsonError(`array index ${name} must be a plain enumerable data property`);
+        }
+
+        assertJsonCompatible(descriptor.value, path);
       }
 
-      const descriptor = Object.getOwnPropertyDescriptor(value, name);
-      if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) {
-        throw jsonError(`array index ${name} must be a plain enumerable data property`);
+      for (let index = 0; index < value.length; index += 1) {
+        if (!Object.prototype.hasOwnProperty.call(value, index)) {
+          throw jsonError(`sparse array holes are not allowed at index ${index}`);
+        }
       }
-
-      assertJsonCompatible(descriptor.value, seen);
-    }
-
-    for (let index = 0; index < value.length; index += 1) {
-      if (!Object.prototype.hasOwnProperty.call(value, index)) {
-        throw jsonError(`sparse array holes are not allowed at index ${index}`);
-      }
+    } finally {
+      path.delete(value);
     }
 
     return;
@@ -302,22 +309,26 @@ const assertJsonCompatible = (value: unknown, seen = new WeakSet<object>()): voi
       throw jsonError("only plain objects and arrays are allowed");
     }
 
-    if (seen.has(value)) {
+    if (path.has(value)) {
       throw jsonError("circular references are not allowed");
     }
-    seen.add(value);
+    path.add(value);
 
-    for (const symbol of Object.getOwnPropertySymbols(value)) {
-      throw jsonError(`symbol key ${String(symbol)} is not allowed`);
-    }
-
-    for (const name of Object.getOwnPropertyNames(value)) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, name);
-      if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) {
-        throw jsonError(`property ${name} must be a plain enumerable data property`);
+    try {
+      for (const symbol of Object.getOwnPropertySymbols(value)) {
+        throw jsonError(`symbol key ${String(symbol)} is not allowed`);
       }
 
-      assertJsonCompatible(descriptor.value, seen);
+      for (const name of Object.getOwnPropertyNames(value)) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, name);
+        if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) {
+          throw jsonError(`property ${name} must be a plain enumerable data property`);
+        }
+
+        assertJsonCompatible(descriptor.value, path);
+      }
+    } finally {
+      path.delete(value);
     }
 
     return;

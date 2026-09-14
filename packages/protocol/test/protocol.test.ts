@@ -252,6 +252,98 @@ describe("parsePairCommand", () => {
     });
   });
 
+  it("accepts shared plain data while cloning away identity", () => {
+    const sharedPaths = ["packages/protocol/src/index.ts"];
+    const command = {
+      protocolVersion: 1,
+      commandId: "cmd-shared-plain-data",
+      expectedRevision: 0,
+      actor: "human",
+      type: "CaptureEntry",
+      entry: {
+        workspaceId: "workspace-1",
+        dirtyPaths: sharedPaths,
+        openPaths: sharedPaths,
+        diagnostics: sharedPaths,
+        protectedPaths: [".env"],
+        capturedAt: 200,
+      },
+      observedAt: 100,
+    } as const;
+
+    const parsed = parsePairCommand(command);
+
+    expect(parsed).toMatchObject(command);
+    expect(Object.isFrozen(parsed)).toBe(true);
+
+    if (parsed.type !== "CaptureEntry") {
+      throw new Error("Expected CaptureEntry");
+    }
+
+    expect(Object.isFrozen(parsed.entry)).toBe(true);
+    expect(Object.isFrozen(parsed.entry.dirtyPaths)).toBe(true);
+    expect(Object.isFrozen(parsed.entry.openPaths)).toBe(true);
+    expect(Object.isFrozen(parsed.entry.diagnostics)).toBe(true);
+    expect(Object.isFrozen(parsed.entry.protectedPaths)).toBe(true);
+
+    expect(parsed.entry.dirtyPaths).not.toBe(parsed.entry.openPaths);
+    expect(parsed.entry.dirtyPaths).not.toBe(sharedPaths);
+    expect(parsed.entry.openPaths).not.toBe(sharedPaths);
+    expect(parsed.entry.diagnostics).not.toBe(sharedPaths);
+
+    sharedPaths.push("packages/protocol/test");
+
+    expect(parsed.entry.dirtyPaths).toEqual(["packages/protocol/src/index.ts"]);
+    expect(parsed.entry.openPaths).toEqual(["packages/protocol/src/index.ts"]);
+    expect(parsed.entry.diagnostics).toEqual(["packages/protocol/src/index.ts"]);
+  });
+
+  it("rejects true cycles and non-plain prototypes before validation", () => {
+    const cyclicPaths: unknown[] = ["packages/protocol/src/index.ts"];
+    cyclicPaths.push(cyclicPaths);
+
+    expect(() =>
+      parsePairCommand({
+        protocolVersion: 1,
+        commandId: "cmd-cyclic",
+        expectedRevision: 0,
+        actor: "human",
+        type: "CaptureEntry",
+        entry: {
+          workspaceId: "workspace-1",
+          dirtyPaths: cyclicPaths,
+          openPaths: ["packages/protocol/test/protocol.test.ts"],
+          diagnostics: ["packages/protocol/src/index.ts:1:1 warning"],
+          protectedPaths: [".env"],
+          capturedAt: 200,
+        },
+        observedAt: 100,
+      }),
+    ).toThrow("circular references are not allowed");
+
+    const exoticCommand = Object.create(null) as {
+      protocolVersion: number;
+      commandId: string;
+      expectedRevision: number;
+      actor: "human";
+      type: "CaptureEntry";
+      entry: ReturnType<typeof createEntry>;
+      observedAt: number;
+    };
+
+    exoticCommand.protocolVersion = 1;
+    exoticCommand.commandId = "cmd-exotic";
+    exoticCommand.expectedRevision = 0;
+    exoticCommand.actor = "human";
+    exoticCommand.type = "CaptureEntry";
+    exoticCommand.entry = createEntry();
+    exoticCommand.observedAt = 100;
+
+    expect(() => parsePairCommand(exoticCommand)).toThrow(
+      "only plain objects and arrays are allowed",
+    );
+  });
+
   it("accepts an entry snapshot with an omitted branch", () => {
     const parsed = parsePairCommand({
       protocolVersion: 1,
