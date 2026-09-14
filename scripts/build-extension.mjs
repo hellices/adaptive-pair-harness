@@ -13,6 +13,7 @@ import { build } from "esbuild";
 import { rm, mkdir, copyFile, readFile, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMainModule } from "./mainModule.mjs";
 import { parseJsonObject, stringArrayField } from "./json.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -142,7 +143,15 @@ const assertNoHostTestCode = async () => {
   }
 };
 
-const main = async () => {
+/**
+ * Produce the complete, deterministic release build: a clean bundle, a
+ * normalized source map, a host-test-free assertion, and the staged package
+ * files. The packaging orchestrator calls this so a direct workspace package
+ * command cannot ship stale or unstaged output.
+ *
+ * @returns {Promise<void>}
+ */
+export const runProductionBuild = async () => {
   await cleanPreviousBundle();
   await buildProductionBundle({ write: true });
   await normalizeSourceMap();
@@ -151,6 +160,6 @@ const main = async () => {
   console.log("Built apps/vscode-extension/dist/extension.cjs");
 };
 
-if (process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`) {
-  await main();
+if (isMainModule(import.meta.url)) {
+  await runProductionBuild();
 }

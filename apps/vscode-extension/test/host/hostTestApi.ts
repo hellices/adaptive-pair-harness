@@ -2,6 +2,7 @@ import type * as vscode from "vscode";
 import type { PairCoordinatorPort } from "@adaptive-pair/runtime";
 import type { PairRuntimeSnapshot } from "@adaptive-pair/protocol";
 import type { GrowthModel } from "../../src/modelAdapter.js";
+import { accountedModelFactory } from "../../src/modelAccounting.js";
 import {
   GrowthEvaluationLog,
   GrowthParticipant,
@@ -135,12 +136,7 @@ export const createHostTestApi = (deps: HostTestApiDependencies): HostTestApi =>
       coordinator: deps.coordinator,
       consent,
       evaluations,
-      createModel: () => ({
-        request: (instructions, tools, signal) => {
-          deps.ledger.recordModelRequest();
-          return options.model.request(instructions, tools, signal);
-        },
-      }),
+      createModel: accountedModelFactory(deps.ledger, () => options.model),
       requestWorkspaceConsent: () => Promise.resolve(options.grantConsent ?? true),
       confirmSolutionReveal: () => Promise.resolve(options.confirmReveal ?? false),
       // The production quiet route, wired exactly as the shipped entry wires it.

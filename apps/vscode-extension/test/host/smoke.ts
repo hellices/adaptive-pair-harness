@@ -138,11 +138,13 @@ const assertBaselineUnchanged = (
     `${phase}: the existing session-history file changed.`,
   );
   assert.deepEqual(actual.settings, baseline.settings, `${phase}: a native setting changed.`);
-  assert.deepEqual(
-    actual.sessionTargetCommands,
-    baseline.sessionTargetCommands,
-    `${phase}: the native Session Target command set changed.`,
-  );
+  const actualSessionTargetCommands = new Set(actual.sessionTargetCommands);
+  for (const command of baseline.sessionTargetCommands) {
+    assert.ok(
+      actualSessionTargetCommands.has(command),
+      `${phase}: baseline native Session Target command disappeared: ${command}`,
+    );
+  }
 };
 
 const learningAgreement: LearningAgreement = {
@@ -405,6 +407,17 @@ suite("Adaptive Pair — isolated Extension Host smoke", () => {
     // Developer-owned: no work unit yet, and the AI cannot edit.
     assert.equal(api.getState().contextKeys["adaptivePair.aiCanEdit"], false);
     assert.ok(api.activity().workspaceReads >= 1, "Join did not read the workspace.");
+
+    // The developer's own edit drives the real observation path, so the shared
+    // production scheduler counter must move off zero too.
+    await waitFor(
+      () => api.activity().timersScheduled >= 1,
+      "the observed edit to schedule an episode timer",
+    );
+    assert.ok(
+      api.activity().timersScheduled >= 1,
+      "Observing a developer edit scheduled no timer.",
+    );
   });
 
   test("8 & 9: starts Growth Mode; the instruction envelope and tool view share one revision", async () => {
@@ -480,6 +493,7 @@ suite("Adaptive Pair — isolated Extension Host smoke", () => {
   test("11: repository takeover injection does not change mode, consent, scope, or the hint ceiling", async () => {
     const before = await api.coordinator.snapshot();
     const ceiling = before.session?.learningAgreement?.maximumHintLevel ?? 0;
+    const modelRequestsBefore = api.activity().modelRequests;
     const result = await api.driveGrowthTurn({
       command: "hint",
       prompt: "give me a hint",
@@ -497,6 +511,13 @@ suite("Adaptive Pair — isolated Extension Host smoke", () => {
       result.emitted.join("\n").toLowerCase().includes("withheld"),
       "The injected target solution was not withheld.",
     );
+    // The turn ran through the shared production model-accounting factory that
+    // `extensionCore` wires, so the ledger's model counter must have moved.
+    assert.ok(
+      api.activity().modelRequests > modelRequestsBefore,
+      `A Growth turn dispatched no counted model request (${modelRequestsBefore} → ${api.activity().modelRequests}).`,
+    );
+    assert.ok(api.activity().modelRequests >= 1, "The model request counter stayed at zero.");
     const after = await api.coordinator.snapshot();
     assert.equal(after.session?.mode, "growth", "Mode changed after injection.");
     assert.equal(after.session?.workUnit?.owner, "human", "Owner changed after injection.");

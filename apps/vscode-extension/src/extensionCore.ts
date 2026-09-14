@@ -15,6 +15,7 @@ import {
   ModelConsentRegistry,
 } from "./growthParticipant.js";
 import { createGrowthModel } from "./modelAdapter.js";
+import { accountedModelFactory } from "./modelAccounting.js";
 import { ActivityLedger } from "./activityLedger.js";
 import { StableEffectPort, type VerificationRunner } from "./stableEffectPort.js";
 import {
@@ -112,15 +113,7 @@ export const createExtensionRuntime = (
     coordinator,
     consent: new ModelConsentRegistry(),
     evaluations: new GrowthEvaluationLog(),
-    createModel: model => {
-      const growthModel = createGrowthModel(model, coordinator);
-      return {
-        request: (instructions, tools, signal) => {
-          ledger.recordModelRequest();
-          return growthModel.request(instructions, tools, signal);
-        },
-      };
-    },
+    createModel: accountedModelFactory(ledger, model => createGrowthModel(model, coordinator)),
     requestWorkspaceConsent,
     confirmSolutionReveal,
     stayQuiet: () => sessionController.stayQuiet(),

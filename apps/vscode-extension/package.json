@@ -460,8 +460,7 @@
     "clean": "rm -rf dist .host-test *.vsix LICENSE README.md docs",
     "typecheck": "tsc -b",
     "build": "node ../../scripts/build-extension.mjs",
-    "prepackage": "node ../../scripts/assert-package-staging.mjs",
-    "package": "vsce package --no-dependencies --out ../../adaptive-pair-0.2.0-preview.1-stable.vsix"
+    "package": "node ../../scripts/package-extension.mjs"
   },
   "dependencies": {
     "@adaptive-pair/evaluation": "0.2.0-preview.1",

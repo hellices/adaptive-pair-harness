@@ -10,6 +10,7 @@ import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { STAGED_PACKAGE_FILES } from "./build-extension.mjs";
+import { isMainModule } from "./mainModule.mjs";
 import { parseJsonObject, stringArrayField } from "./json.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -59,7 +60,12 @@ export const inspectStagedPackageFiles = (staged, options) => {
 const hashOf = async (path) =>
   createHash("sha256").update(await readFile(path)).digest("hex");
 
-const main = async () => {
+/**
+ * Inspect the real extension folder and report every staging violation.
+ *
+ * @returns {Promise<string[]>}
+ */
+export const collectStagingViolations = async () => {
   const staged = [];
   for (const entry of STAGED_PACKAGE_FILES) {
     const sourcePath = resolve(repoRoot, entry.source);
@@ -77,11 +83,15 @@ const main = async () => {
     await readFile(resolve(extensionRoot, "package.json"), "utf8"),
     "The extension manifest",
   );
-  const violations = inspectStagedPackageFiles(staged, {
+  return inspectStagedPackageFiles(staged, {
     bundleExists: existsSync(bundlePath),
     legalNoticeExists: existsSync(legalNoticePath),
     allowlist: stringArrayField(manifest, "files"),
   });
+};
+
+const main = async () => {
+  const violations = await collectStagingViolations();
   if (violations.length > 0) {
     console.error("[prepackage] The extension folder is not staged for packaging:");
     for (const violation of violations) {
@@ -94,6 +104,6 @@ const main = async () => {
   console.log("[prepackage] Staged bundle, license, README, and Growth preview verified.");
 };
 
-if (process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   await main();
 }

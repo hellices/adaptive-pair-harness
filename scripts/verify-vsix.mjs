@@ -8,10 +8,15 @@ import { readFile } from "node:fs/promises";
 import { inflateRawSync } from "node:zlib";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMainModule } from "./mainModule.mjs";
 import { parseJsonObject } from "./json.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const DEFAULT_VSIX = resolve(repoRoot, "adaptive-pair-0.2.0-preview.1-stable.vsix");
+
+/** The Stable release artifact name, shared with the packaging orchestrator. */
+export const RELEASE_VSIX_NAME = "adaptive-pair-0.2.0-preview.1-stable.vsix";
+
+const DEFAULT_VSIX = resolve(repoRoot, RELEASE_VSIX_NAME);
 
 /** Every entry the Stable release VSIX must contain, and nothing else. */
 export const REQUIRED_VSIX_ENTRIES = Object.freeze([
@@ -51,25 +56,68 @@ const FORBIDDEN_CONTENT_PATTERNS = Object.freeze([
 
 const TEXT_ENTRY = /\.(?:cjs|js|json|md|xml|txt|vsixmanifest)$/u;
 
+const MAX_REPORTED_LENGTH = 120;
+
+/**
+ * Archive-derived text is untrusted: an entry name can carry control characters
+ * or be arbitrarily long. Reports escape it and clamp its length so a hostile
+ * archive cannot forge or flood verification output.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+export const sanitizeForMessage = (value) => {
+  let escaped = "";
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    escaped +=
+      code < 0x20 || (code >= 0x7f && code <= 0x9f)
+        ? `\\x${code.toString(16).padStart(2, "0")}`
+        : character;
+  }
+  return escaped.length > MAX_REPORTED_LENGTH
+    ? `${escaped.slice(0, MAX_REPORTED_LENGTH)}…`
+    : escaped;
+};
+
 /**
  * @param {readonly string[]} names
- * @returns {string[]} one violation per missing required or forbidden entry
+ * @returns {string[]} one violation per missing, duplicated, forbidden, or
+ *   unexpected entry; a releasable archive holds exactly the required set
  */
 export const inspectEntryNames = (names) => {
   const violations = [];
-  const present = new Set(names);
+  const required = new Set(REQUIRED_VSIX_ENTRIES);
+  /** @type {Set<string>} */
+  const seen = new Set();
+  /** @type {Set<string>} */
+  const duplicates = new Set();
 
-  for (const required of REQUIRED_VSIX_ENTRIES) {
-    if (!present.has(required)) {
-      violations.push(`Missing required VSIX entry: ${required}`);
+  for (const name of names) {
+    if (seen.has(name)) {
+      duplicates.add(name);
+    }
+    seen.add(name);
+  }
+
+  for (const entry of REQUIRED_VSIX_ENTRIES) {
+    if (!seen.has(entry)) {
+      violations.push(`Missing required VSIX entry: ${entry}`);
     }
   }
 
-  for (const name of names) {
-    for (const rule of FORBIDDEN_ENTRY_PATTERNS) {
-      if (rule.pattern.test(name)) {
-        violations.push(`Forbidden VSIX entry (${rule.reason}): ${name}`);
-      }
+  for (const name of duplicates) {
+    violations.push(`Duplicate VSIX entry: ${sanitizeForMessage(name)}`);
+  }
+
+  for (const name of seen) {
+    const rule = FORBIDDEN_ENTRY_PATTERNS.find((candidate) => candidate.pattern.test(name));
+    if (rule !== undefined) {
+      violations.push(`Forbidden VSIX entry (${rule.reason}): ${sanitizeForMessage(name)}`);
+      continue;
+    }
+    if (!required.has(name)) {
+      violations.push(`Unexpected VSIX entry: ${sanitizeForMessage(name)}`);
     }
   }
 
@@ -124,52 +172,234 @@ export const inspectEntryContent = (name, text) => {
 
 const EOCD_SIGNATURE = 0x06054b50;
 const CENTRAL_SIGNATURE = 0x02014b50;
+const LOCAL_SIGNATURE = 0x04034b50;
+const EOCD_LENGTH = 22;
+const CENTRAL_HEADER_LENGTH = 46;
+const LOCAL_HEADER_LENGTH = 30;
+const MAX_ARCHIVE_COMMENT = 0xffff;
+const ZIP64_SENTINEL = 0xffffffff;
+const DEFLATED = 8;
+const STORED = 0;
 
 /**
- * Read every entry from a zip archive using only the central directory.
+ * A structural problem in the archive itself. Carrying a stable `code` keeps
+ * the release report deterministic instead of surfacing whichever incidental
+ * `RangeError` a malformed offset happened to trigger.
+ */
+export class VsixArchiveError extends Error {
+  /**
+   * @param {string} code
+   * @param {string} message
+   */
+  constructor(code, message) {
+    super(message);
+    this.name = "VsixArchiveError";
+    this.code = code;
+  }
+}
+
+/**
+ * Every end-of-central-directory candidate whose declared comment length
+ * reaches exactly the end of the buffer. The length check is what stops a
+ * decoy `PK\x05\x06` planted inside the archive comment from being mistaken for
+ * the real record.
  *
  * @param {Buffer} buffer
+ * @returns {number[]} candidate offsets, closest to the end first
+ */
+const eocdCandidates = (buffer) => {
+  const candidates = [];
+  const lowest = Math.max(0, buffer.length - EOCD_LENGTH - MAX_ARCHIVE_COMMENT);
+  for (let offset = buffer.length - EOCD_LENGTH; offset >= lowest; offset -= 1) {
+    if (buffer.readUInt32LE(offset) !== EOCD_SIGNATURE) {
+      continue;
+    }
+    if (offset + EOCD_LENGTH + buffer.readUInt16LE(offset + 20) !== buffer.length) {
+      continue;
+    }
+    candidates.push(offset);
+  }
+  return candidates;
+};
+
+/**
+ * @param {Buffer} buffer
+ * @param {number} eocd
  * @returns {{ name: string, data: Buffer, text: string }[]}
  */
-export const readZipEntries = (buffer) => {
-  let eocd = -1;
-  for (let offset = buffer.length - 22; offset >= 0; offset -= 1) {
-    if (buffer.readUInt32LE(offset) === EOCD_SIGNATURE) {
-      eocd = offset;
-      break;
-    }
+const readCentralDirectory = (buffer, eocd) => {
+  const count = buffer.readUInt16LE(eocd + 10);
+  const size = buffer.readUInt32LE(eocd + 12);
+  const start = buffer.readUInt32LE(eocd + 16);
+
+  if (start === ZIP64_SENTINEL || size === ZIP64_SENTINEL || count === 0xffff) {
+    throw new VsixArchiveError(
+      "zip64-unsupported",
+      "The archive declares zip64 records, which this verifier does not read.",
+    );
   }
-  if (eocd < 0) {
-    throw new Error("The archive has no zip end-of-central directory record.");
+  if (start > eocd || size > eocd || start + size > eocd) {
+    throw new VsixArchiveError(
+      "central-directory-out-of-bounds",
+      `The central directory (offset ${start}, size ${size}) does not fit before the end record at offset ${eocd}.`,
+    );
   }
 
-  const count = buffer.readUInt16LE(eocd + 10);
-  let position = buffer.readUInt32LE(eocd + 16);
+  const end = start + size;
   const entries = [];
+  let position = start;
 
   for (let index = 0; index < count; index += 1) {
-    if (buffer.readUInt32LE(position) !== CENTRAL_SIGNATURE) {
-      throw new Error(`Corrupt zip central directory entry at offset ${position}.`);
+    if (position + CENTRAL_HEADER_LENGTH > end) {
+      throw new VsixArchiveError(
+        "central-directory-truncated",
+        `The central directory ends before entry ${index + 1} of ${count}.`,
+      );
     }
+    if (buffer.readUInt32LE(position) !== CENTRAL_SIGNATURE) {
+      throw new VsixArchiveError(
+        "central-directory-entry-signature",
+        `Entry ${index + 1} has no central directory signature at offset ${position}.`,
+      );
+    }
+
     const method = buffer.readUInt16LE(position + 10);
     const compressedSize = buffer.readUInt32LE(position + 20);
     const nameLength = buffer.readUInt16LE(position + 28);
     const extraLength = buffer.readUInt16LE(position + 30);
     const commentLength = buffer.readUInt16LE(position + 32);
     const localOffset = buffer.readUInt32LE(position + 42);
-    const name = buffer.toString("utf8", position + 46, position + 46 + nameLength);
+    const headerEnd =
+      position + CENTRAL_HEADER_LENGTH + nameLength + extraLength + commentLength;
+    if (headerEnd > end) {
+      throw new VsixArchiveError(
+        "central-directory-truncated",
+        `Entry ${index + 1} declares ${nameLength + extraLength + commentLength} header bytes that run past the central directory.`,
+      );
+    }
 
-    const localNameLength = buffer.readUInt16LE(localOffset + 26);
-    const localExtraLength = buffer.readUInt16LE(localOffset + 28);
-    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
-    const stored = buffer.subarray(dataStart, dataStart + compressedSize);
-    const data = method === 8 ? inflateRawSync(stored) : Buffer.from(stored);
+    const name = buffer.toString(
+      "utf8",
+      position + CENTRAL_HEADER_LENGTH,
+      position + CENTRAL_HEADER_LENGTH + nameLength,
+    );
+    const label = sanitizeForMessage(name);
+
+    if (localOffset + LOCAL_HEADER_LENGTH > start) {
+      throw new VsixArchiveError(
+        "entry-header-out-of-bounds",
+        `Entry ${label} declares a local header at offset ${localOffset}, outside the archive data.`,
+      );
+    }
+    if (buffer.readUInt32LE(localOffset) !== LOCAL_SIGNATURE) {
+      throw new VsixArchiveError(
+        "entry-header-signature",
+        `Entry ${label} has no local header signature at offset ${localOffset}.`,
+      );
+    }
+
+    const dataStart =
+      localOffset +
+      LOCAL_HEADER_LENGTH +
+      buffer.readUInt16LE(localOffset + 26) +
+      buffer.readUInt16LE(localOffset + 28);
+    const dataEnd = dataStart + compressedSize;
+    if (dataStart > start || dataEnd > start) {
+      throw new VsixArchiveError(
+        "entry-data-out-of-bounds",
+        `Entry ${label} declares ${compressedSize} bytes at offset ${dataStart}, outside the archive data.`,
+      );
+    }
+
+    const stored = buffer.subarray(dataStart, dataEnd);
+    let data;
+    if (method === DEFLATED) {
+      try {
+        data = inflateRawSync(stored);
+      } catch {
+        throw new VsixArchiveError(
+          "entry-inflate-failed",
+          `Entry ${label} could not be decompressed.`,
+        );
+      }
+    } else if (method === STORED) {
+      data = Buffer.from(stored);
+    } else {
+      throw new VsixArchiveError(
+        "entry-method-unsupported",
+        `Entry ${label} uses unsupported compression method ${method}.`,
+      );
+    }
 
     entries.push({ name, data, text: data.toString("utf8") });
-    position += 46 + nameLength + extraLength + commentLength;
+    position = headerEnd;
+  }
+
+  if (position !== end) {
+    throw new VsixArchiveError(
+      "central-directory-size-mismatch",
+      `The central directory declares ${size} bytes but its ${count} entries occupy ${position - start}.`,
+    );
   }
 
   return entries;
+};
+
+/**
+ * Read every entry from a zip archive using only the central directory, with
+ * every declared offset and length bounds-checked before it is dereferenced.
+ *
+ * @param {Buffer} buffer
+ * @returns {{ name: string, data: Buffer, text: string }[]}
+ * @throws {VsixArchiveError} when the archive is not structurally readable
+ */
+export const readZipEntries = (buffer) => {
+  if (!Buffer.isBuffer(buffer)) {
+    throw new VsixArchiveError("not-a-buffer", "The archive was not provided as a buffer.");
+  }
+
+  const candidates = eocdCandidates(buffer);
+  if (candidates.length === 0) {
+    throw new VsixArchiveError(
+      "eocd-missing",
+      "The archive has no zip end-of-central directory record whose comment reaches the end of the file.",
+    );
+  }
+
+  /** @type {unknown} */
+  let failure;
+  /** @type {{ name: string, data: Buffer, text: string }[] | undefined} */
+  let emptyDirectory;
+  for (const eocd of candidates) {
+    try {
+      const entries = readCentralDirectory(buffer, eocd);
+      if (entries.length > 0) {
+        return entries;
+      }
+      // A decoy end record planted in the comment parses as an empty archive.
+      // Keep scanning for a real central directory and only fall back to the
+      // empty reading when the file genuinely contains no entries.
+      emptyDirectory ??= entries;
+    } catch (error) {
+      failure = error;
+    }
+  }
+  if (emptyDirectory !== undefined) {
+    return emptyDirectory;
+  }
+  throw failure;
+};
+
+/**
+ * @param {unknown} error
+ * @returns {string}
+ */
+const describeArchiveFailure = (error) => {
+  if (error instanceof VsixArchiveError) {
+    return `Unreadable VSIX archive (${error.code}): ${sanitizeForMessage(error.message)}`;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return `Unreadable VSIX archive (unexpected-failure): ${sanitizeForMessage(message)}`;
 };
 
 /**
@@ -177,19 +407,34 @@ export const readZipEntries = (buffer) => {
  * @returns {string[]} every violation found, empty when the archive is releasable
  */
 export const verifyVsix = (buffer) => {
-  const entries = readZipEntries(buffer);
+  /** @type {{ name: string, data: Buffer, text: string }[]} */
+  let entries;
+  try {
+    entries = readZipEntries(buffer);
+  } catch (error) {
+    return [describeArchiveFailure(error)];
+  }
+
   const violations = inspectEntryNames(entries.map((entry) => entry.name));
 
-  const manifestEntry = entries.find((entry) => entry.name === "extension/package.json");
-  if (manifestEntry === undefined) {
+  // Every manifest entry is inspected, not just the first: a second
+  // `extension/package.json` must not be able to smuggle contributions past a
+  // check that stopped at the clean copy.
+  const manifests = entries.filter((entry) => entry.name === "extension/package.json");
+  if (manifests.length === 0) {
     violations.push("The archive contains no extension/package.json manifest.");
-  } else {
+  }
+  for (const manifestEntry of manifests) {
     try {
       violations.push(
         ...inspectManifest(parseJsonObject(manifestEntry.text, "The packaged manifest")),
       );
     } catch (error) {
-      violations.push(`The packaged manifest could not be read: ${String(error)}`);
+      violations.push(
+        `The packaged manifest could not be read: ${sanitizeForMessage(
+          error instanceof Error ? error.message : String(error),
+        )}`,
+      );
     }
   }
 
@@ -217,14 +462,12 @@ const main = async () => {
     return;
   }
 
-  const entries = readZipEntries(buffer);
+  const names = readZipEntries(buffer).map((entry) => sanitizeForMessage(entry.name));
   console.log(
-    `[verify-vsix] ${target} passed with ${entries.length} entries: ${entries
-      .map((entry) => entry.name)
-      .join(", ")}`,
+    `[verify-vsix] ${target} passed with ${names.length} entries: ${names.join(", ")}`,
   );
 };
 
-if (process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   await main();
 }
