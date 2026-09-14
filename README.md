@@ -127,9 +127,9 @@ second session engine after v2.0.
 
 ## Architecture
 
-The open-source Pair Runtime is the source of truth. A VSIX provides the
-runtime, tools, local sensors, inline UI, and an `@pair` fallback. A coordinated
-Agent Plugin provides the native VS Code Agent-picker experience.
+The open-source Pair Runtime is the source of truth. One VS Code extension
+contains the runtime, tools, local sensors, inline UI, `@pair`, and the
+experimental Session Target adapter.
 
 Native model selection, streaming, confirmations, diffs, and session UX are
 reused. Workspace read, edit, verification, terminal, web, and MCP tools are
@@ -167,6 +167,53 @@ APIs require Insiders and explicit `--enable-proposed-api` activation.
 Follow the time-boxed
 [Session Target technical spike](docs/spikes/platform-adaptive-pair-session-target-spike.md)
 for the prototype criteria and current evidence.
+
+The same extension codebase produces two channel packages:
+
+| Artifact | Use |
+|---|---|
+| `adaptive-pair-<version>-stable.vsix` | Stable APIs, Pair Presence, Pair tools, and `@pair`; Marketplace candidate |
+| `adaptive-pair-<version>-insiders.vsix` | The same product plus the proposed Adaptive Pair Session Target |
+
+They share one extension ID and are alternatives, not two required
+installations. An Agent Plugin may optionally expose Adaptive Pair under the
+Agent control on compatible Stable targets, but it is not required.
+
+## Additive, not a replacement
+
+Installing Adaptive Pair must not change ordinary VS Code or GitHub Copilot
+Chat behavior.
+
+- It does not modify `chat.*`, `github.copilot.*`, Claude, or Codex settings.
+- It does not change the default Session Target, Agent, model, permissions,
+  keybindings, or code-isolation choice.
+- It does not intercept another participant's prompt, command, tool, session,
+  or response.
+- It contributes only namespaced commands, tools, status, `@pair`, and the
+  optional Adaptive Pair target.
+- Presence, observation, model calls, and workspace reads remain off until the
+  developer explicitly enables or selects Adaptive Pair.
+- `@pair` is explicit and is not registered for automatic participant routing.
+- Quiet, pause, and disable affect only Adaptive Pair behavior. **Disable and
+  Clear Pair Data** removes its persisted state; uninstall removes its
+  contributions without touching another product.
+- Existing Copilot, Claude, Codex, Local, and Cloud sessions remain readable
+  and usable before, during, and after Adaptive Pair use.
+
+The Session Target proof must demonstrate that Adaptive Pair is added beside
+existing targets, never in place of them.
+
+## Product quality
+
+Every mode must still produce professionally reviewable software. Adaptive
+Pair reports product completion only from observed files and verification, not
+from model prose.
+
+Release candidates are compared with the underlying native agent on the same
+tasks for correctness, regression coverage, maintainability, security,
+review/rework burden, elapsed time, and developer effort. Growth outcomes are
+reported separately: green tests alone do not prove learning, and learning
+controls do not excuse a broken product result.
 
 Read the complete initial [product and system design](docs/design.md).
 The first executable milestone is specified in the

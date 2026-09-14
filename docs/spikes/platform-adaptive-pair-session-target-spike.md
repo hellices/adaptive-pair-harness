@@ -66,12 +66,16 @@ Session Target using supported VS Code mechanisms?
 
 - [ ] `Adaptive Pair` appears in the Session Target control in a clean Insiders
   profile.
+- [ ] Existing Local, Copilot, Claude, Codex, and Cloud entries remain present,
+  ordered as before, and retain the prior default.
 - [ ] A new target session is created through
   `ChatSessionItemController.newChatSessionItemHandler`.
 - [ ] `ChatSessionContentProvider` restores history and handles a new request.
 - [ ] The target calls one Pair extension tool and reports its observed result.
 - [ ] Growth Mode rejects an edit request through the target.
 - [ ] Stop or interruption leaves no late state mutation.
+- [ ] Install, target selection, deselection, and uninstall do not modify user
+  settings, another session, participant routing, or native Chat behavior.
 - [ ] Stable, Insiders, VSIX, and Marketplace limitations are documented.
 - [ ] A clear promote, retain-experimental, or reject decision is recorded.
 
@@ -92,6 +96,8 @@ of this result. Only the preferred VS Code chat entry changes.
   with weaker semantics.
 - The target must remain model- and provider-agnostic.
 - No direct workspace mutation may bypass Pair tools.
+- The extension may add only namespaced UI and must not modify another
+  extension, target, setting, default, or session.
 
 ## Research Findings
 
@@ -201,7 +207,8 @@ the request/tool/cancellation flow.
 
 | Option | Picker entry | Stable/Marketplace | Runtime control | Cost | Decision |
 |---|---|---|---|---|---|
-| Custom agent + Pair tools | Agent control, not Session Target | Yes | Strong tool enforcement; underlying harness owns loop | Low | Stable baseline |
+| Pair Presence + Pair tools + `@pair` | Command/chat entry, not Session Target | Yes | Own stable controlled loop | Low | Required Stable baseline |
+| Optional Agent Plugin | Agent control, not Session Target | Plugin marketplace or repository | Underlying harness owns loop; Pair tools enforce effects | Low | Optional add-on |
 | Proposed chat-session provider | Adaptive Pair Session Target | Insiders VSIX only | Own request, instructions, options, history, and tools | Medium | Build proof of concept |
 | Standalone AHP server | Remote/persistent host after integration | No documented third-party distribution path yet | Full host and session ownership | Very high | Defer |
 | VS Code fork/internal provider | Native target | Custom VS Code build only | Full control | Very high maintenance | Reject |
@@ -211,13 +218,21 @@ the request/tool/cancellation flow.
 ### Recommendation
 
 Build the proposed extension-host Session Target proof of concept, while
-keeping the stable custom-agent/tool and controlled `@pair` paths.
+keeping Stable Pair Presence, Pair tools, and controlled `@pair` in the same
+extension.
 
 If `chatSessionsProvider` stabilizes and the proof passes all Pair mode
 contracts, promote `Adaptive Pair` to the primary **chat** entry. Pair Presence
 remains the primary **workspace** entry.
 
 Do not build a standalone AHP server for v2.0.
+
+Produce two mutually exclusive packages from one extension codebase:
+
+- `adaptive-pair-<version>-stable.vsix` without proposed API declarations;
+- `adaptive-pair-<version>-insiders.vsix` with the Session Target provider.
+
+The Agent Plugin is optional and not required by either VSIX.
 
 ### Rationale
 
@@ -226,8 +241,8 @@ Do not build a standalone AHP server for v2.0.
 - Owning the request handler aligns with Adaptive Pair's instruction and tool
   restraint requirements.
 - Keeping Pair Runtime host-agnostic prevents lock-in to a proposed API.
-- The stable fallback preserves Marketplace distribution and normal VS Code
-  use.
+- The Stable profile preserves Marketplace distribution and normal VS Code
+  use without a second required installation.
 - AHP remains a compatible future host boundary without imposing server work
   before the product interaction is validated.
 
@@ -268,6 +283,11 @@ Activation must:
 6. route every workspace action through the Pair tool catalog;
 7. use a temporary in-memory store for the first picker test, then the real
    Pair journal for cancellation and restore tests.
+
+The clean-profile test records Session Targets, selected defaults, settings,
+commands, keybindings, session history, and idle extension activity before
+installation. The only accepted default change after installation is the
+additional Adaptive Pair contribution.
 
 ### Follow-up Actions
 

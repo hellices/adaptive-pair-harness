@@ -51,6 +51,13 @@ typescript-eslint 8.69.0, esbuild 0.28.2, VS Code API 1.136.0,
 - Pair Presence is the workspace entry. Session Target remains the user's
   execution-harness choice on the stable path; an Adaptive Pair target remains
   an Insiders experiment until `chatSessionsProvider` stabilizes.
+- Installation never writes another extension's settings or storage and never
+  changes the default Session Target, Agent, model, permissions, keybindings,
+  isolation, participant routing, or native Chat UI.
+- Inactive Adaptive Pair has no document listeners, timers, workspace reads,
+  model calls, or network activity.
+- Every mode must pass its product acceptance checks; Growth verification is
+  reported separately and cannot excuse a broken result.
 - Raw code, paths, diagnostics, prompts, and transcripts never enter the
   portable profile or evaluation export.
 - No remote telemetry is enabled by default.
@@ -71,12 +78,28 @@ This is the first of four implementation plans:
 4. **Native adapters and v2.0 release** - adds Adaptive Pair under the Agent
    control, builds a proposed `chatSessionsProvider` Session Target proof of
    concept, validates Adaptive Pair/Local/Copilot/Claude/Codex target
-   compatibility, and completes stable release gates without making Stable
-   depend on the proposed API.
+   compatibility, adds the shared Stable/Insiders manifest build, and completes
+   stable release gates without making Stable depend on the proposed API.
 
 Each subsequent plan starts only after the preceding public interfaces and
 contract tests are green. This prevents four independent subsystems from being
 implemented against speculative interfaces.
+
+## Distribution Direction
+
+There is one extension codebase and one extension identifier. Channel builds
+are mutually exclusive installations:
+
+| Channel | Package | Contents |
+|---|---|---|
+| Stable | `adaptive-pair-0.2.0-preview.1-stable.vsix` | Stable APIs, Pair Presence, Pair tools, and `@pair` |
+| Insiders | `adaptive-pair-0.2.0-preview.1-insiders.vsix` | Stable contents plus `chatSessionsProvider` and Adaptive Pair Session Target |
+
+This plan produces the Stable Growth preview. The Session Target spike and the
+fourth implementation plan add the Insiders manifest overlay and prove that
+both packages use identical Pair Runtime behavior. An optional Agent Plugin is
+packaged separately only for users who want an Agent-control entry on
+compatible Stable targets.
 
 ## File Map
 
@@ -2543,7 +2566,7 @@ Create `apps/vscode-extension/package.json` with:
   "scripts": {
     "clean": "rm -rf dist *.vsix",
     "typecheck": "tsc -b",
-    "package": "vsce package --no-dependencies"
+    "package": "vsce package --no-dependencies --out ../../adaptive-pair-0.2.0-preview.1-stable.vsix"
   },
   "dependencies": {
     "@adaptive-pair/harness": "0.2.0-preview.1",
@@ -2692,10 +2715,14 @@ replacement, and disposal.
 Test that:
 
 - enabling twice is idempotent;
+- installing and activating without an Adaptive Pair command registers no
+  document listener and performs no workspace read or model request;
 - quiet preserves the local observation window;
 - pause disposes document listeners;
 - disable clears local continuity after confirmation;
 - an untrusted workspace remains off and surfaces the reason.
+- no command writes `chat.*`, `github.copilot.*`, Claude, Codex, model,
+  permission, keybinding, or isolation settings.
 
 Create `apps/vscode-extension/test/pairTools.test.ts` and verify:
 
@@ -3188,31 +3215,38 @@ git commit -m "feat: verify product and growth outcomes" \
 
 **Interfaces:**
 - Produces: root scripts `build`, `test:host`, and `package`.
-- Produces: `adaptive-pair-0.2.0-preview.1.vsix`.
+- Produces: `adaptive-pair-0.2.0-preview.1-stable.vsix`.
 - Produces: one isolated Extension Host smoke report.
 
 - [ ] **Step 1: Write the failing Extension Host scenario**
 
 Create a smoke test that:
 
-1. opens an isolated trusted fixture;
-2. enables Pair Presence;
-3. joins a dirty in-progress TypeScript file;
-4. confirms the dirty file remains developer-owned;
-5. starts Growth Mode;
-6. confirms the compiled instruction envelope and visible tool view share one
+1. records a clean-profile baseline of settings, commands, keybindings,
+   Session Targets, default selections, and existing mock session history;
+2. installs and activates Adaptive Pair without selecting it and verifies the
+   baseline is unchanged except for namespaced contributions;
+3. verifies inactive state has no document listener, timer, workspace read,
+   model request, or network request;
+4. opens an isolated trusted fixture;
+5. enables Pair Presence;
+6. joins a dirty in-progress TypeScript file;
+7. confirms the dirty file remains developer-owned;
+8. starts Growth Mode;
+9. confirms the compiled instruction envelope and visible tool view share one
    revision;
-7. verifies `adaptive_pair_apply_edit` and
+10. verifies `adaptive_pair_apply_edit` and
    `adaptive_pair_run_command` are unavailable and rejected in Growth;
-8. injects repository text requesting takeover and verifies mode, consent, and
+11. injects repository text requesting takeover and verifies mode, consent, and
    tool scope do not change;
-9. records a human attempt and diagnosis;
-10. runs a real fixture test that first fails and then passes after the fixture
+12. records a human attempt and diagnosis;
+13. runs a real fixture test that first fails and then passes after the fixture
    applies the human edit;
-11. starts a varied transfer task;
-12. pauses during an in-flight hint and verifies no late output changes state;
-13. restarts the extension and verifies journal reconciliation;
-14. disables Presence and confirms continuity deletion.
+14. starts a varied transfer task;
+15. pauses during an in-flight hint and verifies no late output changes state;
+16. restarts the extension and verifies journal reconciliation;
+17. disables Presence, clears Pair data, and confirms the original settings,
+    defaults, sessions, and native UI state remain unchanged.
 
 - [ ] **Step 2: Verify the host scenario fails**
 
@@ -3278,6 +3312,7 @@ Create `.github/workflows/ci.yml` with:
 - `npm run build`;
 - `npm run package`;
 - manifest-to-catalog parity and harness conformance tests;
+- clean-profile coexistence and idle zero-activity tests;
 - uploaded VSIX artifact;
 - a matrix job for VS Code 1.136.2 and 1.137.0 host smoke tests;
 - an allowed-failure Insiders compatibility job;
@@ -3299,6 +3334,8 @@ Update `README.md` and create `docs/growth-preview.md` with:
   its proposed-API limitation;
 - exact known limitations;
 - no claim that the preview improves learning or productivity.
+- an explicit statement that existing VS Code and Copilot Chat behavior is not
+  replaced or reconfigured.
 
 Update `docs/design.md` implementation status only after the host scenario
 passes.
@@ -3318,9 +3355,13 @@ npm run package
 Expected:
 
 - all unit, property, contract, and host tests pass;
+- clean-profile comparison shows no non-namespaced setting, target, agent,
+  model, permission, keybinding, session, routing, or native-UI change;
 - coverage output is recorded without a release threshold claim;
 - the VSIX contains the bundled extension, manifest, license, README, and
   Growth preview documentation;
+- the artifact is named `adaptive-pair-0.2.0-preview.1-stable.vsix` and contains
+  no `enabledApiProposals` or `chatSessions` contribution;
 - no source maps reveal local absolute paths;
 - the package command exits 0.
 
@@ -3361,6 +3402,8 @@ preview, not a stable v2.0 release.
 This plan is complete only when:
 
 - Pair Presence can join greenfield, existing, and in-progress work;
+- installation is additive and inactive state has zero observation or model
+  activity;
 - controlled chat and extension tools use one versioned instruction compiler
   and tool catalog;
 - manifest contributions, native tool names, visible tool policy, and
@@ -3370,6 +3413,8 @@ This plan is complete only when:
   scope, or hint ceiling;
 - hint and solution-reveal boundaries pass the restraint suite;
 - product verification and all five Growth outcomes are reported separately;
+- every deterministic product acceptance case passes and independent review
+  finds no open critical correctness, security, privacy, or data-loss issue;
 - pause, late result, unknown completion, restart, and continuity deletion pass
   fault tests;
 - a clean-profile VSIX installation completes the host scenario;

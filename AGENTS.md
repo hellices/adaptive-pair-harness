@@ -11,3 +11,10 @@
 - Distinguish confirmed requirements, proposed design choices, verified evidence, and implemented behavior. Publishing a draft does not approve it or authorize implementation.
 - Keep provenance traceable through Git history. Do not present an English synthesis as a verbatim copy of an earlier source, or copy local session logs, credentials, and machine-specific paths into public documentation.
 - Preserve the historical v1 material as reference; do not execute its plan or carry its constraints into v2 without an explicit decision.
+
+## Integration
+
+- Adaptive Pair is additive and opt-in. Do not modify another extension, Session Target, participant, tool, session, setting, keybinding, default selection, or native VS Code UI behavior.
+- Keep inactive behavior at zero: no document listeners, timers, workspace reads, model calls, or network activity before explicit Adaptive Pair enablement.
+- Use native Chat, model, permission, isolation, diff, Source Control, Testing, Tasks, terminal, and diagnostics surfaces where they preserve Pair contracts.
+- Treat product correctness and coexistence regressions as release blockers in every mode; learning outcomes are separate and never excuse an unverified product result.

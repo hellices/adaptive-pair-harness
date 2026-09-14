@@ -147,8 +147,11 @@ required to exercise the core in tests.
    evaluate, not an evidence-backed leaderboard.
 11. **Host capabilities are replaceable.** Native Agent features are used when
    they preserve the product invariants; otherwise the controlled adapter runs.
-12. **No telemetry by default.** Evaluation data stays local unless the
-    developer explicitly exports it.
+12. **Add, never replace.** Installing Adaptive Pair does not alter the
+   defaults, settings, sessions, commands, or UI behavior of VS Code, GitHub
+   Copilot Chat, Claude, Codex, or another harness.
+13. **No telemetry by default.** Evaluation data stays local unless the
+   developer explicitly exports it.
 
 ## 3. Scope and release strategy
 
@@ -197,6 +200,8 @@ use designed extension points and do not redefine the three mode contracts.
 - automatic novice, intermediate, or expert classification;
 - default mining of commit or pull-request history for personal assessment;
 - a requirement to use GitHub Copilot or any single model vendor.
+- modifying, patching, hiding, redirecting, or replacing another extension,
+  Session Target, chat participant, model, permission choice, or user setting.
 
 ## 4. Repository and package structure
 
@@ -216,9 +221,9 @@ packages/
   evaluation/        Local metrics, experiment records, and export schemas
   testkit/           Fake clock, host, model, store, and fault-injection tools
 apps/
-  vscode-extension/  VS Code host, tools, inline UI, status, and @pair adapter
+  vscode-extension/  Shared VS Code host, tools, UI, @pair, target adapter
 plugins/
-  copilot/           Agent Plugin, custom agents, skills, and handoffs
+  copilot/           Optional Stable custom-agent and skill distribution
 ```
 
 Dependency rules:
@@ -810,17 +815,33 @@ silence, a slow edit, or repeated failure as permission to take over.
 
 ## 9. VS Code integration
 
-### 9.1 Full installation
+### 9.1 Extension and distribution profiles
 
-The full VS Code experience has two coordinated open-source artifacts:
+Adaptive Pair is one VS Code extension codebase. It produces two mutually
+exclusive VSIX channel artifacts from the same Pair Runtime, tools, sensors,
+storage, UI, and tests:
 
-1. a VSIX that contains the runtime, extension tools, local sensors, inline UI,
-   storage adapter, and `@pair` fallback;
-2. an Agent Plugin that contributes the Adaptive Pair custom agent and skills
-   to the Agent picker.
+| Artifact | API surface | Entry | Distribution |
+|---|---|---|---|
+| `adaptive-pair-<version>-stable.vsix` | Stable VS Code APIs only | Pair Presence and `@pair`; optional custom-agent plugin | Marketplace candidate and ordinary VSIX |
+| `adaptive-pair-<version>-insiders.vsix` | Stable APIs plus `chatSessionsProvider` | Pair Presence, `@pair`, and Adaptive Pair Session Target | Insiders proof and direct VSIX only |
 
-Both declare a compatible protocol version range. The extension displays a
-clear health result when the plugin is absent or incompatible.
+Both artifacts use the same extension identifier and cannot be installed
+side-by-side. Channel manifests are generated from one reviewed base manifest:
+
+- Stable excludes `enabledApiProposals`, `contributes.chatSessions`, and the
+  proposed provider registration;
+- Insiders adds the proposal, target contribution, controller, and content
+  provider;
+- protocol, state, tool, privacy, and mode behavior is identical;
+- tests fail if a channel changes shared Pair semantics.
+
+The Agent Plugin is optional. It can make Adaptive Pair available under the
+Agent control on compatible Stable targets or distribute portable skills, but
+the extension remains complete without it. There is no required second
+installation for Pair Presence, `@pair`, or the Insiders Session Target.
+
+No standalone AHP process is part of v2.0.
 
 ### 9.2 Entry-point layers
 
@@ -867,7 +888,8 @@ The v2 strategy is therefore dual-track:
 
 1. build a focused Insiders proof of concept for an `Adaptive Pair` Session
    Target;
-2. retain the stable custom-agent/tool and controlled `@pair` adapters;
+2. retain the Stable Pair Presence, Pair tools, and controlled `@pair`
+   adapter in the same extension;
 3. promote the target to the primary chat entry if the API stabilizes and the
    proof satisfies mode, Presence, tool, cancellation, and distribution
    contracts.
@@ -1067,6 +1089,58 @@ hint ceiling, grant consent, or expand scope.
 Instruction and tool changes are reviewed together. A new instruction that
 mentions an unavailable capability, or a new tool without a mode contract and
 conformance case, is a release-blocking defect.
+
+### 9.11 Additive integration and native UX contract
+
+Adaptive Pair coexists with VS Code and other coding agents by contribution,
+not interception.
+
+It must never:
+
+- modify another extension's files, storage, commands, participants, tools, or
+  session data;
+- write `chat.*`, `github.copilot.*`, Claude, Codex, model, permission,
+  keybinding, or code-isolation settings;
+- change the user's default Session Target, Agent, model, permission level, or
+  workspace choice;
+- automatically route an ordinary Copilot Chat request to `@pair`;
+- intercept, proxy, rewrite, hide, or cancel another participant's request or
+  response;
+- replace native Chat, diff, confirmation, Source Control, or session-history
+  UI with an incompatible clone;
+- activate observation, read workspace content, call a model, or use the
+  network before explicit Adaptive Pair enablement.
+
+All public identifiers use the `adaptivePair` or `adaptive-pair` namespace.
+Default keybindings are not required. Any optional keybinding is conflict-free,
+user-removable, and scoped to an explicit Pair command.
+
+The Adaptive Pair Session Target is additive:
+
+- it appears beside existing targets;
+- installation and upgrade do not select it automatically;
+- leaving the target restores the prior native controls without mutation;
+- uninstall removes its contributions and active behavior;
+- **Disable and Clear Pair Data** deletes extension-owned persisted state before
+  uninstall when the developer requests data removal.
+
+When inactive, the extension has no document listeners, timers, model calls,
+file reads, or network activity. Presence event handlers perform no
+synchronous work longer than one animation frame; expensive analysis runs
+asynchronously after bounded debounce and cancellation.
+
+The extension uses native presentation wherever possible:
+
+- Session Target and Agent controls;
+- model, permission, and isolation pickers;
+- Chat streaming and tool progress;
+- confirmation dialogs;
+- diff and changes views;
+- Testing, Tasks, terminal, and diagnostics surfaces.
+
+Custom UI is limited to Pair-specific state that native UI does not represent:
+Presence status, mode, work-unit owner, hint boundary, learning outcome, and
+explicit Pair controls.
 
 ## 10. Interaction flow
 
@@ -1287,6 +1361,38 @@ gate.
 
 Evaluation is a product component, not post-release telemetry.
 
+### Product quality contract
+
+Adaptive Pair must produce professionally reviewable software, not merely a
+pedagogically constrained conversation.
+
+Every mode evaluates:
+
+- acceptance-criteria completion;
+- observed test, type, lint, build, and runtime results where applicable;
+- regression coverage for the changed behavior;
+- maintainability and consistency with repository conventions;
+- security and privacy impact;
+- unintended or reverted changes;
+- independent review and rework burden;
+- elapsed time and developer effort.
+
+Growth controls do not excuse an incorrect or incomplete result. If the
+developer cannot finish within the selected assistance boundary, they may
+request a stronger hint, reveal the solution, or switch mode. The product
+outcome remains unverified until the agreed checks pass, and the growth outcome
+records any bypass separately.
+
+Pair and Delivery must not lower product quality relative to using the selected
+native agent directly. Before a stable release, the same representative tasks
+run through native baseline and Adaptive Pair. Every deterministic acceptance
+case must pass in both. Human evaluation uses a pre-registered non-inferiority
+margin for correctness and independent review quality, chosen before seeing
+the confirmatory results.
+
+No mode promises perfect output. The release promise is that failures,
+uncertainty, and verification gaps are visible and never presented as success.
+
 ### Local metrics
 
 The runtime can record locally:
@@ -1377,6 +1483,35 @@ Tests interrupt each boundary:
 - during handoff;
 - during client disconnect and reconnect.
 
+### Coexistence regression
+
+A clean-profile baseline is captured before installing Adaptive Pair and
+compared after install, enable, disable, channel upgrade, and uninstall:
+
+- existing Session Targets, Agents, models, permissions, and keybindings;
+- Copilot, Claude, Codex, Local, and Cloud session visibility and history;
+- user and workspace settings;
+- commands, tools, participant routing, and default selections;
+- extension-host idle CPU, timers, listeners, file reads, and network activity;
+- native Chat, diff, Source Control, confirmation, and diagnostics behavior.
+
+The only allowed default delta is the addition of namespaced Adaptive Pair
+contributions. No existing item may disappear, change default, or route through
+Adaptive Pair.
+
+### Product quality regression
+
+The evaluation fixture set includes greenfield, existing-project, and
+join-in-progress tasks with deterministic acceptance tests and independent
+review rubrics. It runs against:
+
+- the selected native harness without Adaptive Pair;
+- Stable Adaptive Pair;
+- Insiders Adaptive Pair Session Target when available.
+
+Failures are reported by mode and task type. Aggregate speed cannot hide a
+correctness, security, data-loss, or review-quality regression.
+
 ### VS Code validation
 
 - Extension Host tests on the oldest supported Stable and current Stable;
@@ -1384,7 +1519,8 @@ Tests interrupt each boundary:
 - native Agent capability tests;
 - a published restraint conformance suite covering premature patches, direct
   diagnoses, skipped attempts, oversized work units, and takeover attempts;
-- Agent Plugin and VSIX compatibility tests;
+- Stable/Insiders manifest parity and package-content tests;
+- optional Agent Plugin compatibility tests;
 - package-content and clean-profile installation tests;
 - manual authenticated model and consent smoke tests before release.
 
@@ -1424,11 +1560,39 @@ A stable v2 release requires all of the following:
 - no model claim is presented as an observed tool result;
 - profile and model privacy boundaries pass contract tests.
 
+### Product quality
+
+- every deterministic acceptance task passes with observed verification;
+- Growth, Pair, and Delivery results remain professionally reviewable;
+- no critical correctness, security, privacy, data-loss, or regression finding
+  remains open;
+- native-baseline comparison and independent review results are published;
+- growth verification is never used to hide an unverified product result.
+
+### Coexistence
+
+- install adds Adaptive Pair without removing or changing existing targets,
+  agents, models, settings, sessions, keybindings, or defaults;
+- inactive mode performs no observation, file read, model call, network call,
+  timer, or document-listener work;
+- another participant's request and response never routes through Adaptive
+  Pair;
+- Stable/Insiders replacement and uninstall affect only Adaptive Pair
+  contributions and state;
+- native Chat, diff, confirmation, Source Control, Testing, Tasks, terminal,
+  and diagnostics UX remains intact.
+
 ### Platform
 
-- VSIX works independently through the controlled surface;
+- Stable VSIX works independently through Pair Presence, Pair tools, and
+  `@pair`;
+- Insiders VSIX adds the proposed Session Target without changing shared Pair
+  behavior;
+- both channel packages use one extension ID and have a tested replacement
+  upgrade path;
 - native Agent mode passes its capability gate where advertised;
-- missing or incompatible plugins degrade explicitly;
+- a missing or incompatible optional Agent Plugin does not reduce core
+  functionality;
 - installation succeeds in a clean VS Code profile.
 
 ### Harness
@@ -1512,7 +1676,8 @@ These proofs select an adapter path; they do not reopen the core architecture.
    handoff, goal, and consent changes.
 7. Verify cancellation, client disconnect, document-version, and result
    correlation semantics.
-8. Verify the Agent Plugin plus VSIX installation and version handshake.
+8. Verify Stable and Insiders VSIX manifests, packages, upgrade paths, and
+   shared protocol compatibility; test the optional Agent Plugin separately.
 9. Verify target-specific behavior for Adaptive Pair, Local, Copilot, Claude,
    Codex, and Cloud without assuming one target's result applies to another.
 10. Record each native capability as supported, wrapped, excluded,
@@ -1538,6 +1703,10 @@ limitation.
   Adaptive Pair Session Target is an Insiders experiment and candidate primary
   chat entry after API stabilization.
 - Stable v2.0 does not depend on a proposed VS Code API.
+- one extension codebase produces Stable and Insiders VSIX profiles; the
+  optional Agent Plugin and any future AHP host are not required installations.
+- integration is additive and opt-in; Adaptive Pair never changes another
+  target, extension, session, setting, default, or native UX surface.
 - Local, Copilot, Claude, Codex, and Cloud remain separate execution choices
   with published capability results.
 - one edit owner is enforced per work unit.
@@ -1565,6 +1734,8 @@ limitation.
 - personal data is local, explicit, correctable, inspectable, and deletable;
   optional account sync is an adapter.
 - evaluation is local-first and present in the first release.
+- product correctness and independent review quality are release gates in every
+  mode and are compared with the native harness baseline.
 - the v1 implementation remains a baseline and tested source of compatible
   modules, not a codebase to merge wholesale.
 

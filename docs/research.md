@@ -174,8 +174,8 @@ surfaces.
 | Contributed Session Target | The proposed `chatSessionsProvider` API and `contributes.chatSessions` can register an extension-owned session type with native history, streaming, request handling, and provider option groups. VS Code's service adds contributed types to the new-session UI. [33] | Build an Insiders proof of concept; do not make Stable or Marketplace delivery depend on it. |
 | Chat participant | The Chat Participant API provides an `@`-mentioned assistant that owns its request flow and receives the model selected in Chat. [17][18] | Keep `@pair` as a controlled, model-selecting fallback surface. |
 | Extension tools | Language Model Tools can be contributed by Marketplace extensions, included in custom agents, restricted with `when` clauses, and given confirmation behavior. [19] | Expose Pair Runtime operations through mode-aware extension tools and revalidate every call. |
-| Custom agents | `.agent.md` files define instructions, model choice, tools, visibility in the agent picker, and agent-to-agent handoffs. [20] | Use an Agent Plugin for the native picker surface. Keep human-to-AI edit handoff in the Pair Runtime. |
-| Agent plugins | Plugins package skills, MCP servers, and Copilot-specific custom agents, hooks, and commands for marketplace or repository installation. [21] | Distribute the picker customization separately from, but versioned with, the VSIX. |
+| Custom agents | `.agent.md` files define instructions, model choice, tools, visibility in the agent picker, and agent-to-agent handoffs. [20] | Offer an optional Stable Agent entry where compatible. Keep human-to-AI edit handoff in Pair Runtime. |
+| Agent plugins | Plugins package skills, MCP servers, and Copilot-specific custom agents, hooks, and commands for marketplace or repository installation. [21] | Use only as optional custom-agent or skill distribution; do not make it a required second installation. |
 | Agent sessions | Native sessions provide shared context, pause/resume, checkpoints, multiple surfaces, and handoff. [22] | Reuse presentation/session UX, but keep pairing authority in the open core. |
 | Approvals | Manual, assisted, and allow-all permission levels plus per-tool settings exist. Specific tools can be marked ineligible for auto-approval. [23] | Integrate with native controls; do not rely on them as the only edit-authority gate. |
 | Hooks | `PreToolUse` can deterministically inspect and deny operations. Hooks remain Preview. [24] | Use only as defense in depth, never as the sole product invariant. |
@@ -193,11 +193,12 @@ semantics. The implementation must still verify:
 - how cancellation and late results propagate;
 - how document conflicts appear;
 - how a client disconnect affects an Agent Host turn;
-- the combined Agent Plugin and VSIX installation experience.
+- Stable and Insiders manifest/package parity and channel upgrade behavior;
+- the optional Agent Plugin installation experience.
 
 The architecture does not wait on these answers. A capability gate selects the
-native adapter only when it passes. The controlled VSIX surface remains the
-complete fallback.
+native adapter only when it passes. The Stable VSIX remains complete through
+Pair Presence, Pair tools, and the controlled `@pair` surface.
 
 Current stable public documentation describes first-party Agent Host adapters
 and extension points for tools, MCP, custom agents, and chat participants. The
@@ -283,6 +284,18 @@ continuity and makes the AI available beside normal development. It does not
 stream raw activity to a remote model, infer mental state from silence, or
 acquire edit authority from observation.
 
+### Additive integration, not workspace takeover
+
+Adaptive Pair's value does not require changing the user's existing VS Code or
+GitHub Copilot Chat defaults. It contributes its own Presence, participant,
+tools, optional agent, and experimental target. Existing targets, sessions,
+settings, models, permissions, keybindings, and native review UI remain owned
+by their products and the developer.
+
+This is both a product and evaluation requirement: a clean-profile coexistence
+baseline must show that installing, enabling, disabling, upgrading, and
+uninstalling Adaptive Pair changes only its own namespaced behavior.
+
 ### Explicit and correctable personalization
 
 Task briefing and declared preferences outrank inferred expertise. Any proposed
@@ -294,6 +307,14 @@ rate, vocabulary choice, or repository history creates an ability label.
 Applied files and observed checks are displayed independently from model prose.
 Evaluation compares confidence with correctness instead of treating confidence
 as success.
+
+### Product quality remains a co-primary outcome
+
+Capability preservation does not compensate for broken software. Every mode
+measures verified correctness, regression coverage, maintainability, security,
+review burden, time, and effort. Growth and product outcomes remain separate,
+and Adaptive Pair is compared with the underlying native harness on the same
+tasks.
 
 ### Evaluation from the first release
 
@@ -315,6 +336,11 @@ The first studies test separate hypotheses:
    without being misreported as capability growth.
 5. Local evidence interventions help on relevant events without creating more
    unwanted interruption than accepted assistance.
+6. Installing and enabling Adaptive Pair leaves existing VS Code and Copilot
+   Chat defaults, sessions, routing, and native workflows unchanged.
+7. Adaptive Pair is non-inferior to the selected native harness on verified
+   correctness and independent review quality for the same representative
+   tasks.
 
 Results from one mode are not attributed to another.
 
