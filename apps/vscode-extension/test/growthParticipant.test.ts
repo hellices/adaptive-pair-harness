@@ -93,6 +93,7 @@ class FakeModel {
   public readonly maxInputTokens = 100_000;
 
   public sendCount = 0;
+  public countTokensCount = 0;
   public readonly sentMessages: unknown[][] = [];
 
   public constructor(
@@ -103,6 +104,7 @@ class FakeModel {
   ) {}
 
   public countTokens(text: string | { readonly content?: unknown }): Promise<number> {
+    this.countTokensCount += 1;
     if (typeof text === "string") {
       return Promise.resolve(this.opts.countText?.(text) ?? text.length);
     }
@@ -529,6 +531,43 @@ describe("GrowthModel adapter", () => {
     expect(model.sendCount).toBe(GROWTH_TURN_CAPS.maxModelCalls);
   });
 
+  it("counts serialized tool-call output against the output token cap and skips the tool", async () => {
+    const snapshot = growthSnapshot({ runtimeRevision: 4 });
+    const coordinator = new FakeCoordinator(snapshot);
+    const model = new FakeModel(
+      [
+        {
+          toolCalls: [
+            {
+              callId: "call-1",
+              name: nativeToolName("pair_read_scope"),
+              input: { path: "src/retry.ts" },
+            },
+          ],
+        },
+        { text: JSON.stringify({ level: 1, kind: "question", text: "ok" }) },
+      ],
+      {
+        countText: text =>
+          text.includes("pair") ? GROWTH_TURN_CAPS.maxOutputTokens + 1 : text.length,
+      },
+    );
+    const prepared = await coordinator.prepareTurn({});
+    const growthModel = createGrowthModel(asModel(model), coordinator);
+
+    await expect(
+      growthModel.request(
+        prepared.instructions,
+        prepared.tools,
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "GROWTH_OUTPUT_TOKEN_CAP" });
+    // Over-budget tool call must be rejected without invoking the tool and
+    // without a further model dispatch.
+    expect(coordinator.invokeCalls).toHaveLength(0);
+    expect(model.sendCount).toBe(1);
+  });
+
   it("propagates cancellation without substituting an answer", async () => {
     const snapshot = growthSnapshot({ runtimeRevision: 4 });
     const coordinator = new FakeCoordinator(snapshot);
@@ -554,10 +593,10 @@ describe("GrowthParticipant", () => {
     const model = new FakeModel([
       { text: JSON.stringify({ level: 1, kind: "question", text: "What have you tried?" }) },
     ]);
-    const { participant } = buildParticipant(coordinator, {
+    const { participant, evaluations } = buildParticipant(coordinator, {
       requestWorkspaceConsent: () => Promise.resolve(false),
     });
-    const { stream } = createResponseStream();
+    const { stream, collected } = createResponseStream();
 
     await participant.handle(
       createRequest(model, { prompt: "walk me through this bug" }),
@@ -566,9 +605,127 @@ describe("GrowthParticipant", () => {
       createToken(),
     );
 
-    expect(coordinator.prepareInputs).toHaveLength(1);
-    expect(coordinator.prepareInputs[0]?.repositoryContext).toBeUndefined();
-    expect(coordinator.prepareInputs[0]?.toolResults).toBeUndefined();
+    // Decline must short-circuit: no compiled turn, no model dispatch, no
+    // token accounting, and no assistance state transition.
+    expect(coordinator.prepareInputs).toHaveLength(0);
+    expect(coordinator.invokeCalls).toHaveLength(0);
+    expect(model.sendCount).toBe(0);
+    expect(model.countTokensCount).toBe(0);
+    expect(collected.markdown.join("\n").toLowerCase()).toContain("private");
+    expect(evaluations.records).toHaveLength(0);
+  });
+
+  it("does not dispatch on a hint request when consent is declined", async () => {
+    const snapshot = growthSnapshot({
+      runtimeRevision: 4,
+      session: {
+        status: "active",
+        mode: "growth",
+        assistance: {
+          attempt: { summary: "tried", bypassed: false, recordedAt: 0 },
+          hypothesis: undefined,
+          hint: { level: 1, recordedAt: 0 },
+          solutionReveal: undefined,
+        },
+      },
+    });
+    const coordinator = new FakeCoordinator(snapshot);
+    const model = new FakeModel([
+      { text: JSON.stringify({ level: 2, kind: "hint", text: "clue" }) },
+    ]);
+    const { participant } = buildParticipant(coordinator, {
+      requestWorkspaceConsent: () => Promise.resolve(false),
+    });
+    const { stream } = createResponseStream();
+
+    await participant.handle(
+      createRequest(model, { prompt: "give me a hint" }),
+      createContext(),
+      stream,
+      createToken(),
+    );
+
+    // No hint escalation state transition and no model turn on decline.
+    expect(
+      coordinator.invokeCalls.some(call => call.name === "pair_request_hint"),
+    ).toBe(false);
+    expect(coordinator.prepareInputs).toHaveLength(0);
+    expect(model.sendCount).toBe(0);
+    expect(model.countTokensCount).toBe(0);
+  });
+
+  it("does not reveal or dispatch when consent is declined on a reveal", async () => {
+    const snapshot = growthSnapshot({
+      runtimeRevision: 4,
+      session: {
+        status: "active",
+        mode: "growth",
+        assistance: {
+          attempt: { summary: "tried", bypassed: false, recordedAt: 0 },
+          hypothesis: undefined,
+          hint: { level: 4, recordedAt: 0 },
+          solutionReveal: undefined,
+        },
+      },
+    });
+    const coordinator = new FakeCoordinator(snapshot);
+    const model = new FakeModel([
+      { text: JSON.stringify({ level: 5, kind: "solution-preview", text: "answer" }) },
+    ]);
+    const { participant } = buildParticipant(coordinator, {
+      requestWorkspaceConsent: () => Promise.resolve(false),
+      confirmSolutionReveal: () => Promise.resolve(true),
+    });
+    const { stream } = createResponseStream();
+
+    await participant.handle(
+      createRequest(model, { command: "reveal", prompt: "show me the answer" }),
+      createContext(),
+      stream,
+      createToken(),
+    );
+
+    // No reveal/hint state transition and no model turn on decline.
+    expect(
+      coordinator.invokeCalls.some(call => call.name === "pair_reveal_solution"),
+    ).toBe(false);
+    expect(
+      coordinator.invokeCalls.some(call => call.name === "pair_request_hint"),
+    ).toBe(false);
+    expect(coordinator.prepareInputs).toHaveLength(0);
+    expect(model.sendCount).toBe(0);
+    expect(model.countTokensCount).toBe(0);
+  });
+
+  it("does not let consent for one model authorize a different model", async () => {
+    const snapshot = growthSnapshot({ runtimeRevision: 4 });
+    const coordinator = new FakeCoordinator(snapshot);
+    const modelA = new FakeModel([
+      { text: JSON.stringify({ level: 1, kind: "question", text: "ok" }) },
+    ]);
+    const modelB = new FakeModel([
+      { text: JSON.stringify({ level: 1, kind: "question", text: "ok" }) },
+    ]);
+    // modelB has a different identity so consent must not transfer.
+    Object.defineProperty(modelB, "id", { value: "other-model-id" });
+    const consent = new ModelConsentRegistry();
+    consent.grant(asModel(modelA));
+    const { participant } = buildParticipant(coordinator, {
+      consent,
+      requestWorkspaceConsent: () => Promise.resolve(false),
+    });
+    const { stream } = createResponseStream();
+
+    await participant.handle(
+      createRequest(modelB, { prompt: "walk me through this bug" }),
+      createContext([{ prompt: "prior repository detail" }]),
+      stream,
+      createToken(),
+    );
+
+    expect(coordinator.prepareInputs).toHaveLength(0);
+    expect(modelB.sendCount).toBe(0);
+    expect(modelB.countTokensCount).toBe(0);
   });
 
   it("sends task context once consent is granted for the model", async () => {

@@ -139,6 +139,10 @@ const buildInitialMessages = (
   ];
 };
 
+const serializeToolCall = (
+  toolCall: vscode.LanguageModelToolCallPart,
+): string => `${toolCall.name} ${JSON.stringify(toolCall.input ?? {})}`;
+
 const partText = (part: unknown): string => {
   if (part instanceof vscode.LanguageModelTextPart) {
     return part.value;
@@ -291,6 +295,19 @@ class VscodeGrowthModel implements GrowthModel {
         }
 
         if (toolCalls.length > 0) {
+          // Tool-call names and serialized arguments are model-generated output
+          // and count toward the same output budget as text. Account for them
+          // through the model's own token boundary before executing anything,
+          // and reject an over-budget turn without invoking any tool.
+          for (const toolCall of toolCalls) {
+            totalOutputTokens += await this.model.countTokens(
+              serializeToolCall(toolCall),
+              token,
+            );
+            if (totalOutputTokens > this.caps.maxOutputTokens) {
+              throw new GrowthModelFailure("GROWTH_OUTPUT_TOKEN_CAP");
+            }
+          }
           await this.appendToolResults(messages, toolCalls, tools, signal);
           continue;
         }

@@ -180,6 +180,10 @@ export class ModelConsentRegistry {
   }
 }
 
+export type GrowthConsentResult =
+  | { readonly status: "granted"; readonly taskContext: string | undefined }
+  | { readonly status: "declined" };
+
 export interface GrowthParticipantDependencies {
   readonly coordinator: PairCoordinatorPort;
   readonly consent: ModelConsentRegistry;
@@ -370,6 +374,18 @@ export class GrowthParticipant {
       return;
     }
 
+    // Gate workspace consent before any reveal/hint state transition so a
+    // decline leaves assistance state untouched and never dispatches the model.
+    const consent = await this.gatherConsentedContext(
+      model,
+      request,
+      context,
+      response,
+    );
+    if (consent.status === "declined") {
+      return;
+    }
+
     const snapshot = await this.deps.coordinator.snapshot();
     const workUnitId = snapshot.session?.workUnit?.id;
     if (workUnitId === undefined) {
@@ -388,13 +404,7 @@ export class GrowthParticipant {
       signal,
     );
 
-    const taskContext = await this.gatherConsentedContext(
-      model,
-      request,
-      context,
-      response,
-    );
-    await this.runGuardedTurn(model, request, taskContext, response, signal);
+    await this.runGuardedTurn(model, request, consent.taskContext, response, signal);
   }
 
   private async handleGuidance(
@@ -405,12 +415,15 @@ export class GrowthParticipant {
     signal: AbortSignal,
     options: { readonly escalate: boolean; readonly level: HintLevel | undefined },
   ): Promise<void> {
-    const taskContext = await this.gatherConsentedContext(
+    const consent = await this.gatherConsentedContext(
       model,
       request,
       context,
       response,
     );
+    if (consent.status === "declined") {
+      return;
+    }
 
     if (options.escalate) {
       const escalated = await this.escalateHint(options.level, response, signal);
@@ -419,7 +432,7 @@ export class GrowthParticipant {
       }
     }
 
-    await this.runGuardedTurn(model, request, taskContext, response, signal);
+    await this.runGuardedTurn(model, request, consent.taskContext, response, signal);
   }
 
   private async escalateHint(
@@ -543,24 +556,36 @@ export class GrowthParticipant {
     response.markdown(STALE_TURN_MESSAGE);
   }
 
-  private async gatherConsentedContext(
+  private gatherConsentedContext(
     model: vscode.LanguageModelChat,
     request: vscode.ChatRequest,
     context: vscode.ChatContext,
     response: vscode.ChatResponseStream,
-  ): Promise<string | undefined> {
+  ): Promise<GrowthConsentResult> {
+    return this.resolveConsent(model, request, context, response);
+  }
+
+  private async resolveConsent(
+    model: vscode.LanguageModelChat,
+    request: vscode.ChatRequest,
+    context: vscode.ChatContext,
+    response: vscode.ChatResponseStream,
+  ): Promise<GrowthConsentResult> {
     if (this.deps.consent.has(model)) {
-      return this.gatherTaskContext(request, context);
+      return { status: "granted", taskContext: this.gatherTaskContext(request, context) };
     }
 
     const granted = await this.deps.requestWorkspaceConsent(model);
     if (granted) {
       this.deps.consent.grant(model);
-      return this.gatherTaskContext(request, context);
+      return { status: "granted", taskContext: this.gatherTaskContext(request, context) };
     }
 
+    // Decline short-circuits the whole turn: no compiled trusted work-unit
+    // layer, no model dispatch, and no assistance state transition. The neutral
+    // message is the only side effect.
     response.markdown(CONSENT_DECLINED_MESSAGE);
-    return undefined;
+    return { status: "declined" };
   }
 
   private gatherTaskContext(
