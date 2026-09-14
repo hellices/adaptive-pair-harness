@@ -1,5 +1,4 @@
 import * as vscode from "vscode";
-import { buildEntrySnapshot } from "@adaptive-pair/presence";
 import type {
   EntrySnapshot,
   PairCommand,
@@ -7,6 +6,8 @@ import type {
   PairSessionSnapshot,
   PresenceStatus,
 } from "@adaptive-pair/protocol";
+import { WorkspaceContext } from "./workspaceContext.js";
+import { VscodeWorkspaceContextAccess } from "./workspaceContextAccess.js";
 import {
   PairCoordinator,
   type Clock,
@@ -192,6 +193,9 @@ export class SessionController implements vscode.Disposable {
     ids: this.ids,
     streamId: PLACEHOLDER_WORKSPACE_ID,
   });
+  private readonly workspaceContext = new WorkspaceContext(
+    new VscodeWorkspaceContextAccess(this.clock),
+  );
 
   public coordinator(): PairCoordinatorPort {
     return this.coordinatorPort;
@@ -294,7 +298,7 @@ export class SessionController implements vscode.Disposable {
     if (current.session?.status === "paused") {
       await this.dispatch({
         type: "ResumeSession",
-        entry: this.createEntrySnapshot(),
+        entry: await this.createEntrySnapshot(),
       });
       return this.snapshotNow();
     }
@@ -308,7 +312,7 @@ export class SessionController implements vscode.Disposable {
     if (current.session?.status === "briefing") {
       await this.dispatch({
         type: "CaptureEntry",
-        entry: this.createEntrySnapshot(),
+        entry: await this.createEntrySnapshot(),
       });
       return this.snapshotNow();
     }
@@ -392,28 +396,7 @@ export class SessionController implements vscode.Disposable {
     });
   }
 
-  private createEntrySnapshot(): EntrySnapshot {
-    const workspaceId = this.resolveWorkspaceId();
-    const dirtyPaths = vscode.workspace.textDocuments
-      .filter(document => document.isDirty)
-      .map(document => vscode.workspace.asRelativePath(document.uri));
-    const openPaths = vscode.window.visibleTextEditors.map(editor =>
-      vscode.workspace.asRelativePath(editor.document.uri),
-    );
-    const diagnostics = vscode.languages.getDiagnostics().flatMap(
-      ([uri, entries]) =>
-        entries.map(
-          entry => `${vscode.workspace.asRelativePath(uri)}: ${entry.message}`,
-        ),
-    );
-
-    return buildEntrySnapshot({
-      workspaceId,
-      dirtyPaths,
-      openPaths,
-      diagnostics,
-      protectedPaths: dirtyPaths,
-      capturedAt: this.clock.now(),
-    });
+  private async createEntrySnapshot(): Promise<EntrySnapshot> {
+    return await this.workspaceContext.capture();
   }
 }

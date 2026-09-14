@@ -258,6 +258,7 @@
     "package": "npm run build && vsce package --no-dependencies --out ../../adaptive-pair-0.2.0-preview.1-stable.vsix"
   },
   "dependencies": {
+    "@adaptive-pair/evidence": "0.2.0-preview.1",
     "@adaptive-pair/harness": "0.2.0-preview.1",
     "@adaptive-pair/presence": "0.2.0-preview.1",
     "@adaptive-pair/runtime": "0.2.0-preview.1"

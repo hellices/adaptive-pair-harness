@@ -10,6 +10,7 @@
   "references": [
     { "path": "../../packages/protocol" },
     { "path": "../../packages/presence" },
+    { "path": "../../packages/evidence" },
     { "path": "../../packages/harness" },
     { "path": "../../packages/runtime" },
     { "path": "../../packages/testkit" }

@@ -1,8 +1,19 @@
 import * as vscode from "vscode";
 import { ObservationWindow } from "@adaptive-pair/presence";
+import {
+  EditEpisodeAggregator,
+  type EditEpisode,
+  type Scheduler,
+} from "@adaptive-pair/evidence";
 import type { PresenceStatus } from "@adaptive-pair/protocol";
 import { SessionController } from "./sessionController.js";
 import { StatusView } from "./statusView.js";
+import {
+  LocalJournal,
+  JournalIntegrityError,
+  NodeJournalFileSystem,
+  type JournalEvent,
+} from "./storageAdapter.js";
 import {
   PairToolContext,
   type PairToolContextValues,
@@ -25,6 +36,16 @@ export class PresenceController implements vscode.Disposable {
   private observationWindow = new ObservationWindow(OBSERVATION_CAPACITY);
   private documentListener: vscode.Disposable | undefined;
   private disposed = false;
+  private journal: LocalJournal | undefined;
+  private editAggregator: EditEpisodeAggregator | undefined;
+  private readonly scheduler: Scheduler = {
+    schedule: (delayMs, callback) => setTimeout(callback, delayMs),
+    cancel: handle => {
+      if (handle !== undefined) {
+        clearTimeout(handle as ReturnType<typeof setTimeout>);
+      }
+    },
+  };
 
   public constructor(
     private readonly sessionController: SessionController,
@@ -36,6 +57,7 @@ export class PresenceController implements vscode.Disposable {
   }
 
   public register(context: vscode.ExtensionContext): void {
+    this.initializeJournal(context);
     context.subscriptions.push(
       vscode.commands.registerCommand(
         "adaptivePair.enablePresence",
@@ -91,6 +113,7 @@ export class PresenceController implements vscode.Disposable {
 
     this.disposed = true;
     this.detachObservationListener();
+    this.editAggregator?.dispose();
     this.toolContext.dispose();
     this.statusView.dispose();
     this.sessionController.dispose();
@@ -200,11 +223,98 @@ export class PresenceController implements vscode.Disposable {
         observedAt: Date.now(),
       });
       this.sessionController.bumpObservationRevision();
+      this.recordEditObservation(event);
     });
   }
 
   private detachObservationListener(): void {
     this.documentListener?.dispose();
     this.documentListener = undefined;
+  }
+
+  private initializeJournal(context: vscode.ExtensionContext): void {
+    const storagePath = context.globalStorageUri?.fsPath;
+    if (storagePath === undefined || storagePath.length === 0) {
+      return;
+    }
+
+    this.journal = new LocalJournal(new NodeJournalFileSystem(), storagePath);
+    this.editAggregator = new EditEpisodeAggregator(
+      500,
+      this.scheduler,
+      episode => this.journalEditEpisode(episode),
+    );
+
+    void this.journal.replay().catch((error: unknown) => {
+      if (error instanceof JournalIntegrityError) {
+        void this.failClosed(error);
+      }
+    });
+  }
+
+  private recordEditObservation(event: vscode.TextDocumentChangeEvent): void {
+    const aggregator = this.editAggregator;
+    if (aggregator === undefined) {
+      return;
+    }
+
+    const version =
+      typeof event.document.version === "number" ? event.document.version : 0;
+    const changedRanges = event.contentChanges.map(change => ({
+      startLine: change.range.start.line,
+      endLine: change.range.end.line,
+    }));
+
+    aggregator.record({
+      uri: vscode.workspace.asRelativePath(event.document.uri, false),
+      languageId: event.document.languageId ?? "plaintext",
+      previousVersion: Math.max(0, version - 1),
+      currentVersion: version,
+      changedRanges,
+      observedAt: Date.now(),
+    });
+  }
+
+  private journalEditEpisode(episode: EditEpisode): void {
+    const event: JournalEvent = {
+      type: "edit-episode",
+      capturedAt: episode.observedAt,
+      payload: {
+        uri: episode.uri,
+        languageId: episode.languageId,
+        previousVersion: episode.previousVersion,
+        currentVersion: episode.currentVersion,
+        changedRanges: episode.changedRanges.map(range => ({
+          startLine: range.startLine,
+          endLine: range.endLine,
+        })),
+      },
+    };
+
+    this.appendJournalEvent(event);
+  }
+
+  private appendJournalEvent(event: JournalEvent): void {
+    const journal = this.journal;
+    if (journal === undefined) {
+      return;
+    }
+
+    void journal.append(event).catch((error: unknown) => {
+      if (error instanceof JournalIntegrityError) {
+        void this.failClosed(error);
+      }
+    });
+  }
+
+  private async failClosed(error: JournalIntegrityError): Promise<void> {
+    this.toolContext.clear();
+    this.detachObservationListener();
+    const snapshot = await this.sessionController.pausePresence();
+    this.statusView.render(snapshot.presence.status);
+    await this.toolContext.accept(snapshot);
+    await vscode.window.showWarningMessage(
+      `Adaptive Pair paused: local journal integrity check failed (${error.reason}).`,
+    );
   }
 }
