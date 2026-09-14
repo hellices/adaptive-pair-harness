@@ -2,15 +2,33 @@ import type {
   PairEvent,
   PairRuntimeSnapshot,
   PairSessionSnapshot,
+  SessionStatus,
 } from "@adaptive-pair/protocol";
 import { createSession } from "./initialState.js";
 import { cloneFrozen } from "./immutable.js";
 
-const requireSession = (
+const isPausableStatus = (status: SessionStatus): boolean =>
+  status === "ready" || status === "active" || status === "reconciling";
+
+const requirePausableSession = (
+  session: PairSessionSnapshot | undefined,
+): PairSessionSnapshot => {
+  if (session === undefined || !isPausableStatus(session.status)) {
+    throw new Error("SESSION_NOT_PAUSABLE");
+  }
+
+  return session;
+};
+
+const requireClosableSession = (
   session: PairSessionSnapshot | undefined,
 ): PairSessionSnapshot => {
   if (session === undefined) {
     throw new Error("SESSION_NOT_STARTED");
+  }
+
+  if (session.status === "closed") {
+    throw new Error("SESSION_ALREADY_CLOSED");
   }
 
   return session;
@@ -26,6 +44,10 @@ const applyEvent = (
 
   switch (event.type) {
     case "SessionStarted": {
+      if (snapshot.session !== undefined) {
+        throw new Error("SESSION_ALREADY_STARTED");
+      }
+
       const session = createSession(event.sessionId);
 
       return {
@@ -45,7 +67,7 @@ const applyEvent = (
     }
 
     case "SessionPaused": {
-      const session = requireSession(snapshot.session);
+      const session = requirePausableSession(snapshot.session);
       if (event.authorityEpoch !== session.authorityEpoch + 1) {
         throw new Error("INVALID_AUTHORITY_EPOCH");
       }
@@ -68,7 +90,7 @@ const applyEvent = (
     }
 
     case "SessionClosed": {
-      const session = requireSession(snapshot.session);
+      const session = requireClosableSession(snapshot.session);
 
       return {
         protocolVersion: 1,

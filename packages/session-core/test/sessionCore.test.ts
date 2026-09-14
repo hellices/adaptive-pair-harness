@@ -131,6 +131,25 @@ describe("session core", () => {
     expect(Object.isFrozen(next.session)).toBe(true);
   });
 
+  it("rejects starting a session when one already exists", () => {
+    const runtime = createActiveRuntime();
+
+    expect(() =>
+      reduce(runtime, [
+        {
+          protocolVersion: 1,
+          eventId: "cmd-start:0",
+          commandId: "cmd-start",
+          actor: "human",
+          revision: 1,
+          recordedAt: 10,
+          type: "SessionStarted",
+          sessionId: "session-2",
+        },
+      ]),
+    ).toThrow("SESSION_ALREADY_STARTED");
+  });
+
   it("increments authority before pausing", () => {
     const runtime = createActiveRuntime();
 
@@ -150,6 +169,42 @@ describe("session core", () => {
     expect(next.session?.authorityEpoch).toBe(1);
     expect(next.presence.status).toBe("paused");
     expect(next.presence.activeSessionId).toBe("session-1");
+  });
+
+  it("rejects pausing sessions that are not ready, active, or reconciling", () => {
+    const statuses = ["inactive", "briefing", "paused", "closed"] as const;
+
+    for (const status of statuses) {
+      const runtime: PairRuntimeSnapshot = {
+        ...createRuntime("workspace-1"),
+        presence: {
+          workspaceId: "workspace-1",
+          observationRevision: 0,
+          status: "engaged",
+          activeSessionId: "session-1",
+        },
+        session: {
+          ...createSession("session-1"),
+          status,
+        },
+      };
+
+      expect(() =>
+        reduce(runtime, [
+          {
+            protocolVersion: 1,
+            eventId: "cmd-pause:0",
+            commandId: "cmd-pause",
+            actor: "human",
+            revision: 1,
+            recordedAt: 10,
+            type: "SessionPaused",
+            reason: "takeover",
+            authorityEpoch: 1,
+          },
+        ]),
+      ).toThrow("SESSION_NOT_PAUSABLE");
+    }
   });
 
   it("rejects paused events that do not advance authority", () => {
@@ -176,6 +231,30 @@ describe("session core", () => {
         },
       ]),
     ).toThrow("INVALID_AUTHORITY_EPOCH");
+  });
+
+  it("rejects closing an already closed session", () => {
+    const runtime: PairRuntimeSnapshot = {
+      ...createActiveRuntime(),
+      session: {
+        ...createSession("session-1"),
+        status: "closed",
+      },
+    };
+
+    expect(() =>
+      reduce(runtime, [
+        {
+          protocolVersion: 1,
+          eventId: "cmd-close:0",
+          commandId: "cmd-close",
+          actor: "human",
+          revision: 1,
+          recordedAt: 10,
+          type: "SessionClosed",
+        },
+      ]),
+    ).toThrow("SESSION_ALREADY_CLOSED");
   });
 
   it("enforces strict event revision ordering", () => {
