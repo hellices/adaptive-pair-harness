@@ -1062,7 +1062,9 @@ describe("pair chat planning", () => {
     );
     expect(response.textValues).toContain(goal);
     expect(response.textValues).toContain("local-template");
-    expect(response.textValues).toContain(controlNotice);
+    expect(response.textValues).toContain(
+      formatChatResponseForDisplay(controlNotice),
+    );
     expect(response.textValues).toContain(configurationWarning);
   });
 
@@ -1256,7 +1258,9 @@ describe("pair chat planning", () => {
       } as vscode.CancellationToken,
     );
 
-    expect(response.textValues).toEqual([message]);
+    expect(response.textValues).toEqual([
+      formatChatResponseForDisplay(message),
+    ]);
     expect(response.markdownValues).toEqual([]);
   });
 
@@ -1741,7 +1745,9 @@ describe("pair chat planning", () => {
         } as vscode.CancellationToken,
       );
 
-      expect(response.textValues).toEqual([generatedText]);
+      expect(response.textValues).toEqual([
+        formatChatResponseForDisplay(generatedText),
+      ]);
       expect(response.markdownValues).toEqual([]);
     },
   );
@@ -2291,7 +2297,9 @@ describe("pair chat planning", () => {
       },
     });
     expect(text).toHaveBeenCalledWith(
-      `Adaptive Pair could not answer: ${errorMessage}`,
+      formatChatResponseForDisplay(
+        `Adaptive Pair could not answer: ${errorMessage}`,
+      ),
     );
     expect(markdown).not.toHaveBeenCalled();
   });

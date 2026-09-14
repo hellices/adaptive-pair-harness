@@ -5,6 +5,7 @@ import {
   createVsCodeChatResponse,
   neutralizeChatTextAutolinks,
 } from "../src/vscode/vsCodeChatResponse";
+import { PAIR_CHAT_RESPONSE_DISPLAY_LIMIT } from "../src/vscode/chatResponseDisplay";
 
 const vscodeState = vi.hoisted(() => ({
   appendedText: [] as string[],
@@ -116,5 +117,37 @@ describe("VS Code Chat response adapter", () => {
       "pair@xn--fsq.com 사용자@예시.한국";
 
     expect(linkify.match(neutralizeChatTextAutolinks(text))).toBeNull();
+  });
+
+  it("caps the final normalized and neutralized text passed to appendText", () => {
+    vscodeState.appendedText.length = 0;
+    const response = createVsCodeChatResponse({
+      markdown: vi.fn(),
+    } as unknown as vscode.ChatResponseStream);
+    const text = (
+      "界😀\r\n\u0000https://outer.test/https://inner.test " +
+      "user@example.com www.例子.测试 "
+    ).repeat(PAIR_CHAT_RESPONSE_DISPLAY_LIMIT);
+
+    response.text(text);
+
+    const appended = vscodeState.appendedText[0] ?? "";
+    expect([...appended]).toHaveLength(PAIR_CHAT_RESPONSE_DISPLAY_LIMIT);
+    expect(appended.endsWith("…")).toBe(true);
+    expect(appended).not.toContain("\r");
+    expect(appended).not.toContain("\u0000");
+    expect(new LinkifyIt().match(appended)).toBeNull();
+  });
+
+  it("passes exact-boundary non-link text to appendText unchanged", () => {
+    vscodeState.appendedText.length = 0;
+    const response = createVsCodeChatResponse({
+      markdown: vi.fn(),
+    } as unknown as vscode.ChatResponseStream);
+    const text = "界".repeat(PAIR_CHAT_RESPONSE_DISPLAY_LIMIT);
+
+    response.text(text);
+
+    expect(vscodeState.appendedText).toEqual([text]);
   });
 });

@@ -3758,3 +3758,61 @@
 - No live VS Code extension-host run was performed; this behavior is isolated
   to real TypeScript AST identity collection and is covered by focused and full
   semantic tests.
+
+---
+
+## Chat display-cap ordering follow-up (2026-09-14)
+
+### Correction implemented
+
+- Chat text now normalizes line endings and control characters, neutralizes
+  every supported plain-text autolink across the complete response, and only
+  then applies the 16,384-code-point display cap and ellipsis.
+- The same ordering applies across multipart Chat output, while trusted
+  Markdown parts retain their formatting.
+- The VS Code response adapter applies the complete display pipeline
+  immediately before `MarkdownString.appendText`, so its final argument cannot
+  exceed the documented limit.
+- The neutralization word joiner is preserved during repeated normalization,
+  keeping the pipeline idempotent without restoring active links.
+
+### TDD evidence
+
+- RED: the initial focused run produced **3 expected failures**. URL/email-heavy
+  and CJK/emoji responses retained active links because capping happened before
+  neutralization, and the adapter passed **1,228,800 code points** to
+  `appendText` instead of at most 16,384.
+- Multipart RED: a separate regression failed because text parts remained
+  linkifiable when aggregate bounding preceded adapter neutralization.
+- GREEN: focused Chat display, VS Code adapter, and participant tests passed:
+  **3 files, 80 tests**.
+- Regressions cover exact-boundary non-link text, nested URLs, URL/email-heavy
+  text, CJK/emoji code-point safety, normalization, idempotence, ellipsis,
+  multipart output, and post-truncation link inactivity.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **20 files, 594 tests passed**
+- `npm run test:coverage`: **PASS — 20 files, 594 tests**
+  - statements 90.53%, branches 83.20%, functions 93.57%, lines 90.66%
+- `npm run package`: **PASS — 161 files, 4.37 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX exclusion and changed-module byte-integrity scans: **PASS — 161
+  entries**
+- Source and packaged credential-shaped value, conflict-marker, and whitespace
+  scans: **PASS**
+
+### Self-review and residual concerns
+
+- Reviewed normalization/neutralization/capping order, Unicode code-point
+  slicing, exact-boundary behavior, ellipsis accounting, multipart aggregate
+  accounting, repeated adapter formatting, and linkifier results after
+  truncation. No high-confidence correctness or security defect remains in the
+  changed scope.
+- No live VS Code extension-host run was performed. The adapter mock verifies
+  the exact value passed to `MarkdownString.appendText`, and compiled/package
+  byte-integrity checks cover the shipped implementation.

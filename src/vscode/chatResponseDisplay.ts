@@ -1,3 +1,5 @@
+import { neutralizePlainTextAutolinks } from "./plainTextAutolinks";
+
 export const PAIR_CHAT_RESPONSE_DISPLAY_LIMIT = 16_384;
 
 const ELLIPSIS = "…";
@@ -15,18 +17,22 @@ const normalizeChatResponseForDisplay = (value: string): string =>
         character === "\n" ||
         character === "\t" ||
         character === "\u200c" ||
-        character === "\u200d"
+        character === "\u200d" ||
+        character === "\u2060"
       ) {
         return character;
       }
       return " ";
     });
 
+const prepareChatTextForDisplay = (value: string): string =>
+  neutralizePlainTextAutolinks(normalizeChatResponseForDisplay(value));
+
 export const formatChatResponseForDisplay = (value: string): string => {
-  const normalized = normalizeChatResponseForDisplay(value);
-  const codePoints = [...normalized];
+  const prepared = prepareChatTextForDisplay(value);
+  const codePoints = [...prepared];
   if (codePoints.length <= PAIR_CHAT_RESPONSE_DISPLAY_LIMIT) {
-    return normalized;
+    return prepared;
   }
 
   return `${codePoints
@@ -37,21 +43,24 @@ export const formatChatResponseForDisplay = (value: string): string => {
 export const formatChatResponsePartsForDisplay = (
   parts: readonly ChatResponseDisplayPart[],
 ): readonly ChatResponseDisplayPart[] => {
-  const normalized = parts.map((part) => ({
+  const prepared = parts.map((part) => ({
     ...part,
-    value: normalizeChatResponseForDisplay(part.value),
+    value:
+      part.kind === "text"
+        ? prepareChatTextForDisplay(part.value)
+        : normalizeChatResponseForDisplay(part.value),
   }));
-  const totalCodePoints = normalized.reduce(
+  const totalCodePoints = prepared.reduce(
     (total, part) => total + [...part.value].length,
     0,
   );
   if (totalCodePoints <= PAIR_CHAT_RESPONSE_DISPLAY_LIMIT) {
-    return normalized;
+    return prepared;
   }
 
   let remaining = PAIR_CHAT_RESPONSE_DISPLAY_LIMIT - 1;
   const bounded: ChatResponseDisplayPart[] = [];
-  for (const part of normalized) {
+  for (const part of prepared) {
     if (remaining === 0) {
       break;
     }

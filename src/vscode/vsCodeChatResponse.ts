@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { neutralizePlainTextAutolinks } from "./plainTextAutolinks";
+import { formatChatResponseForDisplay } from "./chatResponseDisplay";
 
 export interface PairChatResponse {
   markdown(value: string): void;
@@ -19,9 +19,7 @@ export const createVsCodeChatResponse = (
   },
   text: (value) => {
     response.markdown(
-      new vscode.MarkdownString().appendText(
-        neutralizePlainTextAutolinks(value),
-      ),
+      new vscode.MarkdownString().appendText(formatChatResponseForDisplay(value)),
     );
   },
 });
