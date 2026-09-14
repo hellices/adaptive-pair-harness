@@ -98,7 +98,7 @@ export class TypeScriptSemanticAnalyzer {
     }
 
     const evidence = [
-      ...collectNewDependencyEvidence(previous.sourceFile, current.sourceFile),
+      ...collectNewDependencyEvidence(previous, current),
       ...collectPublicApiChangeEvidence(previous, current),
       ...collectComplexityGrowthEvidence(
         previous.sourceFile,
@@ -316,11 +316,11 @@ const scriptKindForLanguageId = (languageId: string): ts.ScriptKind => {
 };
 
 const collectNewDependencyEvidence = (
-  previousSource: ts.SourceFile,
-  currentSource: ts.SourceFile,
+  previous: SemanticSource,
+  current: SemanticSource,
 ): Evidence[] => {
-  const previousImports = collectDependencyRecords(previousSource);
-  const currentImports = collectDependencyRecords(currentSource);
+  const previousImports = collectDependencyRecords(previous);
+  const currentImports = collectDependencyRecords(current);
   const evidence: Evidence[] = [];
 
   for (const [specifier, record] of currentImports.entries()) {
@@ -329,7 +329,11 @@ const collectNewDependencyEvidence = (
     }
 
     evidence.push({
-      id: buildEvidenceId("new-dependency", currentSource.fileName, specifier),
+      id: buildEvidenceId(
+        "new-dependency",
+        current.sourceFile.fileName,
+        specifier,
+      ),
       kind: "new-dependency",
       severity: "warning",
       title: "New dependency introduced",
@@ -347,8 +351,10 @@ const collectNewDependencyEvidence = (
 };
 
 const collectDependencyRecords = (
-  sourceFile: ts.SourceFile,
+  source: SemanticSource,
 ): ReadonlyMap<string, ImportRecord> => {
+  const { sourceFile } = source;
+  const checker = source.program.getTypeChecker();
   const dependencies = new Map<string, ImportRecord>();
   const record = (moduleSpecifier: ts.Expression | undefined): void => {
     if (
@@ -368,7 +374,12 @@ const collectDependencyRecords = (
     } else if (ts.isCallExpression(node)) {
       const isRequireCall =
         ts.isIdentifier(node.expression) &&
-        node.expression.text === "require";
+        node.expression.text === "require" &&
+        !checker
+          .getSymbolAtLocation(node.expression)
+          ?.declarations?.some(
+            (declaration) => declaration.getSourceFile() === sourceFile,
+          );
       const isDynamicImport =
         node.expression.kind === ts.SyntaxKind.ImportKeyword;
       if (isRequireCall || isDynamicImport) {

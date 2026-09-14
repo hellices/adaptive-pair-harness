@@ -328,6 +328,67 @@ describe("TypeScriptSemanticAnalyzer", () => {
     ).toEqual([]);
   });
 
+  it.each([
+    [
+      "function",
+      [
+        "function require(specifier: string): string { return specifier; }",
+        'export const value = require("./local-function");',
+      ].join("\n"),
+    ],
+    [
+      "parameter",
+      [
+        "export function load(",
+        "  require: (specifier: string) => string,",
+        "): string {",
+        '  return require("./shadowed-parameter");',
+        "}",
+      ].join("\n"),
+    ],
+    [
+      "variable",
+      [
+        "const require = (specifier: string): string => specifier;",
+        'export const value = require("./shadowed-variable");',
+      ].join("\n"),
+    ],
+  ])("ignores literal require calls resolved to a local %s binding", (_label, current) => {
+    expect(
+      analyzeEvidence(episode("export const value = 1;", current)).filter(
+        (item) => item.kind === "new-dependency",
+      ),
+    ).toEqual([]);
+  });
+
+  it("ignores a literal require call resolved to an import binding", () => {
+    const current = [
+      'import { createRequire as require } from "./loader";',
+      'export const value = require("./not-a-module-load");',
+    ].join("\n");
+
+    expect(
+      analyzeEvidence(episode("export const value = 1;", current))
+        .filter((item) => item.kind === "new-dependency")
+        .map((item) => item.references[0]),
+    ).toEqual(["./loader"]);
+  });
+
+  it("reports a literal require call when CommonJS require is unresolved", () => {
+    expect(
+      analyzeEvidence(
+        episode(
+          "export const value = 1;",
+          'export const value = require("./commonjs");',
+        ),
+      ).filter((item) => item.kind === "new-dependency"),
+    ).toEqual([
+      expect.objectContaining({
+        references: ["./commonjs"],
+      }),
+    ]);
+  });
+
   it("deduplicates repeated dependency forms by full specifier in source order", () => {
     const current = [
       'const required = require("./shared");',

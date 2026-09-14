@@ -100,6 +100,7 @@ class RecordingLanguageModelApi implements VsCodeLanguageModelApi {
   public readonly prompts: string[] = [];
   public readonly countedTexts: string[] = [];
   public readonly countedModelIds: string[] = [];
+  public readonly accessCheckedModelIds: string[] = [];
   public readonly requestedModelIds: string[] = [];
   public readonly requestedOutputCaps: Array<number | undefined> = [];
   public readonly cancellation = new TestCancellation();
@@ -146,6 +147,7 @@ class RecordingLanguageModelApi implements VsCodeLanguageModelApi {
   }
 
   public canSendRequest(model: CopilotModelReference): boolean | undefined {
+    this.accessCheckedModelIds.push(model.id);
     return this.accessByModel.has(model.id)
       ? this.accessByModel.get(model.id)
       : this.access;
@@ -988,6 +990,59 @@ describe("VsCodeLanguageModelProvider", () => {
       text: "Did you intend this dependency?",
     });
     expect(api.requestedModelIds).toEqual(["missing", "available"]);
+  });
+
+  it("retains a reservation when an earlier candidate may have sent before the last candidate is denied", async () => {
+    const budget = new TokenBudget({
+      windowMs: 60_000,
+      maxCalls: 1,
+      maxInputTokens: 1_000,
+      maxOutputTokens: 180,
+      maxOutputTokensPerCall: 180,
+    });
+    const reservation = budget.tryReserve(100, 180, 0);
+    if (!reservation.allowed) {
+      throw new Error("Expected the Copilot request to reserve budget.");
+    }
+    const api = new RecordingLanguageModelApi();
+    api.models = [
+      { id: "send-denied", name: "Send-denied model" },
+      { id: "disallowed", name: "Disallowed model" },
+    ];
+    api.accessByModel.set("send-denied", true);
+    api.accessByModel.set("disallowed", false);
+    const sendFailure = new Error("permission denied during send");
+    api.sendErrorsByModel.set("send-denied", sendFailure);
+    api.errorKinds.set(sendFailure, "no-permissions");
+    const provider = new VsCodeLanguageModelProvider(api);
+
+    const finalError = await provider
+      .generateFromUserAction(request, new AbortController().signal)
+      .then(
+        () => {
+          throw new Error("Expected Copilot candidate exhaustion.");
+        },
+        (error: unknown) => error,
+      );
+
+    expect(api.accessCheckedModelIds).toEqual([
+      "send-denied",
+      "disallowed",
+    ]);
+    expect(api.requestedModelIds).toEqual(["send-denied"]);
+    expect(finalError).toMatchObject({
+      name: "CopilotModelUnavailableError",
+      reason: "access-denied",
+      requestMayHaveBeenSent: true,
+    });
+    expect(
+      releaseUnusedCopilotReservation(
+        budget,
+        reservation.reservationId,
+        finalError,
+      ),
+    ).toBe(false);
+    expect(budget.snapshot(1).remainingCalls).toBe(0);
   });
 
   it.each(["blocked", "unknown"] as const)(

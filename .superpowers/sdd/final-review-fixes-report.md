@@ -3816,3 +3816,74 @@
 - No live VS Code extension-host run was performed. The adapter mock verifies
   the exact value passed to `MarkdownString.appendText`, and compiled/package
   byte-integrity checks cover the shipped implementation.
+
+---
+
+## Require binding and Copilot candidate-state follow-ups (2026-09-14)
+
+### Corrections implemented
+
+- Literal `require("specifier")` calls now use the TypeScript checker before
+  becoming dependency evidence. A binding declared by the analyzed source
+  (function, parameter, variable, or import) makes the call local and therefore
+  not a CommonJS dependency; unresolved/global CommonJS `require` calls remain
+  dependency evidence. Dynamic imports, ESM imports/re-exports, and non-literal
+  call handling are unchanged.
+- Copilot candidate iteration now remembers whether any prior unavailable
+  candidate may have dispatched a request. Later access or token-count
+  failures retain that state while preserving the latest unavailable reason.
+  Consequently, the final error cannot refund a reservation after an earlier
+  candidate reached `sendRequest`.
+- Blocked, unknown, and cancellation failures continue to propagate without
+  candidate fallback.
+
+### TDD evidence
+
+- RED: the initial focused semantic/Copilot run produced **5 expected
+  failures** and **131 passes**. Local function, shadowed parameter, shadowed
+  variable, and imported `require` bindings were incorrectly reported as
+  dependencies; the final Copilot error incorrectly reset
+  `requestMayHaveBeenSent` to `false`. The unresolved CommonJS regression
+  already passed.
+- GREEN: semantic and Copilot suites passed **2 files, 136 tests**.
+- Final focused semantic, Copilot, and runtime verification passed **3 files,
+  235 tests**. The Copilot regression verifies both candidates were considered,
+  only the first reached `sendRequest`, the final flag remains `true`, exact
+  reservation release returns `false`, and the call allowance remains
+  consumed.
+
+### False-positive review
+
+- The `chatResponseDisplay` NUL source and regression were not modified and
+  remain byte-identical to `HEAD`. The test's `\u0000` string-literal escapes
+  create actual NUL code points at runtime, which the assertions correctly
+  require the display pipeline to remove. This review item is a false
+  positive.
+
+### Verification
+
+- `npm run check`: **PASS**
+  - TypeScript compile: pass
+  - ESLint: pass, zero warnings/errors
+  - Vitest: **20 files, 600 tests passed**
+- `npm run test:coverage`: **PASS — 20 files, 600 tests**
+  - statements 90.54%, branches 83.25%, functions 93.59%, lines 90.67%
+- `npm run package`: **PASS — 161 files, 4.37 MB**
+- `npm audit --audit-level=low`: **PASS — 0 vulnerabilities**
+- Runtime dependency root scan: **PASS — `typescript@5.9.3` only**
+- VSIX exclusions and byte integrity: **PASS — 161 entries and 22 compiled
+  modules byte-match**
+- Production/package credential-shaped value, runtime URL, repository
+  metadata, compiled behavior-marker, conflict-marker, whitespace, and
+  NUL-test integrity scans: **PASS**
+
+### Self-review and residual concerns
+
+- Reviewed checker symbol provenance and scope behavior, unresolved CommonJS
+  preservation, non-literal/dynamic import behavior, candidate reason and
+  dispatch-state accumulation, exact reservation ownership, and
+  blocked/unknown/cancellation propagation. No high-confidence defect remains
+  in the changed scope.
+- No live VS Code extension-host or live Copilot request was run. Real
+  TypeScript checker tests, deterministic provider adapters, runtime lifecycle
+  coverage, and packaged-byte checks exercise the changed boundaries.

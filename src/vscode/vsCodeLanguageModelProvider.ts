@@ -358,10 +358,19 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
       );
       let candidateIndex = 0;
       let lastUnavailable: CopilotModelUnavailableError | undefined;
+      const rememberUnavailable = (
+        error: CopilotModelUnavailableError,
+      ): void => {
+        lastUnavailable =
+          lastUnavailable?.requestMayHaveBeenSent === true &&
+          !error.requestMayHaveBeenSent
+            ? new CopilotModelUnavailableError(error.reason, true)
+            : error;
+      };
       return {
         next: async (previousUnavailable) => {
           if (previousUnavailable !== undefined) {
-            lastUnavailable = previousUnavailable;
+            rememberUnavailable(previousUnavailable);
           }
           while (candidateIndex < models.length) {
             signal.throwIfAborted();
@@ -376,8 +385,10 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
               access === false ||
               (options.userInitiated !== true && access !== true)
             ) {
-              lastUnavailable = new CopilotModelUnavailableError(
-                access === false ? "access-denied" : "consent-required",
+              rememberUnavailable(
+                new CopilotModelUnavailableError(
+                  access === false ? "access-denied" : "consent-required",
+                ),
               );
               continue;
             }
@@ -397,7 +408,7 @@ export class VsCodeLanguageModelProvider implements ModelProvider {
               if (!(error instanceof CopilotModelUnavailableError)) {
                 throw error;
               }
-              lastUnavailable = error;
+              rememberUnavailable(error);
               continue;
             }
             signal.throwIfAborted();
