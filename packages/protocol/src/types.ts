@@ -50,7 +50,7 @@ export interface LearningAgreement {
 
 export interface EntrySnapshot {
   readonly workspaceId: string;
-  readonly branch: string | undefined;
+  readonly branch?: string;
   readonly dirtyPaths: readonly string[];
   readonly openPaths: readonly string[];
   readonly diagnostics: readonly string[];

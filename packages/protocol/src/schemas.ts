@@ -71,9 +71,7 @@ const entrySnapshotSchema = {
   type: "object",
   properties: {
     workspaceId: { type: "string" },
-    branch: {
-      anyOf: [{ type: "string" }, { allowUndefined: true }],
-    },
+    branch: { type: "string" },
     dirtyPaths: stringArraySchema,
     openPaths: stringArraySchema,
     diagnostics: stringArraySchema,
@@ -227,6 +225,107 @@ const pairCommandSchema = {
 
 const validatePairCommand = ajv.compile<PairCommand>(pairCommandSchema);
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" &&
+  value !== null &&
+  Object.getPrototypeOf(value) === Object.prototype;
+
+const jsonError = (reason: string) =>
+  new Error(`Invalid Pair command: ${reason}`);
+
+const assertJsonCompatible = (value: unknown, seen = new WeakSet<object>()): void => {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean"
+  ) {
+    return;
+  }
+
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw jsonError("non-finite numbers are not allowed");
+    }
+    return;
+  }
+
+  if (typeof value === "undefined") {
+    throw jsonError("undefined is not allowed");
+  }
+
+  if (typeof value === "bigint" || typeof value === "symbol") {
+    throw jsonError(`unsupported ${typeof value} value`);
+  }
+
+  if (typeof value === "function") {
+    throw jsonError("functions are not allowed");
+  }
+
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      throw jsonError("circular references are not allowed");
+    }
+    seen.add(value);
+
+    for (const symbol of Object.getOwnPropertySymbols(value)) {
+      throw jsonError(`symbol key ${String(symbol)} is not allowed`);
+    }
+
+    for (const name of Object.getOwnPropertyNames(value)) {
+      if (name === "length") {
+        continue;
+      }
+
+      if (!/^(0|[1-9]\d*)$/.test(name)) {
+        throw jsonError(`non-index array property ${name} is not allowed`);
+      }
+
+      const descriptor = Object.getOwnPropertyDescriptor(value, name);
+      if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) {
+        throw jsonError(`array index ${name} must be a plain enumerable data property`);
+      }
+
+      assertJsonCompatible(descriptor.value, seen);
+    }
+
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.prototype.hasOwnProperty.call(value, index)) {
+        throw jsonError(`sparse array holes are not allowed at index ${index}`);
+      }
+    }
+
+    return;
+  }
+
+  if (typeof value === "object") {
+    if (!isPlainObject(value)) {
+      throw jsonError("only plain objects and arrays are allowed");
+    }
+
+    if (seen.has(value)) {
+      throw jsonError("circular references are not allowed");
+    }
+    seen.add(value);
+
+    for (const symbol of Object.getOwnPropertySymbols(value)) {
+      throw jsonError(`symbol key ${String(symbol)} is not allowed`);
+    }
+
+    for (const name of Object.getOwnPropertyNames(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, name);
+      if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) {
+        throw jsonError(`property ${name} must be a plain enumerable data property`);
+      }
+
+      assertJsonCompatible(descriptor.value, seen);
+    }
+
+    return;
+  }
+
+  throw jsonError("unsupported value");
+};
+
 function deepClone<Value>(value: Value): Value;
 function deepClone(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -235,13 +334,12 @@ function deepClone(value: unknown): unknown {
   }
 
   if (typeof value === "object" && value !== null) {
-    const clone: Record<PropertyKey, unknown> = {};
-
-    for (const key of Reflect.ownKeys(value)) {
-      clone[key] = deepClone(Reflect.get(value, key));
-    }
-
-    return clone;
+    return Object.fromEntries(
+      Object.keys(value).map((key) => [
+        key,
+        deepClone((value as Record<string, unknown>)[key]),
+      ]),
+    );
   }
 
   return value;
@@ -249,8 +347,8 @@ function deepClone(value: unknown): unknown {
 
 const deepFreeze = <Value>(value: Value): Value => {
   if (typeof value === "object" && value !== null) {
-    for (const key of Reflect.ownKeys(value)) {
-      deepFreeze(Reflect.get(value, key));
+    for (const key of Object.keys(value)) {
+      deepFreeze(value[key as keyof typeof value]);
     }
     Object.freeze(value);
   }
@@ -259,6 +357,8 @@ const deepFreeze = <Value>(value: Value): Value => {
 };
 
 export const parsePairCommand = (value: unknown): PairCommand => {
+  assertJsonCompatible(value);
+
   if (!validatePairCommand(value)) {
     const detail = ajv.errorsText(validatePairCommand.errors, {
       separator: "; ",

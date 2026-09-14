@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { parsePairCommand } from "../src/index.js";
 
-const createEntry = () => ({
+const createEntry = (branch?: string) => ({
   workspaceId: "workspace-1",
-  branch: "feature/v2-growth-foundation",
+  ...(branch === undefined ? {} : { branch }),
   dirtyPaths: ["packages/protocol/src/index.ts"],
   openPaths: ["packages/protocol/test/protocol.test.ts"],
   diagnostics: ["packages/protocol/src/index.ts:1:1 warning"],
@@ -72,7 +72,7 @@ describe("parsePairCommand", () => {
       expectedRevision: 3,
       actor: "human",
       type: "CaptureEntry",
-      entry: createEntry(),
+      entry: createEntry("feature/v2-growth-foundation"),
       observedAt: 103,
     },
     {
@@ -136,7 +136,7 @@ describe("parsePairCommand", () => {
       expectedRevision: 10,
       actor: "human",
       type: "ResumeSession",
-      entry: createEntry(),
+      entry: createEntry("feature/v2-growth-foundation"),
       observedAt: 110,
     },
     {
@@ -252,25 +252,119 @@ describe("parsePairCommand", () => {
     });
   });
 
-  it("accepts an entry snapshot with an undefined branch", () => {
-    expect(
+  it("accepts an entry snapshot with an omitted branch", () => {
+    const parsed = parsePairCommand({
+      protocolVersion: 1,
+      commandId: "cmd-5",
+      expectedRevision: 0,
+      actor: "human",
+      type: "CaptureEntry",
+      entry: createEntry(),
+      observedAt: 100,
+    });
+
+    expect(parsed).toMatchObject({
+      type: "CaptureEntry",
+      entry: {
+        workspaceId: "workspace-1",
+      },
+    });
+
+    if (parsed.type !== "CaptureEntry") {
+      throw new Error("Expected CaptureEntry");
+    }
+
+    expect(parsed.entry).not.toHaveProperty("branch");
+  });
+
+  it("rejects a null branch in an entry snapshot", () => {
+    expect(() =>
       parsePairCommand({
         protocolVersion: 1,
-        commandId: "cmd-5",
+        commandId: "cmd-6",
         expectedRevision: 0,
         actor: "human",
         type: "CaptureEntry",
         entry: {
-          ...createEntry(),
-          branch: undefined,
+          ...createEntry("feature/v2-growth-foundation"),
+          branch: null,
         },
         observedAt: 100,
       }),
-    ).toMatchObject({
-      type: "CaptureEntry",
-      entry: {
-        branch: undefined,
-      },
+    ).toThrow("Invalid Pair command");
+  });
+
+  it("rejects a non-string branch in an entry snapshot", () => {
+    expect(() =>
+      parsePairCommand({
+        protocolVersion: 1,
+        commandId: "cmd-7",
+        expectedRevision: 0,
+        actor: "human",
+        type: "ResumeSession",
+        entry: {
+          ...createEntry("feature/v2-growth-foundation"),
+          branch: 123,
+        },
+        observedAt: 100,
+      }),
+    ).toThrow("Invalid Pair command");
+  });
+
+  it("rejects symbol, non-enumerable, and getter entry properties", () => {
+    const symbolKey = Symbol("hidden");
+    const symbolEntry = createEntry("feature/v2-growth-foundation") as Record<
+      string | symbol,
+      unknown
+    >;
+    symbolEntry[symbolKey] = "secret";
+
+    expect(() =>
+      parsePairCommand({
+        protocolVersion: 1,
+        commandId: "cmd-8",
+        expectedRevision: 0,
+        actor: "human",
+        type: "CaptureEntry",
+        entry: symbolEntry,
+        observedAt: 100,
+      }),
+    ).toThrow("Invalid Pair command");
+
+    const nonEnumerableEntry = createEntry("feature/v2-growth-foundation");
+    Object.defineProperty(nonEnumerableEntry, "hidden", {
+      value: "secret",
+      enumerable: false,
     });
+
+    expect(() =>
+      parsePairCommand({
+        protocolVersion: 1,
+        commandId: "cmd-9",
+        expectedRevision: 0,
+        actor: "human",
+        type: "CaptureEntry",
+        entry: nonEnumerableEntry,
+        observedAt: 100,
+      }),
+    ).toThrow("Invalid Pair command");
+
+    const getterEntry = createEntry("feature/v2-growth-foundation");
+    Object.defineProperty(getterEntry, "branch", {
+      get: () => "feature/v2-growth-foundation",
+      enumerable: true,
+    });
+
+    expect(() =>
+      parsePairCommand({
+        protocolVersion: 1,
+        commandId: "cmd-10",
+        expectedRevision: 0,
+        actor: "human",
+        type: "CaptureEntry",
+        entry: getterEntry,
+        observedAt: 100,
+      }),
+    ).toThrow("Invalid Pair command");
   });
 });
