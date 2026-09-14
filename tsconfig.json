@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "packages/protocol" },
+    { "path": "packages/presence" },
     { "path": "packages/session-core" },
     { "path": "packages/testkit" }
   ]

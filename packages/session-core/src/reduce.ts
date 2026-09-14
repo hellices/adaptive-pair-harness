@@ -3,7 +3,10 @@ import type {
   PairRuntimeSnapshot,
   PairSessionSnapshot,
   SessionStatus,
+  WorkUnit,
+  WorkUnitStatus,
 } from "@adaptive-pair/protocol";
+import { normalizeEntrySnapshot } from "./entrySnapshot.js";
 import { createSession } from "./initialState.js";
 import { cloneFrozen } from "./immutable.js";
 
@@ -15,6 +18,26 @@ const requirePausableSession = (
 ): PairSessionSnapshot => {
   if (session === undefined || !isPausableStatus(session.status)) {
     throw new Error("SESSION_NOT_PAUSABLE");
+  }
+
+  return session;
+};
+
+const requireBriefingSession = (
+  session: PairSessionSnapshot | undefined,
+): PairSessionSnapshot => {
+  if (session === undefined || session.status !== "briefing") {
+    throw new Error("SESSION_NOT_BRIEFING");
+  }
+
+  return session;
+};
+
+const requirePausedSession = (
+  session: PairSessionSnapshot | undefined,
+): PairSessionSnapshot => {
+  if (session === undefined || session.status !== "paused") {
+    throw new Error("SESSION_NOT_PAUSED");
   }
 
   return session;
@@ -32,6 +55,34 @@ const requireClosableSession = (
   }
 
   return session;
+};
+
+const isTerminalWorkUnitStatus = (status: WorkUnitStatus): boolean =>
+  status === "completed" ||
+  status === "cancelled" ||
+  status === "failed";
+
+const requireReconciliationBlock = (
+  session: PairSessionSnapshot | undefined,
+): never => {
+  if (session?.status === "reconciling") {
+    throw new Error("SESSION_RECONCILING");
+  }
+
+  throw new Error("UNSUPPORTED_EVENT:WorkUnitAgreed");
+};
+
+const reconcileWorkUnit = (
+  workUnit: WorkUnit | undefined,
+): WorkUnit | undefined => {
+  if (workUnit === undefined || isTerminalWorkUnitStatus(workUnit.status)) {
+    return workUnit;
+  }
+
+  return {
+    ...workUnit,
+    status: "needs-reconcile",
+  };
 };
 
 const applyEvent = (
@@ -89,6 +140,46 @@ const applyEvent = (
       };
     }
 
+    case "EntryCaptured": {
+      const session = requireBriefingSession(snapshot.session);
+
+      return {
+        protocolVersion: 1,
+        revision: event.revision,
+        presence: {
+          workspaceId: snapshot.presence.workspaceId,
+          observationRevision: snapshot.presence.observationRevision,
+          status: "engaged",
+          activeSessionId: session.sessionId,
+        },
+        session: {
+          ...session,
+          entrySnapshot: normalizeEntrySnapshot(event.entry, session.entrySnapshot),
+        },
+      };
+    }
+
+    case "SessionResumed": {
+      const session = requirePausedSession(snapshot.session);
+
+      return {
+        protocolVersion: 1,
+        revision: event.revision,
+        presence: {
+          workspaceId: snapshot.presence.workspaceId,
+          observationRevision: snapshot.presence.observationRevision,
+          status: "engaged",
+          activeSessionId: session.sessionId,
+        },
+        session: {
+          ...session,
+          status: "reconciling",
+          entrySnapshot: normalizeEntrySnapshot(event.entry, session.entrySnapshot),
+          workUnit: reconcileWorkUnit(session.workUnit),
+        },
+      };
+    }
+
     case "SessionClosed": {
       const session = requireClosableSession(snapshot.session);
 
@@ -107,6 +198,9 @@ const applyEvent = (
         },
       };
     }
+
+    case "WorkUnitAgreed":
+      return requireReconciliationBlock(snapshot.session);
 
     default:
       throw new Error(`UNSUPPORTED_EVENT:${event.type}`);
