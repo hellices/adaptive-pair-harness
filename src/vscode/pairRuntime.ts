@@ -1,0 +1,2251 @@
+import * as vscode from "vscode";
+import { randomUUID } from "node:crypto";
+import {
+  confirmWorkingGoal,
+  createWorkingAgreement,
+  createWorkingAgreementDraft,
+} from "../core/projectContext";
+import type { PairPhase, ProjectContext, WorkingAgreement } from "../core/projectContext";
+import { readProjectContext } from "./projectContextReader";
+import type { ProjectContextAccess } from "./projectContextReader";
+import {
+  budgetForInterventionStyle,
+  type PairConfig,
+} from "../config/pairConfig";
+import { discoverHarnessSignals } from "../core/coexistence";
+import { EditEpisodeAggregator } from "../core/editEpisodeAggregator";
+import {
+  boundEvidenceMessage,
+  normalizeEvidenceForUi,
+} from "../core/evidencePresentation";
+import { InterventionPolicy } from "../core/interventionPolicy";
+import {
+  hashEvidenceIdentity,
+  PairMemoryStore,
+} from "../core/memoryStore";
+import {
+  LocalTemplateProvider,
+  ModelOutputLimitError,
+  ModelRouter,
+  OpenAICompatibleProvider,
+  containsSensitiveModelText,
+  prepareRemoteModelRequest,
+} from "../core/modelRouter";
+import type {
+  ModelProvider,
+  ModelRequest,
+  ModelRequestContext,
+  ModelResponse,
+  ModelPurpose,
+} from "../core/modelRouter";
+import { TypeScriptSemanticAnalyzer } from "../core/semanticAnalyzer";
+import { TokenBudget } from "../core/tokenBudget";
+import type { BudgetDenialReason } from "../core/tokenBudget";
+import type {
+  EditEpisode,
+  Evidence,
+  PairRange,
+  Scheduler,
+} from "../core/types";
+import { InlinePairController } from "./inlinePairController";
+import type {
+  PairChatGenerator,
+  PairContextRevisionFence,
+  PairRuntimeRevision,
+  PairSessionSnapshot,
+  PairSharedContext,
+} from "./pairChatParticipant";
+import {
+  CopilotModelUnavailableError,
+  VsCodeLanguageModelProvider,
+  releaseUnusedCopilotReservation,
+} from "./vsCodeLanguageModelProvider";
+import type { VsCodeLanguageModelApi } from "./vsCodeLanguageModelProvider";
+import {
+  PairDisabledError,
+  PairDocumentState,
+  PairInactiveError,
+  PairInvocationGate,
+  PairRequestRegistry,
+  PairSessionLifecycle,
+  buildDiagnosticEvidence,
+  buildPairStatusText,
+  pairRangesOverlap,
+  selectManualEvidence,
+  repositoryIdentityForDocument,
+  runCleanupSteps,
+  shouldSuppressCancellation,
+} from "./pairRuntimeSupport";
+import type {
+  PairInvocationSource,
+  PairSessionPreparation,
+  PairSessionPreparationContext,
+  PairSessionActionResult,
+} from "./pairRuntimeSupport";
+
+const PAIR_GOAL = "Navigate with concise, evidence-backed, ask-first questions.";
+const STARTUP_CONTEXT_GLOB =
+  "{README.md,readme.md,WORKING-AGREEMENT.md,working-agreement.md,docs/**/*.md,AGENTS.md,**/AGENTS.md}";
+const STARTUP_GUIDANCE_REFERENCE_LIMIT = 5;
+const SUPPORTED_LANGUAGE_IDS = new Set([
+  "typescript",
+  "typescriptreact",
+  "javascript",
+  "javascriptreact",
+]);
+const SUPPORTED_DOCUMENT_SCHEMES = new Set(["file", "vscode-remote"]);
+
+interface WorkspaceRootSnapshot {
+  readonly repositoryIds: readonly string[];
+  readonly revision: string;
+}
+
+interface WorkspaceStartupContext {
+  readonly controlNotice: string | undefined;
+  readonly startupGuidance: string;
+  readonly project: ProjectContext;
+}
+
+const captureWorkspaceRootSnapshot = (): WorkspaceRootSnapshot => {
+  const repositoryIds = [
+    "no-workspace",
+    ...(vscode.workspace.workspaceFolders?.map((folder) =>
+      folder.uri.toString(),
+    ) ?? []),
+  ];
+  return {
+    repositoryIds,
+    revision: JSON.stringify(repositoryIds),
+  };
+};
+
+const normalizeStartupReference = (workspacePath: string): string | undefined => {
+  const normalized = workspacePath.replaceAll("\\", "/").replace(/^\.\//u, "");
+  if (
+    normalized.length === 0 ||
+    normalized.startsWith("/") ||
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    /^[a-z]:\//iu.test(normalized)
+  ) {
+    return undefined;
+  }
+  return normalized;
+};
+
+const startupReferenceRank = (reference: string): number => {
+  const lower = reference.toLowerCase();
+  if (lower === "readme.md" || lower === "working-agreement.md") {
+    return 0;
+  }
+  if (/^docs\/superpowers\/plans\/[^/]+\.md$/u.test(lower)) {
+    return 1;
+  }
+  if (/^docs\/superpowers\/specs\/[^/]+\.md$/u.test(lower)) {
+    return 2;
+  }
+  if (lower.endsWith("/agents.md") || lower === "agents.md") {
+    return 3;
+  }
+  if (lower.startsWith("docs/") && lower.endsWith(".md")) {
+    return 4;
+  }
+  return 5;
+};
+
+const buildStartupGuidance = (workspacePaths: readonly string[]): string => {
+  const references = [...new Set(
+    workspacePaths
+      .map(normalizeStartupReference)
+      .filter((reference): reference is string => reference !== undefined),
+  )]
+    .sort((left, right) =>
+      startupReferenceRank(left) - startupReferenceRank(right) ||
+      left.localeCompare(right),
+    )
+    .slice(0, STARTUP_GUIDANCE_REFERENCE_LIMIT);
+
+  if (references.length === 0) {
+    return "No README or planning docs were found. Use @pair /plan to clarify the product goal, target user, acceptance criteria, and next implementation slice, or @pair /brief to create an editable draft.";
+  }
+
+  return `Project context found in ${references.join(", ")}. Use @pair /plan to compare the documents with your goal and agree on the next implementation slice. Code evidence is not required to start this conversation.`;
+};
+
+const describeProjectContext = (project: ProjectContext): string => [
+  `Read ${project.documents.length} bounded project document(s) locally.`,
+  ...(project.suggestedGoal === undefined ? ["No clear documented goal found; describe the user problem with @pair /plan."] : [
+    `Proposed goal (not confirmed): ${project.suggestedGoal}`,
+    "Confirm or replace it with @pair /goal <goal>.",
+  ]),
+  ...(project.acceptanceCriteria.length === 0 ? ["Observable acceptance criteria still need to be agreed."] : [
+    `Documented criteria to confirm: ${project.acceptanceCriteria.join("; ")}`,
+  ]),
+  ...project.notices,
+  "Documents and code are not sent to models unless you approve Adaptive Pair: Toggle Project Context Sharing.",
+].join("\n");
+
+const codeExcerpt = (text: string, range: PairRange): Readonly<{ text: string; sensitiveDataDetected: boolean }> => {
+  const region = text.split(/\r?\n/u)
+    .slice(Math.max(0, range.start.line - 3), Math.max(range.start.line + 1, range.end.line + 4))
+    .join("\n");
+  return { text: region.slice(0, 2_000), sensitiveDataDetected: containsSensitiveModelText(region) };
+};
+
+export interface PairRuntimeOptions {
+  readonly projectContextAccess?: ProjectContextAccess;
+  readonly config: PairConfig;
+  readonly extensionContext: vscode.ExtensionContext;
+  readonly sharedContext: PairSharedContext;
+  readonly languageModelApi: VsCodeLanguageModelApi;
+  readonly apiKey: string | undefined;
+  readonly budget?: TokenBudget;
+  readonly budgetFollowsInterventionStyle?: boolean;
+  readonly memoryStore?: PairMemoryStore;
+}
+
+export interface PairMemoryActionResult {
+  readonly kind:
+    | "dismissed"
+    | "approved"
+    | "style-updated"
+    | "no-evidence";
+  readonly message: string;
+}
+
+interface PairGenerationFence {
+  readonly revisionFence: PairContextRevisionFence;
+  isCurrent(): boolean;
+  dispose(): void;
+}
+
+class TimeoutScheduler implements Scheduler, vscode.Disposable {
+  private nextId = 1;
+  private readonly timers = new Map<number, ReturnType<typeof setTimeout>>();
+
+  public schedule(delayMs: number, callback: () => void): number {
+    const id = this.nextId++;
+    const timer = setTimeout(() => {
+      this.timers.delete(id);
+      callback();
+    }, delayMs);
+    this.timers.set(id, timer);
+    return id;
+  }
+
+  public cancel(handle: unknown): void {
+    if (typeof handle !== "number") {
+      return;
+    }
+    const timer = this.timers.get(handle);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.timers.delete(handle);
+    }
+  }
+
+  public dispose(): void {
+    for (const timer of this.timers.values()) {
+      clearTimeout(timer);
+    }
+    this.timers.clear();
+  }
+}
+
+export class PairRuntime implements vscode.Disposable, PairChatGenerator {
+  private readonly documentState = new PairDocumentState();
+  private readonly requestByUri = new Map<string, AbortController>();
+  private readonly chatRequests = new PairRequestRegistry();
+  private readonly analyzer = new TypeScriptSemanticAnalyzer();
+  private readonly scheduler = new TimeoutScheduler();
+  private readonly aggregator: EditEpisodeAggregator;
+  private readonly budget: TokenBudget;
+  private readonly policy: InterventionPolicy;
+  private readonly localProvider = new LocalTemplateProvider();
+  private readonly copilotProvider: VsCodeLanguageModelProvider;
+  private readonly router: ModelRouter;
+  private readonly memoryStore: PairMemoryStore;
+  private readonly inlineController: InlinePairController;
+  private readonly status: vscode.StatusBarItem;
+  private readonly invocationGate: PairInvocationGate;
+  private readonly sessionLifecycle: PairSessionLifecycle;
+  private readonly runtimeRevision: PairRuntimeRevision;
+  private readonly budgetFollowsInterventionStyle: boolean;
+  private effectiveProvider: PairConfig["provider"];
+  private interventionStyle: PairConfig["interventionStyle"];
+  private dismissedEvidenceIdsByRepository = new Map<
+    string,
+    ReadonlySet<string>
+  >();
+  private readonly pendingDismissedEvidenceIdsByRepository = new Map<
+    string,
+    Map<string, number>
+  >();
+  private controlNotice: string | undefined;
+  private startupGuidance: string | undefined;
+  private statusDetail: string | undefined;
+  private memoryWarning: string | undefined;
+  private working: WorkingAgreement | undefined;
+  private contextReadRevision = 0;
+  private contextRefreshRevision: number | undefined;
+  private disposed = false;
+
+  public constructor(private readonly options: PairRuntimeOptions) {
+    this.runtimeRevision = options.sharedContext.beginRuntime();
+    this.budget = options.budget ?? new TokenBudget(options.config.budget);
+    this.budgetFollowsInterventionStyle =
+      options.budget === undefined ||
+      options.budgetFollowsInterventionStyle === true;
+    this.invocationGate = new PairInvocationGate(options.config.enabled, false);
+    this.effectiveProvider = options.config.provider;
+    this.interventionStyle = options.config.interventionStyle;
+    this.policy = new InterventionPolicy({});
+    this.copilotProvider = new VsCodeLanguageModelProvider(
+      options.languageModelApi,
+    );
+
+    const providers: ModelProvider[] = [
+      this.localProvider,
+      this.copilotProvider,
+    ];
+    if (
+      options.config.provider === "openai-compatible" &&
+      options.config.baseUrl !== undefined
+    ) {
+      providers.push(
+        new OpenAICompatibleProvider({
+          baseUrl: options.config.baseUrl,
+          model: options.config.modelName,
+          fetch,
+          ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
+        }),
+      );
+    }
+    this.router = new ModelRouter(providers);
+
+    const repositoryId =
+      vscode.workspace.workspaceFolders?.[0]?.uri.toString() ?? "no-workspace";
+    this.memoryStore =
+      options.memoryStore ??
+      new PairMemoryStore({
+        repositoryId,
+        store: {
+          get: async <T>(key: string): Promise<T | undefined> =>
+            options.extensionContext.globalState.get<T>(key),
+          update: async <T>(key: string, value: T): Promise<void> =>
+            options.extensionContext.globalState.update(key, value),
+        },
+      });
+
+    const commentController = vscode.comments.createCommentController(
+      "adaptivePair",
+      "Adaptive Pair",
+    );
+    this.inlineController = new InlinePairController({
+      controller: commentController,
+      createMarkdown: (value) => new vscode.MarkdownString(value),
+      previewMode: vscode.CommentMode.Preview,
+    });
+    this.status = vscode.window.createStatusBarItem(
+      vscode.StatusBarAlignment.Right,
+      100,
+    );
+    this.status.name = "Adaptive Pair";
+    this.status.command = "adaptivePair.toggle";
+    this.status.show();
+
+    this.aggregator = new EditEpisodeAggregator(
+      options.config.debounceMs,
+      this.scheduler,
+      (episode) => {
+        void this.handleEpisode(episode);
+      },
+    );
+    this.sessionLifecycle = new PairSessionLifecycle(
+      () => this.options.config.enabled,
+      {
+        prepare: (context) => this.prepareSession(context),
+        registerDocumentListeners: () => this.registerDocumentListeners(),
+        cancelPendingWork: () => {
+          this.cancelPendingWork();
+        },
+        clearTransientState: () => {
+          this.clearTransientState();
+        },
+      },
+    );
+    this.statusDetail = this.inactiveStatusDetail();
+    this.publishSession();
+    this.renderStatus();
+  }
+
+  public async start(): Promise<void> {
+    await this.startSession();
+  }
+
+  public isSessionActive(): boolean {
+    return this.sessionLifecycle.active;
+  }
+
+  public async startSession(): Promise<PairSessionActionResult> {
+    const previousGeneration = this.sessionLifecycle.sessionGeneration;
+    const start = this.sessionLifecycle.start();
+    const startedNewGeneration =
+      this.sessionLifecycle.sessionGeneration !== previousGeneration;
+    const lifecycleFence = this.sessionLifecycle.captureFence();
+    const result = await start;
+    if (
+      !startedNewGeneration ||
+      result.kind !== "started" ||
+      !lifecycleFence.isCurrent()
+    ) {
+      return result;
+    }
+    const active = this.sessionLifecycle.active;
+    this.invocationGate.setActive(active);
+    this.statusDetail = active
+      ? this.configurationWarning()
+      : this.inactiveStatusDetail();
+    this.publishSession();
+    this.renderStatus();
+    return active && this.startupGuidance !== undefined
+      ? {
+          ...result,
+          message: `${result.message}\n\nStart here: ${this.startupGuidance}`,
+        }
+      : result;
+  }
+
+  public registerChatRequest(
+    uri: string,
+    request: AbortController,
+  ): vscode.Disposable {
+    if (
+      this.disposed ||
+      !this.invocationGate.sessionActive ||
+      !this.sessionLifecycle.ready
+    ) {
+      request.abort();
+      return { dispose: () => undefined };
+    }
+    this.chatRequests.add(uri, request);
+    return {
+      dispose: () => {
+        this.chatRequests.remove(uri, request);
+      },
+    };
+  }
+
+  public stopSession(): PairSessionActionResult {
+    this.invocationGate.setActive(false);
+    this.effectiveProvider = this.options.config.provider;
+    this.controlNotice = undefined;
+    this.startupGuidance = undefined;
+    this.statusDetail = this.inactiveStatusDetail();
+    let result!: PairSessionActionResult;
+    runCleanupSteps(
+      [
+        () => {
+          result = this.sessionLifecycle.stop();
+        },
+        () => this.publishSession(),
+        () => this.renderStatus(),
+      ],
+      "Failed to stop the Adaptive Pair runtime cleanly.",
+    );
+    return result;
+  }
+
+  private async prepareSession(
+    context: PairSessionPreparationContext,
+  ): Promise<PairSessionPreparation | undefined> {
+    const workspaceRoots = captureWorkspaceRootSnapshot();
+    const loadMemorySnapshot = async (): Promise<
+      | {
+          readonly revision: number;
+          readonly recoveredByRepository: ReadonlyArray<{
+            readonly repositoryId: string;
+            readonly recovered: Awaited<
+              ReturnType<PairMemoryStore["loadOrDefault"]>
+            >;
+          }>;
+        }
+      | undefined
+    > => {
+      while (context.isCurrent()) {
+        const revision = this.memoryStore.revision;
+        const recoveredByRepository: Array<{
+          readonly repositoryId: string;
+          readonly recovered: Awaited<
+            ReturnType<PairMemoryStore["loadOrDefault"]>
+          >;
+        }> = [];
+        for (const repositoryId of workspaceRoots.repositoryIds) {
+          const recovered = await this.memoryStore
+            .forRepository(repositoryId)
+            .loadOrDefault();
+          if (!context.isCurrent()) {
+            return undefined;
+          }
+          recoveredByRepository.push({ repositoryId, recovered });
+        }
+        if (revision === this.memoryStore.revision) {
+          return { revision, recoveredByRepository };
+        }
+      }
+      return undefined;
+    };
+    let memorySnapshot = await loadMemorySnapshot();
+    if (!context.isCurrent() || memorySnapshot === undefined) {
+      return undefined;
+    }
+    const startupContext = await this.discoverWorkspaceStartupContext(() => context.isCurrent());
+    if (!context.isCurrent() || startupContext === undefined) {
+      return undefined;
+    }
+    if (memorySnapshot.revision !== this.memoryStore.revision) {
+      memorySnapshot = await loadMemorySnapshot();
+      if (!context.isCurrent() || memorySnapshot === undefined) {
+        return undefined;
+      }
+    }
+    const { recoveredByRepository } = memorySnapshot;
+    const recoveredMemory = recoveredByRepository[0]?.recovered;
+    if (recoveredMemory === undefined) {
+      return undefined;
+    }
+    const dismissedEvidenceIdsByRepository = new Map(
+      recoveredByRepository.map(({ repositoryId, recovered }) => [
+        repositoryId,
+        new Set(
+          recovered.memory.dismissedEvidenceByRepository[repositoryId] ?? [],
+        ),
+      ]),
+    );
+    const memoryRevision = memorySnapshot.revision;
+
+    return {
+      commit: () => {
+        const documentSeeds = vscode.workspace.textDocuments
+          .filter(isSupportedDocument)
+          .map((document) => {
+            const text = document.getText();
+            return {
+              uri: document.uri,
+              text,
+              stable: this.analyzer.isStable(
+                document.uri.toString(),
+                document.languageId,
+                text,
+              ),
+            };
+          });
+        if (
+          !context.isCurrent() ||
+          memoryRevision !== this.memoryStore.revision ||
+          workspaceRoots.revision !==
+            captureWorkspaceRootSnapshot().revision
+        ) {
+          return false;
+        }
+
+        this.memoryWarning = recoveredMemory.warning;
+        this.interventionStyle =
+          recoveredMemory.source === "stored" &&
+          recoveredMemory.memory.preferences.interventionStyleExplicit
+            ? recoveredMemory.memory.preferences.interventionStyle
+            : recoveredMemory.source === "corrupt"
+              ? "balanced"
+              : this.options.config.interventionStyle;
+        if (
+          recoveredMemory.source === "corrupt" ||
+          recoveredMemory.memory.preferences.interventionStyleExplicit
+        ) {
+          this.applyInterventionStyleBudget();
+        }
+        this.dismissedEvidenceIdsByRepository =
+          dismissedEvidenceIdsByRepository;
+        for (const seed of documentSeeds) {
+          this.documentState.seed(
+            seed.uri.toString(),
+            seed.text,
+            seed.stable,
+          );
+        }
+        this.controlNotice = startupContext.controlNotice;
+        this.startupGuidance = startupContext.startupGuidance;
+        this.working = createWorkingAgreement(startupContext.project, randomUUID());
+        if (recoveredMemory.warning !== undefined) {
+          void vscode.window.showWarningMessage(recoveredMemory.warning);
+        }
+        return true;
+      },
+    };
+  }
+
+  private registerDocumentListeners(): vscode.Disposable {
+    const listeners: vscode.Disposable[] = [];
+    const generationFence = this.sessionLifecycle.captureFence();
+    let listening = false;
+    const acceptsEvents = (): boolean =>
+      listening &&
+      !this.disposed &&
+      (generationFence.isCurrent() || this.sessionLifecycle.active);
+    const acceptsDocumentSeeds = (): boolean =>
+      listening &&
+      !this.disposed &&
+      (generationFence.isCurrent() || this.sessionLifecycle.ready);
+    const disposeListeners = (
+      initialErrors: readonly unknown[] = [],
+    ): void => {
+      listening = false;
+      const registeredListeners = listeners.splice(0).reverse();
+      runCleanupSteps(
+        registeredListeners.map(
+          (listener) => () => listener.dispose(),
+        ),
+        "Multiple Adaptive Pair document-listener cleanups failed.",
+        initialErrors,
+      );
+    };
+    try {
+      listeners.push(
+        vscode.workspace.onDidOpenTextDocument((document) => {
+          if (acceptsDocumentSeeds() && isSupportedDocument(document)) {
+            const key = document.uri.toString();
+            const text = document.getText();
+            this.documentState.seed(
+              key,
+              text,
+              this.analyzer.isStable(key, document.languageId, text),
+            );
+          }
+        }),
+      );
+      listeners.push(
+        vscode.workspace.onDidCloseTextDocument((document) => {
+          if (acceptsEvents()) {
+            this.closeDocument(document.uri);
+          }
+        }),
+      );
+      listeners.push(
+        vscode.workspace.onDidChangeTextDocument((event) => {
+          if (acceptsEvents()) {
+            this.onDocumentChanged(event);
+          }
+        }),
+      );
+      listeners.push(
+        vscode.workspace.onDidChangeWorkspaceFolders(() => {
+          if (acceptsEvents()) {
+            this.onWorkspaceFoldersChanged();
+          }
+        }),
+      );
+      listening = true;
+    } catch (error: unknown) {
+      disposeListeners([error]);
+      throw error;
+    }
+    return {
+      dispose: () => {
+        disposeListeners();
+      },
+    };
+  }
+
+  private requireWorkingAgreement(): WorkingAgreement {
+    if (this.disposed || !this.sessionLifecycle.ready || !this.invocationGate.sessionActive || this.working === undefined) {
+      throw new Error("Start a pairing session and wait for project context before changing the working agreement.");
+    }
+    return this.working;
+  }
+
+  public async setWorkingGoal(input: string, signal = new AbortController().signal): Promise<string> {
+    signal.throwIfAborted();
+    const working = this.requireWorkingAgreement();
+    if (input.trim().length === 0) {
+      return `Confirm the goal with @pair /goal <your goal>. You can include Goal, Acceptance criteria, and Constraints headings.\n\n${working.goal === undefined ? "Proposed goal: " + (working.project.suggestedGoal ?? "not known yet — use @pair /plan or @pair /brief") : "Current goal: " + working.goal}`;
+    }
+    const next = confirmWorkingGoal(working, input, randomUUID());
+    this.cancelPendingWork();
+    this.contextReadRevision += 1;
+    this.working = next;
+    this.publishSession();
+    return `Goal confirmed: ${next.goal}\n\nUse @pair /plan to agree on the first behavior and test. ${next.acceptanceCriteria.length === 0 ? "Acceptance criteria still need to be agreed." : "The supplied acceptance criteria are now part of the working agreement."}`;
+  }
+
+  public async promptForWorkingGoal(): Promise<string> {
+    const working = this.requireWorkingAgreement();
+    const fence = this.captureGenerationFence(new AbortController().signal);
+    try {
+      const input = await vscode.window.showInputBox({
+        title: "Adaptive Pair working goal",
+        prompt: "What should this development cycle achieve? Confirm or replace the proposed goal.",
+        value: working.goal ?? working.project.suggestedGoal ?? "",
+        ignoreFocusOut: true,
+      });
+      if (input === undefined || !fence.isCurrent()) {
+        return "The working goal was not changed.";
+      }
+      return this.setWorkingGoal(input);
+    } finally {
+      fence.dispose();
+    }
+  }
+
+  public isWorkspaceAgentEnabled(): boolean {
+    return this.options.config.chatMode !== "local-only";
+  }
+
+  public completeAgentTurn(conversationId: string | undefined, input: string, phase: PairPhase): boolean {
+    const working = this.working;
+    if (!this.sessionLifecycle.ready || working === undefined || working.conversationId !== conversationId) {
+      return false;
+    }
+    const prompt = input.trim();
+    this.working = Object.freeze({
+      ...working,
+      phase,
+      ...(prompt.length === 0 || prompt.length > 4_096 ? {} : {
+        recentUserDialogue: Object.freeze([...working.recentUserDialogue, Object.freeze({ role: "user" as const, content: prompt })].slice(-4)),
+      }),
+    });
+    this.publishSession();
+    return true;
+  }
+
+  public async recordWorkingDecision(input: string, signal = new AbortController().signal): Promise<string> {
+    signal.throwIfAborted();
+    const working = this.requireWorkingAgreement();
+    if (working.goal === undefined) {
+      return "Confirm a working goal with @pair /goal before recording decisions for it.";
+    }
+    const decision = input.trim();
+    if (decision.length === 0 || decision.length > 800) {
+      return "Use @pair /decision <choice and reason>, within 800 characters.";
+    }
+    this.cancelPendingWork();
+    this.contextReadRevision += 1;
+    this.working = Object.freeze({ ...working, decisions: Object.freeze([...working.decisions.filter((existing) => existing !== decision), decision].slice(-8)) });
+    this.publishSession();
+    return `Decision recorded for this goal: ${decision}\n\nIt will inform later plans and code feedback until the goal or session changes.`;
+  }
+
+  public async refreshProjectContext(signal = new AbortController().signal): Promise<string> {
+    signal.throwIfAborted();
+    const previous = this.requireWorkingAgreement();
+    const readRevision = ++this.contextReadRevision;
+    this.contextRefreshRevision = readRevision;
+    this.cancelPendingWork();
+    this.working = Object.freeze({ ...previous, shareWorkspaceContext: false, conversationId: randomUUID() });
+    this.publishSession();
+    const lifecycleFence = this.sessionLifecycle.captureFence(true);
+    const isCurrent = () => !signal.aborted && lifecycleFence.isCurrent() &&
+      readRevision === this.contextReadRevision && this.contextRefreshRevision === readRevision;
+    try {
+      const startup = await this.discoverWorkspaceStartupContext(isCurrent);
+      if (startup === undefined || !isCurrent()) {
+        return "Project context refresh was cancelled.";
+      }
+      const current = this.requireWorkingAgreement();
+      const next = createWorkingAgreement(startup.project, randomUUID());
+      this.cancelPendingWork();
+      this.working = current.project.rootUri === startup.project.rootUri && current.goal !== undefined
+        ? Object.freeze({ ...next, goal: current.goal, acceptanceCriteria: current.acceptanceCriteria, constraints: current.constraints, decisions: current.decisions, recentUserDialogue: current.recentUserDialogue, phase: current.phase, taskSensitiveDataDetected: current.taskSensitiveDataDetected === true })
+        : next;
+      this.controlNotice = startup.controlNotice;
+      this.startupGuidance = startup.startupGuidance;
+      this.publishSession();
+      return `${describeProjectContext(startup.project)}\n\nContext sharing is now local only. Review the updated documents before approving sharing again.`;
+    } finally {
+      if (this.contextRefreshRevision === readRevision) {
+        this.contextRefreshRevision = undefined;
+      }
+    }
+  }
+
+  public async toggleProjectContextSharing(): Promise<string> {
+    const working = this.requireWorkingAgreement();
+    if (this.contextRefreshRevision === this.contextReadRevision) {
+      return "Project context is refreshing. Review the updated documents before approving sharing.";
+    }
+    if (working.shareWorkspaceContext) {
+      this.cancelPendingWork();
+      this.contextReadRevision += 1;
+      this.working = Object.freeze({ ...working, shareWorkspaceContext: false, conversationId: randomUUID() });
+      this.publishSession();
+      return "Workspace context sharing revoked. Documents and code stay local; previous conversation context is no longer forwarded.";
+    }
+    const trusted = this.options.projectContextAccess?.isTrusted() ?? vscode.workspace.isTrusted === true;
+    if (!trusted || working.project.rootUri === undefined) {
+      return "Open and trust a workspace before sharing its context.";
+    }
+    const fence = this.captureGenerationFence(new AbortController().signal);
+    try {
+      const destination = this.options.config.provider === "openai-compatible"
+        ? this.options.config.baseUrl?.origin ?? "the configured endpoint"
+        : this.options.config.provider;
+      const choice = await vscode.window.showWarningMessage(
+        "Share bounded project documents and current/changed code excerpts with the configured model for this pairing session?",
+        {
+          modal: true,
+          detail: `Destination: ${destination}. Scope: the background navigator for the current workspace root; up to three document excerpts, a small current/previous code excerpt, and recent Pair dialogue. Credential checks and token limits still apply. Approval is cleared on stop, refresh, root change, or provider rebuild. This does not approve interactive Chat access, file edits, or verification commands.`,
+        },
+        "Share for this session",
+      );
+      if (choice !== "Share for this session" || !fence.isCurrent()) {
+        return "Workspace context remains local only.";
+      }
+      this.cancelPendingWork();
+      this.contextReadRevision += 1;
+      this.working = Object.freeze({ ...working, shareWorkspaceContext: true, conversationId: randomUUID() });
+      this.publishSession();
+      return "Workspace context sharing approved for this session. Use @pair /plan to discuss the documents and current code; run the sharing command again to revoke.";
+    } finally {
+      fence.dispose();
+    }
+  }
+
+  public async draftWorkingAgreement(signal = new AbortController().signal): Promise<string> {
+    const working = this.requireWorkingAgreement();
+    const fence = this.captureGenerationFence(signal);
+    try {
+      if (!fence.isCurrent()) {
+        return "Working agreement draft cancelled.";
+      }
+      const draft = await vscode.workspace.openTextDocument({ language: "markdown", content: createWorkingAgreementDraft(working) });
+      if (!fence.isCurrent()) {
+        return "Working agreement draft cancelled.";
+      }
+      await vscode.window.showTextDocument(draft, { preview: false });
+      return "Opened an unsaved working-agreement draft. Edit the goal, criteria, and next step together; save it under docs/ if useful, then use @pair /context and @pair /goal. No project file was written.";
+    } finally {
+      fence.dispose();
+    }
+  }
+
+  public async reviewCurrentBlock(): Promise<void> {
+    if (!this.invocationGate.enabled) {
+      await vscode.window.showInformationMessage(
+        "Adaptive Pair is disabled. Enable it to review the current block.",
+      );
+      return;
+    }
+    if (!this.sessionLifecycle.active) {
+      await vscode.window.showInformationMessage(
+        "Adaptive Pair is off. Start a pairing session before reviewing the current block.",
+      );
+      return;
+    }
+    if (!this.sessionLifecycle.ready) {
+      await vscode.window.showInformationMessage(
+        "Adaptive Pair is refreshing workspace memory. Try again in a moment.",
+      );
+      return;
+    }
+
+    const editor = vscode.window.activeTextEditor;
+    if (editor === undefined || !isSupportedDocument(editor.document)) {
+      await vscode.window.showInformationMessage(
+        "Open a TypeScript or JavaScript editor to review the current block.",
+      );
+      return;
+    }
+
+    const range = normalizedSelectionRange(editor);
+    const key = editor.document.uri.toString();
+    const selection = toPairRange(range);
+    const currentText = editor.document.getText();
+    const previousStableText = this.documentState.lastStableText(key);
+    const analysisBaselineText =
+      this.documentState.analysisBaselineText(key) ?? currentText;
+    const hasUnanalyzedChanges = previousStableText !== currentText;
+    const analysis = hasUnanalyzedChanges
+      ? this.analyzer.analyze({
+            uri: key,
+            languageId: editor.document.languageId,
+            previousText: analysisBaselineText,
+            currentText,
+            version: editor.document.version,
+            observedAt: Date.now(),
+          })
+      : { stability: "stable" as const, evidence: [] };
+    this.aggregator.cancel(key);
+    if (hasUnanalyzedChanges) {
+      this.documentState.recordAnalysis(key, currentText, analysis);
+    }
+    if (analysis.stability === "unstable") {
+      await vscode.window.showInformationMessage(
+        "Adaptive Pair is waiting for the current TypeScript or JavaScript syntax to stabilize.",
+      );
+      return;
+    }
+    const dismissedEvidenceIds = this.dismissedEvidenceIdsForUri(
+      editor.document.uri,
+    );
+    const excludeDismissed = (candidates: readonly Evidence[]) =>
+      candidates.filter(
+        (candidate) =>
+          !dismissedEvidenceIds.has(hashEvidenceIdentity(candidate.id)),
+      );
+    const evidence = selectManualEvidence({
+      selection,
+      diagnostics: excludeDismissed(
+        diagnosticEvidenceForDocument(editor.document, selection),
+      ),
+      latest: excludeDismissed(this.documentState.latestEvidence(key)),
+      analyzed: excludeDismissed(analysis.evidence),
+    });
+    if (evidence === undefined) {
+      await vscode.window.showInformationMessage(
+        "Adaptive Pair found no active evidence for the current block.",
+      );
+      return;
+    }
+
+    await this.intervene(
+      editor.document,
+      evidence,
+      "manual",
+      PAIR_GOAL,
+    );
+  }
+
+  public async generate(
+    uri: string,
+    goal: string,
+    evidence: Evidence | undefined,
+    signal: AbortSignal,
+    context: ModelRequestContext = {},
+    purpose?: Exclude<ModelPurpose, "intervention">,
+    revisionFence?: PairContextRevisionFence,
+  ): Promise<ModelResponse> {
+    signal.throwIfAborted();
+    if (revisionFence !== undefined && !this.options.sharedContext.isRevisionFenceCurrent(revisionFence)) {
+      throw new Error("Adaptive Pair request context is no longer current.");
+    }
+    const working = this.sessionLifecycle.ready && this.isWorkingScope(uri) ? this.working : undefined;
+    const phase = working === undefined ? undefined : working.goal === undefined ? "clarify" : purpose === "checkpoint" ? "verify" : purpose === "plan" ? "plan" : "implement";
+    const prompt = context.userPrompt?.trim();
+    const recordPrompt = prompt !== undefined && prompt.length > 0 && prompt.length <= 4_096;
+    const sourceDocument = this.sourceDocumentForRequest(uri);
+    const sourceVersion = sourceDocument?.version;
+    const requestUri = sourceDocument?.uri.toString() ?? uri;
+    const requestController = new AbortController();
+    const cancelRequest = (): void => {
+      requestController.abort();
+    };
+    signal.addEventListener("abort", cancelRequest, { once: true });
+    if (signal.aborted) {
+      cancelRequest();
+    }
+    this.chatRequests.add(requestUri, requestController);
+    const generationFence = this.captureGenerationFence(
+      requestController.signal,
+      requestUri,
+      () => this.chatRequests.has(requestUri, requestController) && (sourceDocument === undefined || sourceDocument.version === sourceVersion),
+      revisionFence,
+    );
+
+    try {
+      const requestContext = this.contextForRequest(uri, context, evidence, sourceDocument);
+      const result = await this.generateWithProvider(
+        {
+          goal: this.goalForRequest(uri, goal),
+          ...(evidence === undefined ? {} : { evidence }),
+          interactionStyle: "ask-first",
+          context: phase === undefined || requestContext.task === undefined ? requestContext : {
+            ...requestContext,
+            task: { ...requestContext.task, phase },
+          },
+          ...(purpose === undefined ? {} : { purpose }),
+        },
+        requestController.signal,
+        "chat",
+        generationFence,
+      );
+      if (generationFence.isCurrent() && working !== undefined && this.working === working && phase !== undefined && (phase !== working.phase || recordPrompt)) {
+        this.working = Object.freeze({
+          ...working,
+          phase,
+          ...(recordPrompt ? { recentUserDialogue: Object.freeze([
+            ...working.recentUserDialogue,
+            Object.freeze({ role: "user" as const, content: prompt }),
+          ].slice(-4)) } : {}),
+        });
+        this.publishSession(Date.now(), generationFence.revisionFence);
+      }
+      return result;
+    } finally {
+      generationFence.dispose();
+      signal.removeEventListener("abort", cancelRequest);
+      this.chatRequests.remove(requestUri, requestController);
+    }
+  }
+
+  private workspaceContextTrusted(): boolean {
+    return this.options.projectContextAccess?.isTrusted() ?? vscode.workspace.isTrusted === true;
+  }
+
+  private isWorkingScope(uri: string): boolean {
+    const root = this.working?.project.rootUri;
+    if (uri === "adaptive-pair:session" || uri === root) {
+      return true;
+    }
+    if (root === undefined) {
+      return false;
+    }
+    try {
+      return vscode.workspace.getWorkspaceFolder(vscode.Uri.parse(uri))?.uri.toString() === root;
+    } catch {
+      return false;
+    }
+  }
+
+  private goalForRequest(uri: string, fallback: string): string {
+    return this.isWorkingScope(uri) ? this.working?.goal ?? fallback : PAIR_GOAL;
+  }
+
+  private sourceDocumentForRequest(uri: string): vscode.TextDocument | undefined {
+    if (!this.isWorkingScope(uri) || !this.workspaceContextTrusted()) {
+      return undefined;
+    }
+    const document = vscode.workspace.textDocuments.find((candidate) => candidate.uri.toString() === uri)
+      ?? (uri === this.working?.project.rootUri || uri === "adaptive-pair:session"
+        ? vscode.window.activeTextEditor?.document : undefined);
+    return document !== undefined && isSupportedDocument(document) && this.isWorkingScope(document.uri.toString())
+      ? document : undefined;
+  }
+
+  private contextForRequest(
+    uri: string,
+    context: ModelRequestContext,
+    evidence: Evidence | undefined,
+    document?: vscode.TextDocument,
+    previousText?: string,
+  ): ModelRequestContext {
+    const working = this.working;
+    if (working === undefined || !this.isWorkingScope(uri)) {
+      return {
+        ...(context.userPrompt === undefined ? {} : { userPrompt: context.userPrompt }),
+        ...(context.symbol === undefined ? {} : { symbol: context.symbol }),
+      };
+    }
+    const editor = vscode.window.activeTextEditor;
+    const range = evidence !== undefined && document?.uri.toString() === uri ? evidence.range : (editor !== undefined && editor.document === document
+      ? toPairRange(normalizedSelectionRange(editor))
+      : { start: { line: 0, character: 0 }, end: { line: 30, character: 0 } });
+    const currentExcerpt = document === undefined || !this.workspaceContextTrusted() ? undefined : codeExcerpt(document.getText(), range);
+    const previousExcerpt = currentExcerpt === undefined || previousText === undefined ? undefined : codeExcerpt(previousText, range);
+    const code = document === undefined || currentExcerpt === undefined ? undefined : {
+      languageId: document.languageId,
+      current: currentExcerpt.text,
+      ...(previousExcerpt === undefined ? {} : { previous: previousExcerpt.text }),
+      sensitiveDataDetected: currentExcerpt.sensitiveDataDetected || previousExcerpt?.sensitiveDataDetected === true,
+    };
+    return {
+      ...context,
+      ...(context.conversation?.length ? {} : working.recentUserDialogue.length === 0 ? {} : { conversation: working.recentUserDialogue }),
+      ...(working.goal === undefined ? {} : {
+        task: {
+          goal: working.goal,
+          acceptanceCriteria: working.acceptanceCriteria,
+          constraints: working.constraints,
+          decisions: working.decisions,
+          phase: working.phase,
+          sensitiveDataDetected: working.taskSensitiveDataDetected === true,
+        },
+      }),
+      workspace: {
+        approvedForRemote: working.shareWorkspaceContext && this.workspaceContextTrusted(),
+        documents: working.project.documents.map((document) => ({ label: document.label, text: document.text, sensitiveDataDetected: document.sensitiveDataDetected === true })),
+        ...(working.project.suggestedGoal === undefined ? {} : { suggestedGoal: working.project.suggestedGoal }),
+        acceptanceCriteria: working.project.acceptanceCriteria,
+        constraints: working.project.constraints,
+        ...(code === undefined ? {} : { code }),
+      },
+    };
+  }
+
+  private onDocumentChanged(event: vscode.TextDocumentChangeEvent): void {
+    const document = event.document;
+    if (
+      !this.invocationGate.enabled ||
+      !this.invocationGate.sessionActive ||
+      !this.sessionLifecycle.ready ||
+      !isSupportedDocument(document) ||
+      event.contentChanges.length === 0
+    ) {
+      return;
+    }
+
+    const key = document.uri.toString();
+    this.cancelRequest(key);
+    this.chatRequests.cancelUri(key);
+    this.documentState.invalidateEvidence(key);
+    this.options.sharedContext.clearEvidence(key, this.runtimeRevision);
+    this.inlineController.disposeUri(document.uri);
+    const currentText = document.getText();
+    const previousText = this.documentState.updateText(key, currentText);
+    if (previousText === undefined) {
+      return;
+    }
+
+    this.aggregator.record({
+      uri: key,
+      languageId: document.languageId,
+      previousText,
+      currentText,
+      version: document.version,
+      observedAt: Date.now(),
+    });
+  }
+
+  private onWorkspaceFoldersChanged(): void {
+    if (this.disposed || !this.sessionLifecycle.active) {
+      return;
+    }
+    if (!this.sessionLifecycle.ready) {
+      return;
+    }
+
+    this.statusDetail = "refreshing workspace memory";
+    this.publishSession();
+    this.renderStatus();
+    const refresh = this.sessionLifecycle.refresh();
+    const refreshFence = this.sessionLifecycle.captureFence();
+    void refresh.then(
+      (refreshed) => {
+        if (
+          !refreshed ||
+          !refreshFence.isCurrent() ||
+          !this.sessionLifecycle.active
+        ) {
+          return;
+        }
+        this.statusDetail = this.configurationWarning();
+        this.publishSession();
+        this.renderStatus();
+      },
+      (error: unknown) => {
+        if (!refreshFence.isCurrent()) {
+          return;
+        }
+        this.invocationGate.setActive(false);
+        this.effectiveProvider = this.options.config.provider;
+        this.controlNotice = undefined;
+        this.statusDetail = this.inactiveStatusDetail();
+        this.publishSession();
+        this.renderStatus();
+        const message =
+          error instanceof Error ? error.message : String(error);
+        void vscode.window.showErrorMessage(
+          `Adaptive Pair workspace refresh failed: ${message}`,
+        );
+      },
+    );
+  }
+
+  private async handleEpisode(episode: EditEpisode): Promise<void> {
+    if (
+      this.disposed ||
+      !this.invocationGate.enabled ||
+      !this.invocationGate.sessionActive ||
+      !this.sessionLifecycle.ready
+    ) {
+      return;
+    }
+
+    const document = vscode.workspace.textDocuments.find(
+      (candidate) => candidate.uri.toString() === episode.uri,
+    );
+    if (document === undefined || document.version !== episode.version) {
+      return;
+    }
+
+    const previousStableText = this.documentState.lastStableText(episode.uri);
+    const analysis = this.analyzer.analyze({
+      ...episode,
+      previousText: previousStableText ?? episode.previousText,
+    });
+    if (analysis.stability === "unstable") {
+      this.documentState.recordAnalysis(
+        episode.uri,
+        episode.currentText,
+        analysis,
+      );
+      return;
+    }
+
+    const evidence = [
+      ...analysis.evidence,
+      ...diagnosticEvidenceForDocument(document),
+    ].filter(
+      (candidate) =>
+        !this.dismissedEvidenceIdsForUri(document.uri).has(
+          hashEvidenceIdentity(candidate.id),
+        ),
+    );
+    this.documentState.recordAnalysis(
+      episode.uri,
+      episode.currentText,
+      {
+        stability: "stable",
+        evidence,
+      },
+    );
+    const decision = this.policy.decide({
+      evidence,
+      style: this.interventionStyle,
+      now: Date.now(),
+      goal: this.goalForRequest(episode.uri, PAIR_GOAL),
+    });
+    if (decision.kind === "quiet") {
+      return;
+    }
+
+    const selected = evidence.find(
+      (candidate) => candidate.id === decision.evidenceId,
+    );
+    if (selected === undefined) {
+      return;
+    }
+
+    if (!decision.useModel) {
+      this.renderIntervention(document, selected, decision.localMessage);
+      return;
+    }
+
+    await this.intervene(document, selected, "automatic", PAIR_GOAL, previousStableText ?? episode.previousText);
+  }
+
+  private async intervene(
+    document: vscode.TextDocument,
+    evidence: Evidence,
+    source: "automatic" | "manual",
+    goal: string,
+    previousText?: string,
+  ): Promise<void> {
+    const key = document.uri.toString();
+    this.cancelRequest(key);
+    const abortController = new AbortController();
+    this.requestByUri.set(key, abortController);
+    const expectedVersion = document.version;
+    const generationFence = this.captureGenerationFence(
+      abortController.signal,
+      key,
+      () =>
+        document.version === expectedVersion &&
+        this.requestByUri.get(key) === abortController,
+    );
+
+    try {
+      const response = await this.generateWithProvider(
+        {
+          goal: this.goalForRequest(key, goal),
+          evidence,
+          interactionStyle: "ask-first",
+          context: this.contextForRequest(key, {}, evidence, document, previousText),
+        },
+        abortController.signal,
+        source,
+        generationFence,
+      );
+      if (!generationFence.isCurrent()) {
+        return;
+      }
+      this.renderIntervention(
+        document,
+        evidence,
+        response.text,
+        generationFence,
+      );
+    } catch (error: unknown) {
+      if (
+        shouldSuppressCancellation(
+          abortController.signal.aborted,
+          error,
+          isOfficialVsCodeCancellationError,
+        )
+      ) {
+        return;
+      }
+      if (!generationFence.isCurrent()) {
+        return;
+      }
+      if (!(error instanceof Error)) {
+        throw error;
+      }
+      this.statusDetail = `model error: ${error.message}`;
+      this.renderStatus();
+      await vscode.window.showErrorMessage(
+        `Adaptive Pair model request failed: ${error.message}`,
+      );
+    } finally {
+      generationFence.dispose();
+      if (this.requestByUri.get(key) === abortController) {
+        this.requestByUri.delete(key);
+      }
+    }
+  }
+
+  private async generateWithProvider(
+    request: ModelRequest,
+    signal: AbortSignal,
+    source: PairInvocationSource,
+    generationFence?: PairGenerationFence,
+  ): Promise<ModelResponse> {
+    const activeFence =
+      generationFence ?? this.captureGenerationFence(signal);
+    try {
+      if (!activeFence.isCurrent()) {
+        signal.throwIfAborted();
+        throw new PairInactiveError(source);
+      }
+      const result = await this.invocationGate.run(source, async () =>
+        this.generateWhileEnabled(
+          request,
+          signal,
+          source,
+          activeFence,
+        ),
+      );
+      if (result.kind === "disabled") {
+        throw new PairDisabledError(source);
+      }
+      if (result.kind === "inactive") {
+        throw new PairInactiveError(source);
+      }
+      return result.value;
+    } finally {
+      if (generationFence === undefined) {
+        activeFence.dispose();
+      }
+    }
+  }
+
+  private captureGenerationFence(
+    signal: AbortSignal,
+    uri?: string,
+    ownsRequest: () => boolean = () => true,
+    revisionFence = this.options.sharedContext.captureRevisionFence(),
+  ): PairGenerationFence {
+    const lifecycleFence = this.sessionLifecycle.captureFence(true);
+    const evidenceFence =
+      uri === undefined
+        ? undefined
+        : this.options.sharedContext.captureEvidenceRevisionFenceForUri(uri);
+    return {
+      revisionFence,
+      isCurrent: () =>
+        !signal.aborted &&
+        (this.working?.shareWorkspaceContext !== true || this.workspaceContextTrusted()) &&
+        lifecycleFence.isCurrent() &&
+        ownsRequest() &&
+        this.options.sharedContext.isRevisionFenceCurrent(revisionFence) &&
+        (uri === undefined ||
+          evidenceFence?.isCurrent() === true),
+      dispose: () => {
+        evidenceFence?.dispose();
+      },
+    };
+  }
+
+  private assertGenerationCurrent(
+    signal: AbortSignal,
+    generationFence: PairGenerationFence,
+  ): void {
+    signal.throwIfAborted();
+    if (!generationFence.isCurrent()) {
+      throw new Error(
+        "Adaptive Pair request context is no longer current.",
+      );
+    }
+  }
+
+  private async generateWhileEnabled(
+    request: ModelRequest,
+    signal: AbortSignal,
+    source: PairInvocationSource,
+    generationFence: PairGenerationFence,
+  ): Promise<ModelResponse> {
+    const provider = source === "chat" && this.options.config.chatMode === "local-only" ? "local-template" : this.options.config.provider;
+    if (provider === "local-template") {
+      this.assertGenerationCurrent(signal, generationFence);
+      return this.router.generate(provider, request, signal);
+    }
+
+    const prepared = prepareRemoteModelRequest(request);
+    if (prepared.sensitiveDataDetected) {
+      this.assertGenerationCurrent(signal, generationFence);
+      this.publishGenerationStatus(
+        generationFence,
+        "local-template",
+        source === "chat"
+          ? "sensitive Chat content kept local; local-template fallback"
+          : "sensitive request content kept local; local-template fallback",
+      );
+      return this.router.generate("local-template", request, signal);
+    }
+
+    const now = Date.now();
+    const maxOutputTokens = this.budget.outputTokenLimit(now, source === "chat" ? "chat" : "automatic");
+    const availableBudget = this.budget.snapshot(now);
+    const unavailableCapacity =
+      availableBudget.remainingCalls === 0
+        ? "call-limit"
+        : availableBudget.remainingInputTokens === 0
+          ? "input-token-limit"
+          : maxOutputTokens === 0
+            ? "output-token-limit"
+            : undefined;
+    if (unavailableCapacity !== undefined) {
+      return this.fallbackForBudget(
+        unavailableCapacity,
+        request,
+        signal,
+        generationFence,
+      );
+    }
+
+    const remoteRequest: ModelRequest = {
+      ...prepared.request,
+      maxOutputTokens,
+    };
+    if (provider === "vscode-copilot") {
+      return this.generateWithCopilotCandidates(
+        remoteRequest,
+        request,
+        signal,
+        source,
+        maxOutputTokens,
+        generationFence,
+      );
+    }
+
+    let dispatch;
+    try {
+      dispatch = await this.router.prepare(
+        provider,
+        remoteRequest,
+        signal,
+      );
+    } catch (error: unknown) {
+      if (!generationFence.isCurrent()) {
+        throw error;
+      }
+      return this.fallbackForUnavailableOpenAI(
+        request,
+        signal,
+        generationFence,
+      );
+    }
+    if (!generationFence.isCurrent()) {
+      dispatch.dispose();
+      this.assertGenerationCurrent(signal, generationFence);
+    }
+
+    const admission = this.budget.tryReserve(
+      dispatch.inputTokens,
+      maxOutputTokens,
+      Date.now(),
+      source === "chat" ? "chat" : "automatic",
+    );
+    if (!admission.allowed) {
+      dispatch.dispose();
+      return this.fallbackForBudget(
+        admission.reason,
+        request,
+        signal,
+        generationFence,
+      );
+    }
+
+    if (!generationFence.isCurrent()) {
+      this.budget.release(admission.reservationId);
+      dispatch.dispose();
+      this.assertGenerationCurrent(signal, generationFence);
+    }
+    if (
+      !this.publishSession(
+        Date.now(),
+        generationFence.revisionFence,
+      )
+    ) {
+      this.budget.release(admission.reservationId);
+      dispatch.dispose();
+      this.assertGenerationCurrent(signal, generationFence);
+    }
+
+    try {
+      const response = await dispatch.send();
+      this.budget.settle(
+        admission.reservationId,
+        response.inputTokens,
+        response.outputTokens,
+      );
+      if (generationFence.isCurrent()) {
+        this.publishGenerationStatus(
+          generationFence,
+          provider,
+          this.configurationWarning(),
+        );
+      }
+      return response;
+    } catch (error: unknown) {
+      if (error instanceof ModelOutputLimitError) {
+        if (error.requestDispatched) {
+          this.budget.settle(
+            admission.reservationId,
+            error.inputTokens,
+            error.outputTokens,
+          );
+        } else {
+          this.budget.release(admission.reservationId);
+        }
+        if (generationFence.isCurrent()) {
+          this.publishSession(
+            Date.now(),
+            generationFence.revisionFence,
+          );
+        }
+      }
+      const reservationReleased = releaseUnusedCopilotReservation(
+        this.budget,
+        admission.reservationId,
+        error,
+      );
+      if (
+        reservationReleased &&
+        generationFence.isCurrent()
+      ) {
+        this.publishSession(
+          Date.now(),
+          generationFence.revisionFence,
+        );
+      }
+      if (!generationFence.isCurrent()) {
+        throw error;
+      }
+      if (error instanceof ModelOutputLimitError) {
+        throw error;
+      }
+      return this.fallbackForUnavailableOpenAI(
+        request,
+        signal,
+        generationFence,
+      );
+    } finally {
+      dispatch.dispose();
+    }
+  }
+
+  private async generateWithCopilotCandidates(
+    remoteRequest: ModelRequest,
+    localRequest: ModelRequest,
+    signal: AbortSignal,
+    source: PairInvocationSource,
+    maxOutputTokens: number,
+    generationFence: PairGenerationFence,
+  ): Promise<ModelResponse> {
+    let candidates;
+    try {
+      candidates = await this.copilotProvider.prepareCandidates(
+        remoteRequest,
+        signal,
+        { userInitiated: source !== "automatic" },
+      );
+    } catch (error: unknown) {
+      if (!generationFence.isCurrent()) {
+        throw error;
+      }
+      return this.fallbackForUnavailableCopilot(
+        error,
+        localRequest,
+        signal,
+        generationFence,
+      );
+    }
+
+    let previousUnavailable: CopilotModelUnavailableError | undefined;
+    try {
+      for (;;) {
+        let dispatch;
+        try {
+          dispatch = await candidates.next(previousUnavailable);
+          previousUnavailable = undefined;
+        } catch (error: unknown) {
+          if (!generationFence.isCurrent()) {
+            throw error;
+          }
+          return this.fallbackForUnavailableCopilot(
+            error,
+            localRequest,
+            signal,
+            generationFence,
+          );
+        }
+
+        if (!generationFence.isCurrent()) {
+          dispatch.dispose();
+          this.assertGenerationCurrent(signal, generationFence);
+        }
+
+        const admission = this.budget.tryReserve(
+          dispatch.inputTokens,
+          maxOutputTokens,
+          Date.now(),
+          source === "chat" ? "chat" : "automatic",
+        );
+        if (!admission.allowed) {
+          dispatch.dispose();
+          return this.fallbackForBudget(
+            admission.reason,
+            localRequest,
+            signal,
+            generationFence,
+          );
+        }
+        if (!generationFence.isCurrent()) {
+          this.budget.release(admission.reservationId);
+          dispatch.dispose();
+          this.assertGenerationCurrent(signal, generationFence);
+        }
+        if (
+          !this.publishSession(
+            Date.now(),
+            generationFence.revisionFence,
+          )
+        ) {
+          this.budget.release(admission.reservationId);
+          dispatch.dispose();
+          this.assertGenerationCurrent(signal, generationFence);
+        }
+
+        try {
+          const response = await dispatch.send();
+          this.budget.settle(
+            admission.reservationId,
+            response.inputTokens,
+            response.outputTokens,
+          );
+          if (generationFence.isCurrent()) {
+            this.publishGenerationStatus(
+              generationFence,
+              "vscode-copilot",
+              this.configurationWarning(),
+            );
+          }
+          return response;
+        } catch (error: unknown) {
+          if (error instanceof ModelOutputLimitError) {
+            if (error.requestDispatched) {
+              this.budget.settle(
+                admission.reservationId,
+                error.inputTokens,
+                error.outputTokens,
+              );
+            } else {
+              this.budget.release(admission.reservationId);
+            }
+            if (generationFence.isCurrent()) {
+              this.publishSession(
+                Date.now(),
+                generationFence.revisionFence,
+              );
+            }
+          }
+          const reservationReleased = releaseUnusedCopilotReservation(
+            this.budget,
+            admission.reservationId,
+            error,
+          );
+          if (
+            reservationReleased &&
+            generationFence.isCurrent()
+          ) {
+            this.publishSession(
+              Date.now(),
+              generationFence.revisionFence,
+            );
+          }
+          if (!generationFence.isCurrent()) {
+            throw error;
+          }
+          if (!(error instanceof CopilotModelUnavailableError)) {
+            throw error;
+          }
+          previousUnavailable = error;
+        } finally {
+          dispatch.dispose();
+        }
+      }
+    } finally {
+      candidates.dispose();
+    }
+  }
+
+  private fallbackForBudget(
+    reason: BudgetDenialReason,
+    request: ModelRequest,
+    signal: AbortSignal,
+    generationFence: PairGenerationFence,
+  ): Promise<ModelResponse> {
+    this.assertGenerationCurrent(signal, generationFence);
+    this.publishGenerationStatus(
+      generationFence,
+      "local-template",
+      `remote ${reason}; local-template fallback`,
+    );
+    return this.router.generate("local-template", request, signal);
+  }
+
+  private async fallbackForUnavailableCopilot(
+    error: unknown,
+    request: ModelRequest,
+    signal: AbortSignal,
+    generationFence: PairGenerationFence,
+  ): Promise<ModelResponse> {
+    if (!(error instanceof CopilotModelUnavailableError)) {
+      throw error;
+    }
+    this.assertGenerationCurrent(signal, generationFence);
+    this.publishGenerationStatus(
+      generationFence,
+      "local-template",
+      `Copilot unavailable (${error.reason}); local-template fallback`,
+    );
+    return this.router.generate("local-template", request, signal);
+  }
+
+  private fallbackForUnavailableOpenAI(
+    request: ModelRequest,
+    signal: AbortSignal,
+    generationFence: PairGenerationFence,
+  ): Promise<ModelResponse> {
+    this.assertGenerationCurrent(signal, generationFence);
+    this.publishGenerationStatus(
+      generationFence,
+      "local-template",
+      "OpenAI-compatible provider unavailable; local-template fallback",
+    );
+    return this.router.generate("local-template", request, signal);
+  }
+
+  private publishGenerationStatus(
+    generationFence: PairGenerationFence,
+    provider: PairConfig["provider"],
+    detail: string | undefined,
+  ): void {
+    if (!generationFence.isCurrent()) {
+      return;
+    }
+    this.effectiveProvider = provider;
+    this.statusDetail = detail;
+    if (
+      this.publishSession(
+        Date.now(),
+        generationFence.revisionFence,
+      )
+    ) {
+      this.renderStatus();
+    }
+  }
+
+  private renderIntervention(
+    document: vscode.TextDocument,
+    evidence: Evidence,
+    question: string,
+    generationFence?: PairGenerationFence,
+  ): void {
+    if (
+      generationFence !== undefined &&
+      !generationFence.isCurrent()
+    ) {
+      return;
+    }
+    const boundedEvidence = normalizeEvidenceForUi(evidence);
+    const boundedQuestion = boundEvidenceMessage(question);
+    this.inlineController.render(
+      document.uri,
+      safeRange(document, boundedEvidence.range),
+      boundedQuestion,
+      boundedEvidence,
+    );
+    if (
+      generationFence !== undefined &&
+      !generationFence.isCurrent()
+    ) {
+      this.inlineController.disposeUri(document.uri);
+      return;
+    }
+    this.policy.markRendered(boundedEvidence.id, Date.now());
+    const rootUri = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.toString();
+    this.options.sharedContext.publishEvidence(
+      {
+        uri: document.uri.toString(),
+        ...(rootUri === undefined ? {} : { rootUri }),
+        evidence: boundedEvidence,
+        question: boundedQuestion,
+      },
+      this.runtimeRevision,
+      generationFence?.revisionFence,
+    );
+  }
+
+  private cancelRequest(uri: string): void {
+    const existing = this.requestByUri.get(uri);
+    if (existing !== undefined) {
+      existing.abort();
+      this.requestByUri.delete(uri);
+    }
+  }
+
+  private cancelPendingWork(): void {
+    this.aggregator.clear();
+    for (const request of this.requestByUri.values()) {
+      request.abort();
+    }
+    this.requestByUri.clear();
+    this.chatRequests.cancelAll();
+  }
+
+  private clearTransientState(): void {
+    this.contextReadRevision += 1;
+    this.working = undefined;
+    this.documentState.clear();
+    this.policy.resetTransient();
+    this.options.sharedContext.clearEvidence(undefined, this.runtimeRevision);
+    this.inlineController.clear();
+  }
+
+  private inactiveStatusDetail(): string | undefined {
+    if (!this.options.config.enabled) {
+      return "disabled by adaptivePair.enabled";
+    }
+    return this.configurationWarning();
+  }
+
+  private configurationWarning(): string | undefined {
+    return [this.options.config.statusWarning, this.memoryWarning]
+      .filter((warning): warning is string => warning !== undefined)
+      .join(" ") || undefined;
+  }
+
+  public async resetMemory(): Promise<void> {
+    this.stopSession();
+    const lifecycleFence = this.sessionLifecycle.captureFence();
+    await this.memoryStore.reset();
+    if (!lifecycleFence.isCurrent()) {
+      return;
+    }
+    this.memoryWarning = undefined;
+    this.interventionStyle = this.options.config.interventionStyle;
+    this.applyInterventionStyleBudget();
+    this.dismissedEvidenceIdsByRepository.clear();
+    this.statusDetail = this.sessionLifecycle.active
+      ? this.configurationWarning()
+      : this.inactiveStatusDetail();
+    this.publishSession();
+    this.renderStatus();
+    await vscode.window.showInformationMessage(
+      "Adaptive Pair local memory was reset to safe defaults.",
+    );
+  }
+
+  public async dismissCurrentEvidence(): Promise<PairMemoryActionResult> {
+    const snapshot = this.options.sharedContext.snapshot();
+    const latest = snapshot.latest;
+    if (latest === undefined) {
+      return {
+        kind: "no-evidence",
+        message: "Adaptive Pair has no current evidence to dismiss.",
+      };
+    }
+
+    const uri = vscode.Uri.parse(latest.uri);
+    const repositoryId = this.repositoryIdForUri(uri);
+    const persistedEvidenceId = hashEvidenceIdentity(latest.evidence.id);
+    this.cancelRequest(latest.uri);
+    this.chatRequests.cancelUri(latest.uri);
+    this.documentState.invalidateEvidence(latest.uri);
+    this.options.sharedContext.clearEvidence(
+      latest.uri,
+      this.runtimeRevision,
+    );
+    this.inlineController.disposeUri(uri);
+    this.beginPendingDismissal(repositoryId, persistedEvidenceId);
+    try {
+      await this.memoryStoreForRepository(repositoryId).dismissEvidence(
+        latest.evidence.id,
+      );
+    } catch (error: unknown) {
+      this.endPendingDismissal(repositoryId, persistedEvidenceId);
+      const message =
+        error instanceof Error ? error.message : String(error);
+      await vscode.window.showErrorMessage(
+        `Adaptive Pair could not persist the evidence dismissal: ${message}`,
+      );
+      throw error;
+    }
+    if (!this.disposed) {
+      const dismissed = new Set(
+        this.dismissedEvidenceIdsByRepository.get(repositoryId) ?? [],
+      );
+      dismissed.add(persistedEvidenceId);
+      this.dismissedEvidenceIdsByRepository.set(repositoryId, dismissed);
+    }
+    this.endPendingDismissal(repositoryId, persistedEvidenceId);
+    return {
+      kind: "dismissed",
+      message: "Adaptive Pair dismissed the current evidence for this repository.",
+    };
+  }
+
+  public async approveCurrentEvidence(): Promise<PairMemoryActionResult> {
+    const latest = this.options.sharedContext.snapshot().latest;
+    if (latest === undefined) {
+      return {
+        kind: "no-evidence",
+        message: "Adaptive Pair has no current evidence to approve.",
+      };
+    }
+
+    await this.memoryStore.approveEvidence(latest.evidence);
+    return {
+      kind: "approved",
+      message: "Adaptive Pair saved the current evidence summary as approved.",
+    };
+  }
+
+  public async setInterventionStyle(
+    style: PairConfig["interventionStyle"],
+  ): Promise<PairMemoryActionResult> {
+    await this.memoryStore.updatePreferences({
+      interventionStyle: style,
+    });
+    if (!this.disposed) {
+      this.interventionStyle = style;
+      this.applyInterventionStyleBudget();
+      this.publishSession();
+      this.renderStatus();
+    }
+    return {
+      kind: "style-updated",
+      message: `Adaptive Pair intervention style is now ${style}.`,
+    };
+  }
+
+  private closeDocument(uri: vscode.Uri): void {
+    const key = uri.toString();
+    this.documentState.close(key);
+    this.aggregator.cancel(key);
+    this.cancelRequest(key);
+    this.chatRequests.cancelUri(key);
+    this.options.sharedContext.releaseEvidenceUri(
+      key,
+      this.runtimeRevision,
+    );
+    this.inlineController.disposeUri(uri);
+  }
+
+  private repositoryIdForUri(uri: vscode.Uri): string {
+    return repositoryIdentityForDocument(
+      uri,
+      vscode.workspace.getWorkspaceFolder,
+    );
+  }
+
+  private memoryStoreForRepository(repositoryId: string): PairMemoryStore {
+    return this.memoryStore.forRepository(repositoryId);
+  }
+
+  private applyInterventionStyleBudget(): void {
+    if (this.budgetFollowsInterventionStyle) {
+      this.budget.reconfigure(
+        budgetForInterventionStyle(this.interventionStyle),
+      );
+    }
+  }
+
+  private dismissedEvidenceIdsForUri(
+    uri: vscode.Uri,
+  ): ReadonlySet<string> {
+    const repositoryId = this.repositoryIdForUri(uri);
+    const dismissed =
+      this.dismissedEvidenceIdsByRepository.get(repositoryId);
+    const pending =
+      this.pendingDismissedEvidenceIdsByRepository.get(repositoryId);
+    if (pending === undefined || pending.size === 0) {
+      return dismissed ?? new Set();
+    }
+    return new Set([
+      ...(dismissed ?? []),
+      ...pending.keys(),
+    ]);
+  }
+
+  private beginPendingDismissal(
+    repositoryId: string,
+    persistedEvidenceId: string,
+  ): void {
+    const pending =
+      this.pendingDismissedEvidenceIdsByRepository.get(repositoryId) ??
+      new Map<string, number>();
+    pending.set(
+      persistedEvidenceId,
+      (pending.get(persistedEvidenceId) ?? 0) + 1,
+    );
+    this.pendingDismissedEvidenceIdsByRepository.set(repositoryId, pending);
+  }
+
+  private endPendingDismissal(
+    repositoryId: string,
+    persistedEvidenceId: string,
+  ): void {
+    const pending =
+      this.pendingDismissedEvidenceIdsByRepository.get(repositoryId);
+    if (pending === undefined) {
+      return;
+    }
+    const remaining = (pending.get(persistedEvidenceId) ?? 0) - 1;
+    if (remaining > 0) {
+      pending.set(persistedEvidenceId, remaining);
+      return;
+    }
+    pending.delete(persistedEvidenceId);
+    if (pending.size === 0) {
+      this.pendingDismissedEvidenceIdsByRepository.delete(repositoryId);
+    }
+  }
+
+  private async discoverWorkspaceStartupContext(
+    isCurrent: () => boolean,
+  ): Promise<WorkspaceStartupContext | undefined> {
+    const activeDocument = vscode.window.activeTextEditor?.document;
+    const rootUri = (activeDocument === undefined ? undefined : vscode.workspace.getWorkspaceFolder(activeDocument.uri)?.uri.toString())
+      ?? vscode.workspace.workspaceFolders?.[0]?.uri.toString();
+    const workspaceUris = await vscode.workspace.findFiles(
+      STARTUP_CONTEXT_GLOB,
+      "**/node_modules/**",
+      50,
+    );
+    if (!isCurrent()) {
+      return undefined;
+    }
+    const project = await readProjectContext(
+      this.options.projectContextAccess ?? {
+        isTrusted: () => vscode.workspace.isTrusted === true,
+        stat: async (uri) => {
+          const stat = await vscode.workspace.fs.stat(vscode.Uri.parse(uri));
+          return {
+            size: stat.size,
+            isFile: (stat.type & vscode.FileType.File) !== 0,
+            isSymbolicLink: (stat.type & vscode.FileType.SymbolicLink) !== 0,
+          };
+        },
+        readFile: async (uri) => vscode.workspace.fs.readFile(vscode.Uri.parse(uri)),
+        openText: (uri) => vscode.workspace.textDocuments.find((document) => document.uri.toString() === uri)?.getText(),
+      },
+      rootUri,
+      workspaceUris.map((uri) => uri.toString()),
+      isCurrent,
+    );
+    if (project === undefined || !isCurrent()) {
+      return undefined;
+    }
+    const workspacePaths = workspaceUris.map((uri) =>
+      vscode.workspace.asRelativePath(uri, false),
+    );
+    const signals = discoverHarnessSignals({
+      extensionIds: vscode.extensions.all.map((extension) => extension.id),
+      workspacePaths,
+    });
+
+    return {
+      controlNotice:
+        signals.length === 0
+          ? undefined
+          : `${signals.map((signal) => signal.label).join(", ")}; observing only`,
+      project,
+      startupGuidance: `${buildStartupGuidance(workspacePaths)}\n\n${describeProjectContext(project)}`,
+    };
+  }
+
+  public refreshSession(now = Date.now()): void {
+    this.publishSession(now);
+  }
+
+  private publishSession(
+    now = Date.now(),
+    revisionFence?: PairContextRevisionFence,
+  ): boolean {
+    const remainingBudget = this.budget.snapshot(now);
+    const session: PairSessionSnapshot = {
+      enabled: this.invocationGate.enabled,
+      active: this.invocationGate.sessionActive,
+      generation: this.sessionLifecycle.sessionGeneration,
+      goal: this.working?.goal ?? "Goal not confirmed — use @pair /plan to clarify it, then @pair /goal to agree on it.",
+      role: "navigator",
+      provider: this.effectiveProvider,
+      chatMode: this.options.config.chatMode ?? "workspace-agent",
+      remainingCalls: remainingBudget.remainingCalls,
+      remainingInputTokens: remainingBudget.remainingInputTokens,
+      remainingOutputTokens: remainingBudget.remainingOutputTokens,
+      controlNotice: this.controlNotice,
+      configurationWarning: this.configurationWarning(),
+      ...(this.working === undefined ? {} : { working: this.working }),
+      ...(this.startupGuidance === undefined
+        ? {}
+        : { startupGuidance: this.startupGuidance }),
+    };
+    return this.options.sharedContext.updateSession(
+      session,
+      this.runtimeRevision,
+      revisionFence,
+    );
+  }
+
+  private renderStatus(): void {
+    const details = [this.statusDetail, this.controlNotice].filter(
+      (detail): detail is string => detail !== undefined,
+    );
+    this.status.text = buildPairStatusText(
+      this.invocationGate.sessionActive,
+      details,
+    );
+    this.status.tooltip =
+      !this.invocationGate.enabled
+        ? "Adaptive Pair is disabled by adaptivePair.enabled and will not invoke model providers."
+        : this.invocationGate.sessionActive
+        ? this.isWorkspaceAgentEnabled()
+          ? "Background Pair observes code. Interactive @pair uses your selected Chat model; file edits and validation runs require individual approval."
+          : "Interactive Pair is local-only. Background navigator guidance does not edit files or run commands."
+        : "Adaptive Pair is off. Start a session to enable navigator guidance.";
+  }
+
+  public dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    this.invocationGate.setActive(false);
+    this.effectiveProvider = this.options.config.provider;
+    this.controlNotice = undefined;
+    this.startupGuidance = undefined;
+    this.statusDetail = this.inactiveStatusDetail();
+    runCleanupSteps(
+      [
+        () => this.sessionLifecycle.dispose(),
+        () => this.publishSession(),
+        () => this.options.sharedContext.endRuntime(this.runtimeRevision),
+        () => this.aggregator.dispose(),
+        () => this.scheduler.dispose(),
+        () => this.inlineController.dispose(),
+        () => this.status.dispose(),
+      ],
+      "Failed to dispose the Adaptive Pair runtime cleanly.",
+    );
+  }
+}
+
+const isSupportedDocument = (document: vscode.TextDocument): boolean =>
+  SUPPORTED_DOCUMENT_SCHEMES.has(document.uri.scheme) &&
+  SUPPORTED_LANGUAGE_IDS.has(document.languageId);
+
+const normalizedSelectionRange = (editor: vscode.TextEditor): vscode.Range => {
+  if (!editor.selection.isEmpty) {
+    return editor.selection;
+  }
+  return editor.document.lineAt(editor.selection.active.line).range;
+};
+
+const diagnosticEvidenceForDocument = (
+  document: vscode.TextDocument,
+  selectedRange?: PairRange,
+): readonly Evidence[] => {
+  const diagnostics = vscode.languages
+    .getDiagnostics(document.uri)
+    .filter((diagnostic) =>
+      diagnostic.severity === vscode.DiagnosticSeverity.Error ||
+      diagnostic.severity === vscode.DiagnosticSeverity.Warning
+    );
+  const relevantDiagnostics =
+    selectedRange === undefined
+      ? diagnostics
+      : diagnostics.filter((diagnostic) =>
+          pairRangesOverlap(toPairRange(diagnostic.range), selectedRange),
+        );
+  return relevantDiagnostics
+    .slice(0, 20)
+    .map((diagnostic) => {
+      const range = toPairRange(diagnostic.range);
+      const severity = diagnosticSeverity(diagnostic.severity);
+      return buildDiagnosticEvidence({
+        uri: document.uri.toString(),
+        range,
+        message: diagnostic.message,
+        source: diagnostic.source,
+        code: diagnostic.code,
+        severity,
+        confidence:
+          diagnostic.severity === vscode.DiagnosticSeverity.Error
+            ? 0.97
+            : 0.82,
+      });
+    });
+};
+
+const diagnosticSeverity = (
+  severity: vscode.DiagnosticSeverity,
+): Evidence["severity"] => {
+  switch (severity) {
+    case vscode.DiagnosticSeverity.Error:
+      return "error";
+    case vscode.DiagnosticSeverity.Warning:
+      return "warning";
+    default:
+      return "info";
+  }
+};
+
+const toPairRange = (range: vscode.Range): PairRange => ({
+  start: {
+    line: range.start.line,
+    character: range.start.character,
+  },
+  end: {
+    line: range.end.line,
+    character: range.end.character,
+  },
+});
+
+const safeRange = (
+  document: vscode.TextDocument,
+  range: PairRange,
+): vscode.Range => {
+  const lastLine = Math.max(0, document.lineCount - 1);
+  const startLine = Math.min(lastLine, Math.max(0, range.start.line));
+  const endLine = Math.min(lastLine, Math.max(startLine, range.end.line));
+  const startCharacter = Math.min(
+    document.lineAt(startLine).text.length,
+    Math.max(0, range.start.character),
+  );
+  const endCharacter = Math.min(
+    document.lineAt(endLine).text.length,
+    Math.max(endLine === startLine ? startCharacter : 0, range.end.character),
+  );
+  return new vscode.Range(
+    startLine,
+    startCharacter,
+    endLine,
+    endCharacter,
+  );
+};
+
+const isOfficialVsCodeCancellationError = (error: unknown): boolean =>
+  error instanceof vscode.CancellationError ||
+  (error instanceof vscode.LanguageModelError &&
+    error.cause instanceof vscode.CancellationError);

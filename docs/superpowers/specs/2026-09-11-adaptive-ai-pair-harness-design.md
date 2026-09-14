@@ -157,7 +157,24 @@ and already have well-funded incumbents.
 
 ## 5. Core Development Cycle
 
-### 5.1 Project and user setup
+### 5.1 Explicit session activation
+
+Installing or activating the extension does not start observation. Every
+workspace begins with `Pair: off`. A user starts a transient pair session
+through one of these explicit actions:
+
+- `Adaptive Pair: Start Pairing Session`;
+- the contributed toggle keybinding;
+- `@pair /start` in VS Code Chat;
+- `adaptivePair.startSession` invoked by a cooperating agent.
+
+Stopping through the corresponding command or `@pair /stop` cancels pending
+analysis and model calls, unregisters active document listeners, removes
+transient inline threads, and clears session evidence. Session activity is not
+restored automatically after reload. The extension may remain loaded only to
+show status and accept a future start command.
+
+### 5.2 Project and user setup
 
 The harness:
 
@@ -179,7 +196,7 @@ The initial capability dimensions are:
 
 Self-assessment is an initial hypothesis, not a score.
 
-### 5.2 Pair choreography
+### 5.3 Pair choreography
 
 The default state is:
 
@@ -272,6 +289,15 @@ The analyzer looks for:
 - global dependencies that reduce testability;
 - scope expanding beyond the approved plan;
 - a task that has become too large for the current challenge target.
+
+In the current vertical slice, public API detection is intentionally
+best-effort and per document. It compares trivia-free token streams from
+TypeScript's official in-memory declaration-only emit for the previous and
+current TypeScript/JavaScript text, then produces at most one generic
+`public-api-change` item. The restricted compiler host reads only TypeScript's
+standard libraries; external modules are unresolved. If either declaration
+surface is unreliable, the analyzer skips this evidence and does not fall back
+to hand-built signature or type serialization.
 
 It waits while a line is incomplete and favors questions over declarations when
 the user's intent is uncertain.
@@ -607,6 +633,15 @@ The project separates consent for:
 2. model inference;
 3. anonymous diagnostic telemetry.
 
+Remote routing is user/application controlled, never repository controlled.
+Provider endpoints are canonicalized, require HTTPS except for explicit
+loopback hosts, reject embedded credentials and ambiguous URL components, and
+bind stored credentials to the validated canonical origin. Structured evidence
+crosses a remote boundary only as fixed, kind-level summaries with hashed
+identity and no analyzer/editor text or references. Explicit Chat fields are
+checked for credentials and local resources before bounding; a detected field
+keeps the request local rather than sending a partial redaction.
+
 ## 12. Model Router and Token Control
 
 ### 12.1 Role-based model slots
@@ -692,6 +727,12 @@ is content-hashed.
 
 Budget exhaustion degrades to the local navigator. It never silently exceeds
 the configured limit or fabricates model output.
+
+Budget ownership belongs above replaceable provider runtimes so configuration
+and credential rebuilds cannot reset a rolling window. Admission reserves both
+input and bounded output capacity. Successful requests settle measured usage;
+only a provider preflight known not to have dispatched a prompt may release its
+exact reservation.
 
 ## 13. Coexistence and Interoperability
 
@@ -876,6 +917,9 @@ Failure behavior:
 | Failure | Behavior |
 |---|---|
 | Model timeout or provider failure | Continue local analysis and show model state; never simulate a reply |
+| OpenAI-compatible oversized response | Abort parsing, retain conservative budget accounting, and show provider failure |
+| Parse-unstable edit | Stay quiet and retain the last stable source baseline |
+| Corrupt local memory | Use in-memory defaults, preserve the corrupt record, warn visibly, and require explicit reset |
 | Stale documentation conflicts with code | Show both sources and mark the decision uncertain |
 | Pack does not support the detected stack deeply | Enter generic mode and disclose the limitation |
 | Command or patch approval is denied | Make no change and return control |

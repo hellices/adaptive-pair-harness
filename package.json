@@ -1,0 +1,253 @@
+{
+  "name": "adaptive-pair-harness",
+  "displayName": "Adaptive Pair Harness",
+  "description": "A realtime, evidence-backed AI pair for VS Code.",
+  "version": "0.1.0",
+  "publisher": "adaptive-pair",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hellices/adaptive-pair-harness.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hellices/adaptive-pair-harness/issues"
+  },
+  "homepage": "https://github.com/hellices/adaptive-pair-harness#readme",
+  "engines": {
+    "vscode": "^1.136.0",
+    "node": ">=22.13.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:typescript",
+    "onLanguage:typescriptreact",
+    "onLanguage:javascript",
+    "onLanguage:javascriptreact",
+    "onCommand:adaptivePair.startSession",
+    "onCommand:adaptivePair.stopSession",
+    "onCommand:adaptivePair.toggle",
+    "onCommand:adaptivePair.reviewCurrentBlock",
+    "onCommand:adaptivePair.setApiKey",
+    "onCommand:adaptivePair.resetMemory",
+    "onCommand:adaptivePair.dismissCurrentEvidence",
+    "onCommand:adaptivePair.approveCurrentEvidence",
+    "onCommand:adaptivePair.setInterventionStyle",
+    "onCommand:adaptivePair.setWorkingGoal",
+    "onCommand:adaptivePair.refreshProjectContext",
+    "onCommand:adaptivePair.toggleProjectContextSharing",
+    "onCommand:adaptivePair.draftWorkingAgreement",
+    "onChatParticipant:adaptivePair.chat"
+  ],
+  "main": "./dist/src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "adaptivePair.startSession",
+        "title": "Adaptive Pair: Start Pairing Session"
+      },
+      {
+        "command": "adaptivePair.stopSession",
+        "title": "Adaptive Pair: Stop Pairing Session"
+      },
+      {
+        "command": "adaptivePair.toggle",
+        "title": "Adaptive Pair: Toggle Pairing Session"
+      },
+      {
+        "command": "adaptivePair.reviewCurrentBlock",
+        "title": "Adaptive Pair: Review Current Block"
+      },
+      {
+        "command": "adaptivePair.setApiKey",
+        "title": "Adaptive Pair: Set OpenAI-Compatible API Key"
+      },
+      {
+        "command": "adaptivePair.resetMemory",
+        "title": "Adaptive Pair: Reset Local Memory"
+      },
+      {
+        "command": "adaptivePair.dismissCurrentEvidence",
+        "title": "Adaptive Pair: Dismiss Current Evidence"
+      },
+      {
+        "command": "adaptivePair.approveCurrentEvidence",
+        "title": "Adaptive Pair: Approve Current Evidence"
+      },
+      {
+        "command": "adaptivePair.setInterventionStyle",
+        "title": "Adaptive Pair: Set Intervention Style"
+      },
+      {
+        "command": "adaptivePair.setWorkingGoal",
+        "title": "Adaptive Pair: Set Working Goal"
+      },
+      {
+        "command": "adaptivePair.refreshProjectContext",
+        "title": "Adaptive Pair: Refresh Project Context"
+      },
+      {
+        "command": "adaptivePair.toggleProjectContextSharing",
+        "title": "Adaptive Pair: Toggle Project Context Sharing"
+      },
+      {
+        "command": "adaptivePair.draftWorkingAgreement",
+        "title": "Adaptive Pair: Draft Working Agreement"
+      }
+    ],
+    "chatParticipants": [
+      {
+        "id": "adaptivePair.chat",
+        "name": "pair",
+        "fullName": "Adaptive Pair",
+        "description": "Pair using your selected Chat model: inspect project goals and code, apply reviewed edits, and run approved validation checks.",
+        "commands": [
+          {
+            "name": "plan",
+            "description": "Clarify the goal, acceptance criteria, and next development step"
+          },
+          {
+            "name": "work",
+            "description": "Work on one concrete step with project tools, reviewed edits, and approved checks"
+          },
+          {
+            "name": "access",
+            "description": "Approve or revoke project access for this session and selected Chat model"
+          },
+          {
+            "name": "goal",
+            "description": "Confirm the working goal; optionally include acceptance criteria and constraints"
+          },
+          {
+            "name": "decision",
+            "description": "Record an agreed choice and its reason for this working goal"
+          },
+          {
+            "name": "context",
+            "description": "Read or refresh local project documents for the active workspace root"
+          },
+          {
+            "name": "brief",
+            "description": "Read project context and prepare a working brief with a reviewed, approved document edit"
+          },
+          {
+            "name": "checkpoint",
+            "description": "Inspect actual implementation, run an approved validation check, and assess remaining criteria"
+          },
+          {
+            "name": "explain",
+            "description": "Explain the current evidence and trade-off"
+          },
+          {
+            "name": "trace",
+            "description": "Describe relevant control and data flow"
+          },
+          {
+            "name": "session",
+            "description": "Show goal, role, provider, and remaining budget"
+          },
+          {
+            "name": "why",
+            "description": "Expand the latest inline question"
+          },
+          {
+            "name": "start",
+            "description": "Start a pair session for this workspace"
+          },
+          {
+            "name": "stop",
+            "description": "Stop the pair session and clear transient context"
+          }
+        ]
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "adaptivePair.toggle",
+        "key": "ctrl+shift+alt+p",
+        "mac": "cmd+shift+alt+p"
+      }
+    ],
+    "configuration": {
+      "title": "Adaptive Pair",
+      "properties": {
+        "adaptivePair.chat.mode": {
+          "scope": "application",
+          "type": "string",
+          "enum": ["workspace-agent", "local-only"],
+          "default": "workspace-agent",
+          "description": "Interactive @pair uses the Chat model picker and bounded workspace tools by default. Workspace access, edits, and checks require approval. local-only disables interactive model and tool calls."
+        },
+        "adaptivePair.enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "adaptivePair.debounceMs": {
+          "type": "number",
+          "default": 500,
+          "minimum": 300,
+          "maximum": 800
+        },
+        "adaptivePair.interventionStyle": {
+          "type": "string",
+          "enum": [
+            "eco",
+            "balanced",
+            "active"
+          ],
+          "default": "balanced",
+          "description": "Intervention style used until local Pair memory contains an explicit selection. Use Adaptive Pair: Set Intervention Style to persist one."
+        },
+        "adaptivePair.model.provider": {
+          "scope": "application",
+          "type": "string",
+          "enum": [
+            "local-template",
+            "vscode-copilot",
+            "openai-compatible"
+          ],
+          "default": "local-template",
+          "description": "Provider for background navigator guidance. Interactive @pair normally uses the model selected in Chat instead."
+        },
+        "adaptivePair.model.baseUrl": {
+          "scope": "application",
+          "type": "string",
+          "default": "http://localhost:11434/v1"
+        },
+        "adaptivePair.model.name": {
+          "scope": "application",
+          "type": "string",
+          "default": "qwen2.5-coder:7b"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "clean": "rm -rf dist coverage *.vsix",
+    "compile": "tsc -p tsconfig.json",
+    "lint": "eslint src test",
+    "test": "vitest run --passWithNoTests --exclude=dist/** --testTimeout=15000",
+    "test:host": "npm run compile && node scripts/test-extension-host.mjs",
+    "test:coverage": "vitest run --coverage --passWithNoTests --exclude=dist/** --testTimeout=15000",
+    "check": "npm run compile && npm run lint && npm run test",
+    "package": "vsce package --no-rewrite-relative-links"
+  },
+  "dependencies": {
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "8.57.1",
+    "@types/linkify-it": "^5.0.0",
+    "@types/node": "^26.4.1",
+    "@types/vscode": "^1.136.0",
+    "@vitest/coverage-v8": "^4.1.11",
+    "@vscode/vsce": "^3.9.2",
+    "eslint": "8.57.1",
+    "linkify-it": "^5.0.2",
+    "typescript-eslint": "8.69.1-alpha.0",
+    "vitest": "^4.1.11"
+  }
+}

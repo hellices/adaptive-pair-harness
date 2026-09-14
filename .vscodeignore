@@ -1,0 +1,14 @@
+.github/**
+.devcontainer/**
+.vscode/**
+.gitignore
+.superpowers/**
+coverage/**
+docs/superpowers/**
+src/**
+test/**
+scripts/**
+dist/test/**
+**/*.map
+eslint.config.mjs
+tsconfig.json

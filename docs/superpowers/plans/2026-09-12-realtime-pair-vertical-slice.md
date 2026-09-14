@@ -10,9 +10,10 @@
 
 ## Global Constraints
 
-- Require Node.js 20 or newer and VS Code 1.95 or newer.
+- Require Node.js 22.13 or newer, recommend Node.js 24 LTS, and require VS Code 1.136 or newer.
 - Compile with TypeScript `strict: true`; do not use `any` or unchecked casts.
 - Namespace commands, settings, storage, and output as `adaptivePair` or `adaptive-pair`.
+- Load dormant: do not observe edits or invoke models until the user explicitly starts a pair session.
 - Treat all edits not applied by this extension as `user-supplied`; this slice applies no edits.
 - Do not send raw keystrokes, complete files, terminal output, or repository indexes to a model.
 - Run local analysis only after a configurable 300-800 ms semantic debounce.
@@ -37,16 +38,19 @@ tsconfig.json                                 strict compiler configuration
 eslint.config.mjs                             TypeScript lint rules
 .vscodeignore                                 extension package exclusions
 src/extension.ts                              extension activation and disposal
-src/config/pairConfig.ts                      validated workspace configuration
+src/config/pairConfig.ts                      validated application/endpoint configuration
 src/core/types.ts                             shared domain types
 src/core/editEpisodeAggregator.ts             debounced edit episodes
 src/core/tokenBudget.ts                       rolling call/token limits
 src/core/semanticAnalyzer.ts                  incremental TypeScript evidence
 src/core/interventionPolicy.ts                cooldown and intervention choice
 src/core/modelRouter.ts                       swappable provider interface
+src/core/remoteEndpoint.ts                    canonical endpoint and credential binding
 src/core/coexistence.ts                       external harness discovery
 src/core/memoryStore.ts                       approved local pair preferences
 src/vscode/inlinePairController.ts            Comment Thread rendering
+src/vscode/vsCodeLanguageModelProvider.ts     official GitHub Copilot model adapter
+src/vscode/pairChatParticipant.ts             @pair VS Code Chat participant
 src/vscode/pairRuntime.ts                     VS Code event orchestration
 test/editEpisodeAggregator.test.ts            aggregation behavior
 test/tokenBudget.test.ts                      budget boundaries
@@ -86,8 +90,8 @@ Create `package.json` with:
   "publisher": "adaptive-pair",
   "license": "Apache-2.0",
   "engines": {
-    "vscode": "^1.95.0",
-    "node": ">=20"
+    "vscode": "^1.136.0",
+    "node": ">=22.13.0"
   },
   "categories": ["AI", "Programming Languages", "Other"],
   "activationEvents": [
@@ -95,6 +99,8 @@ Create `package.json` with:
     "onLanguage:typescriptreact",
     "onLanguage:javascript",
     "onLanguage:javascriptreact",
+    "onCommand:adaptivePair.startSession",
+    "onCommand:adaptivePair.stopSession",
     "onCommand:adaptivePair.toggle",
     "onCommand:adaptivePair.reviewCurrentBlock"
   ],
@@ -102,8 +108,16 @@ Create `package.json` with:
   "contributes": {
     "commands": [
       {
+        "command": "adaptivePair.startSession",
+        "title": "Adaptive Pair: Start Pairing Session"
+      },
+      {
+        "command": "adaptivePair.stopSession",
+        "title": "Adaptive Pair: Stop Pairing Session"
+      },
+      {
         "command": "adaptivePair.toggle",
-        "title": "Adaptive Pair: Toggle Navigator"
+        "title": "Adaptive Pair: Toggle Pairing Session"
       },
       {
         "command": "adaptivePair.reviewCurrentBlock",
@@ -112,6 +126,13 @@ Create `package.json` with:
       {
         "command": "adaptivePair.setApiKey",
         "title": "Adaptive Pair: Set OpenAI-Compatible API Key"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "adaptivePair.toggle",
+        "key": "ctrl+shift+alt+p",
+        "mac": "cmd+shift+alt+p"
       }
     ],
     "configuration": {
@@ -134,7 +155,7 @@ Create `package.json` with:
         },
         "adaptivePair.model.provider": {
           "type": "string",
-          "enum": ["local-template", "openai-compatible"],
+          "enum": ["local-template", "vscode-copilot", "openai-compatible"],
           "default": "local-template"
         },
         "adaptivePair.model.baseUrl": {
@@ -285,7 +306,7 @@ git commit -m "chore: scaffold VS Code extension"
 **Interfaces:**
 - Produces: `EditEpisode`, `Evidence`, `Intervention`, `PairRange`, and `PairPosition`.
 - Produces: `EditEpisodeAggregator.record(snapshot: EditSnapshot): void`.
-- Produces: `TokenBudget.tryReserve(inputTokens: number, now: number): BudgetDecision`.
+- Produces: `TokenBudget.tryReserve(inputTokens, outputTokens, now): BudgetDecision`.
 
 - [ ] **Step 1: Write failing aggregation tests**
 
@@ -385,20 +406,23 @@ it("rejects calls after either call or token capacity is exhausted", () => {
   const budget = new TokenBudget({
     windowMs: 60_000,
     maxCalls: 2,
-    maxInputTokens: 100
+    maxInputTokens: 100,
+    maxOutputTokens: 50,
+    maxOutputTokensPerCall: 25
   });
 
-  expect(budget.tryReserve(40, 0).allowed).toBe(true);
-  expect(budget.tryReserve(40, 1).allowed).toBe(true);
-  expect(budget.tryReserve(1, 2)).toMatchObject({
+  expect(budget.tryReserve(40, 20, 0).allowed).toBe(true);
+  expect(budget.tryReserve(40, 20, 1).allowed).toBe(true);
+  expect(budget.tryReserve(1, 1, 2)).toMatchObject({
     allowed: false,
     reason: "call-limit"
   });
-  expect(budget.tryReserve(90, 60_001).allowed).toBe(true);
+  expect(budget.tryReserve(90, 10, 60_001).allowed).toBe(true);
 });
 ```
 
-Also test token-limit rejection and exact window expiry.
+Also test input/output-token rejection, exact settlement ownership, preserved
+reservations across reconfiguration, and exact window expiry.
 
 - [ ] **Step 5: Implement the token budget**
 
@@ -409,11 +433,13 @@ export interface TokenBudgetConfig {
   readonly windowMs: number;
   readonly maxCalls: number;
   readonly maxInputTokens: number;
+  readonly maxOutputTokens: number;
+  readonly maxOutputTokensPerCall: number;
 }
 
 export type BudgetDecision =
-  | { readonly allowed: true; readonly remainingCalls: number; readonly remainingInputTokens: number }
-  | { readonly allowed: false; readonly reason: "call-limit" | "token-limit"; readonly retryAfterMs: number };
+  | { readonly allowed: true; readonly reservationId: number; readonly remainingCalls: number; readonly remainingInputTokens: number; readonly remainingOutputTokens: number }
+  | { readonly allowed: false; readonly reason: "call-limit" | "input-token-limit" | "output-token-limit"; readonly retryAfterMs: number };
 ```
 
 - [ ] **Step 6: Run targeted and full tests**
@@ -504,13 +530,18 @@ evidence when current parse diagnostics are non-empty. Collect import module
 specifiers and emit one stable-ID evidence item for each newly introduced
 specifier.
 
-- [ ] **Step 4: Implement public signature and complexity evidence**
+- [ ] **Step 4: Implement public declaration and complexity evidence**
 
-Collect exported function and class method signatures by name. Emit
-`public-api-change` when an existing exported signature changes. Count `if`,
-`switch` cases, loops, catches, conditional expressions, and logical
-short-circuit branches per function; emit `complexity-growth` only when the
-current count is at least six and increased by at least three.
+For public API evidence, perform a best-effort, per-document comparison using
+TypeScript's official in-memory declaration-only emitter for both versions.
+Canonicalize emitted `.d.ts` token streams without trivia and emit at most one
+generic `public-api-change` item for an added, removed, or changed surface.
+Restrict reads to TypeScript standard libraries, leave external modules
+unresolved, and skip evidence if either emit is unreliable; do not fall back to
+custom export or type serialization. Count `if`, `switch` cases, loops,
+catches, conditional expressions, and logical short-circuit branches per
+function; emit `complexity-growth` only when the current count is at least six
+and increased by at least three.
 
 - [ ] **Step 5: Run analyzer and full core tests**
 
@@ -575,13 +606,14 @@ it("suppresses duplicate evidence during cooldown", () => {
 });
 ```
 
-Also test `eco`, `balanced`, and `active` confidence thresholds and local
-fallback when the budget rejects a call.
+Also test `eco`, `balanced`, and `active` confidence thresholds. Runtime budget
+tests cover local fallback when admission rejects a call.
 
 - [ ] **Step 2: Implement the policy**
 
 Use thresholds `0.90`, `0.72`, and `0.55` for eco, balanced, and active.
-Maintain last-intervention timestamps by evidence ID. Return:
+Maintain successful-render timestamps by evidence ID; decisions do not start
+cooldown. Return:
 
 ```typescript
 export type PolicyDecision =
@@ -771,6 +803,8 @@ git commit -m "feat: add coexistence discovery and local memory"
 **Files:**
 - Create: `src/config/pairConfig.ts`
 - Create: `src/vscode/inlinePairController.ts`
+- Create: `src/vscode/vsCodeLanguageModelProvider.ts`
+- Create: `src/vscode/pairChatParticipant.ts`
 - Create: `src/vscode/pairRuntime.ts`
 - Modify: `src/extension.ts`
 
@@ -789,23 +823,62 @@ export interface PairConfig {
   readonly enabled: boolean;
   readonly debounceMs: number;
   readonly interventionStyle: "eco" | "balanced" | "active";
-  readonly provider: "local-template" | "openai-compatible";
+  readonly provider: "local-template" | "vscode-copilot" | "openai-compatible";
   readonly baseUrl: URL | undefined;
   readonly modelName: string;
   readonly budget: TokenBudgetConfig;
 }
 
 const STYLE_BUDGETS = {
-  eco: { maxCalls: 2, maxInputTokens: 2_000, windowMs: 600_000 },
-  balanced: { maxCalls: 4, maxInputTokens: 6_000, windowMs: 600_000 },
-  active: { maxCalls: 8, maxInputTokens: 12_000, windowMs: 600_000 }
+  eco: { maxCalls: 2, maxInputTokens: 2_000, maxOutputTokens: 360, maxOutputTokensPerCall: 180, windowMs: 600_000 },
+  balanced: { maxCalls: 4, maxInputTokens: 6_000, maxOutputTokens: 720, maxOutputTokensPerCall: 180, windowMs: 600_000 },
+  active: { maxCalls: 8, maxInputTokens: 12_000, maxOutputTokens: 1_440, maxOutputTokensPerCall: 180, windowMs: 600_000 }
 } as const;
 ```
 
 Invalid strings fall back to `balanced` or `local-template`; invalid URLs
 disable the remote provider and display a status warning.
 
-- [ ] **Step 2: Implement inline Comment Thread rendering**
+- [ ] **Step 2: Implement the official GitHub Copilot model adapter**
+
+Create `VsCodeLanguageModelProvider` as a VS Code-only adapter for the pure
+`ModelProvider` contract:
+
+- select models with `vscode.lm.selectChatModels({ vendor: "copilot" })`;
+- use the first available model selected by VS Code and the user's Copilot
+  entitlement;
+- send only the structured goal, evidence, references, and ask-first style;
+- pass cancellation through a `vscode.CancellationTokenSource`;
+- collect streamed fragments into one `ModelResponse`;
+- estimate token usage locally when the API does not expose exact usage;
+- throw a typed unavailable error when no Copilot model is available.
+
+The runtime catches this specific unavailable error, updates the status bar,
+and uses `LocalTemplateProvider` for that intervention. The fallback must be
+visible; it must not silently route context to a different remote provider.
+
+- [ ] **Step 3: Implement the `@pair` VS Code Chat participant**
+
+Contribute a chat participant with ID `adaptivePair.chat`, name `pair`, and
+commands:
+
+- `/explain` - explain the current evidence and trade-off;
+- `/trace` - describe the current symbol's relevant control/data flow;
+- `/session` - show goal, role, provider, and remaining token budget;
+- `/why` - expand the most recent inline question.
+- `/start` - explicitly start a pair session for the current workspace;
+- `/stop` - stop the session and clear all transient pair state.
+
+Register it with `vscode.chat.createChatParticipant`. The participant consumes
+the same active evidence, model router, cancellation, and memory as the inline
+runtime. It must not create a separate conversation state or send complete
+files. If there is no active evidence, it asks the user to select code or
+trigger `Review Current Block`.
+
+The Chat UI is user-initiated and handles longer discussion. It does not replace
+proactive inline presence because extensions cannot post unsolicited chat turns.
+
+- [ ] **Step 4: Implement inline Comment Thread rendering**
 
 Create one `vscode.CommentController` named `adaptivePair`. Render:
 
@@ -816,37 +889,53 @@ Create one `vscode.CommentController` named `adaptivePair`. Render:
 
 Dispose the previous active thread for the same URI before replacing it. Mark
 the thread `canReply = false` in this slice and expose deeper interaction through
-the `Adaptive Pair: Review Current Block` command.
+the `Adaptive Pair: Review Current Block` command and the `@pair` Chat
+participant.
 
-- [ ] **Step 3: Implement runtime orchestration**
+- [ ] **Step 5: Implement runtime orchestration**
 
 `PairRuntime` must:
 
-1. seed previous text for open documents;
-2. listen to TypeScript and JavaScript document changes;
-3. aggregate stable edits;
-4. cancel stale model requests per URI;
-5. analyze the latest episode;
-6. apply memory dismissal and intervention policy;
-7. use local or configured remote provider;
-8. verify the document version still matches before rendering;
-9. update the status item with `You drive - Pair navigates`;
-10. discover external harness signals and append an observe-only notice without
+1. start dormant and register no document-analysis work until `startSession`;
+2. seed previous text for open documents only when a session starts;
+3. listen to TypeScript and JavaScript document changes only while active;
+4. aggregate stable edits;
+5. cancel stale model requests per URI;
+6. analyze the latest episode;
+7. apply memory dismissal and intervention policy;
+8. use local, official VS Code Copilot, or configured OpenAI-compatible
+   provider;
+9. verify the document version still matches before rendering;
+10. update the status item with `Pair: off` or `You drive - Pair navigates`;
+11. discover external harness signals and append an observe-only notice without
     changing driver state.
+12. publish the latest evidence and session snapshot to the shared `@pair`
+    participant context.
+13. on `stopSession`, cancel timers and model calls, unregister active
+    document listeners, clear latest evidence and previous text, dispose all
+    Comment Threads, and return to dormant state.
 
-- [ ] **Step 4: Wire commands and secret storage**
+Session activity is in-memory and does not resume automatically after VS Code
+restart or workspace reload.
+
+- [ ] **Step 6: Wire commands, Chat, and secret storage**
 
 Update `src/extension.ts` to:
 
 - construct and start `PairRuntime`;
+- register the `adaptivePair.chat` Chat participant;
+- register `adaptivePair.startSession` and `adaptivePair.stopSession` for users
+  and cooperating agents;
 - register `adaptivePair.toggle`;
 - register `adaptivePair.reviewCurrentBlock`;
 - register `adaptivePair.setApiKey`;
-- store the API key under `adaptivePair.openaiCompatibleApiKey`;
+- bind API keys to opaque secret names derived from validated canonical
+  endpoint origins;
+- register `adaptivePair.resetMemory` for explicit corrupt-memory recovery;
 - rebuild runtime configuration after relevant setting changes;
 - dispose every listener, thread, status item, and pending timer.
 
-- [ ] **Step 5: Compile and lint the extension**
+- [ ] **Step 7: Compile and lint the extension**
 
 Run:
 
@@ -857,7 +946,7 @@ npm run lint
 
 Expected: both commands exit 0.
 
-- [ ] **Step 6: Manually exercise the development host**
+- [ ] **Step 8: Manually exercise the development host**
 
 Run the VS Code extension-development host from the repository:
 
@@ -866,10 +955,36 @@ code --extensionDevelopmentPath="$PWD"
 ```
 
 In a TypeScript file, add a new import and pause for the configured debounce.
-Expected: an inline Comment Thread appears at the import and the status bar
-shows `Pair: You drive`.
+Expected before start: no analysis occurs and status shows `Pair: off`.
 
-- [ ] **Step 7: Commit**
+Run `Adaptive Pair: Start Pairing Session` or press the contributed toggle
+shortcut, then add a new import and pause.
+
+Expected after start: an inline Comment Thread appears at the import and the
+status bar shows `Pair: You drive`.
+
+Run `Adaptive Pair: Stop Pairing Session`, edit again, and wait.
+
+Expected after stop: no new thread or model call occurs and existing transient
+threads are cleared.
+
+- [ ] **Step 9: Verify GitHub Copilot and Chat integration**
+
+With GitHub Copilot installed and authenticated:
+
+1. set `adaptivePair.model.provider` to `vscode-copilot`;
+2. trigger `Adaptive Pair: Review Current Block`;
+3. approve the VS Code model-access consent prompt if shown.
+4. open VS Code Chat and run `@pair /start`, followed by `@pair /why`;
+5. run `@pair /stop` and confirm later Chat commands do not invoke a model.
+
+Expected: the inline response is generated by a model returned from
+`vscode.lm.selectChatModels({ vendor: "copilot" })`, and `@pair /why` expands the
+same active evidence rather than starting unrelated context. When Copilot is
+unavailable, the status bar explicitly reports local-template fallback and no
+other remote provider receives context.
+
+- [ ] **Step 10: Commit**
 
 ```bash
 git add src/config src/vscode src/extension.ts
@@ -882,16 +997,84 @@ git commit -m "feat: render realtime inline pair guidance"
 
 **Files:**
 - Modify: `README.md`
+- Create: `.devcontainer/devcontainer.json`
+- Create: `.vscode/launch.json`
+- Create: `.vscode/tasks.json`
+- Create: `.github/workflows/ci.yml`
 - Create: `docs/configuration.md`
 - Create: `docs/architecture/vertical-slice.md`
 
 **Interfaces:**
 - Documents every setting, privacy boundary, supported evidence type, model adapter, and coexistence limitation.
+- Produces a GitHub Codespaces environment that installs with Node.js 24 LTS
+  and can build, test, package, and run the extension.
+- Produces PR CI that verifies the extension and uploads the packaged VSIX.
 - Produces an installable `.vsix`.
 
-- [ ] **Step 1: Document installation and first run**
+- [ ] **Step 1: Add Codespaces and extension-development configuration**
 
-Add exact commands to `README.md`:
+Create `.devcontainer/devcontainer.json` using the Node.js 24 Bookworm
+devcontainer image. Configure `npm ci` as `postCreateCommand` and install these
+Codespaces extensions:
+
+- `dbaeumer.vscode-eslint`;
+- `github.copilot`;
+- `github.copilot-chat`.
+
+Create `.vscode/tasks.json` with `npm: compile`, `npm: check`, and
+`npm: package` tasks. Create `.vscode/launch.json` with a `Run Adaptive Pair
+Extension` configuration that launches an Extension Development Host using the
+current workspace.
+
+- [ ] **Step 2: Add pull-request CI**
+
+Create `.github/workflows/ci.yml` that runs on pushes to `main` and pull
+requests:
+
+1. checkout;
+2. setup Node.js 24 with npm cache;
+3. `npm ci`;
+4. `npm run check`;
+5. `npm run package`;
+6. upload `adaptive-pair-harness-0.1.0.vsix` as an artifact.
+
+- [ ] **Step 3: Rewrite README for users**
+
+The root README is user documentation, not an implementation diary. Include:
+
+- what Adaptive Pair is and is not;
+- current supported language and evidence types;
+- prerequisites and GitHub Copilot requirements;
+- **Test in GitHub Codespaces** as the first setup path;
+- local installation from the generated VSIX;
+- explicit session start/stop commands, toggle shortcut, and `@pair /start`
+  / `@pair /stop`;
+- `@pair` Chat commands and inline Comment Thread behavior;
+- provider selection: local template, official VS Code Copilot, and
+  OpenAI-compatible;
+- privacy and token-budget behavior;
+- coexistence with Copilot, Superpowers, Cline, and other harnesses;
+- troubleshooting for no inline comment, Copilot unavailable, invalid provider,
+  and disabled/off session;
+- current navigator-only limitations;
+- contribution and license links.
+
+Codespaces instructions must provide this complete test sequence:
+
+```bash
+npm ci
+npm run check
+npm run package
+code --install-extension adaptive-pair-harness-0.1.0.vsix
+```
+
+Then instruct the user to reload VS Code, authenticate GitHub Copilot, open a
+TypeScript file, explicitly start the Pair, introduce a new import or
+compiler-emitted public declaration change, and test `@pair /why`.
+
+- [ ] **Step 4: Document local installation and first run**
+
+Include these exact local commands:
 
 ```bash
 npm install
@@ -903,7 +1086,7 @@ code --install-extension adaptive-pair-harness-0.1.0.vsix
 Document the new-import, exported-signature, and complexity-growth evidence
 types and state that the extension performs no project-file writes.
 
-- [ ] **Step 2: Document configuration and privacy**
+- [ ] **Step 5: Document configuration and privacy**
 
 Create `docs/configuration.md` with:
 
@@ -914,7 +1097,7 @@ Create `docs/configuration.md` with:
 - token budgets by interaction style;
 - disabling, cooldown, and local-only behavior.
 
-- [ ] **Step 3: Document the implemented architecture**
+- [ ] **Step 6: Document the implemented architecture**
 
 Create `docs/architecture/vertical-slice.md` covering:
 
@@ -926,7 +1109,7 @@ Create `docs/architecture/vertical-slice.md` covering:
 - coexistence discovery and why detection does not imply driver ownership;
 - explicit differences between this slice and the full design.
 
-- [ ] **Step 4: Run all verification**
+- [ ] **Step 7: Run all verification**
 
 Run:
 
@@ -945,7 +1128,7 @@ Expected:
 - `adaptive-pair-harness-0.1.0.vsix` is created;
 - `git diff --check` prints nothing.
 
-- [ ] **Step 5: Inspect the package**
+- [ ] **Step 8: Inspect the package**
 
 Run:
 
@@ -955,11 +1138,53 @@ unzip -l adaptive-pair-harness-0.1.0.vsix
 
 Expected: package includes `extension/package.json`, `extension/dist/src/**`,
 `extension/README.md`, and `extension/LICENSE`, and excludes source, tests,
-coverage, and design documents.
+coverage, design documents, `.devcontainer`, `.vscode`, and workflow files.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add README.md docs/configuration.md docs/architecture/vertical-slice.md
-git commit -m "docs: explain realtime pair vertical slice"
+git add README.md .devcontainer .vscode .github/workflows/ci.yml docs/configuration.md docs/architecture/vertical-slice.md
+git commit -m "docs: add Codespaces user workflow"
 ```
+
+- [ ] **Step 10: Prepare GitHub review without merging**
+
+After the broad branch review is clean:
+
+1. push `main` and the feature branch to a public GitHub repository;
+2. open a pull request targeting `main`;
+3. wait for CI and inspect every failed or skipped check;
+4. request GitHub Copilot code review;
+5. wait for the review, inspect every comment, and push fixes with covering
+   tests;
+6. repeat CI and review checks until the PR is merge-ready;
+7. leave the PR open and unmerged for the user to test in Codespaces.
+
+---
+
+## Whole-branch review corrections
+
+The final review wave strengthens the implemented slice without expanding its
+navigator-only boundary:
+
+- remote provider/model/endpoint settings are application-scoped and runtime
+  ignores workspace/folder overrides;
+- endpoints are canonicalized and validated, credentials are origin-bound, and
+  non-loopback HTTP plus URL credentials/query/fragment forms are rejected;
+- automatic remote evidence uses fixed kind-level summaries with hashed
+  identity and no raw analyzer/editor strings, while credential- or
+  local-resource-bearing explicit Chat requests remain local;
+- semantic analysis returns explicit stability, retains the last stable
+  baseline, and uses best-effort, generic, per-document TypeScript declaration
+  emission for public API changes; external modules remain unresolved and
+  module identity is hashed in evidence IDs;
+- cooldown begins after successful render and resets on stop;
+- rolling input/output budget ownership survives runtime rebuilds and completion
+  output is capped/accounted;
+- local Chat responses are command-specific and local `/trace` does not claim
+  unavailable flow analysis;
+- corrupt memory uses visible in-memory recovery with an explicit reset command;
+- Superpowers discovery matches direct `plans/*.md`, document repository
+  identity is multi-root aware, Node.js minimum is 22.13, and the approved
+  Shift-inclusive shortcut is restored;
+- OpenAI-compatible calls use deadlines and bounded response bodies.
