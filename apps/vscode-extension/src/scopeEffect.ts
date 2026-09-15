@@ -240,6 +240,7 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
       signal.throwIfAborted();
       const read = await this.access.readText(path, signal);
       if (read.status !== "ok") {
+        partial = true;
         continue;
       }
       const resolvedPath = canonicalRelative(read.path ?? path);

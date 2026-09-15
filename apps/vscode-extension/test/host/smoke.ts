@@ -699,11 +699,22 @@ suite("Adaptive Pair — isolated Extension Host smoke", () => {
   });
 
   test("14: /check runs the agreed plan and reports only a product result", async () => {
+    let modelRequests = 0;
+    const model: GrowthModel = {
+      request: () => {
+        modelRequests += 1;
+        return Promise.resolve({
+          level: 0,
+          kind: "question",
+          text: "unused",
+        });
+      },
+    };
     const result = await api.driveGrowthTurn({
       command: "check",
       prompt: "",
       grantConsent: true,
-      model: staticModel({ level: 0, kind: "question", text: "unused" }),
+      model,
     });
 
     const text = result.emitted.join("\n");
@@ -718,6 +729,7 @@ suite("Adaptive Pair — isolated Extension Host smoke", () => {
       0,
       "The /check route recorded a model-turn evaluation.",
     );
+    assert.equal(modelRequests, 0, "The /check route called the model.");
   });
 
   test("15: starts a distinct transfer task recorded as started, never demonstrated", async () => {

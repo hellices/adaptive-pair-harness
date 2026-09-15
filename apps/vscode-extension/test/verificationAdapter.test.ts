@@ -17,6 +17,7 @@ import type {
   ConfirmationPort,
   PackageScriptPort,
   ProcessRunPort,
+  RunCommand,
   RunOutcome,
   ScriptManifest,
   TestingRunPort,
@@ -31,6 +32,7 @@ interface Recorder {
   confirmations: number;
   scheduledMs: number[];
   cancelledDeadlines: number;
+  lastProcessCommand: RunCommand | undefined;
   lastProcessSignalAborted: () => boolean;
   lastTestingRequest: import("../src/verificationAdapter.js").TestingRunRequest | undefined;
 }
@@ -61,6 +63,7 @@ const makePorts = (
     confirmations: 0,
     scheduledMs: [],
     cancelledDeadlines: 0,
+    lastProcessCommand: undefined,
     lastProcessSignalAborted: () => lastSignal?.aborted ?? false,
     lastTestingRequest: undefined,
   };
@@ -90,8 +93,9 @@ const makePorts = (
     scripts: () => manifest,
   };
   const process: ProcessRunPort = {
-    run: (_command, signal) => {
+    run: (command, signal) => {
       recorder.processRuns += 1;
+      recorder.lastProcessCommand = command;
       return resolveOutcome(signal);
     },
   };
@@ -152,6 +156,7 @@ describe("VerificationAdapter — allowlisted execution", () => {
     expect(result.observation?.signal).toBeNull();
     expect(result.sensitiveData).toBe(false);
     expect(recorder.processRuns).toBe(1);
+    expect(recorder.lastProcessCommand).toEqual({ script: "test" });
     expect(recorder.scheduledMs).toContain(VERIFICATION_TIMEOUT_MS);
   });
 
@@ -163,6 +168,7 @@ describe("VerificationAdapter — allowlisted execution", () => {
     );
     expect(result.status).toBe("confirmed");
     expect(recorder.processRuns).toBe(1);
+    expect(recorder.lastProcessCommand).toEqual({ script: "lint:unit" });
   });
 
   it("runs VS Code Testing tests selected by the plan", async () => {

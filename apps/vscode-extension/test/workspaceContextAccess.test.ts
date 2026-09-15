@@ -494,6 +494,35 @@ describe("VscodeScopeAccess", () => {
     }
   });
 
+  it("does not discover sibling files beside an allowed file scope", async () => {
+    const root = await mkdtemp(join(tmpdir(), "adaptive-pair-scope-root-"));
+    try {
+      await mkdir(join(root, "src"));
+      const allowed = join(root, "src", "allowed.ts");
+      const sibling = join(root, "src", "sibling.ts");
+      await writeFile(allowed, "allowed", "utf8");
+      await writeFile(sibling, "sibling", "utf8");
+      git.state.workspaceRoot = root;
+      git.state.foundPaths = [
+        git.createUri(allowed),
+        git.createUri(sibling),
+      ];
+
+      await expect(
+        new VscodeScopeAccess(root).listPaths(
+          "**/*.ts",
+          ["src/allowed.ts"],
+          new AbortController().signal,
+        ),
+      ).resolves.toEqual({
+        paths: ["src/allowed.ts"],
+        truncated: false,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("prefers a dirty buffer opened through a symlink alias of the target", async () => {
     const root = await mkdtemp(join(tmpdir(), "adaptive-pair-scope-root-"));
     const alias = `${root}-alias`;

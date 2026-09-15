@@ -328,6 +328,30 @@ describe("StableEffectPort", () => {
     expect(result.partial).toBe(true);
   });
 
+  it("marks a search partial when an eligible file cannot be read", async () => {
+    const runner = new BoundedScopeEffectRunner({
+      listPaths: () =>
+        Promise.resolve({ paths: ["src/retry.ts"], truncated: false }),
+      readText: () => Promise.resolve({ status: "read-failed" }),
+    });
+
+    const result = await runner.run(
+      request({
+        toolName: "pair_search_scope",
+        kind: "read",
+        payload: { query: "retry" },
+        allowedPaths: ["src"],
+      }),
+      new AbortController().signal,
+    );
+
+    expect(result).toMatchObject({
+      status: "confirmed",
+      partial: true,
+      observation: { matches: [] },
+    });
+  });
+
   it("returns a cancelled result when a scope read is aborted", async () => {
     const controller = new AbortController();
     const runner = new BoundedScopeEffectRunner({

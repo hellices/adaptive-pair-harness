@@ -281,7 +281,12 @@ export class VscodeScopeAccess implements ScopeAccess {
         } catch {
           continue;
         }
-        if (!withinRoot(canonicalRoot, discoveredTarget)) {
+        if (
+          !withinRoot(canonicalRoot, discoveredTarget) ||
+          (targetStat.isFile()
+            ? !sameFilesystemIdentity(target, discoveredTarget)
+            : !withinRoot(target, discoveredTarget))
+        ) {
           continue;
         }
         const path = canonicalRelative(
