@@ -360,6 +360,7 @@ export class PairCoordinator implements PairCoordinatorPort {
       const result = await this.options.effects.execute(
         {
           operationId: operation.id,
+          workspaceId: snapshot.presence.workspaceId,
           workUnitId: workUnit.id,
           allowedPaths: [...workUnit.allowedPaths],
           toolName: name,
@@ -412,16 +413,21 @@ export class PairCoordinator implements PairCoordinatorPort {
       ) {
         continue;
       }
+      const workUnit = snapshot.session?.workUnit;
+      if (
+        workUnit === undefined ||
+        workUnit.id !== operation.workUnitId ||
+        workUnit.status !== "agreed"
+      ) {
+        continue;
+      }
 
       const result = await this.options.effects.execute(
         {
           operationId: operation.id,
+          workspaceId: snapshot.presence.workspaceId,
           workUnitId: operation.workUnitId,
-          allowedPaths: [
-            ...(snapshot.session?.workUnit?.id === operation.workUnitId
-              ? snapshot.session.workUnit.allowedPaths
-              : []),
-          ],
+          allowedPaths: [...workUnit.allowedPaths],
           toolName: descriptor.name,
           kind: operation.kind,
           payload: structuredClone(operation.input),

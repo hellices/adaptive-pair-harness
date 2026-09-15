@@ -622,6 +622,7 @@ describe("PairCoordinator", () => {
 
     expect(effects.calls[0]).toMatchObject({
       toolName: "pair_read_scope",
+      workspaceId: "workspace-1",
       workUnitId: "unit-1",
       allowedPaths: ["src/retry.ts"],
     });
@@ -869,6 +870,45 @@ describe("PairCoordinator", () => {
     await coordinator.reconcile();
 
     expect(effects.calls).toHaveLength(1);
+  });
+
+  it("does not replay a read after its work unit needs reconciliation", async () => {
+    const base = createReconcilingRuntime();
+    if (base.session?.workUnit === undefined) {
+      throw new Error("Expected a reconciling work unit.");
+    }
+    const snapshot: PairRuntimeSnapshot = {
+      ...base,
+      session: {
+        ...base.session,
+        operations: [
+          {
+            id: "stale-read",
+            workUnitId: base.session.workUnit.id,
+            toolName: "pair_read_scope",
+            kind: "read",
+            input: { path: "packages/runtime/src/coordinator.ts" },
+            runtimeRevision: base.revision,
+            authorityEpoch: base.session.authorityEpoch,
+            status: "authorized",
+            summary: undefined,
+            userActionGrantId: undefined,
+          },
+        ],
+      },
+    };
+    const effects = new FakeEffectPort([]);
+    const coordinator = new PairCoordinator({
+      store: new FakePairStore([], snapshot),
+      effects,
+      clock: new FakeClock(),
+      ids: new FakeIdSource(),
+      streamId: "workspace-1",
+    });
+
+    await coordinator.reconcile();
+
+    expect(effects.calls).toHaveLength(0);
   });
 
   it("treats duplicate observed results as idempotent", async () => {

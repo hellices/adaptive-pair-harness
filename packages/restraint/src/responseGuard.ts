@@ -41,14 +41,13 @@ const containsTargetImplementation = (
   identifier: string,
 ): boolean => {
   const escaped = escapeRegExp(identifier);
-  const targetName = `${escaped}[A-Za-z0-9_$]*`;
+  const targetName = `${escaped}(?:[A-Z0-9_$][A-Za-z0-9_$]*)?`;
 
   return new RegExp(
     [
       `(?:function|class|interface|type|enum)\\s+${targetName}\\b`,
       `(?:const|let|var)\\s+${targetName}\\b`,
       `\\b${targetName}\\s*[:=]\\s*(?:async\\s*)?(?:\\(|function\\b)`,
-      `\\b${targetName}\\s*\\(`,
       `\`\`\`[\\s\\S]*?\\b${targetName}\\b[\\s\\S]*?\`\`\``,
     ].join("|"),
     "u",

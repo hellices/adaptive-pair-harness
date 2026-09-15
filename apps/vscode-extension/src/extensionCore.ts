@@ -115,9 +115,14 @@ export const createExtensionRuntime = (
     }
     return createVerificationAdapter(root, undefined, confirmation);
   };
-  const resolveScopeAccess = (): VscodeScopeAccess | undefined => {
-    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    return root === undefined ? undefined : new VscodeScopeAccess(root, ledger);
+  const resolveScopeAccess = (
+    request: import("@adaptive-pair/runtime").EffectRequest,
+  ): VscodeScopeAccess | undefined => {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    return folder === undefined ||
+      folder.uri.toString() !== request.workspaceId
+      ? undefined
+      : new VscodeScopeAccess(folder.uri.fsPath, ledger);
   };
   const effects = new StableEffectPort({
     resolveVerification,

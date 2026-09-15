@@ -16,6 +16,9 @@ export interface PairStore {
 
 export interface EffectRequest {
   readonly operationId: string;
+  /** Host-trusted workspace identity captured by the coordinator. */
+  readonly workspaceId: string;
+  /** Host-trusted work-unit identity and scope; never caller-supplied. */
   readonly workUnitId: string;
   readonly allowedPaths: readonly string[];
   readonly toolName: PairToolName;

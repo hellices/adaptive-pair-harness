@@ -26,7 +26,9 @@ export interface StableEffectPortOptions {
   /** Resolve the bounded workspace reader used by read/search effects. */
   readonly resolveScope?: () => ScopeEffectRunner | undefined;
   /** Resolve raw workspace access for the built-in bounded scope runner. */
-  readonly resolveScopeAccess?: () => ScopeAccess | undefined;
+  readonly resolveScopeAccess?: (
+    request: EffectRequest,
+  ) => ScopeAccess | undefined;
 }
 
 const declined = (request: EffectRequest, summary: string): EffectResult => ({
@@ -86,7 +88,7 @@ export class StableEffectPort implements EffectPort {
       request.toolName === "pair_read_scope" ||
       request.toolName === "pair_search_scope"
     ) {
-      const access = this.options.resolveScopeAccess?.();
+      const access = this.options.resolveScopeAccess?.(request);
       const runner =
         this.options.resolveScope?.() ??
         (access === undefined ? undefined : new BoundedScopeEffectRunner(access));

@@ -182,6 +182,27 @@ describe("guardGrowthResponse", () => {
     });
   });
 
+  it.each([
+    ["index", "Look at what indexOf() returns when the value is absent."],
+    ["app", "Which array method would you apply (map or reduce)?"],
+    ["tests", "Re-run the tests (in watch mode) and read the first failure."],
+  ])("does not treat ordinary %s prose as a target implementation", (identifier, text) => {
+    const result = guardGrowthResponse(
+      {
+        level: 2,
+        kind: "hint",
+        text,
+      },
+      {
+        authorizedHintLevel: 2,
+        revealAuthorized: false,
+        targetIdentifiers: [identifier],
+      },
+    );
+
+    expect(result).toMatchObject({ accepted: true });
+  });
+
   it("withholds any diff or patch fence even without known identifiers", () => {
     const result = guardGrowthResponse(
       {

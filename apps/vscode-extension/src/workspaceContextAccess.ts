@@ -100,20 +100,29 @@ export class VscodeScopeAccess implements ScopeAccess {
     if (!withinRoot(canonicalRoot, canonicalTarget)) {
       return { status: "unsafe-path" };
     }
+    const resolvedPath = canonicalRelative(
+      relative(canonicalRoot, canonicalTarget).replace(/\\/gu, "/"),
+    );
+    if (
+      resolvedPath === undefined ||
+      isSecretPath(resolvedPath) ||
+      isBinaryPath(resolvedPath)
+    ) {
+      return { status: "unsafe-path" };
+    }
 
     const document = vscode.workspace.textDocuments.find(
       candidate =>
         candidate.isDirty === true &&
-        canonicalRelative(
-          vscode.workspace.asRelativePath(candidate.uri, false),
-        ) === path,
+        (resolve(candidate.uri.fsPath) === absolute ||
+          resolve(candidate.uri.fsPath) === canonicalTarget),
     );
     if (document !== undefined) {
       const text = document.getText();
       if (Buffer.byteLength(text, "utf8") > MAX_CONTEXT_FILE_BYTES) {
         return { status: "too-large" };
       }
-      return { status: "ok", text };
+      return { status: "ok", path: resolvedPath, text };
     }
 
     try {
@@ -129,7 +138,11 @@ export class VscodeScopeAccess implements ScopeAccess {
       if (content.includes(0)) {
         return { status: "binary" };
       }
-      return { status: "ok", text: content.toString("utf8") };
+      return {
+        status: "ok",
+        path: resolvedPath,
+        text: content.toString("utf8"),
+      };
     } catch (error) {
       return errorCode(error) === "ENOENT"
         ? { status: "not-found" }
@@ -140,7 +153,10 @@ export class VscodeScopeAccess implements ScopeAccess {
   public async listPaths(
     pattern: string | undefined,
     signal: AbortSignal,
-  ): Promise<readonly string[]> {
+  ): Promise<{
+    readonly paths: readonly string[];
+    readonly truncated: boolean;
+  }> {
     signal.throwIfAborted();
     this.ledger?.recordWorkspaceRead();
     const requestedPattern = pattern?.trim() || "**/*";
@@ -149,7 +165,7 @@ export class VscodeScopeAccess implements ScopeAccess {
       /^[A-Za-z]:/u.test(requestedPattern) ||
       requestedPattern.split(/[\\/]/u).includes("..")
     ) {
-      return [];
+      return { paths: [], truncated: false };
     }
 
     const uris = await vscode.workspace.findFiles(
@@ -158,12 +174,12 @@ export class VscodeScopeAccess implements ScopeAccess {
         requestedPattern,
       ),
       "**/{.git,node_modules,.ssh,.aws,.gnupg,.gpg,.docker,.kube,secrets,.secrets}/**",
-      500,
+      5_001,
     );
     signal.throwIfAborted();
 
     const paths = new Set<string>();
-    for (const uri of uris) {
+    for (const uri of uris.slice(0, 5_000)) {
       const path = canonicalRelative(
         relative(this.rootPath, uri.fsPath).replace(/\\/gu, "/"),
       );
@@ -175,7 +191,10 @@ export class VscodeScopeAccess implements ScopeAccess {
         paths.add(path);
       }
     }
-    return [...paths].sort();
+    return {
+      paths: [...paths].sort(),
+      truncated: uris.length > 5_000,
+    };
   }
 }
 

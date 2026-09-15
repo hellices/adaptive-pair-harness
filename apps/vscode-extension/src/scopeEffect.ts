@@ -1,4 +1,5 @@
 import type { EffectRequest, EffectResult } from "@adaptive-pair/runtime";
+import { canonicalRelative } from "./workspaceContext.js";
 
 const MAX_READ_LINES = 200;
 const MAX_RESULT_CHARACTERS = 12_000;
@@ -7,7 +8,12 @@ const MAX_SEARCH_MATCHES = 50;
 const MAX_MATCH_CHARACTERS = 300;
 
 export type ScopeReadResult =
-  | { readonly status: "ok"; readonly text: string; readonly partial?: boolean }
+  | {
+      readonly status: "ok";
+      readonly path?: string;
+      readonly text: string;
+      readonly partial?: boolean;
+    }
   | {
       readonly status:
         | "not-found"
@@ -22,26 +28,15 @@ export interface ScopeAccess {
   listPaths(
     pattern: string | undefined,
     signal: AbortSignal,
-  ): Promise<readonly string[]>;
+  ): Promise<{
+    readonly paths: readonly string[];
+    readonly truncated: boolean;
+  }>;
 }
 
 export interface ScopeEffectRunner {
   run(request: EffectRequest, signal: AbortSignal): Promise<EffectResult>;
 }
-
-const canonicalRelative = (raw: string): string | undefined => {
-  const normalized = raw.replace(/\\/gu, "/");
-  if (normalized.startsWith("/") || /^[A-Za-z]:/u.test(normalized)) {
-    return undefined;
-  }
-  const segments = normalized
-    .split("/")
-    .filter(segment => segment !== "" && segment !== ".");
-  if (segments.length === 0 || segments.includes("..")) {
-    return undefined;
-  }
-  return segments.join("/");
-};
 
 const withinAllowedScope = (
   path: string,
@@ -81,17 +76,30 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
     request: EffectRequest,
     signal: AbortSignal,
   ): Promise<EffectResult> {
-    signal.throwIfAborted();
-    return request.toolName === "pair_read_scope"
-      ? await this.read(request, signal)
-      : request.toolName === "pair_search_scope"
-        ? await this.search(request, signal)
-        : result(
-            request,
-            "declined",
-            "The requested operation is not a scope read.",
-            { reason: "unsupported-scope-tool" },
-          );
+    try {
+      signal.throwIfAborted();
+      return request.toolName === "pair_read_scope"
+        ? await this.read(request, signal)
+        : request.toolName === "pair_search_scope"
+          ? await this.search(request, signal)
+          : result(
+              request,
+              "declined",
+              "The requested operation is not a scope read.",
+              { reason: "unsupported-scope-tool" },
+            );
+    } catch (error) {
+      if (!signal.aborted) {
+        throw error;
+      }
+      return result(
+        request,
+        "cancelled",
+        "The bounded scope read was cancelled.",
+        { reason: "scope-read-cancelled" },
+        true,
+      );
+    }
   }
 
   private async read(
@@ -137,21 +145,40 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
         { reason: read.status },
       );
     }
+    const resolvedPath = canonicalRelative(read.path ?? path);
+    if (
+      resolvedPath === undefined ||
+      !withinAllowedScope(resolvedPath, request.allowedPaths)
+    ) {
+      return result(
+        request,
+        "declined",
+        "The resolved file is outside the agreed work-unit scope.",
+        { reason: "resolved-path-outside-scope" },
+      );
+    }
 
     const lines = read.text.split(/\r?\n/u);
+    if (startLine > lines.length) {
+      return result(
+        request,
+        "declined",
+        "The requested line range starts after the end of the file.",
+        { reason: "line-range-out-of-bounds" },
+      );
+    }
+    const explicitEnd = request.payload["endLine"] !== undefined;
+    const maximumEnd = startLine + MAX_READ_LINES - 1;
     const boundedEnd = Math.min(
       requestedEnd,
-      startLine + MAX_READ_LINES - 1,
-      Math.max(startLine - 1, lines.length),
+      maximumEnd,
+      lines.length,
     );
-    const selected =
-      startLine > lines.length
-        ? ""
-        : lines.slice(startLine - 1, boundedEnd).join("\n");
+    const selected = lines.slice(startLine - 1, boundedEnd).join("\n");
     const text = selected.slice(0, MAX_RESULT_CHARACTERS);
     const partial =
       read.partial === true ||
-      boundedEnd < requestedEnd ||
+      (explicitEnd ? requestedEnd > maximumEnd : lines.length > maximumEnd) ||
       text.length < selected.length;
 
     return result(
@@ -159,7 +186,7 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
       "confirmed",
       "Read bounded text from the agreed work-unit scope.",
       {
-        path,
+        path: resolvedPath,
         startLine,
         endLine: boundedEnd,
         text,
@@ -185,22 +212,30 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
       typeof request.payload["pattern"] === "string"
         ? request.payload["pattern"]
         : undefined;
-    const paths = await this.access.listPaths(pattern, signal);
+    const discovery = await this.access.listPaths(pattern, signal);
+    const scopedPaths = discovery.paths
+      .map(canonicalRelative)
+      .filter(
+        (path): path is string =>
+          path !== undefined &&
+          withinAllowedScope(path, request.allowedPaths),
+      );
     const matches: { path: string; line: number; text: string }[] = [];
-    let partial = paths.length > MAX_SEARCH_FILES;
+    let partial =
+      discovery.truncated || scopedPaths.length > MAX_SEARCH_FILES;
     const needle = query.toLocaleLowerCase();
 
-    for (const rawPath of paths.slice(0, MAX_SEARCH_FILES)) {
+    for (const path of scopedPaths.slice(0, MAX_SEARCH_FILES)) {
       signal.throwIfAborted();
-      const path = canonicalRelative(rawPath);
-      if (
-        path === undefined ||
-        !withinAllowedScope(path, request.allowedPaths)
-      ) {
-        continue;
-      }
       const read = await this.access.readText(path, signal);
       if (read.status !== "ok") {
+        continue;
+      }
+      const resolvedPath = canonicalRelative(read.path ?? path);
+      if (
+        resolvedPath === undefined ||
+        !withinAllowedScope(resolvedPath, request.allowedPaths)
+      ) {
         continue;
       }
       partial ||= read.partial === true;
@@ -212,7 +247,7 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
           continue;
         }
         const match = {
-          path,
+          path: resolvedPath,
           line: index + 1,
           text: line.slice(0, MAX_MATCH_CHARACTERS),
         };
