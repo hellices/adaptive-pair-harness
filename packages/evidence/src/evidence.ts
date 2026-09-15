@@ -30,8 +30,20 @@ export const MAX_EVIDENCE_DETAIL = 500;
 const DEFAULT_FRESHNESS_WINDOW_MS = 5 * 60 * 1000;
 const ELLIPSIS = "…";
 
-const ABSOLUTE_PATH =
-  /(?:^|[\s"'(<=[{:])\/(?!\/)[^\s"'()<>[\]{}]+|[A-Za-z]:[\\/]/u;
+const POSIX_ABSOLUTE_PATH =
+  /(?:^|[^\p{L}\p{N}._~/])\/(?:$|(?!\/)\S+)/u;
+const POSIX_NETWORK_PATH =
+  /(?:^|[\s"'(<=[{,;])\/\/[^\s/]+\/\S+/u;
+const WINDOWS_DRIVE_PATH =
+  /(?:^|[^\p{L}\p{N}._~])[A-Za-z]:[\\/]/u;
+const WINDOWS_NETWORK_PATH =
+  /(?:^|[^\p{L}\p{N}._~\\])\\\\[^\\\s]+\\/u;
+
+const containsAbsolutePath = (value: string): boolean =>
+  POSIX_ABSOLUTE_PATH.test(value) ||
+  POSIX_NETWORK_PATH.test(value) ||
+  WINDOWS_DRIVE_PATH.test(value) ||
+  WINDOWS_NETWORK_PATH.test(value);
 
 const truncate = (value: string, maxLength: number): string => {
   if (value.length <= maxLength) {
@@ -54,7 +66,7 @@ const sanitizeDetail = (detail: string): string => {
     throw new Error("Local evidence detail must be a single line.");
   }
 
-  if (ABSOLUTE_PATH.test(detail)) {
+  if (containsAbsolutePath(detail)) {
     throw new Error("Local evidence detail must not contain an absolute path.");
   }
 

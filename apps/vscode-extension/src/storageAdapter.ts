@@ -41,8 +41,20 @@ export class JournalIntegrityError extends Error {
 
 const GENESIS_HASH = "";
 const MAX_SERIALIZED_STRING = 500;
-const ABSOLUTE_PATH =
-  /(?:^|[\s"'(<=[{:])\/(?!\/)[^\s"'()<>[\]{}]+|[A-Za-z]:[\\/]/u;
+const POSIX_ABSOLUTE_PATH =
+  /(?:^|[^\p{L}\p{N}._~/])\/(?:$|(?!\/)\S+)/u;
+const POSIX_NETWORK_PATH =
+  /(?:^|[\s"'(<=[{,;])\/\/[^\s/]+\/\S+/u;
+const WINDOWS_DRIVE_PATH =
+  /(?:^|[^\p{L}\p{N}._~])[A-Za-z]:[\\/]/u;
+const WINDOWS_NETWORK_PATH =
+  /(?:^|[^\p{L}\p{N}._~\\])\\\\[^\\\s]+\\/u;
+
+const containsAbsolutePath = (value: string): boolean =>
+  POSIX_ABSOLUTE_PATH.test(value) ||
+  POSIX_NETWORK_PATH.test(value) ||
+  WINDOWS_DRIVE_PATH.test(value) ||
+  WINDOWS_NETWORK_PATH.test(value);
 
 const canonicalize = (value: unknown): unknown => {
   if (Array.isArray(value)) {
@@ -81,7 +93,7 @@ const assertSerializable = (value: unknown): void => {
         "Refusing to serialize multi-line or binary content.",
       );
     }
-    if (ABSOLUTE_PATH.test(value)) {
+    if (containsAbsolutePath(value)) {
       throw new JournalIntegrityError(
         "privacy",
         "Refusing to serialize an absolute path.",

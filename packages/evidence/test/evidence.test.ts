@@ -238,6 +238,10 @@ describe("createLocalEvidence", () => {
   it.each([
     "/secret.txt",
     "Read failed: /secret.txt",
+    "files: src/a.ts,/Users/alice/secret.ts",
+    "error-/Users/alice/secret.ts",
+    "//server/share/secret.ts",
+    "\\\\server\\share\\secret.ts",
   ])("rejects root-level POSIX path detail %s", detail => {
     expect(() =>
       createLocalEvidence({

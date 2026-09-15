@@ -122,6 +122,18 @@ describe("LocalProfileStore — forbidden data rejected without silent truncatio
     ).toThrow(ProfileValidationError);
   });
 
+  it("allows an HTTPS URL without treating its scheme as a drive path", () => {
+    const store = createLocalProfileStore(persistence);
+
+    expect(() =>
+      store.correct({
+        kind: "reflection",
+        summary: "Reviewed the RFC at https://example.com",
+        acceptedAt: 1,
+      }),
+    ).not.toThrow();
+  });
+
   it("rejects source code in a reflection", () => {
     const store = createLocalProfileStore(persistence);
     expect(() =>

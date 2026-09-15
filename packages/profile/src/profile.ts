@@ -68,12 +68,24 @@ const DEFAULT_PROFILE: LocalProfile = Object.freeze({
   acceptedReflections: Object.freeze([]),
 });
 
-const ABSOLUTE_PATH =
-  /(?:^|[\s"'(<=[{:])\/(?!\/)[^\s"'()<>[\]{}]+|[A-Za-z]:[\\/]/u;
+const POSIX_ABSOLUTE_PATH =
+  /(?:^|[^\p{L}\p{N}._~/])\/(?:$|(?!\/)\S+)/u;
+const POSIX_NETWORK_PATH =
+  /(?:^|[\s"'(<=[{,;])\/\/[^\s/]+\/\S+/u;
+const WINDOWS_DRIVE_PATH =
+  /(?:^|[^\p{L}\p{N}._~])[A-Za-z]:[\\/]/u;
+const WINDOWS_NETWORK_PATH =
+  /(?:^|[^\p{L}\p{N}._~\\])\\\\[^\\\s]+\\/u;
 const WINDOWS_SEPARATOR = /\\/u;
 const DIAGNOSTIC = /[\w.$/-]+:\d+:\d+|\bTS\d{3,}\b|\berror\s+[A-Z]\w+\d+\b/u;
 const SOURCE_TOKENS =
   /=>|;\s*$|[{}]|\bfunction\b|\bconst\b|\blet\b|\bimport\b|\bexport\b|\bclass\b|\bdef\b|\breturn\b/u;
+
+const containsAbsolutePath = (value: string): boolean =>
+  POSIX_ABSOLUTE_PATH.test(value) ||
+  POSIX_NETWORK_PATH.test(value) ||
+  WINDOWS_DRIVE_PATH.test(value) ||
+  WINDOWS_NETWORK_PATH.test(value);
 
 /**
  * Reject any value that is too long, an absolute path, source code,
@@ -88,7 +100,7 @@ const assertClean = (value: string, field: string): void => {
       `${field} exceeds the ${String(MAX_ENTRY_CHARACTERS)}-character limit.`,
     );
   }
-  if (ABSOLUTE_PATH.test(value) || WINDOWS_SEPARATOR.test(value)) {
+  if (containsAbsolutePath(value) || WINDOWS_SEPARATOR.test(value)) {
     throw new ProfileValidationError(
       "absolute-path",
       field,

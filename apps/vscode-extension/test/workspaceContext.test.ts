@@ -438,6 +438,19 @@ describe("LocalJournal", () => {
     ).rejects.toBeInstanceOf(JournalIntegrityError);
   });
 
+  it.each([
+    "files: src/a.ts,/Users/alice/secret.ts",
+    "error-/Users/alice/secret.ts",
+    "//server/share/secret.ts",
+    "\\\\server\\share\\secret.ts",
+  ])("refuses absolute path form %s", async leaked => {
+    const journal = new LocalJournal(fs, "/storage");
+
+    await expect(
+      journal.append(event("entry-captured", { detail: leaked })),
+    ).rejects.toBeInstanceOf(JournalIntegrityError);
+  });
+
   it("refuses non-plain payload values before hashing or persistence", async () => {
     const journal = new LocalJournal(fs, "/storage");
 
