@@ -1,0 +1,36 @@
+{
+  "name": "adaptive-pair-monorepo",
+  "version": "0.2.0-preview.1",
+  "private": true,
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "clean": "npm run clean --workspaces --if-present",
+    "typecheck": "tsc -b",
+    "lint": "eslint packages apps scripts",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "build": "node scripts/build-extension.mjs",
+    "test:host": "node scripts/test-extension-host.mjs",
+    "package": "node scripts/package-extension.mjs",
+    "check": "npm run typecheck && npm run lint && npm run test"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.13.3",
+    "@vitest/coverage-v8": "5.0.0",
+    "@vscode/test-electron": "3.1.0",
+    "esbuild": "0.28.2",
+    "eslint": "10.10.0",
+    "fast-check": "4.9.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.69.0",
+    "vitest": "5.0.0"
+  }
+}

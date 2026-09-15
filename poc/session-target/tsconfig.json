@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "lib": ["ES2022", "DOM"],
+    "rootDir": ".",
+    "outDir": "dist",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "sourceMap": true,
+    "types": ["node", "mocha"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "test/runHostTests.ts",
+    "test/suite/**/*.ts",
+    "test/unit/**/*.ts",
+    "vscode.d.ts",
+    "vscode.proposed.chatProvider.d.ts",
+    "vscode.proposed.chatSessionsProvider.d.ts"
+  ]
+}

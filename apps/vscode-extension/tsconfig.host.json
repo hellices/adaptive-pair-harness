@@ -1,0 +1,39 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": [
+      "ES2023",
+      "DOM"
+    ],
+    "rootDir": ".",
+    "outDir": "dist/host",
+    "tsBuildInfoFile": "dist/host/tsconfig.tsbuildinfo",
+    "types": [
+      "node",
+      "mocha"
+    ]
+  },
+  "references": [
+    {
+      "path": "./tsconfig.json"
+    },
+    {
+      "path": "../../packages/protocol"
+    },
+    {
+      "path": "../../packages/harness"
+    },
+    {
+      "path": "../../packages/restraint"
+    },
+    {
+      "path": "../../packages/runtime"
+    }
+  ],
+  "include": [
+    "test/host/**/*.ts"
+  ],
+  "exclude": [
+    "test/host/fixture/**"
+  ]
+}
