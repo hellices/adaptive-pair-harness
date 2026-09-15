@@ -46,6 +46,7 @@ const git = vi.hoisted(() => {
     relativePathOverride: undefined as
       | ((fsPath: string) => string | undefined)
       | undefined,
+    findRequests: [] as { readonly base: FakeUri; readonly pattern: string }[],
   };
 
   const reset = (): void => {
@@ -55,6 +56,7 @@ const git = vi.hoisted(() => {
     state.foundPaths = [];
     state.textDocuments = [];
     state.relativePathOverride = undefined;
+    state.findRequests = [];
   };
 
   return { createUri, state, reset };
@@ -88,8 +90,12 @@ vi.mock("vscode", () => {
         return git.state.textDocuments;
       },
       asRelativePath,
-      findFiles: (): Promise<readonly FakeUri[]> =>
-        Promise.resolve(git.state.foundPaths),
+      findFiles: (
+        include: { readonly base: FakeUri; readonly pattern: string },
+      ): Promise<readonly FakeUri[]> => {
+        git.state.findRequests.push(include);
+        return Promise.resolve(git.state.foundPaths);
+      },
     },
     languages: {
       getDiagnostics: (): readonly [FakeUri, readonly unknown[]][] => {
@@ -251,7 +257,7 @@ describe("VscodeScopeAccess", () => {
       ).resolves.toEqual({ status: "unsafe-path" });
       await expect(
         access.listPaths(
-          "**/*.ts",
+          "src/**/*.ts",
           ["src"],
           new AbortController().signal,
         ),
@@ -259,6 +265,9 @@ describe("VscodeScopeAccess", () => {
         paths: ["src/retry.ts"],
         truncated: false,
       });
+      expect(git.state.findRequests).toHaveLength(1);
+      expect(git.state.findRequests[0]?.base.fsPath).toMatch(/\/src$/u);
+      expect(git.state.findRequests[0]?.pattern).toBe("**/*.ts");
     } finally {
       await rm(root, { recursive: true, force: true });
       await rm(outside, { recursive: true, force: true });

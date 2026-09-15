@@ -211,12 +211,21 @@ export class VscodeScopeAccess implements ScopeAccess {
       }
 
       const base = targetStat.isFile() ? dirname(target) : target;
+      const scopePrefix = `${scope}/`;
+      const relativePattern =
+        requestedPattern === scope
+          ? targetStat.isFile()
+            ? basename(target)
+            : "**/*"
+          : requestedPattern.startsWith(scopePrefix)
+            ? requestedPattern.slice(scopePrefix.length)
+            : requestedPattern;
       const scopedPattern =
         pattern === undefined || pattern.trim().length === 0
           ? targetStat.isFile()
             ? basename(target)
             : "**/*"
-          : requestedPattern;
+          : relativePattern;
       const remaining = 5_000 - paths.size;
       if (remaining <= 0) {
         truncated = true;

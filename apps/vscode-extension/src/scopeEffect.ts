@@ -89,15 +89,21 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
               "The requested operation is not a scope read.",
               { reason: "unsupported-scope-tool" },
             );
-    } catch (error) {
-      if (!signal.aborted) {
-        throw error;
+    } catch {
+      if (signal.aborted) {
+        return result(
+          request,
+          "cancelled",
+          "The bounded scope read was cancelled.",
+          { reason: "scope-read-cancelled" },
+          true,
+        );
       }
       return result(
         request,
-        "cancelled",
-        "The bounded scope read was cancelled.",
-        { reason: "scope-read-cancelled" },
+        "failed",
+        "Adaptive Pair could not access the agreed workspace scope.",
+        { reason: "scope-access-failed" },
         true,
       );
     }

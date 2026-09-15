@@ -336,6 +336,27 @@ describe("StableEffectPort", () => {
     });
   });
 
+  it("returns a failed result instead of throwing when scope access fails", async () => {
+    const runner = new BoundedScopeEffectRunner({
+      listPaths: () => Promise.reject(new Error("workspace disappeared")),
+      readText: () => Promise.reject(new Error("workspace disappeared")),
+    });
+
+    await expect(
+      runner.run(
+        request({
+          toolName: "pair_search_scope",
+          kind: "read",
+          payload: { query: "retry" },
+        }),
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      status: "failed",
+      observation: { reason: "scope-access-failed" },
+    });
+  });
+
   it("does not mark a complete short default read partial", async () => {
     const port = new StableEffectPort({
       resolveScopeAccess: () => ({
