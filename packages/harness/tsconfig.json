@@ -9,7 +9,8 @@
     { "path": "../protocol" },
     { "path": "../session-core" },
     { "path": "../modes" },
-    { "path": "../restraint" }
+    { "path": "../restraint" },
+    { "path": "../testkit" }
   ],
   "include": ["src/**/*.ts", "test/**/*.ts"]
 }

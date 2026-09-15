@@ -19,5 +19,8 @@
     "@adaptive-pair/harness": "0.2.0-preview.1",
     "@adaptive-pair/protocol": "0.2.0-preview.1",
     "@adaptive-pair/session-core": "0.2.0-preview.1"
+  },
+  "devDependencies": {
+    "@adaptive-pair/testkit": "0.2.0-preview.1"
   }
 }

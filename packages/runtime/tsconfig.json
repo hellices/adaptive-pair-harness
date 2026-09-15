@@ -10,7 +10,8 @@
   "references": [
     { "path": "../protocol" },
     { "path": "../session-core" },
-    { "path": "../harness" }
+    { "path": "../harness" },
+    { "path": "../testkit" }
   ],
   "include": ["src/**/*.ts", "test/**/*.ts"]
 }
