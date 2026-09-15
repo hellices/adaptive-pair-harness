@@ -16,6 +16,8 @@ export interface PairStore {
 
 export interface EffectRequest {
   readonly operationId: string;
+  readonly workUnitId: string;
+  readonly allowedPaths: readonly string[];
   readonly toolName: PairToolName;
   readonly kind: "read" | "edit" | "check";
   readonly payload: Readonly<Record<string, unknown>>;

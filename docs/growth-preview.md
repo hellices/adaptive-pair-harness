@@ -52,6 +52,13 @@ own separate confirmation before any process starts. Only an existing root
 package script named `test`, `check`, `lint`, `typecheck`, or `build` (with an
 optional `:suffix`) can be run; anything else is refused rather than guessed.
 
+The Stable VSIX contributes only public tools that are operational in this
+preview: Pair state, bounded scope read/search, agreed verification, and session
+close. Attempt, hypothesis, hint, and reveal transitions stay on the controlled
+`@pair` routes so a model cannot author human learning evidence through a
+generic tool call. Forward-only mutation, handoff, and transfer-recording tools
+are not advertised.
+
 ## Walkthroughs
 
 ### Greenfield (start new work)
@@ -151,9 +158,8 @@ Stable VSIX intentionally contains no `enabledApiProposals` and no
 - Growth Mode is the only implemented mode. Pair Mode AI edits, Delivery Mode
   commands, and the native Agent Plugin are out of scope for this preview; their
   tools are declined by the Stable shell.
-- The AI never applies edits or runs delivery commands in this preview:
-  `adaptive_pair_apply_edit` and `adaptive_pair_run_command` are unavailable and
-  rejected in Growth Mode.
+- The AI never applies edits or runs delivery commands in this preview. Those
+  forward-only tools are not contributed by the Stable VSIX.
 - Observed verification uses an allowlisted root package script
   (`test`, `check`, `lint`, `typecheck`, or `build`). VS Code Stable exposes no
   documented consumer API to run another provider's selected tests and observe
@@ -170,9 +176,8 @@ Stable VSIX intentionally contains no `enabledApiProposals` and no
 - `/transfer` starts an independent variation and records only that it started.
   Completing a transfer, and any resulting Growth demonstration, is not
   implemented in this preview and is never claimed.
-- The `adaptive_pair_accept_handoff` and `adaptive_pair_record_transfer` tools
-  are contributed for forward compatibility but are not routable in this
-  preview; the policy hides them in every current mode.
+- Forward-only handoff and transfer-recording tools are not contributed by the
+  Stable VSIX until their complete routes exist.
 - This preview makes no claim that it improves learning or productivity.
 
 ## License

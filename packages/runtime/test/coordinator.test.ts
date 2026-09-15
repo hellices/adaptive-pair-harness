@@ -604,6 +604,29 @@ describe("PairCoordinator", () => {
     expect(prepared.tools.authorityEpoch).toBe(3);
   });
 
+  it("passes the trusted work-unit scope to read effects", async () => {
+    const effects = new FakeEffectPort([]);
+    const coordinator = new PairCoordinator({
+      store: new FakePairStore([], growthRuntime()),
+      effects,
+      clock: new FakeClock(),
+      ids: new FakeIdSource(),
+      streamId: "workspace-1",
+    });
+
+    await coordinator.invokeTool(
+      "pair_read_scope",
+      { path: "src/retry.ts" },
+      new AbortController().signal,
+    );
+
+    expect(effects.calls[0]).toMatchObject({
+      toolName: "pair_read_scope",
+      workUnitId: "unit-1",
+      allowedPaths: ["src/retry.ts"],
+    });
+  });
+
   it("uses one configured stream id for load, append, and save", async () => {
     const store = new FakePairStore([], growthRuntime());
     const coordinator = new PairCoordinator({

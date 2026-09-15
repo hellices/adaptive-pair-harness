@@ -326,6 +326,10 @@ export class PairCoordinator implements PairCoordinatorPort {
     if (!isEffectfulDescriptor(decision.descriptor)) {
       throw new Error("UNSUPPORTED_TOOL_OPERATION");
     }
+    const workUnit = snapshot.session?.workUnit;
+    if (workUnit === undefined || workUnit.status !== "agreed") {
+      throw new Error("WORK_UNIT_NOT_AGREED");
+    }
 
     const authorizedSnapshot = await this.dispatch({
       protocolVersion: 1,
@@ -356,6 +360,8 @@ export class PairCoordinator implements PairCoordinatorPort {
       const result = await this.options.effects.execute(
         {
           operationId: operation.id,
+          workUnitId: workUnit.id,
+          allowedPaths: [...workUnit.allowedPaths],
           toolName: name,
           kind: operation.kind,
           payload: structuredClone(input),
@@ -410,6 +416,12 @@ export class PairCoordinator implements PairCoordinatorPort {
       const result = await this.options.effects.execute(
         {
           operationId: operation.id,
+          workUnitId: operation.workUnitId,
+          allowedPaths: [
+            ...(snapshot.session?.workUnit?.id === operation.workUnitId
+              ? snapshot.session.workUnit.allowedPaths
+              : []),
+          ],
           toolName: descriptor.name,
           kind: operation.kind,
           payload: structuredClone(operation.input),

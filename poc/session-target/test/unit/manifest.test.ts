@@ -24,6 +24,11 @@ interface ExtensionManifest {
       readonly requiresCustomModels?: boolean;
       readonly supportsAutoModel?: boolean;
       readonly requiresCopilotSignIn?: boolean;
+      readonly capabilities?: {
+        readonly supportsFileAttachments?: boolean;
+        readonly supportsToolAttachments?: boolean;
+        readonly supportsImageAttachments?: boolean;
+      };
     }[];
   };
 }
@@ -57,6 +62,11 @@ describe("Adaptive Pair Session Target manifest", () => {
         requiresCustomModels: true,
         supportsAutoModel: false,
         requiresCopilotSignIn: false,
+        capabilities: {
+          supportsFileAttachments: false,
+          supportsToolAttachments: false,
+          supportsImageAttachments: false,
+        },
       }),
     ]);
   });

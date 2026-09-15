@@ -24,19 +24,9 @@ describe("VS Code manifest", () => {
     ]);
     expect(manifest.contributes.languageModelTools.map(tool => tool.name)).toEqual([
       "adaptive_pair_get_state",
-      "adaptive_pair_capture_entry",
       "adaptive_pair_read_scope",
       "adaptive_pair_search_scope",
-      "adaptive_pair_record_attempt",
-      "adaptive_pair_record_hypothesis",
-      "adaptive_pair_request_hint",
-      "adaptive_pair_reveal_solution",
-      "adaptive_pair_propose_work_unit",
-      "adaptive_pair_accept_handoff",
-      "adaptive_pair_apply_edit",
       "adaptive_pair_run_verification",
-      "adaptive_pair_run_command",
-      "adaptive_pair_record_transfer",
       "adaptive_pair_close_session",
     ]);
   });

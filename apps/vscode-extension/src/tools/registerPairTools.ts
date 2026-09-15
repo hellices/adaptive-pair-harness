@@ -9,19 +9,9 @@ import { PairLanguageModelTool } from "./pairTool.js";
 
 const STABLE_TOOL_NAMES: readonly PairToolName[] = Object.freeze([
   "pair_get_state",
-  "pair_capture_entry",
   "pair_read_scope",
   "pair_search_scope",
-  "pair_record_attempt",
-  "pair_record_hypothesis",
-  "pair_request_hint",
-  "pair_reveal_solution",
-  "pair_propose_work_unit",
-  "pair_accept_handoff",
-  "pair_apply_edit",
   "pair_run_verification",
-  "pair_run_command",
-  "pair_record_transfer",
   "pair_close_session",
 ]);
 

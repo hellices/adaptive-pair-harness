@@ -162,6 +162,26 @@ describe("guardGrowthResponse", () => {
     });
   });
 
+  it("withholds a target function whose name extends the file stem", () => {
+    const result = guardGrowthResponse(
+      {
+        level: 4,
+        kind: "pseudocode",
+        text: "function retryUntil(action, max) { return action(max); }",
+      },
+      {
+        authorizedHintLevel: 4,
+        revealAuthorized: false,
+        targetIdentifiers: ["retry"],
+      },
+    );
+
+    expect(result).toEqual({
+      accepted: false,
+      reason: "TARGET_SOLUTION_WITHHELD",
+    });
+  });
+
   it("withholds any diff or patch fence even without known identifiers", () => {
     const result = guardGrowthResponse(
       {

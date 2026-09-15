@@ -122,7 +122,7 @@ export class WorkspaceContextChangedError extends Error {
   }
 }
 
-const canonicalRelative = (raw: string): string | undefined => {
+export const canonicalRelative = (raw: string): string | undefined => {
   const normalized = raw.replace(/\\/gu, "/");
   if (normalized.startsWith("/") || /^[A-Za-z]:/u.test(normalized)) {
     return undefined;
@@ -136,7 +136,7 @@ const canonicalRelative = (raw: string): string | undefined => {
   return segments.join("/");
 };
 
-const isSecretPath = (canonical: string): boolean => {
+export const isSecretPath = (canonical: string): boolean => {
   const segments = canonical.split("/");
   if (segments.some(segment => SECRET_DIRECTORIES.has(segment))) {
     return true;
@@ -150,7 +150,7 @@ const isSecretPath = (canonical: string): boolean => {
   );
 };
 
-const isBinaryPath = (canonical: string): boolean => {
+export const isBinaryPath = (canonical: string): boolean => {
   const filename = canonical.split("/").at(-1) ?? "";
   const dot = filename.lastIndexOf(".");
   if (dot <= 0) {

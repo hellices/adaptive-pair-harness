@@ -26,6 +26,7 @@ import {
   VscodeConfirmationPort,
   type ConfirmationPort,
 } from "./verificationAdapter.js";
+import { VscodeScopeAccess } from "./workspaceContextAccess.js";
 
 export const GROWTH_PARTICIPANT_ID = "adaptivePair.chat";
 
@@ -114,7 +115,14 @@ export const createExtensionRuntime = (
     }
     return createVerificationAdapter(root, undefined, confirmation);
   };
-  const effects = new StableEffectPort({ resolveVerification });
+  const resolveScopeAccess = (): VscodeScopeAccess | undefined => {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    return root === undefined ? undefined : new VscodeScopeAccess(root, ledger);
+  };
+  const effects = new StableEffectPort({
+    resolveVerification,
+    resolveScopeAccess,
+  });
 
   const sessionController = new SessionController({ effects, ledger });
   const statusView = new StatusView();

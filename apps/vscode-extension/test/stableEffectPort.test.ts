@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { EffectRequest, EffectResult } from "@adaptive-pair/runtime";
 import type { VerificationPlan } from "../src/verificationAdapter.js";
-import { StableEffectPort, type VerificationRunner } from "../src/stableEffectPort.js";
+import {
+  StableEffectPort,
+  type ScopeEffectRunner,
+  type VerificationRunner,
+} from "../src/stableEffectPort.js";
 
 const request = (over: Partial<EffectRequest> = {}): EffectRequest => ({
   operationId: "op-1",
+  workUnitId: "unit-1",
+  allowedPaths: ["src"],
   toolName: "pair_run_verification",
   kind: "check",
   payload: {},
@@ -71,10 +77,130 @@ describe("StableEffectPort", () => {
     expect(result.status).toBe("declined");
   });
 
-  it("declines edit, command, and scope effects the Stable shell does not implement", async () => {
+  it("routes bounded read and search tools to the scope runner", async () => {
+    const requests: EffectRequest[] = [];
+    const runner: ScopeEffectRunner = {
+      run: (scopeRequest) => {
+        requests.push(scopeRequest);
+        return Promise.resolve(confirmed(scopeRequest.operationId));
+      },
+    };
+    const port = new StableEffectPort({ resolveScope: () => runner });
+
+    for (const toolName of ["pair_read_scope", "pair_search_scope"] as const) {
+      const result = await port.execute(
+        request({ toolName, kind: "read" }),
+        new AbortController().signal,
+      );
+      expect(result.status).toBe("confirmed");
+    }
+    expect(requests.map(item => item.toolName)).toEqual([
+      "pair_read_scope",
+      "pair_search_scope",
+    ]);
+  });
+
+  it("reads only bounded lines inside the trusted work-unit scope", async () => {
+    const readPaths: string[] = [];
+    const port = new StableEffectPort({
+      resolveScopeAccess: () => ({
+        readText: (path: string) => {
+          readPaths.push(path);
+          return Promise.resolve({
+            status: "ok" as const,
+            text: ["zero", "one", "two", "three"].join("\n"),
+          });
+        },
+        listPaths: () => Promise.resolve([]),
+      }),
+    });
+
+    const result = await port.execute(
+      request({
+        toolName: "pair_read_scope",
+        kind: "read",
+        payload: { path: "src/retry.ts", startLine: 2, endLine: 3 },
+      }),
+      new AbortController().signal,
+    );
+
+    expect(result.status).toBe("confirmed");
+    expect(result.observation).toEqual({
+      path: "src/retry.ts",
+      startLine: 2,
+      endLine: 3,
+      text: "one\ntwo",
+    });
+    expect(readPaths).toEqual(["src/retry.ts"]);
+  });
+
+  it("rejects a read outside the trusted scope before file access", async () => {
+    let reads = 0;
+    const port = new StableEffectPort({
+      resolveScopeAccess: () => ({
+        readText: () => {
+          reads += 1;
+          return Promise.resolve({ status: "ok" as const, text: "secret" });
+        },
+        listPaths: () => Promise.resolve([]),
+      }),
+    });
+
+    const result = await port.execute(
+      request({
+        toolName: "pair_read_scope",
+        kind: "read",
+        allowedPaths: ["src"],
+        payload: { path: "../secret.txt" },
+      }),
+      new AbortController().signal,
+    );
+
+    expect(result.status).toBe("declined");
+    expect(result.observation).toMatchObject({ reason: "path-outside-scope" });
+    expect(reads).toBe(0);
+  });
+
+  it("searches eligible scoped files with bounded structured matches", async () => {
+    const port = new StableEffectPort({
+      resolveScopeAccess: () => ({
+        listPaths: () =>
+          Promise.resolve(["src/a.ts", "src/b.ts", "docs/private.md"]),
+        readText: (path: string) =>
+          Promise.resolve({
+            status: "ok" as const,
+            text:
+              path === "src/a.ts"
+                ? "const retry = true;\nretry();"
+                : "nothing here",
+          }),
+      }),
+    });
+
+    const result = await port.execute(
+      request({
+        toolName: "pair_search_scope",
+        kind: "read",
+        allowedPaths: ["src"],
+        payload: { query: "retry", pattern: "**/*.ts" },
+      }),
+      new AbortController().signal,
+    );
+
+    expect(result.status).toBe("confirmed");
+    expect(result.observation).toEqual({
+      query: "retry",
+      matches: [
+        { path: "src/a.ts", line: 1, text: "const retry = true;" },
+        { path: "src/a.ts", line: 2, text: "retry();" },
+      ],
+    });
+  });
+
+  it("declines edit and command effects the Stable shell does not implement", async () => {
     const port = new StableEffectPort({});
 
-    for (const toolName of ["pair_apply_edit", "pair_run_command", "pair_read_scope"] as const) {
+    for (const toolName of ["pair_apply_edit", "pair_run_command"] as const) {
       const result = await port.execute(
         request({ toolName, kind: "edit" }),
         new AbortController().signal,

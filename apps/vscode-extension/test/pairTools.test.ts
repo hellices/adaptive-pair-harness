@@ -565,6 +565,55 @@ describe("registerPairTools", () => {
 });
 
 describe("PairLanguageModelTool", () => {
+  it("derives verification script and scope from the agreed work unit", async () => {
+    const { adaptPublicToolInput, PairLanguageModelTool } = await import(
+      "../src/tools/pairTool.js"
+    );
+    const effects = new EffectPortDouble(request => ({
+      operationId: request.operationId,
+      status: "confirmed",
+      summary: "confirmed",
+      observation: {},
+      sensitiveData: false,
+      partial: false,
+    }));
+    const { coordinator } = createCoordinator(createGrowthRuntime(), effects);
+    const descriptor = PAIR_TOOL_CATALOG.find(
+      tool => tool.name === "pair_run_verification",
+    );
+    if (descriptor === undefined) {
+      throw new Error("Missing pair_run_verification descriptor.");
+    }
+    const tool = new PairLanguageModelTool(
+      nativeToolName(descriptor.name),
+      descriptor,
+      coordinator,
+    );
+    expect(
+      adaptPublicToolInput(
+        "pair_run_verification",
+        { plan: "npm run deploy" },
+        createGrowthRuntime(),
+      ),
+    ).toEqual({
+      script: "test",
+      targetPaths: ["src/pair.ts"],
+    });
+
+    const result = await tool.invoke(
+      { input: { plan: "npm run deploy" } } as never,
+      createToken() as never,
+    );
+
+    const payload = parseToolPayload(result);
+    expect(fakeVscode.state.warnings).toHaveLength(1);
+    expect(effects.calls[0]?.payload).toEqual({
+      script: "test",
+      targetPaths: ["src/pair.ts"],
+    });
+    expect(payload.status, JSON.stringify(payload)).toBe("confirmed");
+  });
+
   it("shows mode, owner, scope, and operation class during preparation", async () => {
     const { PairLanguageModelTool } = await import("../src/tools/pairTool.js");
     const { coordinator } = createCoordinator(

@@ -42,8 +42,8 @@
         "supportsAutoModel": false,
         "requiresCopilotSignIn": false,
         "capabilities": {
-          "supportsFileAttachments": true,
-          "supportsToolAttachments": true,
+          "supportsFileAttachments": false,
+          "supportsToolAttachments": false,
           "supportsImageAttachments": false
         }
       }

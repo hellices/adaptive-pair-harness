@@ -3,7 +3,9 @@ import type {
   NativePairToolName,
   PairToolDescriptor,
 } from "@adaptive-pair/harness";
+import type { PairRuntimeSnapshot } from "@adaptive-pair/protocol";
 import type { PairCoordinatorPort } from "@adaptive-pair/runtime";
+import { parseVerificationScript } from "../verificationPlan.js";
 
 const sanitizeInput = (
   input: Readonly<Record<string, unknown>>,
@@ -54,6 +56,13 @@ const denialPayload = (error: unknown): Record<string, unknown> => {
         reason: "unsupported-tool-catalog-version",
         summary: "Adaptive Pair tooling is out of date for this request.",
       };
+    case "VERIFICATION_PLAN_UNAVAILABLE":
+    case "WORK_UNIT_NOT_AGREED":
+      return {
+        status: "denied",
+        reason: "work-unit-contract-unavailable",
+        summary: "Adaptive Pair requires a current agreed work-unit contract.",
+      };
     default:
       return {
         status: "failed",
@@ -61,6 +70,29 @@ const denialPayload = (error: unknown): Record<string, unknown> => {
         summary: "Adaptive Pair could not complete the tool request.",
       };
   }
+};
+
+export const adaptPublicToolInput = (
+  name: PairToolDescriptor["name"],
+  input: Readonly<Record<string, unknown>>,
+  snapshot: PairRuntimeSnapshot,
+): Readonly<Record<string, unknown>> => {
+  if (name !== "pair_run_verification") {
+    return input;
+  }
+
+  const workUnit = snapshot.session?.workUnit;
+  if (workUnit === undefined || workUnit.status !== "agreed") {
+    throw new Error("WORK_UNIT_NOT_AGREED");
+  }
+  const script = parseVerificationScript(workUnit.verificationPlan);
+  if (script === undefined) {
+    throw new Error("VERIFICATION_PLAN_UNAVAILABLE");
+  }
+  return {
+    script,
+    targetPaths: [...workUnit.allowedPaths],
+  };
 };
 
 export class PairLanguageModelTool implements vscode.LanguageModelTool<Record<string, unknown>> {
@@ -105,6 +137,15 @@ export class PairLanguageModelTool implements vscode.LanguageModelTool<Record<st
 
     try {
       let userActionId: string | undefined;
+      const snapshot = await this.coordinator.snapshot();
+      const { toolInput, runtimeRevision, authorityEpoch } = sanitizeInput(
+        options.input,
+      );
+      const adaptedInput = adaptPublicToolInput(
+        this.descriptor.name,
+        toolInput,
+        snapshot,
+      );
       if (this.descriptor.requiresExplicitUserAction) {
         const choice = await vscode.window.showWarningMessage(
           `${this.descriptor.name} requires an explicit one-time action.`,
@@ -121,15 +162,16 @@ export class PairLanguageModelTool implements vscode.LanguageModelTool<Record<st
         userActionId = await this.coordinator.grantUserAction(
           this.descriptor.name,
           controller.signal,
+          {
+            runtimeRevision: snapshot.revision,
+            authorityEpoch: snapshot.session?.authorityEpoch,
+          },
         );
       }
 
-      const { toolInput, runtimeRevision, authorityEpoch } = sanitizeInput(
-        options.input,
-      );
       const result = await this.coordinator.invokeTool(
         this.descriptor.name,
-        toolInput,
+        adaptedInput,
         controller.signal,
         {
           ...(userActionId === undefined ? {} : { userActionId }),

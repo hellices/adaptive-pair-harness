@@ -1,5 +1,11 @@
 import type { EffectPort, EffectRequest, EffectResult } from "@adaptive-pair/runtime";
 import type { VerificationPlan } from "./verificationAdapter.js";
+import {
+  BoundedScopeEffectRunner,
+  type ScopeAccess,
+  type ScopeEffectRunner,
+} from "./scopeEffect.js";
+export type { ScopeEffectRunner } from "./scopeEffect.js";
 
 /**
  * A runner that executes a verification plan and returns an observed effect
@@ -17,6 +23,10 @@ export interface StableEffectPortOptions {
    * the active workspace folder at run time rather than construction time.
    */
   readonly resolveVerification?: () => VerificationRunner | undefined;
+  /** Resolve the bounded workspace reader used by read/search effects. */
+  readonly resolveScope?: () => ScopeEffectRunner | undefined;
+  /** Resolve raw workspace access for the built-in bounded scope runner. */
+  readonly resolveScopeAccess?: () => ScopeAccess | undefined;
 }
 
 const declined = (request: EffectRequest, summary: string): EffectResult => ({
@@ -49,11 +59,10 @@ const toVerificationPlan = (request: EffectRequest): VerificationPlan | undefine
 };
 
 /**
- * The Stable Pair Presence effect port. Verification is the only effect the
- * Stable shell actually performs: `pair_run_verification` runs an allowlisted
- * package script through the real {@link VerificationAdapter}. Every other
- * effectful tool (edits, delivery commands, scope reads) is honestly declined
- * because the Stable preview does not implement AI mutation or delivery.
+ * The Stable Pair Presence effect port. It performs consent-gated, bounded
+ * scope reads/searches and runs an allowlisted verification package script.
+ * Mutating edits and delivery commands are honestly declined because the
+ * Stable preview does not implement AI mutation or Delivery Mode.
  */
 export class StableEffectPort implements EffectPort {
   public constructor(private readonly options: StableEffectPortOptions = {}) {}
@@ -70,6 +79,23 @@ export class StableEffectPort implements EffectPort {
       return declined(
         request,
         "Adaptive Pair could not run verification: no workspace script target was available.",
+      );
+    }
+
+    if (
+      request.toolName === "pair_read_scope" ||
+      request.toolName === "pair_search_scope"
+    ) {
+      const access = this.options.resolveScopeAccess?.();
+      const runner =
+        this.options.resolveScope?.() ??
+        (access === undefined ? undefined : new BoundedScopeEffectRunner(access));
+      if (runner !== undefined) {
+        return await runner.run(request, signal);
+      }
+      return declined(
+        request,
+        "Adaptive Pair could not read the agreed scope: no workspace reader was available.",
       );
     }
 

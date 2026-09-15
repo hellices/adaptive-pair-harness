@@ -37,12 +37,20 @@ const git = vi.hoisted(() => {
     repositories: [] as FakeRepository[],
     onDiagnostics: undefined as (() => void) | undefined,
     workspaceRoot: "/workspace",
+    foundPaths: [] as FakeUri[],
+    textDocuments: [] as {
+      readonly uri: FakeUri;
+      readonly isDirty: boolean;
+      getText(): string;
+    }[],
   };
 
   const reset = (): void => {
     state.repositories = [];
     state.onDiagnostics = undefined;
     state.workspaceRoot = "/workspace";
+    state.foundPaths = [];
+    state.textDocuments = [];
   };
 
   return { createUri, state, reset };
@@ -55,12 +63,25 @@ vi.mock("vscode", () => {
   };
 
   return {
+    Uri: {
+      file: git.createUri,
+    },
+    RelativePattern: class {
+      public constructor(
+        public readonly base: FakeUri,
+        public readonly pattern: string,
+      ) {}
+    },
     workspace: {
       get workspaceFolders() {
         return [{ uri: git.createUri(git.state.workspaceRoot) }];
       },
-      textDocuments: [] as unknown[],
+      get textDocuments() {
+        return git.state.textDocuments;
+      },
       asRelativePath,
+      findFiles: (): Promise<readonly FakeUri[]> =>
+        Promise.resolve(git.state.foundPaths),
     },
     languages: {
       getDiagnostics: (): readonly [FakeUri, readonly unknown[]][] => {
@@ -86,7 +107,9 @@ vi.mock("vscode", () => {
   };
 });
 
-const { VscodeWorkspaceContextAccess } = await import("../src/workspaceContextAccess.js");
+const { VscodeScopeAccess, VscodeWorkspaceContextAccess } = await import(
+  "../src/workspaceContextAccess.js"
+);
 
 const clock = { now: () => 1_700_000_000_000 };
 
@@ -173,5 +196,48 @@ describe("VscodeWorkspaceContextAccess — production branch currentness", () =>
     const snapshot = await new WorkspaceContext(access).capture();
 
     expect(snapshot.branch).toBe("main");
+  });
+});
+
+describe("VscodeScopeAccess", () => {
+  it("reads dirty buffers, discovers files, and rejects unsafe paths", async () => {
+    const root = await mkdtemp(join(tmpdir(), "adaptive-pair-scope-"));
+    const outside = await mkdtemp(join(tmpdir(), "adaptive-pair-scope-outside-"));
+    try {
+      await mkdir(join(root, "src"));
+      await writeFile(join(root, "src", "retry.ts"), "disk text", "utf8");
+      await writeFile(join(outside, "secret.ts"), "secret", "utf8");
+      await symlink(outside, join(root, "linked"), "dir");
+      git.state.workspaceRoot = root;
+      git.state.foundPaths = [
+        git.createUri(join(root, "src", "retry.ts")),
+        git.createUri(join(root, ".env")),
+      ];
+      git.state.textDocuments = [
+        {
+          uri: git.createUri(join(root, "src", "retry.ts")),
+          isDirty: true,
+          getText: () => "dirty buffer text",
+        },
+      ];
+
+      const access = new VscodeScopeAccess(root);
+
+      await expect(
+        access.readText("src/retry.ts", new AbortController().signal),
+      ).resolves.toEqual({ status: "ok", text: "dirty buffer text" });
+      await expect(
+        access.readText("linked/secret.ts", new AbortController().signal),
+      ).resolves.toEqual({ status: "unsafe-path" });
+      await expect(
+        access.readText(".env", new AbortController().signal),
+      ).resolves.toEqual({ status: "unsafe-path" });
+      await expect(
+        access.listPaths("**/*.ts", new AbortController().signal),
+      ).resolves.toEqual(["src/retry.ts"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });

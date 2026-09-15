@@ -495,19 +495,64 @@ suite("Adaptive Pair — isolated Extension Host smoke", () => {
       "run_command was not rejected in Growth.",
     );
 
-    // The tool is genuinely registered with the host and denied through the real
-    // VS Code tool pipeline (apply_edit needs no one-time modal).
     const registered = vscode.lm.tools.map((tool) => tool.name);
-    assert.ok(registered.includes("adaptive_pair_apply_edit"), "apply_edit not registered.");
-    const result = await vscode.lm.invokeTool(
-      "adaptive_pair_apply_edit",
-      { input: { path: "src/retry.mjs", contents: "x" }, toolInvocationToken: undefined },
-      new vscode.CancellationTokenSource().token,
+    assert.ok(
+      !registered.includes("adaptive_pair_apply_edit"),
+      "The Stable host registered an unimplemented apply_edit tool.",
     );
-    const rendered = result.content
+  });
+
+  test("10a: public scope tools read and search the real agreed fixture", async () => {
+    const token = new vscode.CancellationTokenSource().token;
+    const render = (result: vscode.LanguageModelToolResult): string =>
+      result.content
       .map((part) => (part instanceof vscode.LanguageModelTextPart ? part.value : ""))
       .join("");
-    assert.ok(/"status":"denied"/.test(rendered), `apply_edit host result not denied: ${rendered}`);
+
+    const read = await vscode.lm.invokeTool(
+      "adaptive_pair_read_scope",
+      {
+        input: { path: "src/retry.mjs", startLine: 1, endLine: 8 },
+        toolInvocationToken: undefined,
+      },
+      token,
+    );
+    const readPayload = JSON.parse(render(read)) as {
+      status?: string;
+      observation?: { text?: string };
+    };
+    assert.equal(
+      readPayload.status,
+      "confirmed",
+      `read_scope failed: ${render(read)}`,
+    );
+    assert.match(readPayload.observation?.text ?? "", /retryUntil/u);
+
+    const search = await vscode.lm.invokeTool(
+      "adaptive_pair_search_scope",
+      {
+        input: { query: "retryUntil", pattern: "**/*.mjs" },
+        toolInvocationToken: undefined,
+      },
+      token,
+    );
+    const searchPayload = JSON.parse(render(search)) as {
+      status?: string;
+      observation?: {
+        matches?: readonly { path?: string; line?: number; text?: string }[];
+      };
+    };
+    assert.equal(
+      searchPayload.status,
+      "confirmed",
+      `search_scope failed: ${render(search)}`,
+    );
+    assert.ok(
+      searchPayload.observation?.matches?.some(
+        match => match.path === "src/retry.mjs" && /retryUntil/u.test(match.text ?? ""),
+      ),
+      `search_scope did not return the fixture symbol: ${render(search)}`,
+    );
   });
 
   test("11: repository takeover injection does not change mode, consent, scope, or the hint ceiling", async () => {

@@ -1,4 +1,4 @@
-import { lstat, realpath, stat } from "node:fs/promises";
+import { lstat, readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import * as vscode from "vscode";
 import type {
@@ -9,7 +9,14 @@ import type {
   WorkspaceContextAccess,
   WorkspaceFolderIdentity,
 } from "./workspaceContext.js";
+import {
+  canonicalRelative,
+  isBinaryPath,
+  isSecretPath,
+  MAX_CONTEXT_FILE_BYTES,
+} from "./workspaceContext.js";
 import type { ActivityLedger } from "./activityLedger.js";
+import type { ScopeAccess, ScopeReadResult } from "./scopeEffect.js";
 
 interface GitRepositoryState {
   readonly HEAD?: { readonly name?: string };
@@ -37,6 +44,140 @@ const documentByteLength = (document: vscode.TextDocument): number => {
     return 0;
   }
 };
+
+const withinRoot = (root: string, target: string): boolean => {
+  const relativePath = relative(root, target);
+  return (
+    relativePath === "" ||
+    (!relativePath.startsWith(`..${sep}`) &&
+      relativePath !== ".." &&
+      !isAbsolute(relativePath))
+  );
+};
+
+const errorCode = (error: unknown): string | undefined => {
+  if (typeof error !== "object" || error === null) {
+    return undefined;
+  }
+  const code = (error as { readonly code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+};
+
+export class VscodeScopeAccess implements ScopeAccess {
+  public constructor(
+    private readonly rootPath: string,
+    private readonly ledger?: ActivityLedger,
+  ) {}
+
+  public async readText(
+    rawPath: string,
+    signal: AbortSignal,
+  ): Promise<ScopeReadResult> {
+    signal.throwIfAborted();
+    this.ledger?.recordWorkspaceRead();
+    const path = canonicalRelative(rawPath);
+    if (
+      path === undefined ||
+      isSecretPath(path) ||
+      isBinaryPath(path)
+    ) {
+      return { status: "unsafe-path" };
+    }
+
+    const absolute = resolve(this.rootPath, path);
+    let canonicalRoot: string;
+    let canonicalTarget: string;
+    try {
+      [canonicalRoot, canonicalTarget] = await Promise.all([
+        realpath(this.rootPath),
+        realpath(absolute),
+      ]);
+    } catch (error) {
+      return errorCode(error) === "ENOENT"
+        ? { status: "not-found" }
+        : { status: "read-failed" };
+    }
+    if (!withinRoot(canonicalRoot, canonicalTarget)) {
+      return { status: "unsafe-path" };
+    }
+
+    const document = vscode.workspace.textDocuments.find(
+      candidate =>
+        candidate.isDirty === true &&
+        canonicalRelative(
+          vscode.workspace.asRelativePath(candidate.uri, false),
+        ) === path,
+    );
+    if (document !== undefined) {
+      const text = document.getText();
+      if (Buffer.byteLength(text, "utf8") > MAX_CONTEXT_FILE_BYTES) {
+        return { status: "too-large" };
+      }
+      return { status: "ok", text };
+    }
+
+    try {
+      const target = await stat(canonicalTarget);
+      if (!target.isFile()) {
+        return { status: "not-found" };
+      }
+      if (target.size > MAX_CONTEXT_FILE_BYTES) {
+        return { status: "too-large" };
+      }
+      const content = await readFile(canonicalTarget);
+      signal.throwIfAborted();
+      if (content.includes(0)) {
+        return { status: "binary" };
+      }
+      return { status: "ok", text: content.toString("utf8") };
+    } catch (error) {
+      return errorCode(error) === "ENOENT"
+        ? { status: "not-found" }
+        : { status: "read-failed" };
+    }
+  }
+
+  public async listPaths(
+    pattern: string | undefined,
+    signal: AbortSignal,
+  ): Promise<readonly string[]> {
+    signal.throwIfAborted();
+    this.ledger?.recordWorkspaceRead();
+    const requestedPattern = pattern?.trim() || "**/*";
+    if (
+      requestedPattern.startsWith("/") ||
+      /^[A-Za-z]:/u.test(requestedPattern) ||
+      requestedPattern.split(/[\\/]/u).includes("..")
+    ) {
+      return [];
+    }
+
+    const uris = await vscode.workspace.findFiles(
+      new vscode.RelativePattern(
+        vscode.Uri.file(this.rootPath),
+        requestedPattern,
+      ),
+      "**/{.git,node_modules,.ssh,.aws,.gnupg,.gpg,.docker,.kube,secrets,.secrets}/**",
+      500,
+    );
+    signal.throwIfAborted();
+
+    const paths = new Set<string>();
+    for (const uri of uris) {
+      const path = canonicalRelative(
+        relative(this.rootPath, uri.fsPath).replace(/\\/gu, "/"),
+      );
+      if (
+        path !== undefined &&
+        !isSecretPath(path) &&
+        !isBinaryPath(path)
+      ) {
+        paths.add(path);
+      }
+    }
+    return [...paths].sort();
+  }
+}
 
 export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
   public constructor(
@@ -184,15 +325,7 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
         realpath(root),
         realpath(absolute),
       ]);
-      const relativePath = relative(canonicalRoot, canonicalTarget);
-      return (
-        relativePath === "" ||
-        (
-        !relativePath.startsWith(`..${sep}`) &&
-        relativePath !== ".." &&
-        !isAbsolute(relativePath)
-        )
-      );
+      return withinRoot(canonicalRoot, canonicalTarget);
     } catch {
       return false;
     }
