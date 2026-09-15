@@ -27,6 +27,7 @@ export interface ScopeAccess {
   readText(path: string, signal: AbortSignal): Promise<ScopeReadResult>;
   listPaths(
     pattern: string | undefined,
+    allowedPaths: readonly string[],
     signal: AbortSignal,
   ): Promise<{
     readonly paths: readonly string[];
@@ -212,7 +213,11 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
       typeof request.payload["pattern"] === "string"
         ? request.payload["pattern"]
         : undefined;
-    const discovery = await this.access.listPaths(pattern, signal);
+    const discovery = await this.access.listPaths(
+      pattern,
+      request.allowedPaths,
+      signal,
+    );
     const scopedPaths = discovery.paths
       .map(canonicalRelative)
       .filter(

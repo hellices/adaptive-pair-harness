@@ -239,13 +239,18 @@ describe("StableEffectPort", () => {
       { length: 200 },
       (_, index) => `docs/generated-${index}.md`,
     );
+    let listedScope: readonly string[] | undefined;
     const port = new StableEffectPort({
       resolveScopeAccess: () => ({
-        listPaths: () =>
+        listPaths: (_pattern, allowedPaths) => {
+          listedScope = allowedPaths;
+          return (
           Promise.resolve({
             paths: [...outside, "src/retry.ts"],
             truncated: false,
-          }),
+          })
+          );
+        },
         readText: path =>
           Promise.resolve({
             status: "ok" as const,
@@ -268,6 +273,7 @@ describe("StableEffectPort", () => {
     expect(result.observation?.["matches"]).toEqual([
       { path: "src/retry.ts", line: 1, text: "retryUntil" },
     ]);
+    expect(listedScope).toEqual(["src"]);
   });
 
   it("propagates workspace discovery truncation as a partial search", async () => {

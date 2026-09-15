@@ -203,6 +203,26 @@ describe("guardGrowthResponse", () => {
     expect(result).toMatchObject({ accepted: true });
   });
 
+  it("withholds an unfenced target body without a declaration keyword", () => {
+    const result = guardGrowthResponse(
+      {
+        level: 4,
+        kind: "pseudocode",
+        text: "retryUntil(action, max) { let attempts = 0; return attempts; }",
+      },
+      {
+        authorizedHintLevel: 4,
+        revealAuthorized: false,
+        targetIdentifiers: ["retry"],
+      },
+    );
+
+    expect(result).toEqual({
+      accepted: false,
+      reason: "TARGET_SOLUTION_WITHHELD",
+    });
+  });
+
   it("withholds any diff or patch fence even without known identifiers", () => {
     const result = guardGrowthResponse(
       {

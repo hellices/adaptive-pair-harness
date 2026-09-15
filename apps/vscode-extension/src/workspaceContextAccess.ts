@@ -1,5 +1,13 @@
 import { lstat, readFile, realpath, stat } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import * as vscode from "vscode";
 import type {
   DiagnosticInfo,
@@ -152,6 +160,7 @@ export class VscodeScopeAccess implements ScopeAccess {
 
   public async listPaths(
     pattern: string | undefined,
+    allowedPaths: readonly string[],
     signal: AbortSignal,
   ): Promise<{
     readonly paths: readonly string[];
@@ -168,32 +177,86 @@ export class VscodeScopeAccess implements ScopeAccess {
       return { paths: [], truncated: false };
     }
 
-    const uris = await vscode.workspace.findFiles(
-      new vscode.RelativePattern(
-        vscode.Uri.file(this.rootPath),
-        requestedPattern,
-      ),
-      "**/{.git,node_modules,.ssh,.aws,.gnupg,.gpg,.docker,.kube,secrets,.secrets}/**",
-      5_001,
-    );
-    signal.throwIfAborted();
-
+    const canonicalRoot = await realpath(this.rootPath);
     const paths = new Set<string>();
-    for (const uri of uris.slice(0, 5_000)) {
-      const path = canonicalRelative(
-        relative(this.rootPath, uri.fsPath).replace(/\\/gu, "/"),
+    let truncated = false;
+    const scopes = [
+      ...new Set(
+        allowedPaths
+          .map(canonicalRelative)
+          .filter(
+            (path): path is string =>
+              path !== undefined &&
+              !isSecretPath(path) &&
+              !isBinaryPath(path),
+          ),
+      ),
+    ];
+
+    for (const scope of scopes) {
+      signal.throwIfAborted();
+      let target: string;
+      let targetStat: Awaited<ReturnType<typeof stat>>;
+      try {
+        target = await realpath(resolve(this.rootPath, scope));
+        targetStat = await stat(target);
+      } catch (error) {
+        if (errorCode(error) === "ENOENT") {
+          continue;
+        }
+        throw error;
+      }
+      if (!withinRoot(canonicalRoot, target)) {
+        continue;
+      }
+
+      const base = targetStat.isFile() ? dirname(target) : target;
+      const scopedPattern =
+        pattern === undefined || pattern.trim().length === 0
+          ? targetStat.isFile()
+            ? basename(target)
+            : "**/*"
+          : requestedPattern;
+      const remaining = 5_000 - paths.size;
+      if (remaining <= 0) {
+        truncated = true;
+        break;
+      }
+      const uris = await vscode.workspace.findFiles(
+        new vscode.RelativePattern(vscode.Uri.file(base), scopedPattern),
+        "**/{.git,node_modules,.ssh,.aws,.gnupg,.gpg,.docker,.kube,secrets,.secrets}/**",
+        remaining + 1,
       );
-      if (
-        path !== undefined &&
-        !isSecretPath(path) &&
-        !isBinaryPath(path)
-      ) {
-        paths.add(path);
+      signal.throwIfAborted();
+      if (uris.length > remaining) {
+        truncated = true;
+      }
+
+      for (const uri of uris.slice(0, remaining)) {
+        let discoveredTarget: string;
+        try {
+          discoveredTarget = await realpath(uri.fsPath);
+        } catch {
+          continue;
+        }
+        if (!withinRoot(canonicalRoot, discoveredTarget)) {
+          continue;
+        }
+        const path = canonicalRelative(
+          relative(canonicalRoot, discoveredTarget).replace(/\\/gu, "/"),
+        );
+        if (
+          path !== undefined &&
+          !isSecretPath(path) &&
+          !isBinaryPath(path)
+        ) {
+          paths.add(path);
+        }
       }
     }
     return {
       paths: [...paths].sort(),
-      truncated: uris.length > 5_000,
+      truncated,
     };
   }
 }

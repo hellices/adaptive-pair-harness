@@ -48,6 +48,7 @@ const containsTargetImplementation = (
       `(?:function|class|interface|type|enum)\\s+${targetName}\\b`,
       `(?:const|let|var)\\s+${targetName}\\b`,
       `\\b${targetName}\\s*[:=]\\s*(?:async\\s*)?(?:\\(|function\\b)`,
+      `\\b${targetName}\\s*\\([^)]*\\)\\s*[:{]`,
       `\`\`\`[\\s\\S]*?\\b${targetName}\\b[\\s\\S]*?\`\`\``,
     ].join("|"),
     "u",

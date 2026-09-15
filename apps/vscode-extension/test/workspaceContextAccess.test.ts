@@ -250,7 +250,11 @@ describe("VscodeScopeAccess", () => {
         access.readText(".env", new AbortController().signal),
       ).resolves.toEqual({ status: "unsafe-path" });
       await expect(
-        access.listPaths("**/*.ts", new AbortController().signal),
+        access.listPaths(
+          "**/*.ts",
+          ["src"],
+          new AbortController().signal,
+        ),
       ).resolves.toEqual({
         paths: ["src/retry.ts"],
         truncated: false,
