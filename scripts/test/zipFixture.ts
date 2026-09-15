@@ -7,6 +7,8 @@ export interface ZipEntryInput {
   readonly deflate?: boolean;
   /** General-purpose bit flags written to both local and central headers. */
   readonly flags?: number;
+  /** Declared central-directory size, for malformed metadata fixtures. */
+  readonly centralUncompressedSize?: number;
 }
 
 /** Deliberate corruptions used to prove the verifier fails safely. */
@@ -29,6 +31,8 @@ export interface ZipOverrides {
   readonly entryCount?: number;
   /** Replaces the first entry's local header offset. */
   readonly firstLocalOffset?: number;
+  /** Replaces the last entry's local header offset. */
+  readonly lastLocalOffset?: number;
   /** Replaces the first entry's compressed size. */
   readonly firstCompressedSize?: number;
   /** Replaces the first entry's declared uncompressed size. */
@@ -55,6 +59,7 @@ export const makeZip = (
   const centrals: Buffer[] = [];
   let offset = 0;
   let first = true;
+  let index = 0;
 
   for (const entry of entries) {
     const nameBytes = Buffer.from(entry.name, "utf8");
@@ -87,15 +92,25 @@ export const makeZip = (
       20,
     );
     central.writeUInt32LE(
-      first ? (overrides.firstUncompressedSize ?? raw.length) : raw.length,
+      first
+        ? (overrides.firstUncompressedSize ?? entry.centralUncompressedSize ?? raw.length)
+        : (entry.centralUncompressedSize ?? raw.length),
       24,
     );
     central.writeUInt16LE(nameBytes.length, 28);
-    central.writeUInt32LE(first ? (overrides.firstLocalOffset ?? offset) : offset, 42);
+    central.writeUInt32LE(
+      first
+        ? (overrides.firstLocalOffset ?? offset)
+        : index === entries.length - 1
+          ? (overrides.lastLocalOffset ?? offset)
+          : offset,
+      42,
+    );
     centrals.push(central, nameBytes);
 
     offset += local.length + nameBytes.length + stored.length;
     first = false;
+    index += 1;
   }
 
   const centralBuffer = Buffer.concat(centrals);
@@ -111,6 +126,57 @@ export const makeZip = (
   end.writeUInt16LE(overrides.commentLength ?? comment.length, 20);
 
   return Buffer.concat([...locals, centralBuffer, end, comment]);
+};
+
+/** Append copies of the real end record as valid candidates in its comment. */
+export const withRepeatedEocdCandidates = (
+  archive: Buffer,
+  copies: number,
+): Buffer => {
+  const eocdLength = 22;
+  const eocdOffset = archive.length - eocdLength;
+  const commentLength = copies * eocdLength;
+  if (
+    copies < 1 ||
+    !Number.isInteger(copies) ||
+    commentLength > 0xffff ||
+    archive.readUInt16LE(eocdOffset + 20) !== 0
+  ) {
+    throw new Error("Repeated EOCD fixtures require a comment-free archive and valid copy count.");
+  }
+
+  const end = Buffer.from(archive.subarray(eocdOffset));
+  end.writeUInt16LE(commentLength, 20);
+  const comment = Buffer.alloc(commentLength);
+  for (let index = 0; index < copies; index += 1) {
+    end.copy(comment, index * eocdLength);
+    comment.writeUInt16LE(commentLength - (index + 1) * eocdLength, index * eocdLength + 20);
+  }
+  return Buffer.concat([archive.subarray(0, eocdOffset), end, comment]);
+};
+
+/**
+ * Plant end records that traverse all but the last central entry before
+ * failing the directory-size check. The original end record remains valid.
+ */
+export const withRepeatedLateFailingEocdCandidates = (
+  archive: Buffer,
+  copies: number,
+): Buffer => {
+  const eocdLength = 22;
+  const eocdOffset = archive.length - eocdLength;
+  const entryCount = archive.readUInt16LE(eocdOffset + 10);
+  if (entryCount < 2) {
+    throw new Error("Late-failing EOCD fixtures require at least two entries.");
+  }
+
+  const repeated = withRepeatedEocdCandidates(archive, copies);
+  for (let index = 0; index < copies; index += 1) {
+    const candidateOffset = eocdOffset + eocdLength * (index + 1);
+    repeated.writeUInt16LE(entryCount - 1, candidateOffset + 8);
+    repeated.writeUInt16LE(entryCount - 1, candidateOffset + 10);
+  }
+  return repeated;
 };
 
 /** The manifest shape the Stable release actually ships. */

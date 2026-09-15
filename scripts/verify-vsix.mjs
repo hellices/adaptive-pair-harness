@@ -301,11 +301,26 @@ const EOCD_LENGTH = 22;
 const CENTRAL_HEADER_LENGTH = 46;
 const LOCAL_HEADER_LENGTH = 30;
 const MAX_ARCHIVE_COMMENT = 0xffff;
+const MAX_EOCD_METADATA_INSPECTION_BYTES = MAX_ARCHIVE_COMMENT;
 const ZIP64_SENTINEL = 0xffffffff;
 const DEFLATED = 8;
 const STORED = 0;
 const ENCRYPTION_FLAGS = 0x0001 | 0x0040;
 const MAX_ENTRY_UNCOMPRESSED_BYTES = 16 * 1024 * 1024;
+const MAX_ARCHIVE_UNCOMPRESSED_BYTES =
+  REQUIRED_VSIX_ENTRIES.length * MAX_ENTRY_UNCOMPRESSED_BYTES;
+
+/**
+ * @typedef {{
+ *   name: string,
+ *   label: string,
+ *   method: number,
+ *   compressedSize: number,
+ *   uncompressedSize: number,
+ *   dataStart: number,
+ *   dataEnd: number,
+ * }} ZipEntryMetadata
+ */
 
 /**
  * A structural problem in the archive itself. Carrying a stable `code` keeps
@@ -351,9 +366,10 @@ const eocdCandidates = (buffer) => {
 /**
  * @param {Buffer} buffer
  * @param {number} eocd
- * @returns {{ name: string, data: Buffer, text: string }[]}
+ * @param {{ inspectedBytes: number }} budget
+ * @returns {ZipEntryMetadata[]}
  */
-const readCentralDirectory = (buffer, eocd) => {
+const inspectCentralDirectory = (buffer, eocd, budget) => {
   const disk = buffer.readUInt16LE(eocd + 4);
   const centralDirectoryDisk = buffer.readUInt16LE(eocd + 6);
   const entriesOnDisk = buffer.readUInt16LE(eocd + 8);
@@ -379,9 +395,18 @@ const readCentralDirectory = (buffer, eocd) => {
       `The central directory (offset ${start}, size ${size}) does not fit before the end record at offset ${eocd}.`,
     );
   }
+  if (size > MAX_EOCD_METADATA_INSPECTION_BYTES - budget.inspectedBytes) {
+    throw new VsixArchiveError(
+      "eocd-metadata-budget-exceeded",
+      `End-of-central-directory candidates declare more than ${MAX_EOCD_METADATA_INSPECTION_BYTES} cumulative central-directory bytes.`,
+    );
+  }
+  budget.inspectedBytes += size;
 
   const end = start + size;
-  const entries = [];
+  const metadata = [];
+  const localOffsets = new Set();
+  let totalUncompressedSize = 0;
   let position = start;
 
   for (let index = 0; index < count; index += 1) {
@@ -422,6 +447,12 @@ const readCentralDirectory = (buffer, eocd) => {
     );
     const label = sanitizeForMessage(name);
 
+    if (method !== DEFLATED && method !== STORED) {
+      throw new VsixArchiveError(
+        "entry-method-unsupported",
+        `Entry ${label} uses unsupported compression method ${method}.`,
+      );
+    }
     if ((flags & ENCRYPTION_FLAGS) !== 0) {
       throw new VsixArchiveError(
         "entry-encrypted",
@@ -434,6 +465,20 @@ const readCentralDirectory = (buffer, eocd) => {
         `Entry ${label} declares ${uncompressedSize} uncompressed bytes, exceeding the ${MAX_ENTRY_UNCOMPRESSED_BYTES}-byte release bound.`,
       );
     }
+    totalUncompressedSize += uncompressedSize;
+    if (totalUncompressedSize > MAX_ARCHIVE_UNCOMPRESSED_BYTES) {
+      throw new VsixArchiveError(
+        "archive-too-large",
+        `The archive declares more than ${MAX_ARCHIVE_UNCOMPRESSED_BYTES} total uncompressed bytes.`,
+      );
+    }
+    if (localOffsets.has(localOffset)) {
+      throw new VsixArchiveError(
+        "entry-offset-duplicate",
+        `Entry ${label} shares local header offset ${localOffset} with another entry.`,
+      );
+    }
+    localOffsets.add(localOffset);
 
     if (localOffset + LOCAL_HEADER_LENGTH > start) {
       throw new VsixArchiveError(
@@ -468,6 +513,45 @@ const readCentralDirectory = (buffer, eocd) => {
       );
     }
 
+    metadata.push({
+      name,
+      label,
+      method,
+      compressedSize,
+      uncompressedSize,
+      dataStart,
+      dataEnd,
+    });
+    position = headerEnd;
+  }
+
+  if (position !== end) {
+    throw new VsixArchiveError(
+      "central-directory-size-mismatch",
+      `The central directory declares ${size} bytes but its ${count} entries occupy ${position - start}.`,
+    );
+  }
+
+  return metadata;
+};
+
+/**
+ * @param {Buffer} buffer
+ * @param {readonly ZipEntryMetadata[]} metadata
+ * @returns {{ name: string, data: Buffer, text: string }[]}
+ */
+const materializeCentralDirectory = (buffer, metadata) => {
+  const entries = [];
+  for (const entry of metadata) {
+    const {
+      name,
+      label,
+      method,
+      compressedSize,
+      uncompressedSize,
+      dataStart,
+      dataEnd,
+    } = entry;
     const stored = buffer.subarray(dataStart, dataEnd);
     let data;
     if (method === DEFLATED) {
@@ -479,6 +563,12 @@ const readCentralDirectory = (buffer, eocd) => {
         throw new VsixArchiveError(
           "entry-inflate-failed",
           `Entry ${label} could not be decompressed.`,
+        );
+      }
+      if (data.length !== uncompressedSize) {
+        throw new VsixArchiveError(
+          "entry-size-mismatch",
+          `Deflated entry ${label} declares ${uncompressedSize} uncompressed bytes but inflates to ${data.length}.`,
         );
       }
     } else if (method === STORED) {
@@ -503,14 +593,6 @@ const readCentralDirectory = (buffer, eocd) => {
     }
 
     entries.push({ name, data, text: data.toString("utf8") });
-    position = headerEnd;
-  }
-
-  if (position !== end) {
-    throw new VsixArchiveError(
-      "central-directory-size-mismatch",
-      `The central directory declares ${size} bytes but its ${count} entries occupy ${position - start}.`,
-    );
   }
 
   return entries;
@@ -539,24 +621,47 @@ export const readZipEntries = (buffer) => {
 
   /** @type {unknown} */
   let failure;
-  /** @type {{ name: string, data: Buffer, text: string }[] | undefined} */
-  let emptyDirectory;
+  /** @type {ZipEntryMetadata[] | undefined} */
+  let selectedDirectory;
+  let hasEmptyDirectory = false;
+  let nonemptyDirectories = 0;
+  const metadataBudget = { inspectedBytes: 0 };
   for (const eocd of candidates) {
     try {
-      const entries = readCentralDirectory(buffer, eocd);
-      if (entries.length > 0) {
-        return entries;
+      const metadata = inspectCentralDirectory(buffer, eocd, metadataBudget);
+      if (metadata.length > 0) {
+        nonemptyDirectories += 1;
+        if (nonemptyDirectories > 1) {
+          break;
+        }
+        selectedDirectory = metadata;
+      } else {
+        // A decoy end record planted in the comment parses as an empty archive.
+        // Keep scanning for a real central directory and only fall back to the
+        // empty reading when the file genuinely contains no entries.
+        hasEmptyDirectory = true;
       }
-      // A decoy end record planted in the comment parses as an empty archive.
-      // Keep scanning for a real central directory and only fall back to the
-      // empty reading when the file genuinely contains no entries.
-      emptyDirectory ??= entries;
     } catch (error) {
+      if (
+        error instanceof VsixArchiveError &&
+        error.code === "eocd-metadata-budget-exceeded"
+      ) {
+        throw error;
+      }
       failure = error;
     }
   }
-  if (emptyDirectory !== undefined) {
-    return emptyDirectory;
+  if (nonemptyDirectories > 1) {
+    throw new VsixArchiveError(
+      "eocd-nonempty-ambiguous",
+      "The archive has multiple structurally valid nonempty end-of-central-directory records.",
+    );
+  }
+  if (selectedDirectory !== undefined) {
+    return materializeCentralDirectory(buffer, selectedDirectory);
+  }
+  if (hasEmptyDirectory) {
+    return [];
   }
   throw failure;
 };

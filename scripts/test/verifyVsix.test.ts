@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   REQUIRED_VSIX_ENTRIES,
   VsixArchiveError,
@@ -13,9 +13,13 @@ import {
   releaseEntries,
   releaseVsixFixture,
   validManifest,
+  withRepeatedEocdCandidates,
+  withRepeatedLateFailingEocdCandidates,
 } from "./zipFixture.js";
 
 const EOCD_SIGNATURE = 0x06054b50;
+const EOCD_LENGTH = 22;
+const MAX_ARCHIVE_COMMENT = 0xffff;
 
 /** A comment that embeds a decoy end-of-central-directory signature. */
 const decoyComment = (padding: number): Buffer => {
@@ -55,6 +59,10 @@ describe("readZipEntries", () => {
     expect(entries[1]?.text).toBe("stored content");
   });
 
+  it("reads a genuinely empty archive with a comment", () => {
+    expect(readZipEntries(makeZip([], { comment: Buffer.from("release comment") }))).toEqual([]);
+  });
+
   it("refuses a buffer that is not a zip archive", () => {
     expect(() => readZipEntries(Buffer.from("not a zip"))).toThrow(/central directory/u);
     expect(archiveError(() => readZipEntries(Buffer.from("not a zip"))).code).toBe("eocd-missing");
@@ -66,6 +74,42 @@ describe("readZipEntries", () => {
 
     expect(readZipEntries(padded)).toHaveLength(REQUIRED_VSIX_ENTRIES.length);
     expect(readZipEntries(exact)).toHaveLength(REQUIRED_VSIX_ENTRIES.length);
+  });
+
+  it("rejects ambiguous nonempty end records before inflating content", () => {
+    const archive = withRepeatedEocdCandidates(
+      makeZip(
+        [{ name: "extension/dist/extension.cjs", content: "x".repeat(1024 * 1024) }],
+        { firstUncompressedSize: 1 },
+      ),
+      3,
+    );
+    const centralNameReads = vi.spyOn(archive, "toString");
+
+    expect(archiveError(() => readZipEntries(archive)).code).toBe(
+      "eocd-nonempty-ambiguous",
+    );
+    expect(centralNameReads).toHaveBeenCalledTimes(2);
+  });
+
+  it("bounds metadata inspection across repeated late-failing end records", () => {
+    const release = releaseVsixFixture();
+    const centralSize = release.readUInt32LE(
+      release.length - EOCD_LENGTH + 12,
+    );
+    const archive = withRepeatedLateFailingEocdCandidates(
+      release,
+      256,
+    );
+    const centralNameReads = vi.spyOn(archive, "toString");
+
+    expect(archiveError(() => readZipEntries(archive)).code).toBe(
+      "eocd-metadata-budget-exceeded",
+    );
+    expect(centralNameReads.mock.calls.length).toBeLessThanOrEqual(
+      (REQUIRED_VSIX_ENTRIES.length - 1) *
+        Math.floor(MAX_ARCHIVE_COMMENT / centralSize),
+    );
   });
 
   it("rejects an archive whose comment length does not reach the end", () => {
@@ -163,6 +207,17 @@ describe("readZipEntries", () => {
     ).toBe("entry-inflate-failed");
   });
 
+  it("rejects a deflated entry whose inflated size differs from its declaration", () => {
+    const archive = makeZip(
+      [{ name: "extension/dist/extension.cjs", content: "inflated content" }],
+      { firstUncompressedSize: 1 },
+    );
+
+    expect(archiveError(() => readZipEntries(archive)).code).toBe(
+      "entry-size-mismatch",
+    );
+  });
+
   it("rejects an oversized stored entry that lies about its uncompressed size", () => {
     const oversized = "x".repeat(16 * 1024 * 1024 + 1);
 
@@ -182,6 +237,35 @@ describe("readZipEntries", () => {
         ),
       ).code,
     ).toBe("entry-size-mismatch");
+  });
+
+  it("rejects duplicate entries sharing a local offset before inflating them", () => {
+    const oversized = "x".repeat(16 * 1024 * 1024 + 1);
+    const archive = makeZip(
+      [
+        { name: "extension/package.json", content: oversized },
+        { name: "extension/package.json", content: "{}" },
+      ],
+      { firstUncompressedSize: 1, lastLocalOffset: 0 },
+    );
+
+    expect(archiveError(() => readZipEntries(archive)).code).toBe(
+      "entry-offset-duplicate",
+    );
+  });
+
+  it("rejects excessive aggregate declared output before inflating any entry", () => {
+    const archive = makeZip(
+      Array.from({ length: REQUIRED_VSIX_ENTRIES.length + 1 }, (_, index) => ({
+        name: `extension/entry-${index}.txt`,
+        content: "small",
+        centralUncompressedSize: 16 * 1024 * 1024,
+      })),
+    );
+
+    expect(archiveError(() => readZipEntries(archive)).code).toBe(
+      "archive-too-large",
+    );
   });
 
   it("rejects a truncated archive without leaking a RangeError", () => {
@@ -247,7 +331,7 @@ describe("inspectEntryNames", () => {
   it("sanitizes hostile entry names in its messages", () => {
     const violations = inspectEntryNames([
       ...REQUIRED_VSIX_ENTRIES,
-      "extension/\u0000drop\nnotes.txt",
+      "extension/\x00drop\nnotes.txt",
     ]);
 
     expect(violations).toEqual([
