@@ -259,7 +259,7 @@ export class WorkspaceContext {
       if (
         inspection.exists &&
         inspection.isFile &&
-        !(inspection.isSymbolicLink && !inspection.withinRoot) &&
+        inspection.withinRoot &&
         inspection.byteLength <= MAX_CONTEXT_FILE_BYTES
       ) {
         accepted.push(canonical);

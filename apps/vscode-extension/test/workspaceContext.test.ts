@@ -236,6 +236,7 @@ describe("WorkspaceContext.capture — rejection rules", () => {
       git: {
         untrackedPaths: [
           "linked.ts",
+          "ancestor-linked.ts",
           "logo.png",
           ".ssh/id_rsa",
           "huge.ts",
@@ -244,6 +245,7 @@ describe("WorkspaceContext.capture — rejection rules", () => {
       },
       stats: {
         "linked.ts": { isSymbolicLink: true, withinRoot: false },
+        "ancestor-linked.ts": { isSymbolicLink: false, withinRoot: false },
         "huge.ts": { byteLength: MAX_CONTEXT_FILE_BYTES + 1 },
       },
     });
