@@ -98,6 +98,25 @@ describe("Evaluation export", () => {
     expect(message).not.toContain("TS2345");
   });
 
+  it("does not echo an unexpected sensitive property name in the error", () => {
+    const sensitiveKey = "/Users/alice/private-prompt";
+    const contaminated = {
+      ...baseRecord(),
+      [sensitiveKey]: true,
+    } as unknown as EvaluationRecord;
+
+    let thrown: unknown;
+    try {
+      exportEvaluation([contaminated]);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(EvaluationExportError);
+    expect((thrown as EvaluationExportError).field).not.toContain(sensitiveKey);
+    expect((thrown as Error).message).not.toContain(sensitiveKey);
+  });
+
   it("emits only the categorical growth outcome fields", () => {
     const parsed = JSON.parse(exportEvaluation([baseRecord()])) as {
       readonly records: readonly {
@@ -138,6 +157,22 @@ describe("Evaluation export — strict runtime validation", () => {
       "invalid-operation-outcome",
     );
     expect((thrown as Error).message).not.toContain("secret");
+  });
+
+  it("rejects sparse operation outcomes", () => {
+    const operationOutcomes = new Array<EvaluationRecord["operationOutcomes"][number]>(1);
+    const record = {
+      ...baseRecord(),
+      operationOutcomes,
+    };
+
+    expect(() => exportEvaluation([record])).toThrow(EvaluationExportError);
+  });
+
+  it("rejects sparse record arrays", () => {
+    const records = new Array<EvaluationRecord>(1);
+
+    expect(() => exportEvaluation(records)).toThrow(EvaluationExportError);
   });
 
   it("rejects an invalid mode category", () => {

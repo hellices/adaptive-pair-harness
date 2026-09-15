@@ -324,6 +324,14 @@ const fakeVscode = vi.hoisted(() => {
         isDirty,
         uri: createUri(path),
       },
+      contentChanges: [
+        {
+          range: {
+            start: { line: 0 },
+            end: { line: 0 },
+          },
+        },
+      ],
     };
     for (const listener of state.documentListeners) {
       listener(event);
@@ -763,6 +771,8 @@ describe("PairLanguageModelTool", () => {
       status: "failed",
       reason: "host-error",
     });
+    expect(result.content).toHaveLength(1);
+    expect(JSON.stringify(result.content)).not.toContain("HOST_SECRET");
     expect(JSON.stringify(payload)).not.toContain("HOST_SECRET");
   });
 });

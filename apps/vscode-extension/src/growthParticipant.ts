@@ -308,8 +308,9 @@ const boundedList = (values: readonly string[] | undefined): string => {
 
 const normalizeForComparison = (value: string): string =>
   value
+    .normalize("NFKC")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/gu, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
 
 /**
@@ -319,7 +320,7 @@ const normalizeForComparison = (value: string): string =>
 export const isDistinctVariation = (text: string, objective: string): boolean => {
   const target = normalizeForComparison(objective);
   if (target.length === 0) {
-    return true;
+    return text.normalize("NFKC").trim() !== objective.normalize("NFKC").trim();
   }
   return !normalizeForComparison(text).includes(target);
 };

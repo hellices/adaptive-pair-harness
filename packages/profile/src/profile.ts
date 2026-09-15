@@ -68,7 +68,8 @@ const DEFAULT_PROFILE: LocalProfile = Object.freeze({
   acceptedReflections: Object.freeze([]),
 });
 
-const ABSOLUTE_PATH = /^\s*(?:[A-Za-z]:[\\/]|[\\/])/u;
+const ABSOLUTE_PATH =
+  /(?:^|[\s"'(<=[{:])\/(?!\/)[^\s"'()<>[\]{}]+|[A-Za-z]:[\\/]/u;
 const WINDOWS_SEPARATOR = /\\/u;
 const DIAGNOSTIC = /[\w.$/-]+:\d+:\d+|\bTS\d{3,}\b|\berror\s+[A-Z]\w+\d+\b/u;
 const SOURCE_TOKENS =

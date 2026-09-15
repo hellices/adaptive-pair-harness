@@ -10,6 +10,7 @@ vi.mock("vscode", () => ({
 const { NodePackageScriptPort, NodeProcessRunPort, MAX_OUTPUT_BYTES } =
   await import("../src/verificationAdapter.js");
 import type {
+  ProcessTreePort,
   ReadTextFile,
   RunOutcome,
   SpawnProcess,
@@ -74,6 +75,9 @@ class FakeChild extends EventEmitter {
   public readonly stdout = new EventEmitter();
   public readonly stderr = new EventEmitter();
   public readonly signals: string[] = [];
+  public constructor(public readonly pid?: number) {
+    super();
+  }
   public kill(signal: string): boolean {
     this.signals.push(signal);
     return true;
@@ -82,10 +86,26 @@ class FakeChild extends EventEmitter {
 
 const spawningInto = (
   child: FakeChild,
-): { readonly spawn: SpawnProcess; readonly state: { calls: number } } => {
-  const state = { calls: 0 };
-  const spawn: SpawnProcess = () => {
+): {
+  readonly spawn: SpawnProcess;
+  readonly state: {
+    calls: number;
+    command?: string;
+    args?: readonly string[];
+    options?: Parameters<SpawnProcess>[2];
+  };
+} => {
+  const state: {
+    calls: number;
+    command?: string;
+    args?: readonly string[];
+    options?: Parameters<SpawnProcess>[2];
+  } = { calls: 0 };
+  const spawn: SpawnProcess = (command, args, options) => {
     state.calls += 1;
+    state.command = command;
+    state.args = args;
+    state.options = options;
     return child as unknown as ReturnType<SpawnProcess>;
   };
   return { spawn, state };
@@ -152,7 +172,7 @@ describe("NodeProcessRunPort", () => {
     controller.abort();
     expect(child.signals).toEqual(["SIGTERM"]);
     // The unresponsive process never emits close; the grace timer escalates.
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(5_250);
     const result = await pending;
     expect(child.signals).toEqual(["SIGTERM", "SIGKILL"]);
     expect(result.signal).toBe("SIGKILL");
@@ -191,5 +211,52 @@ describe("NodeProcessRunPort", () => {
     expect(Buffer.byteLength(result.output, "utf8")).toBeLessThanOrEqual(
       MAX_OUTPUT_BYTES,
     );
+    expect(result.outputTruncated).toBe(true);
+  });
+
+  it("terminates the whole detached process tree before confirming cancellation", async () => {
+    const child = new FakeChild(43_210);
+    const { spawn, state } = spawningInto(child);
+    let alive = true;
+    const signals: string[] = [];
+    const tree: ProcessTreePort = {
+      signal: (_child, signal) => {
+        signals.push(signal);
+        if (signal === "SIGKILL") {
+          alive = false;
+        }
+        return true;
+      },
+      isAlive: () => alive,
+    };
+    const controller = new AbortController();
+    const port = new NodeProcessRunPort("/repo", spawn, tree);
+    const pending = port.run({ script: "test" }, controller.signal);
+
+    expect(state.command).toBe(process.platform === "win32" ? "npm.cmd" : "npm");
+    expect(state.args).toEqual(["run", "test"]);
+    expect(state.options).toMatchObject({
+      cwd: "/repo",
+      shell: false,
+      detached: process.platform !== "win32",
+    });
+
+    controller.abort();
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(child.signals).toEqual([]);
+
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    child.emit("close", null, "SIGTERM");
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    const result = await pending;
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(result.terminationConfirmed).toBe(true);
+    expect(result.signal).toBe("SIGKILL");
   });
 });

@@ -81,6 +81,7 @@ const {
   GrowthParticipant,
   GrowthEvaluationLog,
   GROWTH_COMMAND_INTENTS,
+  isDistinctVariation,
   ModelConsentRegistry,
   WITHHELD_RESPONSE_MESSAGE,
   interpretGrowthIntent,
@@ -501,6 +502,50 @@ describe("interpretGrowthIntent", () => {
 });
 
 describe("GrowthModel adapter", () => {
+  it("does not execute a confirmed tool after the turn deadline", async () => {
+    const snapshot = growthSnapshot({
+      runtimeRevision: 4,
+      session: {
+        status: "briefing",
+        mode: undefined,
+        workUnit: undefined,
+        assistance: undefined,
+      },
+    });
+    const coordinator = new FakeCoordinator(snapshot);
+    const model = new FakeModel([
+      {
+        toolCalls: [
+          {
+            callId: "call-mode",
+            name: nativeToolName("pair_select_mode"),
+            input: { mode: "growth" },
+          },
+        ],
+      },
+    ]);
+    const prepared = await coordinator.prepareTurn({});
+    let now = 0;
+    const growthModel = createGrowthModel(asModel(model), coordinator, {
+      caps: { ...GROWTH_TURN_CAPS, deadlineMs: 100 },
+      now: () => now,
+      confirmToolAction: () => {
+        now = 101;
+        return Promise.resolve(true);
+      },
+    });
+
+    await expect(
+      growthModel.request(
+        prepared.instructions,
+        prepared.tools,
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "GROWTH_TIME_CAP" });
+    expect(coordinator.grantCalls).toEqual([]);
+    expect(coordinator.invokeCalls).toEqual([]);
+  });
+
   it("never exposes an edit or command tool to the model", () => {
     const tools = toGrowthChatTools(viewWith([mutationDescriptor, readDescriptor]));
     const names = tools.map(tool => tool.name);
@@ -1736,6 +1781,10 @@ describe("GrowthParticipant deterministic core-state commands", () => {
 describe("GrowthParticipant transfer", () => {
   const variation =
     "Independent variation: build a queue that drains at most N jobs per tick and prove the boundary yourself.";
+
+  it("does not treat an identical Korean objective as a distinct variation", () => {
+    expect(isDistinctVariation("배열 정렬 구현", "배열 정렬 구현")).toBe(false);
+  });
 
   it("requests a bounded variation distinct from the work unit and records transfer-started", async () => {
     const coordinator = new FakeCoordinator(growthSnapshot({ runtimeRevision: 4 }));

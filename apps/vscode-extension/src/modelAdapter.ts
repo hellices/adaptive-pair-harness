@@ -16,14 +16,19 @@ import type {
 import type { PairCoordinatorPort } from "@adaptive-pair/runtime";
 import type { GrowthResponse } from "@adaptive-pair/restraint";
 
-export const GROWTH_TURN_CAPS = Object.freeze({
+export interface GrowthTurnCaps {
+  readonly maxModelCalls: number;
+  readonly maxInputTokens: number;
+  readonly maxOutputTokens: number;
+  readonly deadlineMs: number;
+}
+
+export const GROWTH_TURN_CAPS: GrowthTurnCaps = Object.freeze({
   maxModelCalls: 4,
   maxInputTokens: 20_000,
   maxOutputTokens: 1_200,
   deadlineMs: 60_000,
 });
-
-export type GrowthTurnCaps = typeof GROWTH_TURN_CAPS;
 
 export type GrowthModelFailureCode =
   | "GROWTH_MODEL_CALL_CAP"
@@ -402,7 +407,8 @@ class VscodeGrowthModel implements GrowthModel {
             toolCalls,
             tools,
             runtime,
-            signal,
+            derived.signal,
+            deadline,
           );
           continue;
         }
@@ -421,11 +427,11 @@ class VscodeGrowthModel implements GrowthModel {
   }
 
   private ensureLive(signal: AbortSignal, deadline: number): void {
-    if (signal.aborted) {
-      throw new GrowthModelFailure("GROWTH_CANCELLED");
-    }
     if (this.now() >= deadline) {
       throw new GrowthModelFailure("GROWTH_TIME_CAP");
+    }
+    if (signal.aborted) {
+      throw new GrowthModelFailure("GROWTH_CANCELLED");
     }
   }
 
@@ -503,6 +509,7 @@ class VscodeGrowthModel implements GrowthModel {
     tools: PairToolView,
     runtime: GrowthRuntimeBoundary,
     signal: AbortSignal,
+    deadline: number,
   ): Promise<GrowthRuntimeBoundary> {
     messages.push(vscode.LanguageModelChatMessage.Assistant([...toolCalls]));
 
@@ -535,11 +542,12 @@ class VscodeGrowthModel implements GrowthModel {
           describeGrowthToolAction(pairName, input, confirmationSnapshot),
           signal,
         );
-        this.ensureLive(signal, Number.POSITIVE_INFINITY);
+        this.ensureLive(signal, deadline);
         await this.captureRuntime(
           runtime.runtimeRevision,
           runtime.authorityEpoch,
         );
+        this.ensureLive(signal, deadline);
         if (!confirmed) {
           resultParts.push(
             new vscode.LanguageModelToolResultPart(toolCall.callId, [
@@ -553,12 +561,14 @@ class VscodeGrowthModel implements GrowthModel {
           );
           continue;
         }
+        this.ensureLive(signal, deadline);
         userActionId = await this.coordinator.grantUserAction(pairName, signal, {
           runtimeRevision: runtime.runtimeRevision,
           authorityEpoch: runtime.authorityEpoch,
         });
       }
 
+      this.ensureLive(signal, deadline);
       const result = await this.coordinator.invokeTool(pairName, input, signal, {
         ...(userActionId === undefined
           ? {

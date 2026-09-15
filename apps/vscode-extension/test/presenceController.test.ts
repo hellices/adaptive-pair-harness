@@ -72,6 +72,7 @@ const harness = vi.hoisted(() => {
       readonly languageId?: string;
       readonly startLine?: number;
       readonly endLine?: number;
+      readonly contentChanges?: boolean;
     } = {},
   ): void => {
     const event: DocumentChangeEvent = {
@@ -81,14 +82,17 @@ const harness = vi.hoisted(() => {
         version: options.version ?? 2,
         languageId: options.languageId ?? "typescript",
       },
-      contentChanges: [
-        {
-          range: {
-            start: { line: options.startLine ?? 0 },
-            end: { line: options.endLine ?? 0 },
-          },
-        },
-      ],
+      contentChanges:
+        options.contentChanges === false
+          ? []
+          : [
+              {
+                range: {
+                  start: { line: options.startLine ?? 0 },
+                  end: { line: options.endLine ?? 0 },
+                },
+              },
+            ],
     };
     for (const listener of state.documentListeners) {
       listener(event);
@@ -305,6 +309,34 @@ afterEach(() => {
 });
 
 describe("PresenceController — pending edit timers", () => {
+  it("observes an undo that returns a document to its saved state", async () => {
+    const scheduler = new FakeScheduler();
+    const fs = new MemoryFs();
+    const { controller } = buildController(scheduler, fs);
+
+    await run("adaptivePair.enablePresence");
+    harness.emitChange("/workspace/src/pair.ts", { isDirty: false });
+    scheduler.advanceBy(1_000);
+    await flush();
+
+    expect(controller.getState().observationCount).toBe(1);
+    expect(fs.writes).toBeGreaterThan(0);
+  });
+
+  it("ignores document-change events without text changes", async () => {
+    const scheduler = new FakeScheduler();
+    const fs = new MemoryFs();
+    const { controller } = buildController(scheduler, fs);
+
+    await run("adaptivePair.enablePresence");
+    harness.emitChange("/workspace/src/pair.ts", { contentChanges: false });
+    scheduler.advanceBy(1_000);
+    await flush();
+
+    expect(controller.getState().observationCount).toBe(0);
+    expect(fs.writes).toBe(0);
+  });
+
   it("cancels a pending edit episode when presence pauses", async () => {
     const scheduler = new FakeScheduler();
     const fs = new MemoryFs();

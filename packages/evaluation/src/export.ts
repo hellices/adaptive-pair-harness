@@ -119,7 +119,10 @@ const assertExactKeys = (
   const allowedSet = new Set(allowed);
   for (const key of Object.keys(value)) {
     if (!allowedSet.has(key)) {
-      throw new EvaluationExportError("unexpected-property", `${container}.${key}`);
+      throw new EvaluationExportError(
+        "unexpected-property",
+        `${container}.<unexpected-property>`,
+      );
     }
   }
   for (const key of allowed) {
@@ -242,7 +245,7 @@ const validateRecord = (
       `${field}.operationOutcomes`,
     );
   }
-  const operationOutcomes = outcomes.map((outcome, index) => {
+  const operationOutcomes = Array.from(outcomes, (outcome, index) => {
     if (
       typeof outcome !== "string" ||
       !OPERATION_OUTCOMES.has(outcome as OperationOutcomeCategory)
@@ -303,7 +306,7 @@ export const exportEvaluation = (
     {
       schema: "adaptive-pair/evaluation-export",
       version: 1,
-      records: records.map((record, index) =>
+      records: Array.from(records, (record, index) =>
         validateRecord(record, `records[${index}]`),
       ),
     },

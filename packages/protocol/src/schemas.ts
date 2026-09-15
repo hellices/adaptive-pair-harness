@@ -386,7 +386,12 @@ const assertJsonCompatible = (
           continue;
         }
 
-        if (!/^(0|[1-9]\d*)$/.test(name)) {
+        const numericName = Number(name);
+        if (
+          !/^(0|[1-9]\d*)$/.test(name) ||
+          !Number.isInteger(numericName) ||
+          numericName >= 2 ** 32 - 1
+        ) {
           throw jsonError(`non-index array property ${name} is not allowed`);
         }
 

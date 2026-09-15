@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceContext, WorkspaceContextChangedError } from "../src/workspaceContext.js";
 
@@ -33,11 +36,13 @@ const git = vi.hoisted(() => {
   const state = {
     repositories: [] as FakeRepository[],
     onDiagnostics: undefined as (() => void) | undefined,
+    workspaceRoot: "/workspace",
   };
 
   const reset = (): void => {
     state.repositories = [];
     state.onDiagnostics = undefined;
+    state.workspaceRoot = "/workspace";
   };
 
   return { createUri, state, reset };
@@ -46,13 +51,13 @@ const git = vi.hoisted(() => {
 vi.mock("vscode", () => {
   const asRelativePath = (value: FakeUri | string): string => {
     const text = typeof value === "string" ? value : value.fsPath;
-    return text.replace(/^\/workspace\//u, "");
+    return text.replace(`${git.state.workspaceRoot}/`, "");
   };
 
   return {
     workspace: {
       get workspaceFolders() {
-        return [{ uri: git.createUri("/workspace") }];
+        return [{ uri: git.createUri(git.state.workspaceRoot) }];
       },
       textDocuments: [] as unknown[],
       asRelativePath,
@@ -90,6 +95,31 @@ afterEach(() => {
 });
 
 describe("VscodeWorkspaceContextAccess — production branch currentness", () => {
+  it("marks a regular file below an escaping ancestor symlink outside the root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "adaptive-pair-root-"));
+    const outside = await mkdtemp(join(tmpdir(), "adaptive-pair-outside-"));
+    try {
+      await mkdir(join(outside, "nested"));
+      await writeFile(join(outside, "nested", "secret.txt"), "secret", "utf8");
+      await symlink(join(outside, "nested"), join(root, "linked"), "dir");
+      git.state.workspaceRoot = root;
+
+      const inspected = await new VscodeWorkspaceContextAccess(clock).inspectPath(
+        "linked/secret.txt",
+      );
+
+      expect(inspected).toMatchObject({
+        exists: true,
+        isFile: true,
+        isSymbolicLink: false,
+        withinRoot: false,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when HEAD changes on the workspace repository during capture", async () => {
     git.state.repositories = [
       {

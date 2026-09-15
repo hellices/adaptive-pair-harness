@@ -98,6 +98,26 @@ describe("guardGrowthResponse", () => {
     });
   });
 
+  it("rejects a solution preview that understates its semantic level", () => {
+    const result = guardGrowthResponse(
+      {
+        level: 4,
+        kind: "solution-preview",
+        text: "The complete answer is 42.",
+      },
+      {
+        authorizedHintLevel: 5,
+        revealAuthorized: false,
+        targetIdentifiers: [],
+      },
+    );
+
+    expect(result).toEqual({
+      accepted: false,
+      reason: "RESPONSE_CLASS_EXCEEDED",
+    });
+  });
+
   it("passes through non-target guidance", () => {
     const result = guardGrowthResponse(
       {

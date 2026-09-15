@@ -358,13 +358,12 @@ describe("LocalJournal", () => {
 
     await journal.append(event("entry-captured", { branch: "main" }));
 
-    const writeIndex = fs.operations.findIndex(op => op.startsWith("writeFile:"));
-    const fsyncIndex = fs.operations.findIndex(op => op.startsWith("fsync:"));
-    const renameIndex = fs.operations.findIndex(op => op.startsWith("rename:"));
-    expect(writeIndex).toBeGreaterThanOrEqual(0);
-    expect(fsyncIndex).toBeGreaterThan(writeIndex);
-    expect(renameIndex).toBeGreaterThan(fsyncIndex);
-    expect(fs.operations[writeIndex]).toContain(".tmp");
+    expect(fs.operations).toEqual([
+      "ensureDir:/storage",
+      "writeFile:/storage/journal.jsonl.tmp",
+      "fsync:/storage/journal.jsonl.tmp",
+      "rename:/storage/journal.jsonl.tmp->/storage/journal.jsonl",
+    ]);
   });
 
   it("replays events across a restart in sequence order", async () => {
@@ -421,6 +420,35 @@ describe("LocalJournal", () => {
     await expect(
       journal.append(event("entry-captured", { path: "/Users/alice/secret.ts" })),
     ).rejects.toBeInstanceOf(JournalIntegrityError);
+  });
+
+  it("refuses a root-level absolute path value", async () => {
+    const journal = new LocalJournal(fs, "/storage");
+
+    await expect(
+      journal.append(event("entry-captured", { path: "/secret.txt" })),
+    ).rejects.toBeInstanceOf(JournalIntegrityError);
+  });
+
+  it("refuses an absolute path in an object key", async () => {
+    const journal = new LocalJournal(fs, "/storage");
+
+    await expect(
+      journal.append(event("entry-captured", { "/home/alice/project": true })),
+    ).rejects.toBeInstanceOf(JournalIntegrityError);
+  });
+
+  it("refuses non-plain payload values before hashing or persistence", async () => {
+    const journal = new LocalJournal(fs, "/storage");
+
+    await expect(
+      journal.append(
+        event("entry-captured", {
+          captured: new Date(0),
+        }),
+      ),
+    ).rejects.toBeInstanceOf(JournalIntegrityError);
+    expect(fs.files.has("/storage/journal.jsonl")).toBe(false);
   });
 
   it("refuses to serialize diagnostic text longer than 500 characters", async () => {

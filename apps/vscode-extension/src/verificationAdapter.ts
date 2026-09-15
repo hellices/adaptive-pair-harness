@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import * as vscode from "vscode";
@@ -38,6 +38,7 @@ export interface RunOutcome {
   readonly exitCode: number | null;
   readonly signal: string | null;
   readonly output: string;
+  readonly outputTruncated: boolean;
   readonly terminationConfirmed: boolean;
 }
 
@@ -302,7 +303,8 @@ export class VerificationAdapter {
     }
 
     const passed = status === "confirmed" && outcome.exitCode === 0;
-    const partial = interrupted || bounded.truncated;
+    const partial =
+      interrupted || outcome.outputTruncated || bounded.truncated;
 
     const observation: Record<string, unknown> = {
       exitCode: outcome.exitCode,
@@ -438,31 +440,124 @@ export class NodePackageScriptPort implements PackageScriptPort {
 export type SpawnProcess = (
   command: string,
   args: readonly string[],
-  options: { readonly cwd: string; readonly shell: false },
+  options: {
+    readonly cwd: string;
+    readonly shell: false;
+    readonly detached: boolean;
+  },
 ) => ChildProcessWithoutNullStreams;
 
 const defaultSpawn: SpawnProcess = (command, args, options) =>
   spawn(command, [...args], options);
 
+type TerminationSignal = "SIGTERM" | "SIGKILL";
+
+export interface ProcessTreePort {
+  signal(
+    child: ChildProcessWithoutNullStreams,
+    signal: TerminationSignal,
+  ): boolean;
+  isAlive(child: ChildProcessWithoutNullStreams): boolean;
+}
+
+const errnoCode = (error: unknown): string | undefined => {
+  if (typeof error !== "object" || error === null) {
+    return undefined;
+  }
+  const code = (error as { readonly code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+};
+
+class SystemProcessTreePort implements ProcessTreePort {
+  private readonly terminatedWindowsTrees = new Set<number>();
+
+  public signal(
+    child: ChildProcessWithoutNullStreams,
+    signal: TerminationSignal,
+  ): boolean {
+    const pid = child.pid;
+    if (pid === undefined) {
+      return child.kill(signal);
+    }
+
+    if (process.platform === "win32") {
+      const result = spawnSync(
+        "taskkill",
+        [
+          "/PID",
+          String(pid),
+          "/T",
+          ...(signal === "SIGKILL" ? ["/F"] : []),
+        ],
+        { stdio: "ignore", windowsHide: true },
+      );
+      if (result.status === 0) {
+        this.terminatedWindowsTrees.add(pid);
+        return true;
+      }
+      return false;
+    }
+
+    try {
+      process.kill(-pid, signal);
+      return true;
+    } catch (error) {
+      return errnoCode(error) === "ESRCH" ? false : false;
+    }
+  }
+
+  public isAlive(child: ChildProcessWithoutNullStreams): boolean {
+    const pid = child.pid;
+    if (pid === undefined) {
+      return true;
+    }
+    if (process.platform === "win32") {
+      return !this.terminatedWindowsTrees.has(pid);
+    }
+
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch (error) {
+      return errnoCode(error) !== "ESRCH";
+    }
+  }
+}
+
 export class NodeProcessRunPort implements ProcessRunPort {
   public constructor(
     private readonly rootPath: string,
     private readonly spawnProcess: SpawnProcess = defaultSpawn,
+    private readonly processTree: ProcessTreePort = new SystemProcessTreePort(),
   ) {}
 
   public run(command: RunCommand, signal: AbortSignal): Promise<RunOutcome> {
     return new Promise<RunOutcome>((resolve) => {
-      const child = this.spawnProcess("npm", ["run", command.script], {
-        cwd: this.rootPath,
-        shell: false,
-      });
+      const child = this.spawnProcess(
+        process.platform === "win32" ? "npm.cmd" : "npm",
+        ["run", command.script],
+        {
+          cwd: this.rootPath,
+          shell: false,
+          detached: process.platform !== "win32",
+        },
+      );
 
       const chunks: Buffer[] = [];
       let byteLength = 0;
+      let outputTruncated = false;
       let settled = false;
 
       const collect = (data: Buffer): void => {
-        if (byteLength >= MAX_OUTPUT_BYTES) {
+        const remaining = MAX_OUTPUT_BYTES - byteLength;
+        if (remaining <= 0) {
+          outputTruncated = true;
+          return;
+        }
+        if (data.byteLength > remaining) {
+          chunks.push(data.subarray(0, remaining));
+          byteLength += remaining;
+          outputTruncated = true;
           return;
         }
         byteLength += data.byteLength;
@@ -475,7 +570,13 @@ export class NodeProcessRunPort implements ProcessRunPort {
         boundedUtf8(Buffer.concat(chunks), MAX_OUTPUT_BYTES);
 
       const KILL_GRACE_MS = 5_000;
+      const KILL_CONFIRM_MS = 250;
       let graceHandle: ReturnType<typeof setTimeout> | undefined;
+      let confirmHandle: ReturnType<typeof setTimeout> | undefined;
+      let aborting = false;
+      let childClosed = false;
+      let childCloseSignal: string | null = null;
+      let onAbort: () => void = () => undefined;
       const settle = (result: RunOutcome): void => {
         if (settled) {
           return;
@@ -484,24 +585,55 @@ export class NodeProcessRunPort implements ProcessRunPort {
         if (graceHandle !== undefined) {
           clearTimeout(graceHandle);
         }
+        if (confirmHandle !== undefined) {
+          clearTimeout(confirmHandle);
+        }
         signal.removeEventListener("abort", onAbort);
         resolve(result);
       };
 
-      function onAbort(): void {
-        child.kill("SIGTERM");
+      const interruptedOutcome = (
+        terminationSignal: string | null,
+        terminationConfirmed: boolean,
+      ): RunOutcome => ({
+        exitCode: null,
+        signal: terminationSignal,
+        output: output(),
+        outputTruncated,
+        terminationConfirmed,
+      });
+
+      const settleIfTreeStopped = (terminationSignal: string | null): boolean => {
+        if (
+          (child.pid === undefined && childClosed) ||
+          (child.pid !== undefined && !this.processTree.isAlive(child))
+        ) {
+          settle(interruptedOutcome(terminationSignal, true));
+          return true;
+        }
+        return false;
+      };
+
+      onAbort = (): void => {
+        aborting = true;
+        this.processTree.signal(child, "SIGTERM");
         // If the process ignores SIGTERM, escalate and then report an
         // unconfirmed termination rather than hanging forever.
         graceHandle = setTimeout(() => {
-          child.kill("SIGKILL");
-          settle({
-            exitCode: null,
-            signal: "SIGKILL",
-            output: output(),
-            terminationConfirmed: false,
-          });
+          this.processTree.signal(child, "SIGKILL");
+          if (settleIfTreeStopped("SIGKILL")) {
+            return;
+          }
+          confirmHandle = setTimeout(() => {
+            settle(
+              interruptedOutcome(
+                "SIGKILL",
+                child.pid !== undefined && !this.processTree.isAlive(child),
+              ),
+            );
+          }, KILL_CONFIRM_MS);
         }, KILL_GRACE_MS);
-      }
+      };
       signal.addEventListener("abort", onAbort, { once: true });
 
       child.on("error", () => {
@@ -509,18 +641,30 @@ export class NodeProcessRunPort implements ProcessRunPort {
           exitCode: null,
           signal: null,
           output: output(),
+          outputTruncated,
           terminationConfirmed: false,
         });
       });
 
       child.on("close", (code, terminationSignal) => {
+        childClosed = true;
+        childCloseSignal = terminationSignal;
+        if (aborting) {
+          settleIfTreeStopped(childCloseSignal);
+          return;
+        }
         settle({
           exitCode: code,
           signal: terminationSignal,
           output: output(),
+          outputTruncated,
           terminationConfirmed: true,
         });
       });
+
+      if (signal.aborted) {
+        onAbort();
+      }
     });
   }
 }

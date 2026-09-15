@@ -350,4 +350,16 @@ describe("instruction compiler", () => {
       truncated: true,
     });
   });
+
+  it("bounds very large tool-result arrays without quadratic scanning", () => {
+    const startedAt = Date.now();
+    const envelope = compileInstructions({
+      snapshot: growthRuntime(),
+      toolResults: Array.from({ length: 10_000 }, () => ""),
+    });
+    const elapsedMs = Date.now() - startedAt;
+
+    expectJsonFencesToParseWithinCaps(envelope);
+    expect(elapsedMs).toBeLessThan(1_000);
+  }, 30_000);
 });

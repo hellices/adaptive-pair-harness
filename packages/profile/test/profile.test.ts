@@ -111,6 +111,17 @@ describe("LocalProfileStore — forbidden data rejected without silent truncatio
     ).toThrow(ProfileValidationError);
   });
 
+  it("rejects an embedded absolute path in a reflection", () => {
+    const store = createLocalProfileStore(persistence);
+    expect(() =>
+      store.correct({
+        kind: "reflection",
+        summary: "Reviewed /home/alice/private-project",
+        acceptedAt: 1,
+      }),
+    ).toThrow(ProfileValidationError);
+  });
+
   it("rejects source code in a reflection", () => {
     const store = createLocalProfileStore(persistence);
     expect(() =>
@@ -150,6 +161,22 @@ describe("LocalProfileStore — forbidden data rejected without silent truncatio
       explanationDepth: "standard",
       declaredFamiliarity: { "/etc/passwd": "new" },
       acceptedReflections: [],
+    };
+    const store = createLocalProfileStore(persistence);
+    expect(() => store.inspect()).toThrow(ProfileValidationError);
+  });
+
+  it("rejects an embedded absolute path loaded from persistence", () => {
+    persistence.value = {
+      interventionStyle: "balanced",
+      explanationDepth: "standard",
+      declaredFamiliarity: {},
+      acceptedReflections: [
+        {
+          summary: "Reviewed /home/alice/private-project",
+          acceptedAt: 1,
+        },
+      ],
     };
     const store = createLocalProfileStore(persistence);
     expect(() => store.inspect()).toThrow(ProfileValidationError);

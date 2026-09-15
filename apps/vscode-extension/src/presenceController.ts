@@ -264,7 +264,7 @@ export class PresenceController implements vscode.Disposable {
     }
 
     this.documentListener = vscode.workspace.onDidChangeTextDocument(event => {
-      if (!event.document.isDirty) {
+      if (event.contentChanges.length === 0) {
         return;
       }
 

@@ -41,7 +41,8 @@ export class JournalIntegrityError extends Error {
 
 const GENESIS_HASH = "";
 const MAX_SERIALIZED_STRING = 500;
-const ABSOLUTE_PATH = /(^|[\s"'(=[])(?:\/(?:[^/\s"')\]]+\/){1,}|[A-Za-z]:[\\/])/u;
+const ABSOLUTE_PATH =
+  /(?:^|[\s"'(<=[{:])\/(?!\/)[^\s"'()<>[\]{}]+|[A-Za-z]:[\\/]/u;
 
 const canonicalize = (value: unknown): unknown => {
   if (Array.isArray(value)) {
@@ -89,18 +90,47 @@ const assertSerializable = (value: unknown): void => {
     return;
   }
 
+  if (
+    value === null ||
+    typeof value === "boolean" ||
+    (typeof value === "number" && Number.isFinite(value))
+  ) {
+    return;
+  }
+
   if (Array.isArray(value)) {
-    for (const nested of value) {
-      assertSerializable(nested);
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.prototype.hasOwnProperty.call(value, index)) {
+        throw new JournalIntegrityError(
+          "privacy",
+          "Refusing to serialize a sparse array.",
+        );
+      }
+      assertSerializable(value[index]);
     }
     return;
   }
 
   if (value !== null && typeof value === "object") {
-    for (const nested of Object.values(value as Record<string, unknown>)) {
+    const prototype: unknown = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new JournalIntegrityError(
+        "privacy",
+        "Refusing to serialize a non-plain object.",
+      );
+    }
+
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      assertSerializable(key);
       assertSerializable(nested);
     }
+    return;
   }
+
+  throw new JournalIntegrityError(
+    "privacy",
+    "Refusing to serialize non-JSON data.",
+  );
 };
 
 export class LocalJournal {
@@ -119,6 +149,7 @@ export class LocalJournal {
   public append(event: JournalEvent): Promise<void> {
     return this.enqueue(async () => {
       assertSerializable(event);
+      const normalizedEvent = canonicalize(event) as JournalEvent;
 
       const records = await this.readRecords();
       const previous = records.at(-1);
@@ -127,8 +158,8 @@ export class LocalJournal {
       const record: JournalRecord = {
         seq,
         prevHash,
-        hash: chainHash(prevHash, seq, event),
-        event,
+        hash: chainHash(prevHash, seq, normalizedEvent),
+        event: normalizedEvent,
       };
 
       const serialized = [...records, record]

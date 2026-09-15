@@ -587,4 +587,25 @@ describe("parsePairCommand", () => {
       }),
     ).toThrow("Invalid Pair command");
   });
+
+  it("rejects an enumerable array property outside the JavaScript index range", () => {
+    const criteria: string[] = [];
+    Object.defineProperty(criteria, "4294967295", {
+      value: "must not disappear during cloning",
+      enumerable: true,
+    });
+
+    expect(() =>
+      parsePairCommand({
+        protocolVersion: 1,
+        commandId: "cmd-array-index-overflow",
+        expectedRevision: 0,
+        actor: "human",
+        type: "ConfirmBrief",
+        goal: "Keep validated data intact",
+        criteria,
+        observedAt: 100,
+      }),
+    ).toThrow("non-index array property");
+  });
 });

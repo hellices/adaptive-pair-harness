@@ -30,7 +30,8 @@ export const MAX_EVIDENCE_DETAIL = 500;
 const DEFAULT_FRESHNESS_WINDOW_MS = 5 * 60 * 1000;
 const ELLIPSIS = "…";
 
-const ABSOLUTE_PATH = /(^|[\s"'(=[])(?:\/(?:[^/\s"')\]]+\/){1,}|[A-Za-z]:[\\/])/u;
+const ABSOLUTE_PATH =
+  /(?:^|[\s"'(<=[{:])\/(?!\/)[^\s"'()<>[\]{}]+|[A-Za-z]:[\\/]/u;
 
 const truncate = (value: string, maxLength: number): string => {
   if (value.length <= maxLength) {

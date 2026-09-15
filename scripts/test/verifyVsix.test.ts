@@ -28,7 +28,7 @@ const decoyComment = (padding: number): Buffer => {
 const hasControlCharacters = (text: string): boolean =>
   [...text].some((character) => {
     const code = character.codePointAt(0) ?? 0;
-    return (code < 0x20 && code !== 0x0a) || (code >= 0x7f && code <= 0x9f);
+    return code < 0x20 || (code >= 0x7f && code <= 0x9f);
   });
 
 const archiveError = (build: () => unknown): VsixArchiveError => {
@@ -163,6 +163,27 @@ describe("readZipEntries", () => {
     ).toBe("entry-inflate-failed");
   });
 
+  it("rejects an oversized stored entry that lies about its uncompressed size", () => {
+    const oversized = "x".repeat(16 * 1024 * 1024 + 1);
+
+    expect(
+      archiveError(() =>
+        readZipEntries(
+          makeZip(
+            [
+              {
+                name: "extension/dist/extension.cjs",
+                content: oversized,
+                deflate: false,
+              },
+            ],
+            { firstUncompressedSize: 1 },
+          ),
+        ),
+      ).code,
+    ).toBe("entry-size-mismatch");
+  });
+
   it("rejects a truncated archive without leaking a RangeError", () => {
     const archive = releaseVsixFixture();
 
@@ -229,8 +250,10 @@ describe("inspectEntryNames", () => {
       "extension/\u0000drop\nnotes.txt",
     ]);
 
-    expect(violations.join("\n")).toContain("Unexpected VSIX entry");
-    expect(hasControlCharacters(violations.join("\n"))).toBe(false);
+    expect(violations).toEqual([
+      "Unexpected VSIX entry: extension/\\x00drop\\x0anotes.txt",
+    ]);
+    expect(hasControlCharacters(violations[0] ?? "")).toBe(false);
   });
 });
 
@@ -326,6 +349,17 @@ describe("inspectManifest", () => {
 });
 
 describe("inspectEntryContent", () => {
+  it("sanitizes hostile entry names in content violations", () => {
+    expect(
+      inspectEntryContent(
+        "extension/evil\n[verify-vsix] forged.md",
+        "api.__pairHostTest = {}",
+      ),
+    ).toEqual([
+      "Forbidden content in extension/evil\\x0a[verify-vsix] forged.md: __pairHostTest",
+    ]);
+  });
+
   it("rejects host-test strings and local absolute paths", () => {
     expect(
       inspectEntryContent("extension/dist/extension.cjs", "process.env.ADAPTIVE_PAIR_HOST_TEST")

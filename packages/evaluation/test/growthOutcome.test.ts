@@ -44,6 +44,29 @@ describe("Growth outcome", () => {
     ).toBe("unverified");
   });
 
+  it.each([
+    "similarGeneration",
+    "variedDebugging",
+    "explanation",
+    "meaningfulAuthorship",
+  ] as const)("requires the %s demonstration", field => {
+    const demonstrations = {
+      similarGeneration: "demonstrated",
+      variedDebugging: "demonstrated",
+      explanation: "demonstrated",
+      meaningfulAuthorship: "demonstrated",
+    } as const;
+
+    expect(
+      summarizeGrowth({
+        productVerified: true,
+        ...demonstrations,
+        [field]: "not-assessed",
+        nextAssistance: "unchanged",
+      }).growth,
+    ).toBe("unverified");
+  });
+
   it("keeps product and growth independent when the product is unverified", () => {
     const outcome = summarizeGrowth({
       productVerified: false,

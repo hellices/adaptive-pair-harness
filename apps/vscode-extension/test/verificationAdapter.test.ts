@@ -32,12 +32,14 @@ interface Recorder {
   scheduledMs: number[];
   cancelledDeadlines: number;
   lastProcessSignalAborted: () => boolean;
+  lastTestingRequest: import("../src/verificationAdapter.js").TestingRunRequest | undefined;
 }
 
 const okOutcome = (overrides: Partial<RunOutcome> = {}): RunOutcome => ({
   exitCode: 0,
   signal: null,
   output: "All tests passed.\n",
+  outputTruncated: false,
   terminationConfirmed: true,
   ...overrides,
 });
@@ -60,6 +62,7 @@ const makePorts = (
     scheduledMs: [],
     cancelledDeadlines: 0,
     lastProcessSignalAborted: () => lastSignal?.aborted ?? false,
+    lastTestingRequest: undefined,
   };
 
   const resolveOutcome = (signal: AbortSignal): Promise<RunOutcome> => {
@@ -94,8 +97,9 @@ const makePorts = (
   };
   const testing: TestingRunPort = {
     available: () => options.testingAvailable ?? true,
-    run: (_request, signal) => {
+    run: (request, signal) => {
       recorder.testingRuns += 1;
+      recorder.lastTestingRequest = request;
       return resolveOutcome(signal);
     },
   };
@@ -167,6 +171,27 @@ describe("VerificationAdapter — allowlisted execution", () => {
     expect(result.status).toBe("confirmed");
     expect(recorder.testingRuns).toBe(1);
     expect(recorder.processRuns).toBe(0);
+    expect(recorder.lastTestingRequest).toEqual({
+      testIds: ["suite/case-1"],
+      label: undefined,
+    });
+  });
+
+  it("marks a collection-truncated result as partial", async () => {
+    const { ports } = makePorts(
+      okOutcome({
+        output: "bounded output",
+        outputTruncated: true,
+      }),
+    );
+
+    const result = await new VerificationAdapter(ports).run(
+      scriptPlan("test"),
+      signal,
+    );
+
+    expect(result.status).toBe("confirmed");
+    expect(result.partial).toBe(true);
   });
 
   it("declines a Testing plan and runs nothing when the host cannot observe results", async () => {

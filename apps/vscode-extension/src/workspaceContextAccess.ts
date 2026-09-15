@@ -150,7 +150,7 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
     try {
       const link = await lstat(absolute);
       const isSymbolicLink = link.isSymbolicLink();
-      const withinRoot = await this.targetWithinRoot(absolute, root, isSymbolicLink);
+      const withinRoot = await this.targetWithinRoot(absolute, root);
       const target = await stat(absolute);
 
       return {
@@ -178,20 +178,20 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
   private async targetWithinRoot(
     absolute: string,
     root: string,
-    isSymbolicLink: boolean,
   ): Promise<boolean> {
-    if (!isSymbolicLink) {
-      return true;
-    }
-
     try {
-      const canonical = await realpath(absolute);
-      const relativePath = relative(root, canonical);
+      const [canonicalRoot, canonicalTarget] = await Promise.all([
+        realpath(root),
+        realpath(absolute),
+      ]);
+      const relativePath = relative(canonicalRoot, canonicalTarget);
       return (
-        relativePath !== "" &&
+        relativePath === "" ||
+        (
         !relativePath.startsWith(`..${sep}`) &&
         relativePath !== ".." &&
         !isAbsolute(relativePath)
+        )
       );
     } catch {
       return false;

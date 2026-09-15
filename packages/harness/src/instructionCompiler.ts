@@ -270,7 +270,11 @@ const boundStructuredValue = (
 
   const shape = collectJsonShape(normalizedValue);
 
-  for (let maxArrayItems = shape.maxArrayLength; maxArrayItems >= 0; maxArrayItems -= 1) {
+  for (
+    let maxArrayItems = shape.maxArrayLength;
+    ;
+    maxArrayItems = Math.floor(maxArrayItems / 2)
+  ) {
     let minimumStringLength = 0;
     let maximumStringLength = shape.maxStringLength;
     let bestFit: JsonObject | undefined;
@@ -312,6 +316,9 @@ const boundStructuredValue = (
 
     if (bestFit !== undefined) {
       return bestFit;
+    }
+    if (maxArrayItems === 0) {
+      break;
     }
   }
 

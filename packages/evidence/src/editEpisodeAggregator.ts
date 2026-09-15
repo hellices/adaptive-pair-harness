@@ -91,15 +91,14 @@ export class EditEpisodeAggregator {
     }
 
     const existing = this.pendingByUri.get(observation.uri);
-    if (existing !== undefined) {
-      this.scheduler.cancel(existing.timer);
-    }
-
     const previousVersion = existing?.previousVersion ?? observation.previousVersion;
     const ranges = mergeRanges([
       ...(existing?.ranges ?? []),
       ...observation.changedRanges,
     ]);
+    if (existing !== undefined) {
+      this.scheduler.cancel(existing.timer);
+    }
 
     const pending: PendingEpisode = {
       previousVersion,

@@ -286,7 +286,9 @@ export const inspectEntryContent = (name, text) => {
   const violations = [];
   for (const rule of FORBIDDEN_CONTENT_PATTERNS) {
     if (rule.pattern.test(text)) {
-      violations.push(`Forbidden content in ${name}: ${rule.label}`);
+      violations.push(
+        `Forbidden content in ${sanitizeForMessage(name)}: ${rule.label}`,
+      );
     }
   }
   return violations;
@@ -480,6 +482,18 @@ const readCentralDirectory = (buffer, eocd) => {
         );
       }
     } else if (method === STORED) {
+      if (compressedSize !== uncompressedSize) {
+        throw new VsixArchiveError(
+          "entry-size-mismatch",
+          `Stored entry ${label} declares compressed size ${compressedSize} but uncompressed size ${uncompressedSize}.`,
+        );
+      }
+      if (stored.length > MAX_ENTRY_UNCOMPRESSED_BYTES) {
+        throw new VsixArchiveError(
+          "entry-too-large",
+          `Stored entry ${label} exceeds the ${MAX_ENTRY_UNCOMPRESSED_BYTES}-byte release bound.`,
+        );
+      }
       data = Buffer.from(stored);
     } else {
       throw new VsixArchiveError(

@@ -62,13 +62,17 @@ export const guardGrowthResponse = (
     readonly targetIdentifiers: readonly string[];
   },
 ): GuardedResponse => {
+  const minimumLevel = MINIMUM_LEVEL_BY_KIND[response.kind];
   if (response.level > context.authorizedHintLevel) {
     return {
       accepted: false,
       reason: "HINT_LEVEL_EXCEEDED",
     };
   }
-  if (MINIMUM_LEVEL_BY_KIND[response.kind] > context.authorizedHintLevel) {
+  if (
+    response.level < minimumLevel ||
+    minimumLevel > context.authorizedHintLevel
+  ) {
     return {
       accepted: false,
       reason: "RESPONSE_CLASS_EXCEEDED",

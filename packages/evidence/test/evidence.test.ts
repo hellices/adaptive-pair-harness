@@ -151,6 +151,27 @@ describe("EditEpisodeAggregator", () => {
     expect(episodes).toHaveLength(1);
     expect(episodes[0]?.previousVersion).toBe(2);
   });
+
+  it("keeps a pending valid episode when a later range is invalid", () => {
+    const scheduler = new FakeScheduler();
+    const episodes: EditEpisode[] = [];
+    const aggregator = new EditEpisodeAggregator(200, scheduler, episode => {
+      episodes.push(episode);
+    });
+
+    aggregator.record(observation(1, 2, [{ startLine: 4, endLine: 6 }]));
+    expect(() =>
+      aggregator.record(observation(2, 3, [{ startLine: 7, endLine: 5 }])),
+    ).toThrow(/ordered non-negative/u);
+
+    scheduler.advanceBy(200);
+    expect(episodes).toHaveLength(1);
+    expect(episodes[0]).toMatchObject({
+      previousVersion: 1,
+      currentVersion: 2,
+      changedRanges: [{ startLine: 4, endLine: 6 }],
+    });
+  });
 });
 
 describe("createLocalEvidence", () => {
@@ -208,6 +229,22 @@ describe("createLocalEvidence", () => {
         provenance: "diagnostic",
         privacyClass: "summary",
         detail: "leaked /Users/alice/project/src/secret.ts value",
+        observedAt: 1_000,
+        now: 1_000,
+      }),
+    ).toThrowError(/absolute path/i);
+  });
+
+  it.each([
+    "/secret.txt",
+    "Read failed: /secret.txt",
+  ])("rejects root-level POSIX path detail %s", detail => {
+    expect(() =>
+      createLocalEvidence({
+        id: "ev-root-path",
+        provenance: "diagnostic",
+        privacyClass: "summary",
+        detail,
         observedAt: 1_000,
         now: 1_000,
       }),
