@@ -241,6 +241,16 @@ describe("createLocalEvidence", () => {
     "files: src/a.ts,/Users/alice/secret.ts",
     "error-/Users/alice/secret.ts",
     "//server/share/secret.ts",
+    "///home/alice/private.ts",
+    "//secret.txt",
+    "///secret.txt",
+    "////secret.txt",
+    "file:///Users/alice/private.ts",
+    "file:////home/alice/private.ts",
+    "file:%2F%2F%2FUsers%2Falice%2Fprivate.ts",
+    "file:private.ts",
+    "file:%ZZprivate.ts",
+    "file:%2",
     "\\\\server\\share\\secret.ts",
   ])("rejects root-level POSIX path detail %s", detail => {
     expect(() =>
@@ -253,6 +263,25 @@ describe("createLocalEvidence", () => {
         now: 1_000,
       }),
     ).toThrowError(/absolute path/i);
+  });
+
+  it.each([
+    "See http://example.com/docs/path for context",
+    "See https://example.com/docs/path for context",
+    "profile: updated",
+    "myfile:value",
+    "File: changed",
+  ])("preserves non-file URI text %s", detail => {
+    const evidence = createLocalEvidence({
+      id: "ev-url",
+      provenance: "diagnostic",
+      privacyClass: "summary",
+      detail,
+      observedAt: 1_000,
+      now: 1_000,
+    });
+
+    expect(evidence.detail).toBe(detail);
   });
 
   it("rejects multi-line raw content so transcripts never enter local evidence", () => {

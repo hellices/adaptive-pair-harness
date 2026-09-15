@@ -122,13 +122,41 @@ describe("LocalProfileStore — forbidden data rejected without silent truncatio
     ).toThrow(ProfileValidationError);
   });
 
-  it("allows an HTTPS URL without treating its scheme as a drive path", () => {
+  it.each([
+    "///home/alice/private-project",
+    "//secret.txt",
+    "///secret.txt",
+    "////secret.txt",
+    "file:///Users/alice/private-project",
+    "file:////home/alice/private-project",
+    "file:%2F%2F%2FUsers%2Falice%2Fprivate.ts",
+    "file:private.ts",
+    "file:%ZZprivate.ts",
+    "file:%2",
+  ])("rejects local absolute path form %s in a reflection", summary => {
+    const store = createLocalProfileStore(persistence);
+    expect(() =>
+      store.correct({
+        kind: "reflection",
+        summary,
+        acceptedAt: 1,
+      }),
+    ).toThrow(ProfileValidationError);
+  });
+
+  it.each([
+    "Reviewed the RFC at http://example.com",
+    "Reviewed the RFC at https://example.com",
+    "profile: updated",
+    "myfile:value",
+    "File: changed",
+  ])("allows non-file URI text %s", summary => {
     const store = createLocalProfileStore(persistence);
 
     expect(() =>
       store.correct({
         kind: "reflection",
-        summary: "Reviewed the RFC at https://example.com",
+        summary,
         acceptedAt: 1,
       }),
     ).not.toThrow();

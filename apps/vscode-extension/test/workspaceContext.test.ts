@@ -416,6 +416,76 @@ describe("LocalJournal", () => {
     );
   });
 
+  it.each([
+    ["null", null],
+    ["an array", []],
+    ["missing required fields", {}],
+    ["a non-string type", { capturedAt: 0, payload: {}, type: 1 }],
+    ["a non-number capturedAt", { capturedAt: "0", payload: {}, type: "entry-captured" }],
+    ["a null payload", { capturedAt: 0, payload: null, type: "entry-captured" }],
+    ["an array payload", { capturedAt: 0, payload: [], type: "entry-captured" }],
+  ])("rejects a hash-consistent event envelope containing %s", async (_case, malformedEvent) => {
+    const path = "/storage/journal.jsonl";
+    const hash = createHash("sha256")
+      .update(`\n1\n${JSON.stringify(malformedEvent)}`)
+      .digest("hex");
+    fs.files.set(path, `${JSON.stringify({
+      seq: 1,
+      prevHash: "",
+      hash,
+      event: malformedEvent,
+    })}\n`);
+
+    await expect(new LocalJournal(fs, "/storage").replay()).rejects.toMatchObject({
+      reason: "parse",
+    });
+  });
+
+  it.each([
+    ["an absolute path", "/Users/alice/secret.ts", undefined],
+    ["a repeated-slash absolute path", "///home/alice/private.ts", undefined],
+    ["a two-slash root-level filename", "//secret.txt", undefined],
+    ["a three-slash root-level filename", "///secret.txt", undefined],
+    ["a four-slash root-level filename", "////secret.txt", undefined],
+    ["a local file URI", "file:///Users/alice/private.ts", undefined],
+    [
+      "a percent-encoded local file URI",
+      "file:%2F%2F%2FUsers%2Falice%2Fprivate.ts",
+      undefined,
+    ],
+    ["a relative local file URI", "file:private.ts", undefined],
+    ["a local file URI with an invalid percent escape", "file:%ZZprivate.ts", undefined],
+    ["a local file URI with a truncated percent escape", "file:%2", undefined],
+    ["multi-line text", "line one\nline two", undefined],
+    ["a non-finite number", Number.POSITIVE_INFINITY, "1e400"],
+  ])("rejects a hash-consistent persisted payload containing %s", async (
+    _case,
+    rejectedValue,
+    serializedValue,
+  ) => {
+    const path = "/storage/journal.jsonl";
+    const persistedEvent = {
+      capturedAt: 1_700_000_000_000,
+      payload: { nested: { value: rejectedValue } },
+      type: "entry-captured",
+    };
+    const canonicalEvent = JSON.stringify(persistedEvent);
+    const hash = createHash("sha256")
+      .update(`\n1\n${canonicalEvent}`)
+      .digest("hex");
+    const rawEvent = serializedValue === undefined
+      ? canonicalEvent
+      : canonicalEvent.replace("null", serializedValue);
+    fs.files.set(
+      path,
+      `{"seq":1,"prevHash":"","hash":"${hash}","event":${rawEvent}}\n`,
+    );
+
+    await expect(new LocalJournal(fs, "/storage").replay()).rejects.toMatchObject({
+      reason: "privacy",
+    });
+  });
+
   it("refuses to serialize an absolute path", async () => {
     const journal = new LocalJournal(fs, "/storage");
 
@@ -444,6 +514,16 @@ describe("LocalJournal", () => {
     "files: src/a.ts,/Users/alice/secret.ts",
     "error-/Users/alice/secret.ts",
     "//server/share/secret.ts",
+    "///home/alice/private.ts",
+    "//secret.txt",
+    "///secret.txt",
+    "////secret.txt",
+    "file:///Users/alice/private.ts",
+    "file:////home/alice/private.ts",
+    "file:%2F%2F%2FUsers%2Falice%2Fprivate.ts",
+    "file:private.ts",
+    "file:%ZZprivate.ts",
+    "file:%2",
     "\\\\server\\share\\secret.ts",
   ])("refuses absolute path form %s", async leaked => {
     const journal = new LocalJournal(fs, "/storage");
@@ -451,6 +531,23 @@ describe("LocalJournal", () => {
     await expect(
       journal.append(event("entry-captured", { detail: leaked })),
     ).rejects.toBeInstanceOf(JournalIntegrityError);
+  });
+
+  it.each([
+    "http://example.com/docs/path",
+    "https://example.com/docs/path",
+    "profile: updated",
+    "myfile:value",
+    "File: changed",
+  ])("preserves non-file URI text %s", async detail => {
+    const journal = new LocalJournal(fs, "/storage");
+
+    await expect(
+      journal.append(event("entry-captured", { detail })),
+    ).resolves.toBeUndefined();
+    await expect(journal.replay()).resolves.toMatchObject([
+      { payload: { detail } },
+    ]);
   });
 
   it("refuses non-plain payload values before hashing or persistence", async () => {

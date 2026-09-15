@@ -452,7 +452,12 @@ function deepClone<Value>(value: Value): Value;
 function deepClone(value: unknown): unknown {
   if (Array.isArray(value)) {
     const arrayValue: readonly unknown[] = value;
-    return arrayValue.map((item) => deepClone(item));
+    const clone: unknown[] = [];
+    clone.length = arrayValue.length;
+    for (let index = 0; index < arrayValue.length; index += 1) {
+      clone[index] = deepClone(arrayValue[index]);
+    }
+    return clone;
   }
 
   if (typeof value === "object" && value !== null) {

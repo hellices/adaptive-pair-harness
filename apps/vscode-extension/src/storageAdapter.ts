@@ -44,7 +44,9 @@ const MAX_SERIALIZED_STRING = 500;
 const POSIX_ABSOLUTE_PATH =
   /(?:^|[^\p{L}\p{N}._~/])\/(?:$|(?!\/)\S+)/u;
 const POSIX_NETWORK_PATH =
-  /(?:^|[\s"'(<=[{,;])\/\/[^\s/]+\/\S+/u;
+  /(?:^|[\s"'(<=[{,;])\/{2,}[^\s/]+/u;
+const LOCAL_FILE_URI =
+  /(?:^|[^\p{L}\p{N}+.-])file:(?=\S)/iu;
 const WINDOWS_DRIVE_PATH =
   /(?:^|[^\p{L}\p{N}._~])[A-Za-z]:[\\/]/u;
 const WINDOWS_NETWORK_PATH =
@@ -53,6 +55,7 @@ const WINDOWS_NETWORK_PATH =
 const containsAbsolutePath = (value: string): boolean =>
   POSIX_ABSOLUTE_PATH.test(value) ||
   POSIX_NETWORK_PATH.test(value) ||
+  LOCAL_FILE_URI.test(value) ||
   WINDOWS_DRIVE_PATH.test(value) ||
   WINDOWS_NETWORK_PATH.test(value);
 
@@ -78,6 +81,16 @@ const chainHash = (prevHash: string, seq: number, event: JournalEvent): string =
   createHash("sha256")
     .update(`${prevHash}\n${seq}\n${canonicalJson(event)}`)
     .digest("hex");
+
+const isJsonObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+const isJournalEvent = (value: unknown): value is JournalEvent =>
+  isJsonObject(value) &&
+  typeof value.type === "string" &&
+  typeof value.capturedAt === "number" &&
+  Number.isFinite(value.capturedAt) &&
+  isJsonObject(value.payload);
 
 const assertSerializable = (value: unknown): void => {
   if (typeof value === "string") {
@@ -275,11 +288,12 @@ export class LocalJournal {
       typeof (value as JournalRecord).seq !== "number" ||
       typeof (value as JournalRecord).prevHash !== "string" ||
       typeof (value as JournalRecord).hash !== "string" ||
-      typeof (value as JournalRecord).event !== "object"
+      !isJournalEvent((value as JournalRecord).event)
     ) {
       throw new JournalIntegrityError("parse", "Journal record is malformed.");
     }
 
+    assertSerializable((value as JournalRecord).event);
     return value as JournalRecord;
   }
 }

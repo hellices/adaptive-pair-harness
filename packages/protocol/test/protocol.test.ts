@@ -588,6 +588,29 @@ describe("parsePairCommand", () => {
     ).toThrow("Invalid Pair command");
   });
 
+  it("clones arrays without invoking an inherited map method", () => {
+    const criteria = ["Keep the validated criterion"];
+    Object.setPrototypeOf(criteria, { map: () => 42 });
+
+    const parsed = parsePairCommand({
+      protocolVersion: 1,
+      commandId: "cmd-poisoned-array-map",
+      expectedRevision: 0,
+      actor: "human",
+      type: "ConfirmBrief",
+      goal: "Keep validated data intact",
+      criteria,
+      observedAt: 100,
+    });
+
+    if (parsed.type !== "ConfirmBrief") {
+      throw new Error("Expected ConfirmBrief");
+    }
+
+    expect(parsed.criteria).toEqual(["Keep the validated criterion"]);
+    expect(Object.getPrototypeOf(parsed.criteria)).toBe(Array.prototype);
+  });
+
   it("rejects an enumerable array property outside the JavaScript index range", () => {
     const criteria: string[] = [];
     Object.defineProperty(criteria, "4294967295", {

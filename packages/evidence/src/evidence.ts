@@ -33,7 +33,9 @@ const ELLIPSIS = "…";
 const POSIX_ABSOLUTE_PATH =
   /(?:^|[^\p{L}\p{N}._~/])\/(?:$|(?!\/)\S+)/u;
 const POSIX_NETWORK_PATH =
-  /(?:^|[\s"'(<=[{,;])\/\/[^\s/]+\/\S+/u;
+  /(?:^|[\s"'(<=[{,;])\/{2,}[^\s/]+/u;
+const LOCAL_FILE_URI =
+  /(?:^|[^\p{L}\p{N}+.-])file:(?=\S)/iu;
 const WINDOWS_DRIVE_PATH =
   /(?:^|[^\p{L}\p{N}._~])[A-Za-z]:[\\/]/u;
 const WINDOWS_NETWORK_PATH =
@@ -42,6 +44,7 @@ const WINDOWS_NETWORK_PATH =
 const containsAbsolutePath = (value: string): boolean =>
   POSIX_ABSOLUTE_PATH.test(value) ||
   POSIX_NETWORK_PATH.test(value) ||
+  LOCAL_FILE_URI.test(value) ||
   WINDOWS_DRIVE_PATH.test(value) ||
   WINDOWS_NETWORK_PATH.test(value);
 
