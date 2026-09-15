@@ -17,6 +17,14 @@ const EXTENSION_ID = "adaptive-pair.adaptive-pair";
 const requireHostModule = createRequire(__filename);
 const http = requireHostModule("node:http") as HttpModuleLike;
 const https = requireHostModule("node:https") as HttpModuleLike;
+type RegisterCommand = typeof vscode.commands.registerCommand;
+const commandModule = (
+  requireHostModule("vscode") as {
+    readonly commands: { registerCommand: RegisterCommand };
+  }
+).commands;
+const HOST_EXTENSION_STACK_MARKER =
+  "/apps/vscode-extension/.host-test/extension.cjs";
 
 /** Registered native settings that must be byte-identical across the session. */
 const NATIVE_SETTINGS = [
@@ -225,6 +233,7 @@ suite("Adaptive Pair — isolated Extension Host smoke", () => {
   let productionManifest: ExtensionManifest;
   let hostManifest: ExtensionManifest;
   let contributedCommands: string[];
+  let activatedCommands: string[];
   let baselineCommands: Set<string>;
   let probe: NetworkProbe;
   let controlledProbeCalls = 0;
@@ -258,7 +267,22 @@ suite("Adaptive Pair — isolated Extension Host smoke", () => {
     assert.ok(folder, "No fixture workspace folder was opened.");
     workspaceRoot = folder.uri.fsPath;
 
-    const exports = (await extension.activate()) as HostExports;
+    activatedCommands = [];
+    const originalRegisterCommand = commandModule.registerCommand;
+    commandModule.registerCommand = ((...args: Parameters<RegisterCommand>) => {
+      const stack = new Error().stack?.replaceAll("\\", "/") ?? "";
+      if (stack.includes(HOST_EXTENSION_STACK_MARKER)) {
+        activatedCommands.push(args[0]);
+      }
+      return originalRegisterCommand(...args);
+    }) as RegisterCommand;
+
+    let exports: HostExports;
+    try {
+      exports = (await extension.activate()) as HostExports;
+    } finally {
+      commandModule.registerCommand = originalRegisterCommand;
+    }
     assert.ok(
       exports.__pairHostTest,
       "Host test API missing: the host-test entry point was not activated.",
@@ -322,16 +346,11 @@ suite("Adaptive Pair — isolated Extension Host smoke", () => {
     const after = await vscode.commands.getCommands(true);
     const afterSet = new Set(after);
 
-    // Every newly registered command must be an expected Adaptive Pair
-    // contribution — not merely a superset of the baseline.
-    const expected = new Set(contributedCommands);
-    const added = after.filter((id) => !baselineCommands.has(id)).sort();
-    for (const id of added) {
-      assert.ok(
-        expected.has(id),
-        `Activation registered a command that is not an expected Adaptive Pair contribution: ${id}`,
-      );
-    }
+    assert.deepEqual(
+      [...activatedCommands].sort(),
+      [...contributedCommands].sort(),
+      "Activation did not register exactly the commands contributed by Adaptive Pair.",
+    );
 
     for (const command of baselineCommands) {
       assert.ok(afterSet.has(command), `A baseline command disappeared: ${command}`);
