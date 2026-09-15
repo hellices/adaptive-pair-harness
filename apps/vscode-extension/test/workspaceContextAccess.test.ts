@@ -26,6 +26,11 @@ interface FakeRepository {
   state: FakeRepositoryState;
 }
 
+interface FakeDiagnostic {
+  readonly range: { readonly start: { readonly line: number } };
+  readonly message: string;
+}
+
 const git = vi.hoisted(() => {
   const createUri = (fsPath: string): FakeUri => ({
     fsPath,
@@ -37,12 +42,15 @@ const git = vi.hoisted(() => {
     repositories: [] as FakeRepository[],
     onDiagnostics: undefined as (() => void) | undefined,
     workspaceRoot: "/workspace",
+    additionalWorkspaceRoots: [] as string[],
     foundPaths: [] as FakeUri[],
     textDocuments: [] as {
       readonly uri: FakeUri;
       readonly isDirty: boolean;
+      readonly version?: number;
       getText(): string;
     }[],
+    diagnostics: [] as [FakeUri, readonly FakeDiagnostic[]][],
     relativePathOverride: undefined as
       | ((fsPath: string) => string | undefined)
       | undefined,
@@ -53,8 +61,10 @@ const git = vi.hoisted(() => {
     state.repositories = [];
     state.onDiagnostics = undefined;
     state.workspaceRoot = "/workspace";
+    state.additionalWorkspaceRoots = [];
     state.foundPaths = [];
     state.textDocuments = [];
+    state.diagnostics = [];
     state.relativePathOverride = undefined;
     state.findRequests = [];
   };
@@ -69,7 +79,11 @@ vi.mock("vscode", () => {
     if (overridden !== undefined) {
       return overridden;
     }
-    return text.replace(`${git.state.workspaceRoot}/`, "");
+    const root = [
+      git.state.workspaceRoot,
+      ...git.state.additionalWorkspaceRoots,
+    ].find(candidate => text.startsWith(`${candidate}/`));
+    return root === undefined ? text : text.slice(root.length + 1);
   };
 
   return {
@@ -84,7 +98,10 @@ vi.mock("vscode", () => {
     },
     workspace: {
       get workspaceFolders() {
-        return [{ uri: git.createUri(git.state.workspaceRoot) }];
+        return [
+          git.state.workspaceRoot,
+          ...git.state.additionalWorkspaceRoots,
+        ].map(root => ({ uri: git.createUri(root) }));
       },
       get textDocuments() {
         return git.state.textDocuments;
@@ -98,9 +115,9 @@ vi.mock("vscode", () => {
       },
     },
     languages: {
-      getDiagnostics: (): readonly [FakeUri, readonly unknown[]][] => {
+      getDiagnostics: (): readonly [FakeUri, readonly FakeDiagnostic[]][] => {
         git.state.onDiagnostics?.();
-        return [];
+        return git.state.diagnostics;
       },
     },
     extensions: {
@@ -132,6 +149,136 @@ afterEach(() => {
 });
 
 describe("VscodeWorkspaceContextAccess — production branch currentness", () => {
+  it("collects duplicate-path open documents only from the first workspace root", () => {
+    git.state.additionalWorkspaceRoots = ["/other-workspace"];
+    git.state.textDocuments = [
+      {
+        uri: git.createUri("/workspace/src/main.ts"),
+        version: 3,
+        isDirty: false,
+        getText: () => "first root",
+      },
+      {
+        uri: git.createUri("/other-workspace/src/main.ts"),
+        version: 9,
+        isDirty: true,
+        getText: () => "second root",
+      },
+    ];
+
+    const documents = new VscodeWorkspaceContextAccess(clock).openDocuments();
+
+    expect(documents).toEqual([
+      {
+        relativePath: "src/main.ts",
+        version: 3,
+        isDirty: false,
+        byteLength: 10,
+      },
+    ]);
+  });
+
+  it("collects duplicate-path diagnostics only from the first workspace root", () => {
+    git.state.additionalWorkspaceRoots = ["/other-workspace"];
+    git.state.diagnostics = [
+      [
+        git.createUri("/workspace/src/main.ts"),
+        [{ range: { start: { line: 4 } }, message: "first-root diagnostic" }],
+      ],
+      [
+        git.createUri("/other-workspace/src/main.ts"),
+        [{ range: { start: { line: 8 } }, message: "second-root diagnostic" }],
+      ],
+    ];
+
+    const diagnostics = new VscodeWorkspaceContextAccess(
+      clock,
+      undefined,
+      path => path,
+    ).diagnostics();
+
+    expect(diagnostics).toEqual([
+      {
+        relativePath: "src/main.ts",
+        line: 4,
+        message: "first-root diagnostic",
+      },
+    ]);
+  });
+
+  it("excludes diagnostics that escape through an ancestor symlink", async () => {
+    const root = await mkdtemp(join(tmpdir(), "adaptive-pair-root-"));
+    const outside = await mkdtemp(join(tmpdir(), "adaptive-pair-outside-"));
+    try {
+      await writeFile(join(outside, "secret.ts"), "secret", "utf8");
+      await symlink(outside, join(root, "linked"), "dir");
+      git.state.workspaceRoot = root;
+      git.state.diagnostics = [
+        [
+          git.createUri(join(root, "linked", "secret.ts")),
+          [{ range: { start: { line: 2 } }, message: "escaped diagnostic" }],
+        ],
+      ];
+
+      const diagnostics = new VscodeWorkspaceContextAccess(clock).diagnostics();
+
+      expect(diagnostics).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    "/workspace",
+    "/workspace/src/main.ts",
+  ])("fails closed when identity cannot be established for %s", failedPath => {
+    const targetPath = "/workspace/src/main.ts";
+    git.state.diagnostics = [
+      [
+        git.createUri(targetPath),
+        [{ range: { start: { line: 3 } }, message: "unverified diagnostic" }],
+      ],
+    ];
+    const filesystemIdentity = (path: string): string => {
+      if (path === failedPath) {
+        throw new Error("identity unavailable");
+      }
+      return path;
+    };
+
+    const diagnostics = new VscodeWorkspaceContextAccess(
+      clock,
+      undefined,
+      filesystemIdentity,
+    ).diagnostics();
+
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("uses dirty open documents only from the selected root without a git repository", async () => {
+    git.state.additionalWorkspaceRoots = ["/other-workspace"];
+    git.state.textDocuments = [
+      {
+        uri: git.createUri("/workspace/src/main.ts"),
+        isDirty: true,
+        getText: () => "first root",
+      },
+      {
+        uri: git.createUri("/other-workspace/src/main.ts"),
+        isDirty: true,
+        getText: () => "second root",
+      },
+    ];
+    const access = new VscodeWorkspaceContextAccess(clock);
+    const folder = access.workspaceFolder();
+
+    expect(folder).toBeDefined();
+    await expect(access.readGitMetadata(folder!)).resolves.toMatchObject({
+      dirtyPaths: ["src/main.ts"],
+    });
+  });
+
   it("marks a regular file below an escaping ancestor symlink outside the root", async () => {
     const root = await mkdtemp(join(tmpdir(), "adaptive-pair-root-"));
     const outside = await mkdtemp(join(tmpdir(), "adaptive-pair-outside-"));
@@ -177,7 +324,11 @@ describe("VscodeWorkspaceContextAccess — production branch currentness", () =>
       }
     };
 
-    const access = new VscodeWorkspaceContextAccess(clock);
+    const access = new VscodeWorkspaceContextAccess(
+      clock,
+      undefined,
+      path => path,
+    );
 
     await expect(new WorkspaceContext(access).capture()).rejects.toBeInstanceOf(
       WorkspaceContextChangedError,
@@ -210,6 +361,41 @@ describe("VscodeWorkspaceContextAccess — production branch currentness", () =>
     const snapshot = await new WorkspaceContext(access).capture();
 
     expect(snapshot.branch).toBe("main");
+  });
+
+  it("filters ancestor-repository changes to the first workspace root", async () => {
+    git.state.workspaceRoot = "/monorepo/first";
+    git.state.additionalWorkspaceRoots = ["/monorepo/second"];
+    git.state.repositories = [
+      {
+        rootUri: git.createUri("/monorepo"),
+        state: {
+          HEAD: { name: "main" },
+          workingTreeChanges: [
+            { uri: git.createUri("/monorepo/first/src/shared.ts") },
+            { uri: git.createUri("/monorepo/second/src/shared.ts") },
+          ],
+          indexChanges: [
+            { uri: git.createUri("/monorepo/first/test/shared.test.ts") },
+            { uri: git.createUri("/monorepo/second/test/shared.test.ts") },
+          ],
+          untrackedChanges: [
+            { uri: git.createUri("/monorepo/first/notes/shared.md") },
+            { uri: git.createUri("/monorepo/second/notes/shared.md") },
+          ],
+        },
+      },
+    ];
+    const access = new VscodeWorkspaceContextAccess(clock);
+    const folder = access.workspaceFolder();
+
+    expect(folder).toBeDefined();
+    await expect(access.readGitMetadata(folder!)).resolves.toEqual({
+      branch: "main",
+      dirtyPaths: ["src/shared.ts"],
+      stagedPaths: ["test/shared.test.ts"],
+      untrackedPaths: ["notes/shared.md"],
+    });
   });
 });
 
@@ -305,6 +491,67 @@ describe("VscodeScopeAccess", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
       await rm(other, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers a dirty buffer opened through a symlink alias of the target", async () => {
+    const root = await mkdtemp(join(tmpdir(), "adaptive-pair-scope-root-"));
+    const alias = `${root}-alias`;
+    try {
+      await mkdir(join(root, "src"));
+      await writeFile(join(root, "src", "index.ts"), "root disk text", "utf8");
+      await symlink(root, alias, "dir");
+      git.state.workspaceRoot = root;
+      git.state.textDocuments = [
+        {
+          uri: git.createUri(join(alias, "src", "index.ts")),
+          isDirty: true,
+          getText: () => "dirty alias buffer",
+        },
+      ];
+
+      await expect(
+        new VscodeScopeAccess(root).readText(
+          "src/index.ts",
+          new AbortController().signal,
+        ),
+      ).resolves.toEqual({
+        status: "ok",
+        path: "src/index.ts",
+        text: "dirty alias buffer",
+      });
+    } finally {
+      await rm(alias, { force: true });
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores an unrelated dirty new file when reading an existing scoped target", async () => {
+    const root = await mkdtemp(join(tmpdir(), "adaptive-pair-scope-root-"));
+    try {
+      await mkdir(join(root, "src"));
+      await writeFile(join(root, "src", "index.ts"), "disk text", "utf8");
+      git.state.workspaceRoot = root;
+      git.state.textDocuments = [
+        {
+          uri: git.createUri(join(root, "src", "new.ts")),
+          isDirty: true,
+          getText: () => "unsaved new file",
+        },
+      ];
+
+      await expect(
+        new VscodeScopeAccess(root).readText(
+          "src/index.ts",
+          new AbortController().signal,
+        ),
+      ).resolves.toEqual({
+        status: "ok",
+        path: "src/index.ts",
+        text: "disk text",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 });

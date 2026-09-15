@@ -182,6 +182,7 @@ vi.mock("vscode", () => {
   };
 });
 
+const vscode = await import("vscode");
 const { PresenceController } = await import("../src/presenceController.js");
 const { SessionController } = await import("../src/sessionController.js");
 const { StatusView } = await import("../src/statusView.js");
@@ -268,6 +269,41 @@ class MemoryFs implements JournalFileSystem {
   }
 }
 
+class DelayedReadMemoryFs extends MemoryFs {
+  private nextRead:
+    | {
+        readonly started: () => void;
+        readonly released: Promise<void>;
+      }
+    | undefined;
+
+  public delayNextRead(): {
+    readonly started: Promise<void>;
+    readonly release: () => void;
+  } {
+    let markStarted: () => void = () => undefined;
+    let release: () => void = () => undefined;
+    const started = new Promise<void>(resolve => {
+      markStarted = resolve;
+    });
+    const released = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    this.nextRead = { started: markStarted, released };
+    return { started, release };
+  }
+
+  public override async readFile(path: string): Promise<string | undefined> {
+    const delayed = this.nextRead;
+    if (delayed !== undefined) {
+      this.nextRead = undefined;
+      delayed.started();
+      await delayed.released;
+    }
+    return await super.readFile(path);
+  }
+}
+
 interface FakeContext {
   readonly subscriptions: FakeDisposable[];
   readonly globalStorageUri: { readonly fsPath: string };
@@ -296,8 +332,8 @@ const buildController = (
   return { controller, context };
 };
 
-const run = (name: string): Promise<unknown> =>
-  Promise.resolve(harness.state.commandHandlers.get(name)?.());
+const run = async (name: string): Promise<unknown> =>
+  await vscode.commands.executeCommand(name);
 
 const flush = async (): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -306,6 +342,14 @@ const flush = async (): Promise<void> => {
 
 afterEach(() => {
   harness.reset();
+});
+
+describe("PresenceController — command test harness", () => {
+  it("rejects an unregistered command instead of silently succeeding", async () => {
+    await expect(run("adaptivePair.missing")).rejects.toThrow(
+      "Unknown command: adaptivePair.missing",
+    );
+  });
 });
 
 describe("PresenceController — pending edit timers", () => {
@@ -449,6 +493,29 @@ describe("PresenceController — continuity clearing on disable", () => {
     const restarted = buildController(new FakeScheduler(), fs);
     await flush();
     expect(restarted.controller.getState().observationCount).toBe(0);
+  });
+
+  it("does not restore delayed journal replay after disable clears continuity", async () => {
+    const scheduler = new FakeScheduler();
+    const fs = new DelayedReadMemoryFs();
+    const first = buildController(scheduler, fs);
+
+    await run("adaptivePair.enablePresence");
+    harness.emitChange("/workspace/src/pair.ts");
+    scheduler.advanceBy(1_000);
+    await flush();
+    first.controller.dispose();
+
+    harness.reset();
+    const delayedRead = fs.delayNextRead();
+    const second = buildController(new FakeScheduler(), fs);
+    await delayedRead.started;
+
+    const disable = second.controller.performDisable();
+    delayedRead.release();
+    await disable;
+
+    expect(second.controller.getState().observationCount).toBe(0);
   });
 });
 

@@ -46,6 +46,7 @@ export class PresenceController implements vscode.Disposable {
   private disposed = false;
   private journal: LocalJournal | undefined;
   private editAggregator: EditEpisodeAggregator | undefined;
+  private journalRestorationGeneration = 0;
   private readonly journalFileSystem: JournalFileSystem;
   private readonly scheduler: Scheduler;
   private readonly ledger: ActivityLedger | undefined;
@@ -186,6 +187,7 @@ export class PresenceController implements vscode.Disposable {
    * while exercising the real clearing and journal-deletion path.
    */
   public async performDisable(): Promise<void> {
+    this.journalRestorationGeneration += 1;
     this.editAggregator?.clear();
     this.toolContext.clear();
     this.detachObservationListener();
@@ -319,12 +321,17 @@ export class PresenceController implements vscode.Disposable {
     if (journal === undefined) {
       return;
     }
+    const restorationGeneration = this.journalRestorationGeneration;
 
     let events: readonly JournalEvent[];
     try {
       events = await journal.replay();
     } catch (error: unknown) {
       this.handleJournalFailure(error);
+      return;
+    }
+
+    if (restorationGeneration !== this.journalRestorationGeneration) {
       return;
     }
 

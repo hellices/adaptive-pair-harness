@@ -1757,6 +1757,109 @@ describe("GrowthParticipant deterministic core-state commands", () => {
     expect(text).toContain("npm run test exited 0");
   });
 
+  it("does not report a successful check after the work unit changes", async () => {
+    const snapshot = growthSnapshot({ runtimeRevision: 4 });
+    const coordinator = new FakeCoordinator(snapshot, {
+      resultFor: call =>
+        call.name === "pair_run_verification"
+          ? Object.freeze({
+              operationId: "op-check",
+              runtimeRevision: snapshot.revision,
+              authorityEpoch: snapshot.session?.authorityEpoch,
+              status: "confirmed" as const,
+              summary: "npm run test exited 0",
+              observation: Object.freeze({ passed: true, exitCode: 0 }),
+              sensitiveData: false,
+              partial: false,
+            })
+          : undefined,
+    });
+    const { participant } = buildParticipant(coordinator);
+
+    await participant.handle(
+      createRequest(new FakeModel([]), { command: "check", prompt: "" }),
+      createContext(),
+      createResponseStream().stream,
+      createToken(),
+    );
+
+    coordinator.setSnapshot({
+      ...snapshot,
+      revision: 5,
+      session: {
+        ...snapshot.session!,
+        workUnit: {
+          ...snapshot.session!.workUnit!,
+          id: "unit-2",
+        },
+      },
+    });
+
+    const { stream, collected } = createResponseStream();
+    await participant.handle(
+      createRequest(new FakeModel([]), { command: "session", prompt: "" }),
+      createContext(),
+      stream,
+      createToken(),
+    );
+
+    expect(collected.markdown.join("\n").toLowerCase()).toContain(
+      "no check observed in this session",
+    );
+  });
+
+  it("does not report a successful check after the session changes", async () => {
+    const snapshot = growthSnapshot({ runtimeRevision: 4 });
+    const coordinator = new FakeCoordinator(snapshot, {
+      resultFor: call =>
+        call.name === "pair_run_verification"
+          ? Object.freeze({
+              operationId: "op-check",
+              runtimeRevision: snapshot.revision,
+              authorityEpoch: snapshot.session?.authorityEpoch,
+              status: "confirmed" as const,
+              summary: "npm run test exited 0",
+              observation: Object.freeze({ passed: true, exitCode: 0 }),
+              sensitiveData: false,
+              partial: false,
+            })
+          : undefined,
+    });
+    const { participant } = buildParticipant(coordinator);
+
+    await participant.handle(
+      createRequest(new FakeModel([]), { command: "check", prompt: "" }),
+      createContext(),
+      createResponseStream().stream,
+      createToken(),
+    );
+
+    coordinator.setSnapshot({
+      ...snapshot,
+      revision: 5,
+      presence: {
+        ...snapshot.presence,
+        activeSessionId: "session-2",
+      },
+      session: {
+        ...snapshot.session!,
+        sessionId: "session-2",
+      },
+    });
+
+    const { stream, collected } = createResponseStream();
+    await participant.handle(
+      createRequest(new FakeModel([]), { command: "session", prompt: "" }),
+      createContext(),
+      stream,
+      createToken(),
+    );
+
+    expect(collected.markdown.join("\n").toLowerCase()).toContain(
+      "no check observed in this session",
+    );
+  });
+
   it("reports an observed verification failure without calling it a success", async () => {
     const snapshot = growthSnapshot({ runtimeRevision: 4 });
     const coordinator = new FakeCoordinator(snapshot, {
@@ -1873,6 +1976,7 @@ describe("GrowthParticipant transfer", () => {
 
     expect(participant.transferStatus()).toEqual({
       status: "started",
+      sessionId: "session-1",
       workUnitId: "unit-1",
       independentCheck: "Implement a varied timeout retry",
       demonstrated: false,
@@ -1958,6 +2062,87 @@ describe("GrowthParticipant transfer", () => {
     const text = collected.markdown.join("\n").toLowerCase();
     expect(text).toContain("transfer: started");
     expect(text).toContain("not demonstrated");
+  });
+
+  it("reports a transfer from an old work unit as not started in /session", async () => {
+    const coordinator = new FakeCoordinator(growthSnapshot({ runtimeRevision: 4 }));
+    const model = new FakeModel([
+      { text: JSON.stringify({ level: 1, kind: "question", text: variation }) },
+    ]);
+    const { participant } = buildParticipant(coordinator);
+
+    await participant.handle(
+      createRequest(model, { command: "transfer", prompt: "" }),
+      createContext(),
+      createResponseStream().stream,
+      createToken(),
+    );
+
+    const previous = await coordinator.snapshot();
+    coordinator.setSnapshot({
+      ...previous,
+      revision: 5,
+      session: {
+        ...previous.session!,
+        workUnit: {
+          ...previous.session!.workUnit!,
+          id: "unit-2",
+        },
+      },
+    });
+
+    const { stream, collected } = createResponseStream();
+    await participant.handle(
+      createRequest(new FakeModel([]), { command: "session", prompt: "" }),
+      createContext(),
+      stream,
+      createToken(),
+    );
+
+    expect(collected.markdown.join("\n").toLowerCase()).toContain(
+      "transfer: not started",
+    );
+  });
+
+  it("does not report a transfer after the session changes with the same work unit id", async () => {
+    const coordinator = new FakeCoordinator(growthSnapshot({ runtimeRevision: 4 }));
+    const model = new FakeModel([
+      { text: JSON.stringify({ level: 1, kind: "question", text: variation }) },
+    ]);
+    const { participant } = buildParticipant(coordinator);
+
+    await participant.handle(
+      createRequest(model, { command: "transfer", prompt: "" }),
+      createContext(),
+      createResponseStream().stream,
+      createToken(),
+    );
+
+    const previous = await coordinator.snapshot();
+    coordinator.setSnapshot({
+      ...previous,
+      revision: 5,
+      presence: {
+        ...previous.presence,
+        activeSessionId: "session-2",
+      },
+      session: {
+        ...previous.session!,
+        sessionId: "session-2",
+      },
+    });
+
+    const { stream, collected } = createResponseStream();
+    await participant.handle(
+      createRequest(new FakeModel([]), { command: "session", prompt: "" }),
+      createContext(),
+      stream,
+      createToken(),
+    );
+
+    expect(collected.markdown.join("\n").toLowerCase()).toContain(
+      "transfer: not started",
+    );
   });
 });
 

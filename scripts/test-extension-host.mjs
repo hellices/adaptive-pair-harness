@@ -228,11 +228,17 @@ const main = async () => {
   await pruneStaleRuns();
   const runDir = await mkdtemp(join(runsRoot, "run-"));
   const fixtureDir = join(runDir, "fixture");
+  const workspaceFile = join(runDir, "fixture.code-workspace");
   const userDataDir = join(runDir, "user-data");
   const extensionsDir = join(runDir, "extensions");
   const logsDir = join(runDir, "logs");
   await Promise.all([
     cp(join(hostTestDir, "fixture"), fixtureDir, { recursive: true }),
+    writeFile(
+      workspaceFile,
+      `${JSON.stringify({ folders: [{ path: fixtureDir }] }, null, 2)}\n`,
+      "utf8",
+    ),
     mkdir(join(userDataDir, "User"), { recursive: true }),
     mkdir(extensionsDir, { recursive: true }),
     mkdir(logsDir, { recursive: true }),
@@ -249,7 +255,7 @@ const main = async () => {
       extensionDevelopmentPath: stagingDir,
       extensionTestsPath: testsPath,
       launchArgs: [
-        fixtureDir,
+        workspaceFile,
         `--user-data-dir=${userDataDir}`,
         `--extensions-dir=${extensionsDir}`,
         `--logsPath=${logsDir}`,

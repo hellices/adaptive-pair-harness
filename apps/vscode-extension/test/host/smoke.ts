@@ -1,7 +1,14 @@
 import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as vscode from "vscode";
 import type { LearningAgreement, WorkUnit } from "@adaptive-pair/protocol";
@@ -100,6 +107,43 @@ const waitFor = async (
     }
     await sleep(25);
   }
+};
+
+const updateWorkspaceFoldersAndWait = async (
+  start: number,
+  deleteCount: number | undefined,
+  ...foldersToAdd: { readonly uri: vscode.Uri; readonly name?: string }[]
+): Promise<boolean> => {
+  let timeout: NodeJS.Timeout | undefined;
+  let listener: vscode.Disposable | undefined;
+  const changed = new Promise<void>((resolve, reject) => {
+    timeout = setTimeout(() => {
+      listener?.dispose();
+      reject(new Error("Timed out waiting for the workspace-folder change event."));
+    }, 8_000);
+    listener = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      if (timeout !== undefined) {
+        clearTimeout(timeout);
+      }
+      listener?.dispose();
+      resolve();
+    });
+  });
+
+  const accepted = vscode.workspace.updateWorkspaceFolders(
+    start,
+    deleteCount,
+    ...foldersToAdd,
+  );
+  if (!accepted) {
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+    }
+    listener?.dispose();
+    return false;
+  }
+  await changed;
+  return true;
 };
 
 const hashFile = (path: string): string =>
@@ -572,9 +616,15 @@ suite("Adaptive Pair — isolated Extension Host smoke", () => {
       }),
     });
 
+    const emitted = result.emitted.join("\n");
     assert.ok(
-      result.emitted.join("\n").toLowerCase().includes("withheld"),
+      emitted.toLowerCase().includes("withheld"),
       "The injected target solution was not withheld.",
+    );
+    assert.ok(
+      !emitted.includes("Here is the full fix:") &&
+        !emitted.includes("attempts < max"),
+      `The withheld target solution leaked into host output: ${emitted}`,
     );
     // The turn ran through the shared production model-accounting factory that
     // `extensionCore` wires, so the ledger's model counter must have moved.
@@ -733,6 +783,81 @@ suite("Adaptive Pair — isolated Extension Host smoke", () => {
       !result.emitted.join("\n").includes("the same task once more"),
       "The non-distinct variation text was emitted.",
     );
+  });
+
+  test("16a: refuses verification when the first root changes after authorization", async () => {
+    const replacementRoot = mkdtempSync(
+      join(tmpdir(), "adaptive-pair-replacement-root-"),
+    );
+    const marker = join(replacementRoot, "unexpected-run.txt");
+    writeFileSync(
+      join(replacementRoot, "package.json"),
+      JSON.stringify({
+        private: true,
+        scripts: {
+          test:
+            "node -e \"require('node:fs').writeFileSync('unexpected-run.txt', 'ran')\"",
+        },
+      }),
+      "utf8",
+    );
+    const signal = new AbortController().signal;
+    const userActionId = await api.coordinator.grantUserAction(
+      "pair_run_verification",
+      signal,
+    );
+    let replacementInserted = false;
+
+    try {
+      assert.equal(
+        await updateWorkspaceFoldersAndWait(0, 0, {
+          uri: vscode.Uri.file(replacementRoot),
+          name: "replacement-root",
+        }),
+        true,
+        "The host refused to insert a replacement first root.",
+      );
+      replacementInserted = true;
+      await waitFor(
+        () =>
+          vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ===
+          replacementRoot,
+        "the replacement root to become first",
+      );
+
+      const result = await api.coordinator.invokeTool(
+        "pair_run_verification",
+        { script: "test", targetPaths: ["src/retry.mjs"] },
+        signal,
+        { userActionId },
+      );
+
+      assert.equal(
+        result.status,
+        "declined",
+        `Verification used the replacement root: ${result.status}.`,
+      );
+      assert.equal(
+        existsSync(marker),
+        false,
+        "The replacement workspace package script executed.",
+      );
+    } finally {
+      if (replacementInserted) {
+        assert.equal(
+          await updateWorkspaceFoldersAndWait(0, 1),
+          true,
+          "The host refused to remove the replacement first root.",
+        );
+        await waitFor(
+          () =>
+            vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ===
+            workspaceRoot,
+          "the original fixture root to become first again",
+        );
+      }
+      rmSync(replacementRoot, { recursive: true, force: true });
+    }
   });
 
   test("17: pausing during an in-flight hint leaves state exactly unchanged", async () => {

@@ -31,6 +31,27 @@ const confirmed = (operationId: string): EffectResult => ({
 });
 
 describe("StableEffectPort", () => {
+  it("passes the trusted effect request to the verification resolver", async () => {
+    const resolved: (EffectRequest | undefined)[] = [];
+    const runner: VerificationRunner = {
+      run: plan => Promise.resolve(confirmed(plan.operationId)),
+    };
+    const port = new StableEffectPort({
+      resolveVerification: (...args: EffectRequest[]) => {
+        resolved.push(args[0]);
+        return runner;
+      },
+    });
+    const trustedRequest = request({
+      workspaceId: "file:///trusted-workspace",
+      payload: { script: "test" },
+    });
+
+    await port.execute(trustedRequest, new AbortController().signal);
+
+    expect(resolved).toEqual([trustedRequest]);
+  });
+
   it("routes pair_run_verification to the runner with a package-script plan", async () => {
     const plans: VerificationPlan[] = [];
     const runner: VerificationRunner = {

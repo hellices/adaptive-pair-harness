@@ -22,7 +22,9 @@ export interface StableEffectPortOptions {
    * when no workspace/root is available. Resolving lazily lets the port bind to
    * the active workspace folder at run time rather than construction time.
    */
-  readonly resolveVerification?: () => VerificationRunner | undefined;
+  readonly resolveVerification?: (
+    request: EffectRequest,
+  ) => VerificationRunner | undefined;
   /** Resolve the bounded workspace reader used by read/search effects. */
   readonly resolveScope?: () => ScopeEffectRunner | undefined;
   /** Resolve raw workspace access for the built-in bounded scope runner. */
@@ -73,7 +75,7 @@ export class StableEffectPort implements EffectPort {
     signal.throwIfAborted();
 
     if (request.toolName === "pair_run_verification") {
-      const runner = this.options.resolveVerification?.();
+      const runner = this.options.resolveVerification?.(request);
       const plan = toVerificationPlan(request);
       if (runner !== undefined && plan !== undefined) {
         return await runner.run(plan, signal);

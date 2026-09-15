@@ -199,6 +199,7 @@ export interface GrowthEvaluationRecord {
  */
 export interface GrowthTransferState {
   readonly status: "started";
+  readonly sessionId: string;
   readonly workUnitId: string;
   readonly independentCheck: string;
   readonly demonstrated: false;
@@ -207,6 +208,8 @@ export interface GrowthTransferState {
 
 /** The last observed product check, recorded only from a real run result. */
 export interface GrowthCheckState {
+  readonly sessionId: string;
+  readonly workUnitId: string;
   readonly script: string;
   readonly status: PairToolResult["status"];
   readonly passed: boolean | undefined;
@@ -549,10 +552,16 @@ export class GrowthParticipant {
       `- Solution reveal authorized: ${
         assistance?.solutionReveal === undefined ? "no" : "yes"
       }`,
-      `- Transfer: ${this.transferSummary()}`,
+      `- Transfer: ${this.transferSummary(
+        session.sessionId,
+        session.workUnit?.id,
+      )}`,
       "",
       "**Outcomes — reported independently**",
-      `- Product verification: ${this.productSummary()}`,
+      `- Product verification: ${this.productSummary(
+        session.sessionId,
+        session.workUnit?.id,
+      )}`,
       "- Similar generation: not assessed",
       "- Varied debugging: not assessed",
       "- Explanation: not assessed",
@@ -565,8 +574,15 @@ export class GrowthParticipant {
     response.markdown(lines.join("\n"));
   }
 
-  private transferSummary(): string {
-    if (this.transfer === undefined) {
+  private transferSummary(
+    currentSessionId: string,
+    currentWorkUnitId: string | undefined,
+  ): string {
+    if (
+      this.transfer === undefined ||
+      this.transfer.sessionId !== currentSessionId ||
+      this.transfer.workUnitId !== currentWorkUnitId
+    ) {
       return "not started";
     }
     return `started — not demonstrated (independent check: ${
@@ -574,8 +590,15 @@ export class GrowthParticipant {
     })`;
   }
 
-  private productSummary(): string {
-    if (this.lastCheck === undefined) {
+  private productSummary(
+    currentSessionId: string,
+    currentWorkUnitId: string | undefined,
+  ): string {
+    if (
+      this.lastCheck === undefined ||
+      this.lastCheck.sessionId !== currentSessionId ||
+      this.lastCheck.workUnitId !== currentWorkUnitId
+    ) {
       return "no check observed in this session";
     }
     if (this.lastCheck.status !== "confirmed" || this.lastCheck.passed === undefined) {
@@ -596,8 +619,9 @@ export class GrowthParticipant {
     signal: AbortSignal,
   ): Promise<void> {
     const snapshot = await this.deps.coordinator.snapshot();
-    const workUnit = snapshot.session?.workUnit;
-    if (workUnit === undefined) {
+    const session = snapshot.session;
+    const workUnit = session?.workUnit;
+    if (session === undefined || workUnit === undefined) {
       response.markdown(NO_WORK_UNIT_MESSAGE);
       return;
     }
@@ -629,6 +653,8 @@ export class GrowthParticipant {
 
     const passed = result.observation["passed"];
     this.lastCheck = Object.freeze({
+      sessionId: session.sessionId,
+      workUnitId: workUnit.id,
       script,
       status: result.status,
       passed: typeof passed === "boolean" ? passed : undefined,
@@ -711,6 +737,7 @@ export class GrowthParticipant {
 
     this.transfer = Object.freeze({
       status: "started" as const,
+      sessionId: session.sessionId,
       workUnitId: workUnit.id,
       independentCheck,
       demonstrated: false as const,

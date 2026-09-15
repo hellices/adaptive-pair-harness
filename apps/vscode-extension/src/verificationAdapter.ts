@@ -1,10 +1,11 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import * as vscode from "vscode";
 import type { EffectResult } from "@adaptive-pair/runtime";
+import { canonicalRelative } from "./workspaceContext.js";
 import { ALLOWED_VERIFICATION_SCRIPT } from "./verificationPlan.js";
 
 export const MAX_OUTPUT_BYTES = 128 * 1024;
@@ -53,6 +54,22 @@ export interface TestingRunRequest {
 
 export interface BufferInspectionPort {
   dirtyTargets(paths: readonly string[]): readonly string[];
+}
+
+export type FilesystemIdentity = (path: string) => string | undefined;
+
+type FilesystemIdentityResolution =
+  | { readonly status: "resolved"; readonly identity: string }
+  | { readonly status: "missing" }
+  | { readonly status: "unavailable" };
+
+class TargetBufferIdentityUnavailableError extends Error {
+  public constructor(public readonly targetPaths: readonly string[]) {
+    super(
+      `Could not resolve the filesystem identity for agreed verification target(s): ${targetPaths.join(", ") || "<workspace-root>"}.`,
+    );
+    this.name = "TargetBufferIdentityUnavailableError";
+  }
 }
 
 export interface ConfirmationPort {
@@ -209,7 +226,23 @@ export class VerificationAdapter {
       );
     }
 
-    const dirty = this.ports.buffers.dirtyTargets(plan.targetPaths);
+    let dirty: readonly string[];
+    try {
+      dirty = this.ports.buffers.dirtyTargets(plan.targetPaths);
+    } catch (error) {
+      if (error instanceof TargetBufferIdentityUnavailableError) {
+        return failed(
+          plan.operationId,
+          "cancelled",
+          "Verification was cancelled because target buffer identities could not be resolved.",
+          {
+            reason: "target-buffer-identity-unavailable",
+            targetPaths: [...error.targetPaths],
+          },
+        );
+      }
+      throw error;
+    }
     if (dirty.length > 0) {
       return failed(
         plan.operationId,
@@ -226,6 +259,11 @@ export class VerificationAdapter {
       },
       signal,
     );
+    if (signal.aborted) {
+      return failed(plan.operationId, "cancelled", "Verification was cancelled.", {
+        reason: "caller-cancelled",
+      });
+    }
     if (!confirmed) {
       return failed(
         plan.operationId,
@@ -350,20 +388,162 @@ export class VerificationAdapter {
 
 // --- Production port bindings ------------------------------------------------
 
+const defaultFilesystemIdentity: FilesystemIdentity = path =>
+  realpathSync.native(path);
+
+const comparableFilesystemIdentity = (path: string): string =>
+  process.platform === "win32" ? path.toLowerCase() : path;
+
+const withinFilesystemRoot = (root: string, target: string): boolean => {
+  const relativePath = relative(
+    comparableFilesystemIdentity(root),
+    comparableFilesystemIdentity(target),
+  );
+  return (
+    relativePath === "" ||
+    (!relativePath.startsWith(`..${sep}`) &&
+      relativePath !== ".." &&
+      !isAbsolute(relativePath))
+  );
+};
+
+const withinPathScope = (scope: string, path: string): boolean =>
+  path === scope || path.startsWith(`${scope}/`);
+
 export class VscodeBufferInspectionPort implements BufferInspectionPort {
+  public constructor(
+    private readonly rootPath: string,
+    private readonly filesystemIdentity: FilesystemIdentity =
+      defaultFilesystemIdentity,
+  ) {}
+
   public dirtyTargets(paths: readonly string[]): readonly string[] {
-    const targets = new Set(paths);
-    const dirty: string[] = [];
+    const root = resolve(this.rootPath);
+    const rootResolution = this.identityFor(root);
+    if (rootResolution.status !== "resolved") {
+      throw new TargetBufferIdentityUnavailableError(paths);
+    }
+    const rootIdentity = rootResolution.identity;
+
+    let inspectAll = paths.length === 0;
+    const targetPaths: string[] = [];
+    const targetIdentities: string[] = [];
+    for (const rawTarget of paths) {
+      const target = canonicalRelative(rawTarget);
+      if (target === undefined) {
+        inspectAll = true;
+        continue;
+      }
+      targetPaths.push(target);
+      const targetResolution = this.identityFor(resolve(root, target));
+      if (targetResolution.status === "unavailable") {
+        throw new TargetBufferIdentityUnavailableError([target]);
+      }
+      if (targetResolution.status === "resolved") {
+        if (!withinFilesystemRoot(rootIdentity, targetResolution.identity)) {
+          throw new TargetBufferIdentityUnavailableError([target]);
+        }
+        targetIdentities.push(targetResolution.identity);
+      }
+    }
+
+    const dirty = new Set<string>();
     for (const document of vscode.workspace.textDocuments) {
       if (document.isDirty !== true) {
         continue;
       }
-      const relative = vscode.workspace.asRelativePath(document.uri, false);
-      if (targets.size === 0 || targets.has(relative)) {
-        dirty.push(relative);
+      if (
+        document.uri.scheme !== undefined &&
+        document.uri.scheme !== "file"
+      ) {
+        continue;
+      }
+
+      const documentPath = resolve(document.uri.fsPath);
+      const lexicalPath = canonicalRelative(
+        relative(root, documentPath).replace(/\\/gu, "/"),
+      );
+      const documentResolution = this.identityFor(documentPath);
+      if (documentResolution.status === "missing") {
+        if (
+          lexicalPath !== undefined &&
+          (inspectAll ||
+            targetPaths.some(target => withinPathScope(target, lexicalPath)))
+        ) {
+          dirty.add(lexicalPath);
+        }
+        continue;
+      }
+      if (documentResolution.status === "unavailable") {
+        if (!withinFilesystemRoot(root, documentPath)) {
+          if (this.isWithinAnotherWorkspaceRoot(root, documentPath)) {
+            continue;
+          }
+          throw new TargetBufferIdentityUnavailableError(paths);
+        }
+        throw new TargetBufferIdentityUnavailableError(paths);
+      }
+      const documentIdentity = documentResolution.identity;
+
+      if (!withinFilesystemRoot(rootIdentity, documentIdentity)) {
+        continue;
+      }
+      const normalized = canonicalRelative(
+        relative(rootIdentity, documentIdentity).replace(/\\/gu, "/"),
+      );
+      if (normalized === undefined) {
+        continue;
+      }
+      const withinTarget =
+        inspectAll ||
+        targetIdentities.some(
+          targetIdentity =>
+            withinFilesystemRoot(targetIdentity, documentIdentity),
+        ) ||
+        (lexicalPath !== undefined &&
+          targetPaths.some(target => withinPathScope(target, lexicalPath)));
+      if (withinTarget) {
+        dirty.add(normalized);
       }
     }
-    return dirty;
+    return [...dirty];
+  }
+
+  private identityFor(path: string): FilesystemIdentityResolution {
+    try {
+      const identity = this.filesystemIdentity(path);
+      return identity === undefined
+        ? { status: "unavailable" }
+        : { status: "resolved", identity };
+    } catch (error) {
+      const code =
+        typeof error === "object" && error !== null
+          ? (error as { readonly code?: unknown }).code
+          : undefined;
+      if (code === "ENOENT" || code === "ENOTDIR") {
+        return { status: "missing" };
+      }
+      if (typeof code === "string") {
+        return { status: "unavailable" };
+      }
+      throw error;
+    }
+  }
+
+  private isWithinAnotherWorkspaceRoot(
+    root: string,
+    target: string,
+  ): boolean {
+    return (
+      vscode.workspace.workspaceFolders?.some(folder => {
+        const folderRoot = resolve(folder.uri.fsPath);
+        return (
+          comparableFilesystemIdentity(folderRoot) !==
+            comparableFilesystemIdentity(root) &&
+          withinFilesystemRoot(folderRoot, target)
+        );
+      }) ?? false
+    );
   }
 }
 
@@ -450,6 +630,114 @@ export type SpawnProcess = (
 const defaultSpawn: SpawnProcess = (command, args, options) =>
   spawn(command, [...args], options);
 
+export interface ProcessRuntime {
+  readonly platform: NodeJS.Platform;
+  readonly execPath: string;
+  readonly path: string | undefined;
+  readonly npmExecPath: string | undefined;
+  readonly npmNodeExecPath: string | undefined;
+  exists(path: string): boolean;
+}
+
+const defaultProcessRuntime: ProcessRuntime = {
+  platform: process.platform,
+  execPath: process.execPath,
+  path: process.env["PATH"],
+  npmExecPath: process.env["npm_execpath"],
+  npmNodeExecPath: process.env["npm_node_execpath"],
+  exists: existsSync,
+};
+
+interface NpmInvocation {
+  readonly command: string;
+  readonly argsPrefix: readonly string[];
+  readonly detached: boolean;
+}
+
+const isWindowsNode = (path: string): boolean =>
+  win32.basename(path).toLowerCase() === "node.exe";
+
+const windowsNpmInvocation = (
+  runtime: ProcessRuntime,
+): NpmInvocation | undefined => {
+  const npmExecPath = runtime.npmExecPath;
+  const npmNodeExecPath = runtime.npmNodeExecPath;
+  if (
+    npmExecPath !== undefined &&
+    win32.basename(npmExecPath).toLowerCase() === "npm-cli.js" &&
+    runtime.exists(npmExecPath)
+  ) {
+    if (
+      npmNodeExecPath !== undefined &&
+      isWindowsNode(npmNodeExecPath) &&
+      runtime.exists(npmNodeExecPath)
+    ) {
+      return {
+        command: npmNodeExecPath,
+        argsPrefix: [npmExecPath],
+        detached: false,
+      };
+    }
+    if (isWindowsNode(runtime.execPath)) {
+      return {
+        command: runtime.execPath,
+        argsPrefix: [npmExecPath],
+        detached: false,
+      };
+    }
+  }
+
+  if (isWindowsNode(runtime.execPath)) {
+    const adjacentCli = win32.join(
+      win32.dirname(runtime.execPath),
+      "node_modules",
+      "npm",
+      "bin",
+      "npm-cli.js",
+    );
+    if (runtime.exists(adjacentCli)) {
+      return {
+        command: runtime.execPath,
+        argsPrefix: [adjacentCli],
+        detached: false,
+      };
+    }
+  }
+
+  for (const rawEntry of runtime.path?.split(";") ?? []) {
+    const entry = rawEntry.replace(/^"(.*)"$/u, "$1");
+    if (entry.length === 0) {
+      continue;
+    }
+    const npmCommand = win32.join(entry, "npm.cmd");
+    const nodeExecutable = win32.join(entry, "node.exe");
+    const npmCli = win32.join(
+      entry,
+      "node_modules",
+      "npm",
+      "bin",
+      "npm-cli.js",
+    );
+    if (
+      runtime.exists(npmCommand) &&
+      runtime.exists(nodeExecutable) &&
+      runtime.exists(npmCli)
+    ) {
+      return {
+        command: nodeExecutable,
+        argsPrefix: [npmCli],
+        detached: false,
+      };
+    }
+  }
+  return undefined;
+};
+
+const npmInvocation = (runtime: ProcessRuntime): NpmInvocation | undefined =>
+  runtime.platform === "win32"
+    ? windowsNpmInvocation(runtime)
+    : { command: "npm", argsPrefix: [], detached: true };
+
 type TerminationSignal = "SIGTERM" | "SIGKILL";
 
 export interface ProcessTreePort {
@@ -529,17 +817,29 @@ export class NodeProcessRunPort implements ProcessRunPort {
     private readonly rootPath: string,
     private readonly spawnProcess: SpawnProcess = defaultSpawn,
     private readonly processTree: ProcessTreePort = new SystemProcessTreePort(),
+    private readonly runtime: ProcessRuntime = defaultProcessRuntime,
   ) {}
 
   public run(command: RunCommand, signal: AbortSignal): Promise<RunOutcome> {
     return new Promise<RunOutcome>((resolve) => {
+      const invocation = npmInvocation(this.runtime);
+      if (invocation === undefined) {
+        resolve({
+          exitCode: null,
+          signal: null,
+          output: "",
+          outputTruncated: false,
+          terminationConfirmed: false,
+        });
+        return;
+      }
       const child = this.spawnProcess(
-        process.platform === "win32" ? "npm.cmd" : "npm",
-        ["run", command.script],
+        invocation.command,
+        [...invocation.argsPrefix, "run", command.script],
         {
           cwd: this.rootPath,
           shell: false,
-          detached: process.platform !== "win32",
+          detached: invocation.detached,
         },
       );
 
@@ -710,9 +1010,10 @@ export const createVerificationAdapter = (
   rootPath: string,
   testing: TestingRunPort = new StableTestingRunPort(),
   confirmation: ConfirmationPort = new VscodeConfirmationPort(),
+  filesystemIdentity: FilesystemIdentity = defaultFilesystemIdentity,
 ): VerificationAdapter =>
   new VerificationAdapter({
-    buffers: new VscodeBufferInspectionPort(),
+    buffers: new VscodeBufferInspectionPort(rootPath, filesystemIdentity),
     confirmation,
     scripts: new NodePackageScriptPort(rootPath),
     process: new NodeProcessRunPort(rootPath),

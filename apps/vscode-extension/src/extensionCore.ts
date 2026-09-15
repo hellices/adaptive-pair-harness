@@ -108,12 +108,17 @@ export const createExtensionRuntime = (
   const confirmation: ConfirmationPort =
     options.confirmation ?? new VscodeConfirmationPort();
 
-  const resolveVerification = (): VerificationRunner | undefined => {
-    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (root === undefined) {
+  const resolveVerification = (
+    request: import("@adaptive-pair/runtime").EffectRequest,
+  ): VerificationRunner | undefined => {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (
+      folder === undefined ||
+      folder.uri.toString() !== request.workspaceId
+    ) {
       return undefined;
     }
-    return createVerificationAdapter(root, undefined, confirmation);
+    return createVerificationAdapter(folder.uri.fsPath, undefined, confirmation);
   };
   const resolveScopeAccess = (
     request: import("@adaptive-pair/runtime").EffectRequest,

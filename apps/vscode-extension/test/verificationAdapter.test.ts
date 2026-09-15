@@ -322,6 +322,29 @@ describe("VerificationAdapter — preconditions", () => {
     expect(recorder.confirmations).toBe(0);
     expect(recorder.processRuns).toBe(0);
   });
+
+  it("cancels when the caller aborts while declined confirmation is open", async () => {
+    const controller = new AbortController();
+    let answerConfirmation: ((confirmed: boolean) => void) | undefined;
+    const { ports, recorder } = makePorts(okOutcome());
+    ports.confirmation.confirm = () =>
+      new Promise<boolean>((resolve) => {
+        answerConfirmation = resolve;
+      });
+
+    const pending = new VerificationAdapter(ports).run(
+      scriptPlan("test"),
+      controller.signal,
+    );
+    await Promise.resolve();
+    controller.abort();
+    answerConfirmation?.(false);
+
+    const result = await pending;
+    expect(result.status).toBe("cancelled");
+    expect(result.observation?.reason).toBe("caller-cancelled");
+    expect(recorder.processRuns).toBe(0);
+  });
 });
 
 describe("VerificationAdapter — timeout and termination", () => {

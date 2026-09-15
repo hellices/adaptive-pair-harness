@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { lstat, readFile, realpath, stat } from "node:fs/promises";
 import {
   basename,
@@ -71,6 +72,11 @@ const errorCode = (error: unknown): string | undefined => {
   return typeof code === "string" ? code : undefined;
 };
 
+const sameFilesystemIdentity = (left: string, right: string): boolean =>
+  process.platform === "win32"
+    ? left.toLowerCase() === right.toLowerCase()
+    : left === right;
+
 export class VscodeScopeAccess implements ScopeAccess {
   public constructor(
     private readonly rootPath: string,
@@ -119,12 +125,39 @@ export class VscodeScopeAccess implements ScopeAccess {
       return { status: "unsafe-path" };
     }
 
-    const document = vscode.workspace.textDocuments.find(
-      candidate =>
-        candidate.isDirty === true &&
-        (resolve(candidate.uri.fsPath) === absolute ||
-          resolve(candidate.uri.fsPath) === canonicalTarget),
-    );
+    let document: vscode.TextDocument | undefined;
+    for (const candidate of vscode.workspace.textDocuments) {
+      if (candidate.isDirty !== true) {
+        continue;
+      }
+      if (
+        candidate.uri.scheme !== undefined &&
+        candidate.uri.scheme !== "file"
+      ) {
+        continue;
+      }
+
+      const candidatePath = resolve(candidate.uri.fsPath);
+      let candidateIdentity: string;
+      try {
+        candidateIdentity = await realpath(candidatePath);
+      } catch (error) {
+        if (
+          errorCode(error) === "ENOENT" ||
+          errorCode(error) === "ENOTDIR"
+        ) {
+          continue;
+        }
+        if (withinRoot(resolve(this.rootPath), candidatePath)) {
+          return { status: "read-failed" };
+        }
+        throw error;
+      }
+      if (sameFilesystemIdentity(candidateIdentity, canonicalTarget)) {
+        document = candidate;
+        break;
+      }
+    }
     if (document !== undefined) {
       const text = document.getText();
       if (Buffer.byteLength(text, "utf8") > MAX_CONTEXT_FILE_BYTES) {
@@ -274,6 +307,8 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
   public constructor(
     private readonly clock: { now(): number },
     private readonly ledger?: ActivityLedger,
+    private readonly filesystemIdentity: (path: string) => string =
+      realpathSync.native,
   ) {}
 
   public workspaceFolder(): WorkspaceFolderIdentity | undefined {
@@ -310,44 +345,80 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
     if (repository === undefined) {
       return Promise.resolve({
         branch: undefined,
-        dirtyPaths: this.dirtyOpenDocuments(),
+        dirtyPaths: this.dirtyOpenDocuments(folder),
         stagedPaths: [],
         untrackedPaths: [],
       });
     }
 
-    const toRelative = (uri: vscode.Uri): string =>
-      vscode.workspace.asRelativePath(uri, false);
+    const toRelative = (
+      changes: readonly { readonly uri: vscode.Uri }[],
+    ): readonly string[] =>
+      changes.flatMap(change => {
+        const relativePath = this.relativePathWithinRoot(
+          folder.rootPath,
+          change.uri,
+        );
+        return relativePath === undefined ? [] : [relativePath];
+      });
 
     return Promise.resolve({
       branch: repository.state.HEAD?.name,
-      dirtyPaths: (repository.state.workingTreeChanges ?? []).map(change =>
-        toRelative(change.uri),
-      ),
-      stagedPaths: (repository.state.indexChanges ?? []).map(change =>
-        toRelative(change.uri),
-      ),
-      untrackedPaths: (repository.state.untrackedChanges ?? []).map(change =>
-        toRelative(change.uri),
-      ),
+      dirtyPaths: toRelative(repository.state.workingTreeChanges ?? []),
+      stagedPaths: toRelative(repository.state.indexChanges ?? []),
+      untrackedPaths: toRelative(repository.state.untrackedChanges ?? []),
     });
   }
 
   public openDocuments(): readonly OpenDocumentInfo[] {
     this.ledger?.recordWorkspaceRead();
-    return vscode.workspace.textDocuments.map(document => ({
-      relativePath: vscode.workspace.asRelativePath(document.uri, false),
-      version: typeof document.version === "number" ? document.version : 0,
-      isDirty: document.isDirty === true,
-      byteLength: documentByteLength(document),
-    }));
+    const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (rootPath === undefined) {
+      return [];
+    }
+
+    return vscode.workspace.textDocuments.flatMap(document => {
+      const relativePath = this.relativePathWithinRoot(rootPath, document.uri);
+      return relativePath === undefined
+        ? []
+        : [{
+            relativePath,
+            version: typeof document.version === "number" ? document.version : 0,
+            isDirty: document.isDirty === true,
+            byteLength: documentByteLength(document),
+          }];
+    });
   }
 
   public diagnostics(): readonly DiagnosticInfo[] {
     this.ledger?.recordWorkspaceRead();
+    const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (rootPath === undefined) {
+      return [];
+    }
+
+    let rootIdentity: string;
+    try {
+      rootIdentity = this.filesystemIdentity(rootPath);
+    } catch {
+      return [];
+    }
+
     const collected: DiagnosticInfo[] = [];
     for (const [uri, entries] of vscode.languages.getDiagnostics()) {
-      const relativePath = vscode.workspace.asRelativePath(uri, false);
+      const relativePath = this.relativePathWithinRoot(rootPath, uri);
+      if (relativePath === undefined) {
+        continue;
+      }
+      let targetIdentity: string;
+      try {
+        targetIdentity = this.filesystemIdentity(uri.fsPath);
+      } catch {
+        continue;
+      }
+      if (!withinRoot(rootIdentity, targetIdentity)) {
+        continue;
+      }
       for (const entry of entries) {
         collected.push({
           relativePath,
@@ -422,10 +493,31 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
     }
   }
 
-  private dirtyOpenDocuments(): readonly string[] {
-    return vscode.workspace.textDocuments
-      .filter(document => document.isDirty === true)
-      .map(document => vscode.workspace.asRelativePath(document.uri, false));
+  private dirtyOpenDocuments(
+    folder: WorkspaceFolderIdentity,
+  ): readonly string[] {
+    return vscode.workspace.textDocuments.flatMap(document => {
+      if (document.isDirty !== true) {
+        return [];
+      }
+      const relativePath = this.relativePathWithinRoot(
+        folder.rootPath,
+        document.uri,
+      );
+      return relativePath === undefined ? [] : [relativePath];
+    });
+  }
+
+  private relativePathWithinRoot(
+    rootPath: string,
+    uri: vscode.Uri,
+  ): string | undefined {
+    const root = resolve(rootPath);
+    const target = resolve(uri.fsPath);
+    if (!withinRoot(root, target)) {
+      return undefined;
+    }
+    return relative(root, target).replace(/\\/gu, "/");
   }
 
   private gitRepositoryForRoot(rootPath: string): GitRepository | undefined {
