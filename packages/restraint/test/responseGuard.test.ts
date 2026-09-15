@@ -22,6 +22,26 @@ describe("guardGrowthResponse", () => {
     });
   });
 
+  it("withholds a response class above the deterministic hint ceiling", () => {
+    const result = guardGrowthResponse(
+      {
+        level: 1,
+        kind: "solution-preview",
+        text: "```ts\nexport function retry() { return 3; }\n```",
+      },
+      {
+        authorizedHintLevel: 1,
+        revealAuthorized: false,
+        targetIdentifiers: [],
+      },
+    );
+
+    expect(result).toEqual({
+      accepted: false,
+      reason: "RESPONSE_CLASS_EXCEEDED",
+    });
+  });
+
   it("withholds a target patch before reveal", () => {
     const result = guardGrowthResponse(
       { level: 3, kind: "hint", text: "```diff\n+export function retry() {}\n```" },

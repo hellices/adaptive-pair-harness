@@ -67,6 +67,11 @@ export interface InvokeToolOptions {
   readonly authorityEpoch?: number | undefined;
 }
 
+export interface GrantUserActionOptions {
+  readonly runtimeRevision: number;
+  readonly authorityEpoch: number | undefined;
+}
+
 export interface PairToolResult {
   readonly operationId: string;
   readonly runtimeRevision: number;
@@ -81,7 +86,11 @@ export interface PairToolResult {
 export interface PairCoordinatorPort {
   dispatch(command: PairCommand): Promise<PairRuntimeSnapshot>;
   snapshot(): Promise<PairRuntimeSnapshot>;
-  grantUserAction(name: PairToolName, signal: AbortSignal): Promise<string>;
+  grantUserAction(
+    name: PairToolName,
+    signal: AbortSignal,
+    options?: GrantUserActionOptions,
+  ): Promise<string>;
   prepareTurn(input: PrepareTurnInput): Promise<PreparedTurn>;
   invokeTool(
     name: PairToolName,

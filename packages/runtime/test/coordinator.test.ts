@@ -476,6 +476,27 @@ describe("PairCoordinator", () => {
     expect(store.snapshot().session?.userActionGrants).toEqual([]);
   });
 
+  it("rejects a user-action grant requested from a stale runtime boundary", async () => {
+    const store = new FakePairStore([], createBriefingRuntime());
+    const coordinator = new PairCoordinator({
+      store,
+      effects: new FakeEffectPort([]),
+      clock: new FakeClock(),
+      ids: new FakeIdSource(),
+      streamId: "workspace-1",
+    });
+    const signal = new AbortController().signal;
+    const current = store.snapshot();
+
+    await expect(
+      coordinator.grantUserAction("pair_select_mode", signal, {
+        runtimeRevision: current.revision - 1,
+        authorityEpoch: current.session?.authorityEpoch,
+      }),
+    ).rejects.toThrow("STALE_TOOL_VIEW");
+    expect(store.snapshot().session?.userActionGrants).toEqual([]);
+  });
+
   it("only exposes visible tools that the coordinator can execute", async () => {
     const snapshots = [
       createInactiveRuntime(),

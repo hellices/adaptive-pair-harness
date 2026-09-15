@@ -508,6 +508,65 @@ describe("GrowthModel adapter", () => {
     expect(names).toContain(nativeToolName("pair_read_scope"));
   });
 
+  it("does not expose direct human evidence, escalation, verification, or close actions", () => {
+    const names = toGrowthChatTools(toolsFor(growthSnapshot())).map(tool => tool.name);
+
+    for (const name of [
+      "pair_capture_entry",
+      "pair_record_attempt",
+      "pair_record_hypothesis",
+      "pair_request_hint",
+      "pair_reveal_solution",
+      "pair_run_verification",
+      "pair_close_session",
+    ] as const) {
+      expect(names).not.toContain(nativeToolName(name));
+    }
+    expect(names).toEqual(
+      expect.arrayContaining([
+        nativeToolName("pair_get_state"),
+        nativeToolName("pair_read_scope"),
+        nativeToolName("pair_search_scope"),
+      ]),
+    );
+  });
+
+  it("rejects a fabricated model call to a direct human action", async () => {
+    const snapshot = growthSnapshot({ runtimeRevision: 4 });
+    const coordinator = new FakeCoordinator(snapshot);
+    const model = new FakeModel([
+      {
+        toolCalls: [
+          {
+            callId: "call-attempt",
+            name: nativeToolName("pair_record_attempt"),
+            input: {
+              workUnitId: "unit-1",
+              summary: "The model claims this was my attempt.",
+              bypassed: false,
+            },
+          },
+        ],
+      },
+    ]);
+    const prepared = await coordinator.prepareTurn({});
+    const confirmToolAction = vi.fn(() => Promise.resolve(true));
+    const growthModel = createGrowthModel(asModel(model), coordinator, {
+      confirmToolAction,
+    });
+
+    await expect(
+      growthModel.request(
+        prepared.instructions,
+        prepared.tools,
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "GROWTH_DIRECT_USER_ACTION_REQUIRED" });
+    expect(confirmToolAction).not.toHaveBeenCalled();
+    expect(coordinator.grantCalls).toEqual([]);
+    expect(coordinator.invokeCalls).toEqual([]);
+  });
+
   it("derives native tool names from the same harness mapping", () => {
     const tools = toGrowthChatTools(viewWith([readDescriptor]));
     expect(tools[0]?.name).toBe(nativeToolName("pair_read_scope"));
@@ -632,10 +691,77 @@ describe("GrowthModel adapter", () => {
     expect(confirmToolAction).toHaveBeenCalledWith(
       "pair_select_mode",
       { mode: "delivery" },
+      expect.stringContaining("Mode: delivery"),
       expect.anything(),
     );
     expect(coordinator.grantCalls).toEqual([]);
     expect(coordinator.invokeCalls).toEqual([]);
+  });
+
+  it("discloses work-unit ownership, scope, and verification before agreement", async () => {
+    const base = growthSnapshot({ runtimeRevision: 4 });
+    const snapshot = growthSnapshot({
+      runtimeRevision: 4,
+      session: {
+        status: "briefing",
+        mode: "pair",
+        learningAgreement: undefined,
+        assistance: undefined,
+        workUnit: base.session?.workUnit
+          ? {
+              ...base.session.workUnit,
+              id: "pair-unit",
+              mode: "pair",
+              owner: "ai",
+              allowedPaths: ["src/retry.ts", "test/retry.test.ts"],
+              verificationPlan: "npm test",
+              status: "proposed",
+            }
+          : undefined,
+      },
+    });
+    const coordinator = new FakeCoordinator(snapshot);
+    const model = new FakeModel([
+      {
+        toolCalls: [
+          {
+            callId: "call-agree",
+            name: nativeToolName("pair_agree_work_unit"),
+            input: { workUnitId: "pair-unit" },
+          },
+        ],
+      },
+      {
+        text: JSON.stringify({
+          level: 1,
+          kind: "question",
+          text: "The proposed unit remains unagreed.",
+        }),
+      },
+    ]);
+    const prepared = await coordinator.prepareTurn({});
+    const confirmToolAction = vi.fn(() => Promise.resolve(false));
+    const growthModel = createGrowthModel(asModel(model), coordinator, {
+      confirmToolAction,
+    });
+
+    await growthModel.request(
+      prepared.instructions,
+      viewWith([{
+        ...explicitModeDescriptor,
+        name: "pair_agree_work_unit",
+      }], snapshot.revision),
+      new AbortController().signal,
+    );
+
+    expect(confirmToolAction).toHaveBeenCalledWith(
+      "pair_agree_work_unit",
+      { workUnitId: "pair-unit" },
+      expect.stringMatching(
+        /Mode: pair[\s\S]*Owner: ai[\s\S]*Scope: src\/retry\.ts, test\/retry\.test\.ts[\s\S]*Verification: npm test/u,
+      ),
+      expect.anything(),
+    );
   });
 
   it("uses the post-grant tool view when an explicit contract action is confirmed", async () => {
@@ -724,6 +850,62 @@ describe("GrowthModel adapter", () => {
       expect(result.runtime.mode).toBe("growth");
       expect(result.response.text).toContain("now selected");
     }
+  });
+
+  it("rejects a confirmed contract action if the runtime changed while the modal was open", async () => {
+    const snapshot = growthSnapshot({
+      runtimeRevision: 4,
+      session: {
+        status: "briefing",
+        mode: undefined,
+        workUnit: undefined,
+        assistance: undefined,
+      },
+    });
+    const coordinator = realCoordinator(snapshot);
+    const model = new FakeModel([
+      {
+        toolCalls: [
+          {
+            callId: "call-mode",
+            name: nativeToolName("pair_select_mode"),
+            input: { mode: "pair" },
+          },
+        ],
+      },
+    ]);
+    const prepared = await coordinator.prepareTurn({});
+    const growthModel = createGrowthModel(asModel(model), coordinator, {
+      confirmToolAction: async () => {
+        const current = await coordinator.snapshot();
+        await coordinator.dispatch({
+          protocolVersion: 1,
+          commandId: "human-updated-learning",
+          expectedRevision: current.revision,
+          actor: "human",
+          type: "ConfirmLearning",
+          agreement: current.session?.learningAgreement ?? {
+            learningGoals: ["Practice retry control flow"],
+            familiarAreas: [],
+            humanOwnedCapabilities: ["implementation"],
+            delegatableWork: [],
+            maximumHintLevel: 2,
+            independentCheck: "Implement a varied retry",
+          },
+          observedAt: 2_000,
+        });
+        return true;
+      },
+    });
+
+    await expect(
+      growthModel.request(
+        prepared.instructions,
+        prepared.tools,
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "GROWTH_STALE_TURN" });
+    expect((await coordinator.snapshot()).session?.mode).toBeUndefined();
   });
 
   it("rejects markdown outside the JSON envelope", async () => {

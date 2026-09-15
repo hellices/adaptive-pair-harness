@@ -191,9 +191,20 @@ export class PairCoordinator implements PairCoordinatorPort {
   public async grantUserAction(
     name: PairToolName,
     signal: AbortSignal,
+    options?: {
+      readonly runtimeRevision: number;
+      readonly authorityEpoch: number | undefined;
+    },
   ): Promise<string> {
     throwIfAborted(signal);
     const current = await this.snapshot();
+    if (
+      options !== undefined &&
+      (options.runtimeRevision !== current.revision ||
+        options.authorityEpoch !== current.session?.authorityEpoch)
+    ) {
+      throw new Error("STALE_TOOL_VIEW");
+    }
     const view = toolsFor(current);
     const descriptor = view.tools.find(tool => tool.name === name);
 

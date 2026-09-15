@@ -18,8 +18,20 @@ export type GuardedResponse =
     }
   | {
       readonly accepted: false;
-      readonly reason: "HINT_LEVEL_EXCEEDED" | "TARGET_SOLUTION_WITHHELD";
+      readonly reason:
+        | "HINT_LEVEL_EXCEEDED"
+        | "RESPONSE_CLASS_EXCEEDED"
+        | "TARGET_SOLUTION_WITHHELD";
     };
+
+const MINIMUM_LEVEL_BY_KIND: Readonly<Record<GrowthResponse["kind"], HintLevel>> =
+  Object.freeze({
+    question: 0,
+    hint: 2,
+    pseudocode: 4,
+    analogy: 4,
+    "solution-preview": 5,
+  });
 
 const escapeRegExp = (value: string): string =>
   value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -54,6 +66,12 @@ export const guardGrowthResponse = (
     return {
       accepted: false,
       reason: "HINT_LEVEL_EXCEEDED",
+    };
+  }
+  if (MINIMUM_LEVEL_BY_KIND[response.kind] > context.authorizedHintLevel) {
+    return {
+      accepted: false,
+      reason: "RESPONSE_CLASS_EXCEEDED",
     };
   }
 

@@ -5,9 +5,14 @@ import {
   type CompiledInstructionEnvelope,
   type InstructionLayer,
   type PairToolDescriptor,
+  type PairToolName,
   type PairToolView,
 } from "@adaptive-pair/harness";
-import type { HintLevel, OperatingMode } from "@adaptive-pair/protocol";
+import type {
+  HintLevel,
+  OperatingMode,
+  PairRuntimeSnapshot,
+} from "@adaptive-pair/protocol";
 import type { PairCoordinatorPort } from "@adaptive-pair/runtime";
 import type { GrowthResponse } from "@adaptive-pair/restraint";
 
@@ -30,6 +35,7 @@ export type GrowthModelFailureCode =
   | "GROWTH_EMPTY_RESPONSE"
   | "GROWTH_MODEL_ERROR"
   | "GROWTH_TOOL_TRANSLATION_FAILED"
+  | "GROWTH_DIRECT_USER_ACTION_REQUIRED"
   | "GROWTH_STALE_TURN"
   | "GROWTH_CANCELLED";
 
@@ -71,6 +77,7 @@ export const isGrowthModelResult = (
 export type ConfirmGrowthToolAction = (
   name: PairToolDescriptor["name"],
   input: Readonly<Record<string, unknown>>,
+  description: string,
   signal: AbortSignal,
 ) => Promise<boolean>;
 
@@ -89,6 +96,66 @@ export const authorizedHintLevelFor = (
 const isMutatingTool = (descriptor: PairToolDescriptor): boolean =>
   descriptor.effectClass === "mutation" || descriptor.effectClass === "external";
 
+const MODEL_CONFIRMABLE_TOOLS: ReadonlySet<PairToolName> = new Set([
+  "pair_confirm_learning",
+  "pair_select_mode",
+  "pair_agree_work_unit",
+]);
+
+const isModelCallableTool = (descriptor: PairToolDescriptor): boolean =>
+  !isMutatingTool(descriptor) &&
+  (!descriptor.requiresExplicitUserAction ||
+    MODEL_CONFIRMABLE_TOOLS.has(descriptor.name));
+
+const inline = (value: string, limit = 160): string =>
+  value.replace(/\s+/gu, " ").trim().slice(0, limit);
+
+const describeGrowthToolAction = (
+  name: PairToolName,
+  input: Readonly<Record<string, unknown>>,
+  snapshot: PairRuntimeSnapshot,
+): string => {
+  if (name === "pair_select_mode") {
+    const mode = input["mode"];
+    return `Mode: ${typeof mode === "string" ? inline(mode) : "invalid"}.`;
+  }
+
+  if (name === "pair_confirm_learning") {
+    const agreement = input["agreement"];
+    if (typeof agreement !== "object" || agreement === null) {
+      return "Learning agreement: invalid.";
+    }
+    const fields = agreement as Record<string, unknown>;
+    const goals = Array.isArray(fields["learningGoals"])
+      ? fields["learningGoals"]
+          .filter((goal): goal is string => typeof goal === "string")
+          .map(goal => inline(goal, 80))
+          .slice(0, 3)
+          .join(", ")
+      : "";
+    const ceiling = fields["maximumHintLevel"];
+    return `Learning goals: ${goals || "none"}; hint ceiling: ${
+      typeof ceiling === "number" ? ceiling : "invalid"
+    }.`;
+  }
+
+  const workUnit = snapshot.session?.workUnit;
+  if (
+    name !== "pair_agree_work_unit" ||
+    workUnit === undefined ||
+    input["workUnitId"] !== workUnit.id
+  ) {
+    return "Work unit: unavailable.";
+  }
+  return [
+    `Work unit: ${inline(workUnit.objective)}.`,
+    `Mode: ${workUnit.mode}.`,
+    `Owner: ${workUnit.owner}.`,
+    `Scope: ${workUnit.allowedPaths.map(path => inline(path, 100)).join(", ") || "none"}.`,
+    `Verification: ${inline(workUnit.verificationPlan)}.`,
+  ].join(" ");
+};
+
 const toolDescription = (descriptor: PairToolDescriptor): string =>
   `Adaptive Pair ${descriptor.name} (${descriptor.effectClass}). Every invocation is revalidated against the immutable snapshot; visibility is advisory only.`;
 
@@ -96,7 +163,7 @@ export const toGrowthChatTools = (
   view: PairToolView,
 ): vscode.LanguageModelChatTool[] =>
   view.tools
-    .filter(descriptor => !isMutatingTool(descriptor))
+    .filter(isModelCallableTool)
     .map(descriptor => ({
       name: nativeToolName(descriptor.name),
       description: toolDescription(descriptor),
@@ -450,8 +517,29 @@ class VscodeGrowthModel implements GrowthModel {
       const descriptor = tools.tools.find(tool => tool.name === pairName);
       let userActionId: string | undefined;
       if (descriptor?.requiresExplicitUserAction === true) {
-        const confirmed = await this.confirmToolAction(pairName, input, signal);
+        if (!MODEL_CONFIRMABLE_TOOLS.has(pairName)) {
+          throw new GrowthModelFailure(
+            "GROWTH_DIRECT_USER_ACTION_REQUIRED",
+          );
+        }
+        const confirmationSnapshot = await this.coordinator.snapshot();
+        if (
+          confirmationSnapshot.revision !== runtime.runtimeRevision ||
+          confirmationSnapshot.session?.authorityEpoch !== runtime.authorityEpoch
+        ) {
+          throw new GrowthModelFailure("GROWTH_STALE_TURN");
+        }
+        const confirmed = await this.confirmToolAction(
+          pairName,
+          input,
+          describeGrowthToolAction(pairName, input, confirmationSnapshot),
+          signal,
+        );
         this.ensureLive(signal, Number.POSITIVE_INFINITY);
+        await this.captureRuntime(
+          runtime.runtimeRevision,
+          runtime.authorityEpoch,
+        );
         if (!confirmed) {
           resultParts.push(
             new vscode.LanguageModelToolResultPart(toolCall.callId, [
@@ -465,7 +553,10 @@ class VscodeGrowthModel implements GrowthModel {
           );
           continue;
         }
-        userActionId = await this.coordinator.grantUserAction(pairName, signal);
+        userActionId = await this.coordinator.grantUserAction(pairName, signal, {
+          runtimeRevision: runtime.runtimeRevision,
+          authorityEpoch: runtime.authorityEpoch,
+        });
       }
 
       const result = await this.coordinator.invokeTool(pairName, input, signal, {
