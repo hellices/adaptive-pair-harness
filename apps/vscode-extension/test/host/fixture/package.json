@@ -1,0 +1,9 @@
+{
+  "name": "adaptive-pair-host-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Isolated fixture workspace for the Adaptive Pair host smoke test.",
+  "scripts": {
+    "test": "node run-check.mjs"
+  }
+}

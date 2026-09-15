@@ -1,0 +1,219 @@
+{
+  "name": "adaptive-pair",
+  "displayName": "Adaptive Pair",
+  "description": "Protect direct development capability while working with AI.",
+  "version": "0.2.0-preview.1",
+  "publisher": "adaptive-pair",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hellices/adaptive-pair-harness.git"
+  },
+  "type": "module",
+  "engines": {
+    "vscode": "^1.136.0",
+    "node": ">=24"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:adaptivePair.enablePresence",
+    "onCommand:adaptivePair.startSession",
+    "onCommand:adaptivePair.joinInProgress",
+    "onChatParticipant:adaptivePair.chat"
+  ],
+  "main": "./dist/extension.cjs",
+  "files": [
+    "dist/extension.cjs",
+    "LICENSE",
+    "README.md",
+    "docs/growth-preview.md"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "adaptivePair.enablePresence",
+        "title": "Adaptive Pair: Enable Presence"
+      },
+      {
+        "command": "adaptivePair.stayQuiet",
+        "title": "Adaptive Pair: Stay Quiet"
+      },
+      {
+        "command": "adaptivePair.pausePresence",
+        "title": "Adaptive Pair: Pause Presence"
+      },
+      {
+        "command": "adaptivePair.disablePresence",
+        "title": "Adaptive Pair: Disable Presence and Clear Continuity"
+      },
+      {
+        "command": "adaptivePair.startSession",
+        "title": "Adaptive Pair: Start a Session"
+      },
+      {
+        "command": "adaptivePair.joinInProgress",
+        "title": "Adaptive Pair: Join Work in Progress"
+      }
+    ],
+    "languageModelTools": [
+      {
+        "name": "adaptive_pair_get_state",
+        "displayName": "Get Adaptive Pair State",
+        "modelDescription": "Read the current Pair Presence, mode, owner, work unit, hint ceiling, and verification state. Call before grounded project guidance.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "adaptivePairState",
+        "when": "adaptivePair.presenceEnabled",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "adaptive_pair_read_scope",
+        "displayName": "Read Pair Scope",
+        "modelDescription": "Read a bounded line range inside the agreed work-unit scope after consent.",
+        "when": "adaptivePair.sessionActive",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "startLine": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "endLine": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "adaptive_pair_search_scope",
+        "displayName": "Search Pair Scope",
+        "modelDescription": "Search bounded eligible text inside the agreed workspace and work-unit scope.",
+        "when": "adaptivePair.sessionActive",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "pattern": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "adaptive_pair_run_verification",
+        "displayName": "Run Pair Verification",
+        "modelDescription": "Run only the verification already agreed in the current work unit and return its observed result.",
+        "when": "adaptivePair.sessionActive",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "adaptive_pair_close_session",
+        "displayName": "Close Pair Session",
+        "modelDescription": "Close the current Pair session and report product and capability outcomes separately.",
+        "when": "adaptivePair.sessionActive",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      }
+    ],
+    "chatParticipants": [
+      {
+        "id": "adaptivePair.chat",
+        "name": "pair",
+        "fullName": "Adaptive Pair",
+        "description": "Work in Growth Mode with bounded hints and direct practice.",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "brief",
+            "description": "Report the agreed brief from current state"
+          },
+          {
+            "name": "attempt",
+            "description": "Record your implementation attempt"
+          },
+          {
+            "name": "hypothesis",
+            "description": "Record your diagnosis before help"
+          },
+          {
+            "name": "hint",
+            "description": "Request the next bounded hint"
+          },
+          {
+            "name": "reveal",
+            "description": "Explicitly reveal a target solution"
+          },
+          {
+            "name": "check",
+            "description": "Run the agreed verification plan and report the product result"
+          },
+          {
+            "name": "transfer",
+            "description": "Start an independent variation distinct from this work unit"
+          },
+          {
+            "name": "session",
+            "description": "Show mode, work unit, transfer, and outcome fields"
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "clean": "rm -rf dist .host-test *.vsix LICENSE README.md docs",
+    "typecheck": "tsc -b",
+    "build": "node ../../scripts/build-extension.mjs",
+    "package": "node ../../scripts/package-extension.mjs"
+  },
+  "dependencies": {
+    "@adaptive-pair/evaluation": "0.2.0-preview.1",
+    "@adaptive-pair/evidence": "0.2.0-preview.1",
+    "@adaptive-pair/harness": "0.2.0-preview.1",
+    "@adaptive-pair/presence": "0.2.0-preview.1",
+    "@adaptive-pair/profile": "0.2.0-preview.1",
+    "@adaptive-pair/restraint": "0.2.0-preview.1",
+    "@adaptive-pair/runtime": "0.2.0-preview.1"
+  },
+  "devDependencies": {
+    "@adaptive-pair/testkit": "0.2.0-preview.1",
+    "@types/mocha": "^10.0.10",
+    "@types/vscode": "1.136.0",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "3.9.2",
+    "mocha": "^11.8.0"
+  }
+}

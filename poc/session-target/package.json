@@ -1,0 +1,69 @@
+{
+  "name": "adaptive-pair",
+  "displayName": "Adaptive Pair Session Target POC",
+  "description": "Proof of concept for an Adaptive Pair VS Code Session Target.",
+  "version": "0.0.1",
+  "publisher": "adaptive-pair",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hellices/adaptive-pair-harness.git"
+  },
+  "enabledApiProposals": [
+    "chatProvider",
+    "chatSessionsProvider"
+  ],
+  "engines": {
+    "vscode": "^1.137.0",
+    "node": ">=22.13"
+  },
+  "activationEvents": [
+    "onChatSession:adaptive-pair"
+  ],
+  "main": "./dist/src/extension.js",
+  "contributes": {
+    "languageModelChatProviders": [
+      {
+        "vendor": "adaptive-pair-poc",
+        "displayName": "Adaptive Pair POC"
+      }
+    ],
+    "chatSessions": [
+      {
+        "type": "adaptive-pair",
+        "name": "pair",
+        "displayName": "Adaptive Pair",
+        "description": "Capability-preserving AI pair programming.",
+        "icon": "$(git-compare)",
+        "order": 100,
+        "canDelegate": true,
+        "requiresCustomModels": true,
+        "supportsAutoModel": false,
+        "requiresCopilotSignIn": false,
+        "capabilities": {
+          "supportsFileAttachments": false,
+          "supportsToolAttachments": false,
+          "supportsImageAttachments": false
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "test:unit": "vitest run test/unit",
+    "test:host": "npm run compile && node dist/test/runHostTests.js",
+    "check": "npm run compile && npm run test:unit",
+    "package": "npm run compile && vsce package --no-dependencies --skip-license --out adaptive-pair-session-target-poc.vsix"
+  },
+  "devDependencies": {
+    "@types/mocha": "10.0.10",
+    "@types/node": "24.13.3",
+    "@vscode/dts": "0.4.1",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "3.9.2",
+    "mocha": "12.0.0",
+    "typescript": "6.0.3",
+    "vitest": "5.0.0"
+  }
+}
