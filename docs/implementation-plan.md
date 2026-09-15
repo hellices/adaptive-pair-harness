@@ -2347,7 +2347,7 @@ Create `apps/vscode-extension/package.json` with:
         "displayName": "Get Adaptive Pair State",
         "modelDescription": "Read the current Pair Presence, mode, owner, work unit, hint ceiling, and verification state. Call before grounded project guidance.",
         "canBeReferencedInPrompt": true,
-        "toolReferenceName": "pairState",
+        "toolReferenceName": "adaptivePairState",
         "when": "adaptivePair.presenceEnabled",
         "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
       },
@@ -3184,8 +3184,10 @@ Export only:
 - counts of pauses, conflicts, and unwanted interventions.
 
 Exclude workspace IDs, paths, source, prompts, model output, diagnostics,
-branch names, and profile text. Render the JSON in an unsaved editor before the
-developer chooses a destination.
+branch names, and profile text. Implement the unsaved-editor preview adapter,
+but do not expose a Stable command until the extension can aggregate every
+declared session metric without inventing zeros or inferring demonstrations.
+Task 12 documents that preview limitation.
 
 - [ ] **Step 7: Verify outcome and privacy behavior**
 
@@ -3338,7 +3340,7 @@ Update `README.md` and create `docs/growth-preview.md` with:
 - greenfield and join-in-progress walkthroughs;
 - Growth hint and reveal behavior;
 - the five independent Growth outcomes;
-- local storage, export, and deletion;
+- local storage and deletion, plus the current user-facing export limitation;
 - supported languages and host versions;
 - Pair Presence as the workspace entry and Session Target as a separate
   execution choice on the stable path;
@@ -3400,7 +3402,7 @@ git commit -m "feat: complete the Growth Mode preview" \
 | Durable ordering, cancellation, unknown completion, and replay | Tasks 3, 7, 9, 12 |
 | Local evidence without raw keystroke retention | Tasks 4 and 9 |
 | Observed verification and independent transfer | Task 11 |
-| Local profile and privacy-reviewed evaluation export | Task 11 |
+| Local profile and privacy-reviewed evaluation export core | Task 11 |
 | Clean-profile Extension Host and package validation | Task 12 |
 
 Pair Mode AI edits and handoff, Delivery Mode commands, and the native Agent

@@ -1,4 +1,5 @@
 import type {
+  HintLevel,
   PairRuntimeSnapshot,
   PairSessionSnapshot,
 } from "@adaptive-pair/protocol";
@@ -363,6 +364,10 @@ const responseClassFor = (
 ): CompiledInstructionEnvelope["maximumResponseClass"] => {
   const session = snapshot.session;
 
+  if (session?.mode === undefined) {
+    return "question";
+  }
+
   if (session?.mode !== "growth") {
     return "solution";
   }
@@ -382,6 +387,22 @@ const responseClassFor = (
     case 5:
       return "pseudocode";
   }
+};
+
+export const maximumHintLevelForSnapshot = (
+  snapshot: PairRuntimeSnapshot,
+): HintLevel => {
+  const session = snapshot.session;
+  if (session?.mode === undefined) {
+    return 1;
+  }
+  if (session.mode !== "growth") {
+    return 5;
+  }
+
+  const requested = session.assistance?.hint?.level ?? 1;
+  const agreementCeiling = session.learningAgreement?.maximumHintLevel ?? 1;
+  return Math.min(requested, agreementCeiling) as HintLevel;
 };
 
 const buildModeLayer = (
@@ -545,6 +566,7 @@ export const compileInstructions = (
     instructionVersion: PAIR_INSTRUCTION_VERSION,
     runtimeRevision: input.snapshot.revision,
     authorityEpoch: input.snapshot.session?.authorityEpoch,
+    maximumHintLevel: maximumHintLevelForSnapshot(input.snapshot),
     maximumResponseClass: responseClassFor(input.snapshot),
     layers: Object.freeze(layers),
   });

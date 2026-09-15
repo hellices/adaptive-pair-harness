@@ -58,9 +58,12 @@ optional `:suffix`) can be run; anything else is refused rather than guessed.
 
 1. Open a trusted workspace and run `Adaptive Pair: Enable Presence`.
 2. Run `Adaptive Pair: Start a Session`.
-3. In chat, use `@pair /brief` to frame the work, agree a Growth work unit, and
-   begin. You own every edit; Adaptive Pair never writes to your files in Growth
-   Mode.
+3. Ask `@pair` to frame the work. It may propose a learning agreement, mode, and
+   bounded work unit, but each learning confirmation, mode selection, and final
+   work-unit agreement requires a separate modal **Continue once** action from
+   you. The model cannot grant those actions. Use `@pair /brief` at any time to
+   read the resulting agreed state without a model call. You own every edit;
+   Adaptive Pair never writes to your files in Growth Mode.
 
 ### Join in progress
 
@@ -106,7 +109,7 @@ demonstrates nothing**: `/transfer` records a `transfer-started` state that is
 explicitly `demonstrated: false`, and a skipped or merely started transfer check
 is reported as "not assessed" rather than as success.
 
-## Local storage, export, and deletion
+## Local storage and deletion
 
 - **Storage** — Pair continuity is a local, append-only journal in the
   extension's own global storage. It stores bounded edit-episode metadata (file
@@ -115,9 +118,6 @@ is reported as "not assessed" rather than as success.
   or strings longer than 500 characters.
 - **Reconciliation** — on restart, the persisted journal is replayed and
   reconciled so continuity survives a host reload.
-- **Export** — an evaluation export is rendered in an unsaved editor for your
-  review before you choose any destination; nothing is written to disk on your
-  behalf.
 - **Deletion** — `Adaptive Pair: Disable Presence and Clear Continuity` deletes
   the local journal and clears in-memory Pair state. Your VS Code settings,
   defaults, sessions, and native UI are left unchanged.
@@ -162,6 +162,11 @@ Stable VSIX intentionally contains no `enabledApiProposals` and no
   verification path.
 - Pair continuity is local only. There is no cloud sync, telemetry, or network
   activity.
+- The privacy-reviewed evaluation serializer and unsaved-editor preview adapter
+  are implemented and tested as open-core components, but this Stable preview
+  does not expose an export command. Session-level aggregation for every
+  declared metric is not wired yet, so the extension does not present an empty
+  or inferred export as if it were observed data.
 - `/transfer` starts an independent variation and records only that it started.
   Completing a transfer, and any resulting Growth demonstration, is not
   implemented in this preview and is never claimed.

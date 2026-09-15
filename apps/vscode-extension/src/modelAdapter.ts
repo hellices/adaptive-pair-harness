@@ -7,7 +7,7 @@ import {
   type PairToolDescriptor,
   type PairToolView,
 } from "@adaptive-pair/harness";
-import type { HintLevel } from "@adaptive-pair/protocol";
+import type { HintLevel, OperatingMode } from "@adaptive-pair/protocol";
 import type { PairCoordinatorPort } from "@adaptive-pair/runtime";
 import type { GrowthResponse } from "@adaptive-pair/restraint";
 
@@ -30,6 +30,7 @@ export type GrowthModelFailureCode =
   | "GROWTH_EMPTY_RESPONSE"
   | "GROWTH_MODEL_ERROR"
   | "GROWTH_TOOL_TRANSLATION_FAILED"
+  | "GROWTH_STALE_TURN"
   | "GROWTH_CANCELLED";
 
 export class GrowthModelFailure extends Error {
@@ -47,8 +48,31 @@ export interface GrowthModel {
     instructions: CompiledInstructionEnvelope,
     tools: PairToolView,
     signal: AbortSignal,
-  ): Promise<GrowthResponse>;
+  ): Promise<GrowthModelOutput>;
 }
+
+export interface GrowthRuntimeBoundary {
+  readonly runtimeRevision: number;
+  readonly authorityEpoch: number | undefined;
+  readonly mode: OperatingMode | undefined;
+}
+
+export interface GrowthModelResult {
+  readonly response: GrowthResponse;
+  readonly runtime: GrowthRuntimeBoundary;
+}
+
+export type GrowthModelOutput = GrowthResponse | GrowthModelResult;
+
+export const isGrowthModelResult = (
+  output: GrowthModelOutput,
+): output is GrowthModelResult => "response" in output;
+
+export type ConfirmGrowthToolAction = (
+  name: PairToolDescriptor["name"],
+  input: Readonly<Record<string, unknown>>,
+  signal: AbortSignal,
+) => Promise<boolean>;
 
 const RESPONSE_KINDS: readonly GrowthResponse["kind"][] = Object.freeze([
   "question",
@@ -58,20 +82,9 @@ const RESPONSE_KINDS: readonly GrowthResponse["kind"][] = Object.freeze([
   "solution-preview",
 ]);
 
-const RESPONSE_CLASS_LEVEL: Record<
-  CompiledInstructionEnvelope["maximumResponseClass"],
-  HintLevel
-> = {
-  question: 1,
-  hint: 3,
-  pseudocode: 4,
-  analogy: 4,
-  solution: 5,
-};
-
 export const authorizedHintLevelFor = (
   envelope: CompiledInstructionEnvelope,
-): HintLevel => RESPONSE_CLASS_LEVEL[envelope.maximumResponseClass];
+): HintLevel => envelope.maximumHintLevel;
 
 const isMutatingTool = (descriptor: PairToolDescriptor): boolean =>
   descriptor.effectClass === "mutation" || descriptor.effectClass === "external";
@@ -242,18 +255,23 @@ class VscodeGrowthModel implements GrowthModel {
     private readonly coordinator: PairCoordinatorPort,
     private readonly caps: GrowthTurnCaps,
     private readonly now: () => number,
+    private readonly confirmToolAction: ConfirmGrowthToolAction,
   ) {}
 
   public async request(
     instructions: CompiledInstructionEnvelope,
     tools: PairToolView,
     signal: AbortSignal,
-  ): Promise<GrowthResponse> {
+  ): Promise<GrowthModelOutput> {
     this.ensureLive(signal, Number.POSITIVE_INFINITY);
 
     const deadline = this.now() + this.caps.deadlineMs;
     const chatTools = toGrowthChatTools(tools);
     const messages = buildInitialMessages(instructions);
+    let runtime = await this.captureRuntime(
+      tools.runtimeRevision,
+      tools.authorityEpoch,
+    );
 
     const derived = new AbortController();
     const relayAbort = (): void => derived.abort();
@@ -274,6 +292,10 @@ class VscodeGrowthModel implements GrowthModel {
     try {
       for (let call = 0; call < this.caps.maxModelCalls; call += 1) {
         this.ensureLive(signal, deadline);
+        runtime = await this.captureRuntime(
+          runtime.runtimeRevision,
+          runtime.authorityEpoch,
+        );
 
         totalInputTokens += await this.countInput(messages, token);
         if (totalInputTokens > this.caps.maxInputTokens) {
@@ -308,11 +330,20 @@ class VscodeGrowthModel implements GrowthModel {
               throw new GrowthModelFailure("GROWTH_OUTPUT_TOKEN_CAP");
             }
           }
-          await this.appendToolResults(messages, toolCalls, tools, signal);
+          runtime = await this.appendToolResults(
+            messages,
+            toolCalls,
+            tools,
+            runtime,
+            signal,
+          );
           continue;
         }
 
-        return parseEnvelope(text);
+        return Object.freeze({
+          response: parseEnvelope(text),
+          runtime,
+        });
       }
 
       throw new GrowthModelFailure("GROWTH_MODEL_CALL_CAP");
@@ -403,8 +434,9 @@ class VscodeGrowthModel implements GrowthModel {
     messages: vscode.LanguageModelChatMessage[],
     toolCalls: readonly vscode.LanguageModelToolCallPart[],
     tools: PairToolView,
+    runtime: GrowthRuntimeBoundary,
     signal: AbortSignal,
-  ): Promise<void> {
+  ): Promise<GrowthRuntimeBoundary> {
     messages.push(vscode.LanguageModelChatMessage.Assistant([...toolCalls]));
 
     const resultParts: vscode.LanguageModelToolResultPart[] = [];
@@ -415,10 +447,50 @@ class VscodeGrowthModel implements GrowthModel {
       }
 
       const input = isRecord(toolCall.input) ? toolCall.input : {};
+      const descriptor = tools.tools.find(tool => tool.name === pairName);
+      let userActionId: string | undefined;
+      if (descriptor?.requiresExplicitUserAction === true) {
+        const confirmed = await this.confirmToolAction(pairName, input, signal);
+        this.ensureLive(signal, Number.POSITIVE_INFINITY);
+        if (!confirmed) {
+          resultParts.push(
+            new vscode.LanguageModelToolResultPart(toolCall.callId, [
+              new vscode.LanguageModelTextPart(
+                JSON.stringify({
+                  status: "declined",
+                  summary: "The developer declined the explicit one-time action.",
+                }),
+              ),
+            ]),
+          );
+          continue;
+        }
+        userActionId = await this.coordinator.grantUserAction(pairName, signal);
+      }
+
       const result = await this.coordinator.invokeTool(pairName, input, signal, {
-        runtimeRevision: tools.runtimeRevision,
-        authorityEpoch: tools.authorityEpoch,
+        ...(userActionId === undefined
+          ? {
+              runtimeRevision: runtime.runtimeRevision,
+              authorityEpoch: runtime.authorityEpoch,
+            }
+          : { userActionId }),
       });
+      if (result.observation["stale"] === true) {
+        throw new GrowthModelFailure("GROWTH_STALE_TURN");
+      }
+      const nextRuntime = await this.captureRuntime(
+        result.runtimeRevision,
+        result.authorityEpoch,
+      );
+      if (
+        nextRuntime.authorityEpoch !== runtime.authorityEpoch ||
+        (nextRuntime.mode !== runtime.mode &&
+          !(pairName === "pair_select_mode" && userActionId !== undefined))
+      ) {
+        throw new GrowthModelFailure("GROWTH_STALE_TURN");
+      }
+      runtime = nextRuntime;
 
       resultParts.push(
         new vscode.LanguageModelToolResultPart(toolCall.callId, [
@@ -434,6 +506,25 @@ class VscodeGrowthModel implements GrowthModel {
     }
 
     messages.push(vscode.LanguageModelChatMessage.User(resultParts));
+    return runtime;
+  }
+
+  private async captureRuntime(
+    expectedRevision: number,
+    expectedAuthorityEpoch: number | undefined,
+  ): Promise<GrowthRuntimeBoundary> {
+    const snapshot = await this.coordinator.snapshot();
+    if (
+      snapshot.revision !== expectedRevision ||
+      snapshot.session?.authorityEpoch !== expectedAuthorityEpoch
+    ) {
+      throw new GrowthModelFailure("GROWTH_STALE_TURN");
+    }
+    return Object.freeze({
+      runtimeRevision: snapshot.revision,
+      authorityEpoch: snapshot.session?.authorityEpoch,
+      mode: snapshot.session?.mode,
+    });
   }
 
   private rethrowLifecycle(
@@ -459,6 +550,7 @@ export const createGrowthModel = (
   options: {
     readonly caps?: GrowthTurnCaps;
     readonly now?: () => number;
+    readonly confirmToolAction?: ConfirmGrowthToolAction;
   } = {},
 ): GrowthModel =>
   new VscodeGrowthModel(
@@ -466,4 +558,5 @@ export const createGrowthModel = (
     coordinator,
     options.caps ?? GROWTH_TURN_CAPS,
     options.now ?? (() => Date.now()),
+    options.confirmToolAction ?? (() => Promise.resolve(false)),
   );

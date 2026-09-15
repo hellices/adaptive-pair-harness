@@ -253,6 +253,76 @@ describe("inspectManifest", () => {
       "main",
     );
   });
+
+  it.each([
+    [
+      "wildcard activation",
+      { ...validManifest, activationEvents: ["*"] },
+      "activation event",
+    ],
+    [
+      "foreign command",
+      {
+        ...validManifest,
+        contributes: {
+          ...validManifest.contributes,
+          commands: [{ command: "github.copilot.override" }],
+        },
+      },
+      "command identifier",
+    ],
+    [
+      "foreign language-model tool",
+      {
+        ...validManifest,
+        contributes: {
+          ...validManifest.contributes,
+          languageModelTools: [{ name: "getState" }],
+        },
+      },
+      "language-model tool identifier",
+    ],
+    [
+      "foreign tool reference",
+      {
+        ...validManifest,
+        contributes: {
+          ...validManifest.contributes,
+          languageModelTools: [
+            {
+              name: "adaptive_pair_get_state",
+              toolReferenceName: "pairState",
+            },
+          ],
+        },
+      },
+      "tool reference identifier",
+    ],
+    [
+      "foreign chat participant",
+      {
+        ...validManifest,
+        contributes: {
+          ...validManifest.contributes,
+          chatParticipants: [{ id: "pair.chat", name: "pair" }],
+        },
+      },
+      "chat participant identifier",
+    ],
+    [
+      "configuration defaults",
+      {
+        ...validManifest,
+        contributes: {
+          ...validManifest.contributes,
+          configurationDefaults: { "chat.detectParticipant.enabled": false },
+        },
+      },
+      "configurationDefaults",
+    ],
+  ])("rejects %s", (_label, manifest, expected) => {
+    expect(inspectManifest(manifest).join("\n")).toContain(expected);
+  });
 });
 
 describe("inspectEntryContent", () => {

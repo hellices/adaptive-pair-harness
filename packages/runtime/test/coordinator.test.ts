@@ -386,6 +386,79 @@ describe("PairCoordinator", () => {
     );
   });
 
+  it("requires and consumes human grants for the Growth briefing contract", async () => {
+    const store = new FakePairStore([], createBriefingRuntime());
+    const coordinator = new PairCoordinator({
+      store,
+      effects: new FakeEffectPort([]),
+      clock: new FakeClock(),
+      ids: new FakeIdSource(),
+      streamId: "workspace-1",
+    });
+    const signal = new AbortController().signal;
+
+    for (const [name, input] of [
+      [
+        "pair_confirm_learning",
+        { agreement: createLearningAgreement() },
+      ],
+      ["pair_select_mode", { mode: "growth" }],
+    ] as const) {
+      await expect(coordinator.invokeTool(name, input, signal)).rejects.toThrow(
+        "USER_ACTION_REQUIRED",
+      );
+      const userActionId = await coordinator.grantUserAction(name, signal);
+      await coordinator.invokeTool(name, input, signal, { userActionId });
+    }
+
+    await coordinator.invokeTool(
+      "pair_propose_work_unit",
+      {
+        workUnit: createWorkUnit({
+          id: "growth-unit",
+          mode: "growth",
+          learningValue: "high",
+          owner: "human",
+          status: "proposed",
+        }),
+      },
+      signal,
+    );
+
+    await expect(
+      coordinator.invokeTool(
+        "pair_agree_work_unit",
+        { workUnitId: "growth-unit" },
+        signal,
+      ),
+    ).rejects.toThrow("USER_ACTION_REQUIRED");
+    const agreementGrant = await coordinator.grantUserAction(
+      "pair_agree_work_unit",
+      signal,
+    );
+    await coordinator.invokeTool(
+      "pair_agree_work_unit",
+      { workUnitId: "growth-unit" },
+      signal,
+      { userActionId: agreementGrant },
+    );
+
+    expect(store.snapshot().session).toMatchObject({
+      status: "ready",
+      mode: "growth",
+      workUnit: {
+        id: "growth-unit",
+        owner: "human",
+        status: "agreed",
+      },
+    });
+    expect(
+      store.snapshot().session?.userActionGrants.filter(
+        grant => grant.status === "available",
+      ),
+    ).toEqual([]);
+  });
+
   it("rejects hidden operational grants during briefing", async () => {
     const store = new FakePairStore([], createBriefingRuntime());
     const coordinator = new PairCoordinator({

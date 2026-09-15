@@ -2,10 +2,34 @@ import { describe, expect, it } from "vitest";
 import { guardGrowthResponse } from "../src/index.js";
 
 describe("guardGrowthResponse", () => {
+  it("withholds a response above the deterministic hint ceiling", () => {
+    const result = guardGrowthResponse(
+      {
+        level: 4,
+        kind: "pseudocode",
+        text: "Track attempts, stop at the bound, and return the successful count.",
+      },
+      {
+        authorizedHintLevel: 1,
+        revealAuthorized: false,
+        targetIdentifiers: ["retry"],
+      },
+    );
+
+    expect(result).toEqual({
+      accepted: false,
+      reason: "HINT_LEVEL_EXCEEDED",
+    });
+  });
+
   it("withholds a target patch before reveal", () => {
     const result = guardGrowthResponse(
       { level: 3, kind: "hint", text: "```diff\n+export function retry() {}\n```" },
-      { revealAuthorized: false, targetIdentifiers: ["retry"] },
+      {
+        authorizedHintLevel: 3,
+        revealAuthorized: false,
+        targetIdentifiers: ["retry"],
+      },
     );
 
     expect(result).toEqual({
@@ -21,7 +45,11 @@ describe("guardGrowthResponse", () => {
         kind: "pseudocode",
         text: "class retry$1 {}\nKeep the rest of the logic unchanged.",
       },
-      { revealAuthorized: false, targetIdentifiers: ["retry$1"] },
+      {
+        authorizedHintLevel: 4,
+        revealAuthorized: false,
+        targetIdentifiers: ["retry$1"],
+      },
     );
 
     expect(result).toEqual({
@@ -37,7 +65,11 @@ describe("guardGrowthResponse", () => {
         kind: "solution-preview",
         text: "function retry() { return 3; }",
       },
-      { revealAuthorized: false, targetIdentifiers: ["retry"] },
+      {
+        authorizedHintLevel: 5,
+        revealAuthorized: false,
+        targetIdentifiers: ["retry"],
+      },
     );
 
     expect(result).toEqual({
@@ -53,7 +85,11 @@ describe("guardGrowthResponse", () => {
         kind: "question",
         text: "Which branch should update the retry counter first?",
       },
-      { revealAuthorized: false, targetIdentifiers: ["retry"] },
+      {
+        authorizedHintLevel: 2,
+        revealAuthorized: false,
+        targetIdentifiers: ["retry"],
+      },
     );
 
     expect(result).toEqual({
@@ -73,7 +109,11 @@ describe("guardGrowthResponse", () => {
         kind: "pseudocode",
         text: "const retry = () => nextCount + 1;",
       },
-      { revealAuthorized: false, targetIdentifiers: ["retry"] },
+      {
+        authorizedHintLevel: 4,
+        revealAuthorized: false,
+        targetIdentifiers: ["retry"],
+      },
     );
 
     expect(result).toEqual({
@@ -89,7 +129,11 @@ describe("guardGrowthResponse", () => {
         kind: "hint",
         text: "```patch\n+ do the thing\n```",
       },
-      { revealAuthorized: false, targetIdentifiers: [] },
+      {
+        authorizedHintLevel: 3,
+        revealAuthorized: false,
+        targetIdentifiers: [],
+      },
     );
 
     expect(result).toEqual({
@@ -107,6 +151,7 @@ describe("guardGrowthResponse", () => {
 
     expect(
       guardGrowthResponse(response, {
+        authorizedHintLevel: 5,
         revealAuthorized: true,
         targetIdentifiers: ["retry"],
       }),

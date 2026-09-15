@@ -14,7 +14,10 @@ import {
   GrowthParticipant,
   ModelConsentRegistry,
 } from "./growthParticipant.js";
-import { createGrowthModel } from "./modelAdapter.js";
+import {
+  createGrowthModel,
+  type ConfirmGrowthToolAction,
+} from "./modelAdapter.js";
 import { accountedModelFactory } from "./modelAccounting.js";
 import { ActivityLedger } from "./activityLedger.js";
 import { StableEffectPort, type VerificationRunner } from "./stableEffectPort.js";
@@ -71,6 +74,41 @@ const confirmSolutionReveal = async (
   return choice === "Reveal solution";
 };
 
+const confirmGrowthToolAction: ConfirmGrowthToolAction = async (
+  name,
+  input,
+  signal,
+) => {
+  if (signal.aborted) {
+    return false;
+  }
+
+  let detail = "";
+  const mode = input["mode"];
+  const agreement = input["agreement"];
+  const workUnitId = input["workUnitId"];
+  if (name === "pair_select_mode" && typeof mode === "string") {
+    detail = ` Select mode: ${mode}.`;
+  } else if (
+    name === "pair_confirm_learning" &&
+    typeof agreement === "object" &&
+    agreement !== null
+  ) {
+    const ceiling = (agreement as Record<string, unknown>)["maximumHintLevel"];
+    if (typeof ceiling === "number") {
+      detail = ` Set the learning agreement and hint ceiling to level ${ceiling}.`;
+    }
+  } else if (name === "pair_agree_work_unit" && typeof workUnitId === "string") {
+    detail = ` Agree work unit ${workUnitId.slice(0, 80)}.`;
+  }
+  const choice = await vscode.window.showWarningMessage(
+    `Adaptive Pair requests the explicit action ${name}.${detail} The deterministic core will revalidate current mode, scope, and revision.`,
+    { modal: true },
+    "Continue once",
+  );
+  return !signal.aborted && choice === "Continue once";
+};
+
 /**
  * Build and register the complete Adaptive Pair runtime for one activation.
  *
@@ -113,7 +151,10 @@ export const createExtensionRuntime = (
     coordinator,
     consent: new ModelConsentRegistry(),
     evaluations: new GrowthEvaluationLog(),
-    createModel: accountedModelFactory(ledger, model => createGrowthModel(model, coordinator)),
+    createModel: accountedModelFactory(ledger, model =>
+      createGrowthModel(model, coordinator, {
+        confirmToolAction: confirmGrowthToolAction,
+      })),
     requestWorkspaceConsent,
     confirmSolutionReveal,
     stayQuiet: () => sessionController.stayQuiet(),

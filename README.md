@@ -49,9 +49,9 @@ transfer task demonstrates none of them.
 
 See **[docs/growth-preview.md](docs/growth-preview.md)** for the greenfield and
 join-in-progress walkthroughs, hint and reveal behavior, product verification
-and the five Growth fields, local storage/export/deletion, supported languages
-and host versions, the experimental Session Target and its Insiders
-proposed-API limitation, and the exact known limitations. The Stable VSIX
+and the five Growth fields, local storage/deletion and the export limitation,
+supported languages and host versions, the experimental Session Target and its
+Insiders proposed-API limitation, and the exact known limitations. The Stable VSIX
 (`adaptive-pair-0.2.0-preview.1-stable.vsix`) contains no `enabledApiProposals`
 and no `contributes.chatSessions`.
 

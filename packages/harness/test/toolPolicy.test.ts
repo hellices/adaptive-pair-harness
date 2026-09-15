@@ -596,6 +596,41 @@ describe("Pair tool policy", () => {
     });
   });
 
+  it("requires one-shot user action for learning, mode, and work-unit agreement", () => {
+    const cases = [
+      {
+        view: toolsFor(createBriefingRuntime()),
+        name: "pair_confirm_learning",
+      },
+      {
+        view: toolsFor(createBriefingRuntime()),
+        name: "pair_select_mode",
+      },
+      {
+        view: toolsFor(createBriefingProposedRuntime()),
+        name: "pair_agree_work_unit",
+      },
+    ] as const;
+
+    for (const { view, name } of cases) {
+      expect(view.tools.find(tool => tool.name === name)).toMatchObject({
+        requiresExplicitUserAction: true,
+      });
+      expect(
+        authorizeVisibleTool(view, {
+          catalogVersion: PAIR_TOOL_CATALOG_VERSION,
+          name,
+          runtimeRevision: view.runtimeRevision,
+          authorityEpoch: view.authorityEpoch,
+          owner: "human",
+        }),
+      ).toEqual({
+        allowed: false,
+        reason: "USER_ACTION_REQUIRED",
+      });
+    }
+  });
+
   it("rejects caller-forged lookalike grants", () => {
     const view = toolsFor(growthRuntime());
 

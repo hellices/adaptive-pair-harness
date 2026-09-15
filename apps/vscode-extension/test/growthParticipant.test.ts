@@ -9,12 +9,19 @@ import {
   type PairToolView,
 } from "@adaptive-pair/harness";
 import type { PairRuntimeSnapshot } from "@adaptive-pair/protocol";
-import type {
-  InvokeToolOptions,
-  PairCoordinatorPort,
-  PairToolResult,
-  PrepareTurnInput,
-  PreparedTurn,
+import {
+  PairCoordinator,
+  type Clock,
+  type EffectPort,
+  type EffectRequest,
+  type EffectResult,
+  type IdSource,
+  type InvokeToolOptions,
+  type PairCoordinatorPort,
+  type PairStore,
+  type PairToolResult,
+  type PrepareTurnInput,
+  type PreparedTurn,
 } from "@adaptive-pair/runtime";
 import { growthRuntime } from "@adaptive-pair/testkit";
 
@@ -65,6 +72,7 @@ vi.mock("vscode", () => vscodeMock.module);
 // Imports that depend on the vscode mock must come after vi.mock.
 const {
   createGrowthModel,
+  isGrowthModelResult,
   toGrowthChatTools,
   GrowthModelFailure,
   GROWTH_TURN_CAPS,
@@ -259,6 +267,74 @@ class FakeCoordinator implements PairCoordinatorPort {
   }
 }
 
+class IntegrationStore implements PairStore {
+  private snapshotValue: PairRuntimeSnapshot;
+  private readonly commandIds = new Set<string>();
+
+  public constructor(snapshot: PairRuntimeSnapshot) {
+    this.snapshotValue = structuredClone(snapshot);
+  }
+
+  public load(): Promise<{
+    readonly snapshot: PairRuntimeSnapshot;
+    readonly seenCommandIds: ReadonlySet<string>;
+  }> {
+    return Promise.resolve({
+      snapshot: structuredClone(this.snapshotValue),
+      seenCommandIds: new Set(this.commandIds),
+    });
+  }
+
+  public append(
+    _streamId: string,
+    events: readonly { readonly commandId: string }[],
+  ): Promise<void> {
+    for (const event of events) {
+      this.commandIds.add(event.commandId);
+    }
+    return Promise.resolve();
+  }
+
+  public saveSnapshot(
+    _streamId: string,
+    snapshot: PairRuntimeSnapshot,
+  ): Promise<void> {
+    this.snapshotValue = structuredClone(snapshot);
+    return Promise.resolve();
+  }
+}
+
+const realCoordinator = (snapshot: PairRuntimeSnapshot): PairCoordinator => {
+  let id = 0;
+  const clock: Clock = { now: () => 1_000 + id };
+  const ids: IdSource = {
+    next: (prefix: string) => `${prefix}-${++id}`,
+  };
+  const effects: EffectPort = {
+    execute: (
+      request: EffectRequest,
+      signal: AbortSignal,
+    ): Promise<EffectResult> => {
+      void signal;
+      return Promise.resolve({
+        operationId: request.operationId,
+        status: "confirmed",
+        summary: "Read the agreed scope.",
+        observation: { excerpt: "bounded context" },
+        sensitiveData: false,
+        partial: false,
+      });
+    },
+  };
+  return new PairCoordinator({
+    store: new IntegrationStore(snapshot),
+    effects,
+    clock,
+    ids,
+    streamId: "workspace-1",
+  });
+};
+
 type CollectedResponse = {
   readonly markdown: string[];
 };
@@ -369,12 +445,24 @@ const readDescriptor: PairToolDescriptor = Object.freeze({
   maximumResultCharacters: 8_000,
 });
 
+const explicitModeDescriptor: PairToolDescriptor = Object.freeze({
+  name: "pair_select_mode",
+  effectClass: "state",
+  modes: ["growth", "pair", "delivery"] as const,
+  requiredEditOwner: "either",
+  requiresExplicitUserAction: true,
+  requiresConsent: false,
+  retry: "same-key",
+  maximumResultCharacters: 2_000,
+});
+
 const viewWith = (
   tools: readonly PairToolDescriptor[],
+  runtimeRevision = 7,
 ): PairToolView =>
   Object.freeze({
     catalogVersion: 1,
-    runtimeRevision: 7,
+    runtimeRevision,
     authorityEpoch: 0,
     tools: Object.freeze([...tools]),
   });
@@ -448,9 +536,194 @@ describe("GrowthModel adapter", () => {
       new AbortController().signal,
     );
 
-    expect(response.kind).toBe("question");
+    expect(isGrowthModelResult(response) ? response.response.kind : response.kind).toBe(
+      "question",
+    );
     expect(coordinator.invokeCalls[0]?.name).toBe("pair_read_scope");
     expect(coordinator.invokeCalls[0]?.input).toEqual({ path: "src/retry.ts" });
+  });
+
+  it("rejects a tool turn whose operation became stale during an authority change", async () => {
+    const before = growthSnapshot({ runtimeRevision: 4 });
+    const after: PairRuntimeSnapshot = {
+      ...before,
+      revision: 7,
+      session: before.session
+        ? { ...before.session, mode: "pair", authorityEpoch: 1 }
+        : undefined,
+    };
+    const coordinator = new FakeCoordinator(before, {
+      onInvoke: () => coordinator.setSnapshot(after),
+      resultFor: call =>
+        Object.freeze({
+          operationId: `op-${call.name}`,
+          runtimeRevision: after.revision,
+          authorityEpoch: after.session?.authorityEpoch,
+          status: "cancelled" as const,
+          summary: "Ignored a stale operation result after authority changed.",
+          observation: Object.freeze({ stale: true }),
+          sensitiveData: false,
+          partial: false,
+        }),
+    });
+    const model = new FakeModel([
+      {
+        toolCalls: [
+          {
+            callId: "call-read",
+            name: nativeToolName("pair_read_scope"),
+            input: { path: "src/retry.ts" },
+          },
+        ],
+      },
+      {
+        text: JSON.stringify({
+          level: 1,
+          kind: "question",
+          text: "This must not be delivered.",
+        }),
+      },
+    ]);
+    const prepared = await coordinator.prepareTurn({});
+    const growthModel = createGrowthModel(asModel(model), coordinator);
+
+    await expect(
+      growthModel.request(
+        prepared.instructions,
+        prepared.tools,
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "GROWTH_STALE_TURN" });
+  });
+
+  it("does not execute an explicit contract tool without human confirmation", async () => {
+    const snapshot = growthSnapshot({ runtimeRevision: 4 });
+    const coordinator = new FakeCoordinator(snapshot);
+    const model = new FakeModel([
+      {
+        toolCalls: [
+          {
+            callId: "call-mode",
+            name: nativeToolName("pair_select_mode"),
+            input: { mode: "delivery" },
+          },
+        ],
+      },
+      {
+        text: JSON.stringify({
+          level: 1,
+          kind: "question",
+          text: "The mode was not changed.",
+        }),
+      },
+    ]);
+    const prepared = await coordinator.prepareTurn({});
+    const confirmToolAction = vi.fn(() => Promise.resolve(false));
+    const growthModel = createGrowthModel(asModel(model), coordinator, {
+      confirmToolAction,
+    });
+
+    await growthModel.request(
+      prepared.instructions,
+      viewWith([explicitModeDescriptor], snapshot.revision),
+      new AbortController().signal,
+    );
+
+    expect(confirmToolAction).toHaveBeenCalledWith(
+      "pair_select_mode",
+      { mode: "delivery" },
+      expect.anything(),
+    );
+    expect(coordinator.grantCalls).toEqual([]);
+    expect(coordinator.invokeCalls).toEqual([]);
+  });
+
+  it("uses the post-grant tool view when an explicit contract action is confirmed", async () => {
+    const snapshot = growthSnapshot({ runtimeRevision: 4 });
+    const coordinator = new FakeCoordinator(snapshot);
+    const model = new FakeModel([
+      {
+        toolCalls: [
+          {
+            callId: "call-mode",
+            name: nativeToolName("pair_select_mode"),
+            input: { mode: "growth" },
+          },
+        ],
+      },
+      {
+        text: JSON.stringify({
+          level: 1,
+          kind: "question",
+          text: "Growth mode is selected.",
+        }),
+      },
+    ]);
+    const prepared = await coordinator.prepareTurn({});
+    const growthModel = createGrowthModel(asModel(model), coordinator, {
+      confirmToolAction: () => Promise.resolve(true),
+    });
+
+    await growthModel.request(
+      prepared.instructions,
+      viewWith([explicitModeDescriptor], snapshot.revision),
+      new AbortController().signal,
+    );
+
+    expect(coordinator.grantCalls).toEqual(["pair_select_mode"]);
+    expect(coordinator.invokeCalls[0]?.options).toEqual({
+      userActionId: "grant-pair_select_mode",
+    });
+  });
+
+  it("applies a confirmed mode selection through the real coordinator", async () => {
+    const snapshot = growthSnapshot({
+      runtimeRevision: 4,
+      session: {
+        status: "briefing",
+        mode: undefined,
+        workUnit: undefined,
+        assistance: undefined,
+      },
+    });
+    const coordinator = realCoordinator(snapshot);
+    const model = new FakeModel([
+      {
+        toolCalls: [
+          {
+            callId: "call-mode",
+            name: nativeToolName("pair_select_mode"),
+            input: { mode: "growth" },
+          },
+        ],
+      },
+      {
+        text: JSON.stringify({
+          level: 1,
+          kind: "question",
+          text: "Growth mode is now selected.",
+        }),
+      },
+    ]);
+    const prepared = await coordinator.prepareTurn({});
+    const growthModel = createGrowthModel(asModel(model), coordinator, {
+      confirmToolAction: () => Promise.resolve(true),
+    });
+
+    const result = await growthModel.request(
+      prepared.instructions,
+      prepared.tools,
+      new AbortController().signal,
+    );
+
+    expect(isGrowthModelResult(result)).toBe(true);
+    expect(await coordinator.snapshot()).toMatchObject({
+      session: { mode: "growth" },
+    });
+    if (isGrowthModelResult(result)) {
+      expect(result.runtime.mode).toBe("growth");
+      expect(result.response.text).toContain("now selected");
+    }
   });
 
   it("rejects markdown outside the JSON envelope", async () => {
@@ -593,6 +866,47 @@ describe("GrowthModel adapter", () => {
 });
 
 describe("GrowthParticipant", () => {
+  it("delivers a response grounded by its own authorized read tool", async () => {
+    const snapshot = growthSnapshot({ runtimeRevision: 4 });
+    const coordinator = realCoordinator(snapshot);
+    const model = new FakeModel([
+      {
+        toolCalls: [
+          {
+            callId: "call-read",
+            name: nativeToolName("pair_read_scope"),
+            input: { path: "src/retry.ts" },
+          },
+        ],
+      },
+      {
+        text: JSON.stringify({
+          level: 1,
+          kind: "question",
+          text: "What evidence changed after the bounded read?",
+        }),
+      },
+    ]);
+    const consent = new ModelConsentRegistry();
+    consent.grant(asModel(model));
+    const { participant, evaluations } = buildParticipant(coordinator, {
+      consent,
+    });
+    const { stream, collected } = createResponseStream();
+
+    await participant.handle(
+      createRequest(model, { prompt: "read the scoped file and guide me" }),
+      createContext(),
+      stream,
+      createToken(),
+    );
+
+    expect(collected.markdown.join("\n")).toContain(
+      "What evidence changed after the bounded read?",
+    );
+    expect(evaluations.records.at(-1)?.outcome).toBe("delivered");
+  });
+
   it("does not send task context before model-specific workspace consent", async () => {
     const snapshot = growthSnapshot({ runtimeRevision: 4 });
     const coordinator = new FakeCoordinator(snapshot);
@@ -797,6 +1111,49 @@ describe("GrowthParticipant", () => {
     const record = evaluations.records.at(-1);
     expect(record?.outcome).toBe("withheld");
     expect(JSON.stringify(evaluations.records)).not.toContain("export function retry");
+  });
+
+  it("withholds a response one level above the currently authorized hint", async () => {
+    const snapshot = growthSnapshot({
+      runtimeRevision: 4,
+      session: {
+        status: "active",
+        mode: "growth",
+        assistance: {
+          attempt: { summary: "tried", bypassed: false, recordedAt: 0 },
+          hypothesis: undefined,
+          hint: { level: 2, recordedAt: 0 },
+          solutionReveal: undefined,
+        },
+      },
+    });
+    const coordinator = new FakeCoordinator(snapshot);
+    const model = new FakeModel([
+      {
+        text: JSON.stringify({
+          level: 3,
+          kind: "hint",
+          text: "Consider the ordering between the counter update and retry condition.",
+        }),
+      },
+    ]);
+    const consent = new ModelConsentRegistry();
+    consent.grant(asModel(model));
+    const { participant, evaluations } = buildParticipant(coordinator, { consent });
+    const { stream, collected } = createResponseStream();
+
+    await participant.handle(
+      createRequest(model, { prompt: "keep the hint at the current level" }),
+      createContext(),
+      stream,
+      createToken(),
+    );
+
+    expect(collected.markdown.join("\n")).toContain(WITHHELD_RESPONSE_MESSAGE);
+    expect(evaluations.records.at(-1)).toMatchObject({
+      outcome: "withheld",
+      reason: "HINT_LEVEL_EXCEEDED",
+    });
   });
 
   it("surfaces invalid JSON as a restraint failure without raw text", async () => {
@@ -1201,7 +1558,7 @@ describe("GrowthParticipant transfer", () => {
   it("requests a bounded variation distinct from the work unit and records transfer-started", async () => {
     const coordinator = new FakeCoordinator(growthSnapshot({ runtimeRevision: 4 }));
     const model = new FakeModel([
-      { text: JSON.stringify({ level: 2, kind: "hint", text: variation }) },
+      { text: JSON.stringify({ level: 1, kind: "question", text: variation }) },
     ]);
     const { participant, evaluations } = buildParticipant(coordinator);
     const { stream, collected } = createResponseStream();
@@ -1226,8 +1583,8 @@ describe("GrowthParticipant transfer", () => {
 
     const record = evaluations.records.at(-1);
     expect(record?.outcome).toBe("transfer-started");
-    expect(record?.level).toBe(2);
-    expect(record?.kind).toBe("hint");
+    expect(record?.level).toBe(1);
+    expect(record?.kind).toBe("question");
     // The evaluation record is non-raw: it never carries model or user text.
     expect(JSON.stringify(record)).not.toContain(variation);
 
@@ -1248,8 +1605,8 @@ describe("GrowthParticipant transfer", () => {
     const model = new FakeModel([
       {
         text: JSON.stringify({
-          level: 2,
-          kind: "hint",
+          level: 1,
+          kind: "question",
           text: "Try this next: implement one retry transition, exactly as before.",
         }),
       },
@@ -1273,7 +1630,7 @@ describe("GrowthParticipant transfer", () => {
   it("does not start a transfer when workspace consent is declined", async () => {
     const coordinator = new FakeCoordinator(growthSnapshot({ runtimeRevision: 4 }));
     const model = new FakeModel([
-      { text: JSON.stringify({ level: 2, kind: "hint", text: variation }) },
+      { text: JSON.stringify({ level: 1, kind: "question", text: variation }) },
     ]);
     const { participant, evaluations } = buildParticipant(coordinator, {
       requestWorkspaceConsent: () => Promise.resolve(false),
@@ -1296,7 +1653,7 @@ describe("GrowthParticipant transfer", () => {
   it("reports a started transfer as not demonstrated in /session", async () => {
     const coordinator = new FakeCoordinator(growthSnapshot({ runtimeRevision: 4 }));
     const model = new FakeModel([
-      { text: JSON.stringify({ level: 2, kind: "hint", text: variation }) },
+      { text: JSON.stringify({ level: 1, kind: "question", text: variation }) },
     ]);
     const { participant } = buildParticipant(coordinator);
 

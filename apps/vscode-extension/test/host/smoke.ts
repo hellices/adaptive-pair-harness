@@ -423,21 +423,21 @@ suite("Adaptive Pair — isolated Extension Host smoke", () => {
 
   test("8 & 9: starts Growth Mode; the instruction envelope and tool view share one revision", async () => {
     const signal = new AbortController().signal;
-    await api.coordinator.invokeTool(
+    await invokeWithAction(
+      api,
       "pair_confirm_learning",
       { agreement: learningAgreement },
-      signal,
     );
-    await api.coordinator.invokeTool("pair_select_mode", { mode: "growth" }, signal);
+    await invokeWithAction(api, "pair_select_mode", { mode: "growth" });
     await api.coordinator.invokeTool(
       "pair_propose_work_unit",
       { workUnit: growthWorkUnit },
       signal,
     );
-    await api.coordinator.invokeTool(
+    await invokeWithAction(
+      api,
       "pair_agree_work_unit",
       { workUnitId: growthWorkUnit.id },
-      signal,
     );
 
     const snapshot = await api.coordinator.snapshot();
@@ -613,8 +613,8 @@ suite("Adaptive Pair — isolated Extension Host smoke", () => {
       prompt: "",
       grantConsent: true,
       model: staticModel({
-        level: 2,
-        kind: "hint",
+        level: 1,
+        kind: "question",
         text: "Fresh challenge: build a rate limiter that admits at most N calls per window, and prove the boundary with your own test.",
       }),
     });
@@ -653,8 +653,8 @@ suite("Adaptive Pair — isolated Extension Host smoke", () => {
       prompt: "",
       grantConsent: true,
       model: staticModel({
-        level: 2,
-        kind: "hint",
+        level: 1,
+        kind: "question",
         text: "Next, fix the retry loop so it honors max — the same task once more.",
       }),
     });

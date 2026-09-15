@@ -1,4 +1,8 @@
-import type { OperatingMode, PairRuntimeSnapshot } from "@adaptive-pair/protocol";
+import type {
+  HintLevel,
+  OperatingMode,
+  PairRuntimeSnapshot,
+} from "@adaptive-pair/protocol";
 
 export const PAIR_TOOL_CATALOG_VERSION = 1 as const;
 export const PAIR_INSTRUCTION_VERSION = 1 as const;
@@ -66,6 +70,7 @@ export interface CompiledInstructionEnvelope {
   readonly instructionVersion: typeof PAIR_INSTRUCTION_VERSION;
   readonly runtimeRevision: number;
   readonly authorityEpoch: number | undefined;
+  readonly maximumHintLevel: HintLevel;
   readonly maximumResponseClass:
     | "question"
     | "hint"

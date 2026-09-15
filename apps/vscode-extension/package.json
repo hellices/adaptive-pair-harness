@@ -65,7 +65,7 @@
         "displayName": "Get Adaptive Pair State",
         "modelDescription": "Read the current Pair Presence, mode, owner, work unit, hint ceiling, and verification state. Call before grounded project guidance.",
         "canBeReferencedInPrompt": true,
-        "toolReferenceName": "pairState",
+        "toolReferenceName": "adaptivePairState",
         "when": "adaptivePair.presenceEnabled",
         "inputSchema": {
           "type": "object",

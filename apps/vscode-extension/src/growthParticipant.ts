@@ -5,9 +5,17 @@ import type {
   PairSessionSnapshot,
 } from "@adaptive-pair/protocol";
 import type { PairCoordinatorPort, PairToolResult } from "@adaptive-pair/runtime";
-import type { PairToolName } from "@adaptive-pair/harness";
+import {
+  maximumHintLevelForSnapshot,
+  type PairToolName,
+} from "@adaptive-pair/harness";
 import { guardGrowthResponse, type GrowthResponse } from "@adaptive-pair/restraint";
-import { createGrowthModel, GrowthModelFailure, type GrowthModel } from "./modelAdapter.js";
+import {
+  createGrowthModel,
+  GrowthModelFailure,
+  type GrowthModel,
+  isGrowthModelResult,
+} from "./modelAdapter.js";
 import { parseVerificationScript } from "./verificationPlan.js";
 
 export const WITHHELD_RESPONSE_MESSAGE = [
@@ -913,13 +921,31 @@ export class GrowthParticipant {
       (candidate => createGrowthModel(candidate, this.deps.coordinator)))(model);
 
     let result: GrowthResponse;
+    let expectedRuntime = {
+      runtimeRevision: before.revision,
+      authorityEpoch: before.session?.authorityEpoch,
+      mode: before.session?.mode,
+    };
     try {
-      result = await growthModel.request(
+      const output = await growthModel.request(
         prepared.instructions,
         prepared.tools,
         signal,
       );
+      if (isGrowthModelResult(output)) {
+        result = output.response;
+        expectedRuntime = output.runtime;
+      } else {
+        result = output;
+      }
     } catch (error) {
+      if (
+        error instanceof GrowthModelFailure &&
+        error.code === "GROWTH_STALE_TURN"
+      ) {
+        this.rejectStale(response);
+        return undefined;
+      }
       this.deps.evaluations.record({
         outcome: "restraint-failure",
         reason: failureReason(error),
@@ -930,15 +956,16 @@ export class GrowthParticipant {
 
     const after = await this.deps.coordinator.snapshot();
     if (
-      after.revision !== before.revision ||
-      after.session?.authorityEpoch !== before.session?.authorityEpoch ||
-      after.session?.mode !== before.session?.mode
+      after.revision !== expectedRuntime.runtimeRevision ||
+      after.session?.authorityEpoch !== expectedRuntime.authorityEpoch ||
+      after.session?.mode !== expectedRuntime.mode
     ) {
       this.rejectStale(response);
       return undefined;
     }
 
     const guard = guardGrowthResponse(result, {
+      authorizedHintLevel: maximumHintLevelForSnapshot(after),
       revealAuthorized: after.session?.assistance?.solutionReveal !== undefined,
       targetIdentifiers: deriveTargetIdentifiers(after),
     });

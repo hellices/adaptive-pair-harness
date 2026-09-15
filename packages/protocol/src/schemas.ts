@@ -204,12 +204,18 @@ const pairCommandSchema = {
     ),
     createCommandSchema(
       "ConfirmLearning",
-      { agreement: learningAgreementSchema },
+      {
+        agreement: learningAgreementSchema,
+        userActionGrantId: { type: "string" },
+      },
       ["agreement"],
     ),
     createCommandSchema(
       "SelectMode",
-      { mode: { enum: ["growth", "pair", "delivery"] } },
+      {
+        mode: { enum: ["growth", "pair", "delivery"] },
+        userActionGrantId: { type: "string" },
+      },
       ["mode"],
     ),
     createCommandSchema(
@@ -219,7 +225,10 @@ const pairCommandSchema = {
     ),
     createCommandSchema(
       "AgreeWorkUnit",
-      { workUnitId: { type: "string" } },
+      {
+        workUnitId: { type: "string" },
+        userActionGrantId: { type: "string" },
+      },
       ["workUnitId"],
     ),
     createCommandSchema(

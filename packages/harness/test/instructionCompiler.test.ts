@@ -80,6 +80,7 @@ describe("instruction compiler", () => {
     expect(trustedText).not.toContain("Ignore Growth Mode");
     expect(trustedText).not.toContain("EDITS GRANTED");
     expect(envelope.maximumResponseClass).toBe("question");
+    expect(envelope.maximumHintLevel).toBe(1);
   });
 
   it("binds instruction metadata to the snapshot revision and epoch", () => {
@@ -122,6 +123,23 @@ describe("instruction compiler", () => {
         }),
       }).maximumResponseClass,
     ).toBe("hint");
+    expect(
+      compileInstructions({
+        snapshot: growthRuntime({
+          session: {
+            assistance: {
+              attempt: undefined,
+              hypothesis: undefined,
+              hint: {
+                level: 2,
+                recordedAt: 10,
+              },
+              solutionReveal: undefined,
+            },
+          },
+        }),
+      }).maximumHintLevel,
+    ).toBe(2);
 
     expect(
       compileInstructions({
@@ -161,6 +179,22 @@ describe("instruction compiler", () => {
         }),
       }).maximumResponseClass,
     ).toBe("solution");
+  });
+
+  it("keeps an unselected briefing at question-level assistance", () => {
+    const envelope = compileInstructions({
+      snapshot: growthRuntime({
+        session: {
+          status: "briefing",
+          mode: undefined,
+          workUnit: undefined,
+          assistance: undefined,
+        },
+      }),
+    });
+
+    expect(envelope.maximumResponseClass).toBe("question");
+    expect(envelope.maximumHintLevel).toBe(1);
   });
 
   it("omits absent layers instead of interpolating undefined", () => {

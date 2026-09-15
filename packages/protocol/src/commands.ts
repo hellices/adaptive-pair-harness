@@ -41,10 +41,12 @@ export type PairCommand =
   | (CommandBase & {
       readonly type: "ConfirmLearning";
       readonly agreement: LearningAgreement;
+      readonly userActionGrantId?: string;
     })
   | (CommandBase & {
       readonly type: "SelectMode";
       readonly mode: OperatingMode;
+      readonly userActionGrantId?: string;
     })
   | (CommandBase & {
       readonly type: "ProposeWorkUnit";
@@ -53,6 +55,7 @@ export type PairCommand =
   | (CommandBase & {
       readonly type: "AgreeWorkUnit";
       readonly workUnitId: string;
+      readonly userActionGrantId?: string;
     })
   | (CommandBase & {
       readonly type: "RecordAttempt";

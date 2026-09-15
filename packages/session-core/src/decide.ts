@@ -214,14 +214,20 @@ const createEventFactory = (
   ...payload,
 } as PairEvent);
 
-const consumeGrantEvents = (
+const consumeHumanActionEvents = (
   snapshot: PairRuntimeSnapshot,
   session: PairSessionSnapshot,
   event: ReturnType<typeof createEventFactory>,
-  grantId: string | undefined,
+  command: Pick<PairCommand, "actor"> & {
+    readonly userActionGrantId?: string;
+  },
   expectedNativeToolName: string,
 ): PairEvent[] => {
+  const grantId = command.userActionGrantId;
   if (grantId === undefined) {
+    if (command.actor !== "human") {
+      throw new Error("USER_ACTION_REQUIRED");
+    }
     return [];
   }
 
@@ -240,6 +246,27 @@ const requireGrantableUserActionSession = (
   switch (nativeToolName) {
     case "adaptive_pair_capture_entry":
       return requireBriefingSession(snapshot.session);
+
+    case "adaptive_pair_confirm_learning":
+      return requireLearningEntry(requireBriefingSession(snapshot.session));
+
+    case "adaptive_pair_select_mode":
+      return requireModeChangeWithoutWorkUnit(
+        requireBriefingSession(snapshot.session),
+      );
+
+    case "adaptive_pair_agree_work_unit": {
+      const session = requireWorkUnitEntry(
+        requireBriefingSession(snapshot.session),
+      );
+      if (session.workUnit === undefined) {
+        throw new Error("WORK_UNIT_NOT_FOUND");
+      }
+      if (session.workUnit.status !== "proposed") {
+        throw new Error("WORK_UNIT_NOT_PROPOSED");
+      }
+      return session;
+    }
 
     case "adaptive_pair_record_attempt":
     case "adaptive_pair_record_hypothesis":
@@ -314,11 +341,11 @@ export const decide = (
     case "CaptureEntry":
       return freezeDecision((() => {
         const session = requireBriefingSession(snapshot.session);
-        const events = consumeGrantEvents(
+        const events = consumeHumanActionEvents(
           snapshot,
           session,
           event,
-          command.userActionGrantId,
+          command,
           "adaptive_pair_capture_entry",
         );
 
@@ -333,13 +360,22 @@ export const decide = (
       })());
 
     case "ConfirmLearning":
-      requireLearningEntry(requireBriefingSession(snapshot.session));
-
-      return freezeDecision([
-        event(0, "LearningConfirmed", {
+      return freezeDecision((() => {
+        const session = requireLearningEntry(
+          requireBriefingSession(snapshot.session),
+        );
+        const events = consumeHumanActionEvents(
+          snapshot,
+          session,
+          event,
+          command,
+          "adaptive_pair_confirm_learning",
+        );
+        events.push(event(events.length, "LearningConfirmed", {
           agreement: command.agreement,
-        }),
-      ]);
+        }));
+        return events;
+      })());
 
     case "SelectMode": {
       const session = requireModeChangeWithoutWorkUnit(
@@ -350,11 +386,17 @@ export const decide = (
         requireGrowthAgreement(session);
       }
 
-      return freezeDecision([
-        event(0, "ModeSelected", {
+      const events = consumeHumanActionEvents(
+        snapshot,
+        session,
+        event,
+        command,
+        "adaptive_pair_select_mode",
+      );
+      events.push(event(events.length, "ModeSelected", {
           mode: command.mode,
-        }),
-      ]);
+      }));
+      return freezeDecision(events);
     }
 
     case "ProposeWorkUnit": {
@@ -391,11 +433,17 @@ export const decide = (
         throw new Error("WORK_UNIT_MODE_MISMATCH");
       }
 
-      return freezeDecision([
-        event(0, "WorkUnitAgreed", {
+      const events = consumeHumanActionEvents(
+        snapshot,
+        session,
+        event,
+        command,
+        "adaptive_pair_agree_work_unit",
+      );
+      events.push(event(events.length, "WorkUnitAgreed", {
           workUnitId: command.workUnitId,
-        }),
-      ]);
+      }));
+      return freezeDecision(events);
     }
 
     case "RecordAttempt":
@@ -406,11 +454,11 @@ export const decide = (
 
       return freezeDecision((() => {
         const session = requireBriefingOrActiveSession(snapshot.session);
-        const events = consumeGrantEvents(
+        const events = consumeHumanActionEvents(
           snapshot,
           session,
           event,
-          command.userActionGrantId,
+          command,
           "adaptive_pair_record_attempt",
         );
 
@@ -427,11 +475,11 @@ export const decide = (
       return freezeDecision((() => {
         const session = requireBriefingOrActiveSession(snapshot.session);
         requireGrowthWorkUnit(session, command.workUnitId);
-        const events = consumeGrantEvents(
+        const events = consumeHumanActionEvents(
           snapshot,
           session,
           event,
-          command.userActionGrantId,
+          command,
           "adaptive_pair_record_hypothesis",
         );
 
@@ -448,11 +496,11 @@ export const decide = (
       return freezeDecision((() => {
         const session = requireBriefingOrActiveSession(snapshot.session);
         validateHintLevel(session, command.workUnitId, command.level);
-        const events = consumeGrantEvents(
+        const events = consumeHumanActionEvents(
           snapshot,
           session,
           event,
-          command.userActionGrantId,
+          command,
           "adaptive_pair_request_hint",
         );
 
@@ -472,11 +520,11 @@ export const decide = (
           command.workUnitId,
           command.previewOnly,
         );
-        const events = consumeGrantEvents(
+        const events = consumeHumanActionEvents(
           snapshot,
           session,
           event,
-          command.userActionGrantId,
+          command,
           "adaptive_pair_reveal_solution",
         );
 
@@ -620,11 +668,11 @@ export const decide = (
       }
 
       return freezeDecision((() => {
-        const events = consumeGrantEvents(
+        const events = consumeHumanActionEvents(
           snapshot,
           snapshot.session,
           event,
-          command.userActionGrantId,
+          command,
           "adaptive_pair_close_session",
         );
         events.push(event(events.length, "SessionClosed", {}));

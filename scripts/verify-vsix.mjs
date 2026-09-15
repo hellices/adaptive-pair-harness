@@ -59,6 +59,13 @@ const TEXT_ENTRY = /\.(?:cjs|js|json|md|xml|txt|vsixmanifest)$/u;
 const MAX_REPORTED_LENGTH = 120;
 
 /**
+ * @param {unknown} value
+ * @returns {value is Record<string, unknown>}
+ */
+const isRecord = (value) =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
  * Archive-derived text is untrusted: an entry name can carry control characters
  * or be arbitrarily long. Reports escape it and clamp its length so a hostile
  * archive cannot forge or flood verification output.
@@ -144,11 +151,126 @@ export const inspectManifest = (manifest) => {
     );
   }
 
+  const activationEvents = record["activationEvents"];
+  if (activationEvents !== undefined) {
+    if (!Array.isArray(activationEvents)) {
+      violations.push("The packaged manifest activationEvents field is not an array.");
+    } else {
+      for (const event of activationEvents) {
+        if (
+          typeof event !== "string" ||
+          !/^(?:onCommand:adaptivePair\.|onChatParticipant:adaptivePair\.)[A-Za-z0-9._-]+$/u.test(
+            event,
+          )
+        ) {
+          violations.push(
+            `Non-additive activation event: ${sanitizeForMessage(String(event))}`,
+          );
+        }
+      }
+    }
+  }
+
   const contributes = record["contributes"];
   if (typeof contributes === "object" && contributes !== null) {
     const contributions = /** @type {Record<string, unknown>} */ (contributes);
+    const allowedContributionPoints = new Set([
+      "commands",
+      "languageModelTools",
+      "chatParticipants",
+    ]);
+    for (const key of Object.keys(contributions)) {
+      if (!allowedContributionPoints.has(key)) {
+        violations.push(
+          `Unsupported Stable contribution point: ${sanitizeForMessage(key)}`,
+        );
+      }
+    }
+
     if (contributions["chatSessions"] !== undefined) {
       violations.push("The packaged manifest contributes chatSessions.");
+    }
+
+    const commands = contributions["commands"];
+    if (commands !== undefined) {
+      if (!Array.isArray(commands)) {
+        violations.push("The packaged manifest commands contribution is not an array.");
+      } else {
+        for (const entry of commands) {
+          const identifier = isRecord(entry) ? entry["command"] : undefined;
+          if (typeof identifier !== "string" || !identifier.startsWith("adaptivePair.")) {
+            violations.push(
+              `Non-additive command identifier: ${
+                typeof identifier === "string"
+                  ? sanitizeForMessage(identifier)
+                  : "<non-string>"
+              }`,
+            );
+          }
+        }
+      }
+    }
+
+    const tools = contributions["languageModelTools"];
+    if (tools !== undefined) {
+      if (!Array.isArray(tools)) {
+        violations.push(
+          "The packaged manifest languageModelTools contribution is not an array.",
+        );
+      } else {
+        for (const entry of tools) {
+          const tool = isRecord(entry) ? entry : undefined;
+          const identifier = tool?.["name"];
+          if (
+            typeof identifier !== "string" ||
+            !identifier.startsWith("adaptive_pair_")
+          ) {
+            violations.push(
+              `Non-additive language-model tool identifier: ${
+                typeof identifier === "string"
+                  ? sanitizeForMessage(identifier)
+                  : "<non-string>"
+              }`,
+            );
+          }
+          const reference = tool?.["toolReferenceName"];
+          if (
+            reference !== undefined &&
+            (typeof reference !== "string" ||
+              !reference.startsWith("adaptivePair"))
+          ) {
+            violations.push(
+              `Non-additive tool reference identifier: ${
+                typeof reference === "string"
+                  ? sanitizeForMessage(reference)
+                  : "<non-string>"
+              }`,
+            );
+          }
+        }
+      }
+    }
+
+    const participants = contributions["chatParticipants"];
+    if (participants !== undefined) {
+      if (!Array.isArray(participants)) {
+        violations.push(
+          "The packaged manifest chatParticipants contribution is not an array.",
+        );
+      } else {
+        for (const entry of participants) {
+          const identifier = isRecord(entry) ? entry["id"] : undefined;
+          if (typeof identifier !== "string" || !identifier.startsWith("adaptivePair.")) {
+            violations.push(
+              `Non-additive chat participant identifier: ${
+                typeof identifier === "string"
+                  ? sanitizeForMessage(identifier)
+                  : "<non-string>"
+              }`,
+            );
+          }
+        }
+      }
     }
   }
 

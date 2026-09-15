@@ -18,7 +18,7 @@ export type GuardedResponse =
     }
   | {
       readonly accepted: false;
-      readonly reason: "TARGET_SOLUTION_WITHHELD";
+      readonly reason: "HINT_LEVEL_EXCEEDED" | "TARGET_SOLUTION_WITHHELD";
     };
 
 const escapeRegExp = (value: string): string =>
@@ -45,10 +45,18 @@ const containsTargetImplementation = (
 export const guardGrowthResponse = (
   response: GrowthResponse,
   context: {
+    readonly authorizedHintLevel: HintLevel;
     readonly revealAuthorized: boolean;
     readonly targetIdentifiers: readonly string[];
   },
 ): GuardedResponse => {
+  if (response.level > context.authorizedHintLevel) {
+    return {
+      accepted: false,
+      reason: "HINT_LEVEL_EXCEEDED",
+    };
+  }
+
   if (response.level === 5 && !context.revealAuthorized) {
     return {
       accepted: false,
