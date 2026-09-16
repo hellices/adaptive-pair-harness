@@ -1,9 +1,9 @@
 # Adaptive Pair v2: Product and System Design
 
 - **Updated:** September 16, 2026 (UTC)
-- **Status:** Initial v2 architecture and the next Pair increment await
-  written-spec review. The roadmap and P1 choices below are proposals, not
-  implementation approval.
+- **Status:** The reviewed P1 policy increment was authorized on September 16,
+  2026 and is implemented as pure contracts. The remaining v2 roadmap is
+  proposed and requires separately reviewed implementation plans and approval.
 - **Implementation:** Stable Growth Mode preview implemented (Tasks 1–12):
   host-agnostic protocol, durable runtime, versioned harness kernel, Growth
   restraint, Pair Presence with join-in-progress capture, observed verification,
@@ -13,11 +13,13 @@
   *started* independent variation: completing a transfer, and any resulting
   Growth demonstration, is not implemented. Pair Mode AI edits, Delivery Mode
   commands, and the native Agent Plugin remain out of scope for this preview.
-- **Current plan:** `implementation-plan.md` proposes P1, the pure Pair policy
-  contract milestone. It deliberately replaces the completed Foundation plan,
-  retained at `ae1f095:docs/implementation-plan.md` in Git history. No Pair
-  runtime, edit adapter, or new extension control is implemented by this
-  documentation checkpoint.
+  The modes package also implements tested Pair admission, related human
+  follow-up, and handoff-preflight policies without runtime or host wiring.
+- **Current plan:** `implementation-plan.md` records the authorized P1
+  implementation and review gates. It deliberately replaces the completed
+  Foundation plan, retained at `ae1f095:docs/implementation-plan.md` in Git
+  history. P2 ownership/lifecycle scope review is next; no Pair runtime,
+  edit adapter, or new extension control is authorized by P1 completion.
 
 This document is the first complete product and architecture specification for
 Adaptive Pair v2. Every v2 behavior starts here as an initial design decision;
@@ -209,8 +211,10 @@ increment through a dedicated pull request branch, request review, address
 findings with verified fixes or reasoned thread replies, and resolve addressed
 threads. Report readiness only after checking follow-up feedback and the final
 revision's required checks. Stop for the user's merge decision; do not merge
-or enable auto-merge implicitly. Review of this documentation does not itself
-authorize P1 implementation or the next milestone.
+or enable auto-merge implicitly. Review of documentation does not itself
+authorize implementation or the next milestone. P1 received separate execution
+authorization when the repository owner requested merging PR #4 and proceeding
+with the next increment on September 16, 2026; P2 and P3 remain unapproved.
 
 **Proposed sequence:** retain the four program milestones from the Foundation
 plan, but split Pair into smaller reviewable increments. Dates and duration
@@ -219,7 +223,7 @@ estimates are intentionally not assigned.
 | Milestone | Deliverable | Current state | Exit gate |
 |---|---|---|---|
 | M1 — Foundation and Growth preview | Shared protocol, durable runtime, Presence, Growth guidance, observed verification, Stable packaging | Implemented at `ae1f095`; preview scope only; baseline revalidation complete | Preserve the existing unit, property, contract, package, and isolated-host baseline |
-| M2 — Pair Mode | Meaningful human/AI work units, explicit handoff, guarded AI edits, complete Stable `@pair` flow | Specified, not implemented; P1 is the current planning target | Both initial owners complete a Pair session with observed checks, interruption/recovery, ownership reporting, and unchanged Growth/coexistence behavior |
+| M2 — Pair Mode | Meaningful human/AI work units, explicit handoff, guarded AI edits, complete Stable `@pair` flow | P1 pure contracts implemented; P2/P3 runtime and host work remain unimplemented | Both initial owners complete a Pair session with observed checks, interruption/recovery, ownership reporting, and unchanged Growth/coexistence behavior |
 | M3 — Delivery and mode switching | Explicit delegation, classified commands, safe mode changes, separate outcome reporting | Future plan | Complete Delivery sessions; switches revoke old authority and require new agreement; no delegated work is reported as Growth or balanced pairing |
 | M4 — Completion, native adapters, and v2.0 | Finish preview gaps, validate optional native entry points, harden both channels, publish release evidence | Future plans and an existing Session Target proof of concept | Every gate in section 17 is satisfied; unavailable optional native capabilities are reported honestly and never required by Stable |
 
@@ -239,7 +243,8 @@ M2 has three ordered increments, not three competing active plans:
    follow-up rules, and handoff preflight assessment in `packages/modes`.
    Existing protocol types are inputs. No authority changes, persistence
    migration, host effects, public tool additions, or Pair UI activation occur.
-   This is an open-core contract deliverable, not a usable Pair preview.
+   Implemented and locally verified with 75 new Pair cases. This is an
+   open-core contract deliverable, not a usable Pair preview.
 2. **P2 — Runtime ownership and lifecycle:** consume reviewed P1 contracts in
    the authoritative core. Add versioned handoff, work-unit completion and
    history, human confirmation, operation quiescence, explicit reconciliation,
@@ -888,7 +893,7 @@ Use Pair Mode when delivery and active participation both matter.
 The session can start with either participant driving. AI ownership requires an
 agreed scope and a host capability that the runtime can enforce.
 
-#### P1 proposal: policy contracts before authority changes
+#### P1: policy contracts before authority changes
 
 P1 is intentionally smaller than the full Pair Mode contract. It uses the
 existing `WorkUnit`, `LearningAgreement`, and `PairRuntimeSnapshot` types to
@@ -903,7 +908,7 @@ answer three deterministic questions without changing those values:
 - Can a matching handoff proposal proceed to human/baseline review once new
   operation admission has stopped and outstanding operations are settled?
 
-The proposed decisions needing review are:
+The decisions authorized and implemented for this pure-policy increment are:
 
 1. A learning-relevant AI unit (`high` or `mixed`) creates a related human
    follow-up requirement. An explicitly related, learning-relevant human unit
@@ -1955,7 +1960,8 @@ preview (Tasks 1–12) is now implemented and validated by unit, property,
 contract, and clean-profile Extension Host tests, including a runtime
 outbound-network probe and automated release-artifact verification. Product
 verification and the five Growth fields are reported independently, and no
-Growth outcome is claimed from a started transfer. The remaining Pair and
-Delivery behavior stays specified-but-unimplemented and empirically unvalidated
-pending approved implementation plans and runtime/host validation. The P1
-planning checkpoint does not change that implementation status.
+Growth outcome is claimed from a started transfer. P1 now implements and tests
+the pure Pair policy contracts. Pair runtime/host integration and Delivery
+remain specified-but-unimplemented and empirically unvalidated pending their
+own approved plans and validation. P1 does not change the Growth-only extension
+or establish Pair edit authority, learning efficacy, or release completeness.

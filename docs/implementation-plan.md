@@ -22,12 +22,15 @@ blanket freeze.
 
 ## Global Constraints
 
-- Status: **draft for written review; not approved for implementation**.
+- Status: **P1 execution authorized; pure policies implemented and locally
+  verified; prior review checkpoint complete**. Final-revision review and check
+  status are tracked in [PR #6](https://github.com/hellices/adaptive-pair-harness/pull/6).
 - This plan is M2/P1 in the
   [sequential delivery roadmap](design.md#sequential-delivery-roadmap).
-- The policy choices are proposed in
-  [the Pair design](design.md#p1-proposal-policy-contracts-before-authority-changes).
-  Writing them down does not establish user acceptance or implemented behavior.
+- The P1 policy choices are recorded in
+  [the Pair design](design.md#p1-policy-contracts-before-authority-changes).
+  The owner authorized this increment on September 16, 2026 after PR #4 review;
+  writing or merging a plan alone does not authorize its implementation.
 - P1 produces a useful open-core policy contract, not a usable Pair preview.
 - Start from the reviewed `main` baseline and use a dedicated pull request
   branch. Keep unrelated worktrees untouched and do not push directly to `main`.
@@ -95,11 +98,18 @@ implicitly.
 
 ## Baseline and Scope Boundary
 
-The source baseline is `ae1f095`, the merged Foundation and Growth preview.
+The runtime baseline is `ae1f095`, the merged Foundation and Growth preview.
+P1 execution started from `f28de5f`, the merge of reviewed documentation PR #4;
+application source is unchanged between those baselines.
+After the owner-authorized merge of maintenance PR #7, the P1 branch integrates
+`main` at `79d75ab` without rewriting its published implementation history.
+The maintenance policy and both dependency-audit gates remain in force;
+post-maintenance validation is distinct from the initial P1 checkpoint.
 The existing `WorkUnit` already contains mode, owner, capability, scope,
 verification plan, baseline, and status. `PairRuntimeSnapshot` already contains
-revision, authority epoch, and operations. The modes package exports only
-Growth policy; handoff is hidden and the Stable edit effect is unimplemented.
+revision, authority epoch, and operations. At the execution baseline, the modes
+package exported only Growth policy. Handoff remains hidden and the Stable edit
+effect remains unimplemented after P1.
 See [implementation evidence](research.md#implementation-evidence-for-the-next-pair-increment).
 
 P1 deliberately does **not** add:
@@ -128,7 +138,8 @@ current guard nor the snapshot representation.
 
 ## Interface Map
 
-All interfaces below are **proposed P1 exports**, not existing APIs.
+All interfaces below are **implemented P1 exports** in `@adaptive-pair/modes`.
+They have no runtime or host integration.
 
 | File | Responsibility | Public interface |
 |---|---|---|
@@ -148,7 +159,7 @@ gate for the relevant workspace and revision. P1 does not discover, cache,
 persist, or advertise that capability. Tests may construct it as a fixture.
 It is neither consent nor permission to apply an edit.
 
-`PairHumanFollowUp` is a proposed pure projection, not a second session state
+`PairHumanFollowUp` is a pure projection, not a second session state
 machine. A future core derives it from accepted AI work and persists its
 outstanding status. A helper result must never create an obligation from a
 mere model proposal or clear an existing obligation because a later mechanical
@@ -226,7 +237,7 @@ Produces the exact exported types and `assessPairWorkUnit` implementation in
 Step 3. Callers must still perform scope resolution, input-schema validation,
 consent checks, and invocation-time authorization in P2/P3.
 
-- [ ] **Step 1: Write the typed fixtures and failing tests.**
+- [x] **Step 1: Write the typed fixtures and failing tests.**
 
 **Create: `packages/modes/test/pairFixtures.ts`**
 
@@ -360,7 +371,7 @@ describe("Pair work-unit policy", () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused red test.**
+- [x] **Step 2: Run the focused red test.**
 
 ```sh
 npm exec -- vitest run packages/modes/test/pairWorkUnit.test.ts
@@ -369,7 +380,7 @@ npm exec -- vitest run packages/modes/test/pairWorkUnit.test.ts
 Expected: failure because `assessPairWorkUnit` is not exported/implemented.
 Do not weaken the tests or alter Growth behavior to obtain a green result.
 
-- [ ] **Step 3: Implement the complete pure assessment and export it.**
+- [x] **Step 3: Implement the complete pure assessment and export it.**
 
 **Create: `packages/modes/src/pairWorkUnit.ts`**
 
@@ -460,7 +471,7 @@ identity, consent, content versions, and process classification remain at the
 future runtime/effect boundary. Do not add a second path-authority mechanism
 to this pure policy.
 
-- [ ] **Step 4: Verify the policy and unchanged Growth behavior.**
+- [x] **Step 4: Verify the policy and unchanged Growth behavior.**
 
 ```sh
 npm exec -- vitest run packages/modes/test/pairWorkUnit.test.ts packages/modes/test/growthMode.test.ts
@@ -491,7 +502,7 @@ Produces `PairHumanFollowUp`, `PairSuccessorAssessment`,
 an instruction to clear an existing requirement. The future core combines
 these assessments with Task 1 and records accepted decisions separately.
 
-- [ ] **Step 1: Write the failing follow-up cases.**
+- [x] **Step 1: Write the failing follow-up cases.**
 
 **Create: `packages/modes/test/pairFollowUp.test.ts`**
 
@@ -639,7 +650,7 @@ describe("Pair human follow-up policy", () => {
 });
 ```
 
-- [ ] **Step 2: Observe the focused red result.**
+- [x] **Step 2: Observe the focused red result.**
 
 ```sh
 npm exec -- vitest run packages/modes/test/pairFollowUp.test.ts
@@ -647,7 +658,7 @@ npm exec -- vitest run packages/modes/test/pairFollowUp.test.ts
 
 Expected: the new follow-up exports do not exist. Task 1 stays green.
 
-- [ ] **Step 3: Implement the pure follow-up functions.**
+- [x] **Step 3: Implement the pure follow-up functions.**
 
 **Create: `packages/modes/src/pairFollowUp.ts`**
 
@@ -738,7 +749,7 @@ erase the requirement. A `true` satisfaction assessment still requires the
 core to record the correlated observation and any requirement-clearing event;
 this helper changes no state and reports no Growth outcome.
 
-- [ ] **Step 4: Run both policy suites and review the boundary.**
+- [x] **Step 4: Run both policy suites and review the boundary.**
 
 ```sh
 npm exec -- vitest run packages/modes/test/pairWorkUnit.test.ts packages/modes/test/pairFollowUp.test.ts packages/modes/test/growthMode.test.ts
@@ -771,7 +782,7 @@ unknown read is not an unknown mutation, while an unknown `edit` or `check`
 requires reconciliation. P2 must classify partial state changes conservatively
 and bind the stopped-admission fact to an actual serialized admission barrier.
 
-- [ ] **Step 1: Add typed runtime fixtures and failing preflight cases.**
+- [x] **Step 1: Add typed runtime fixtures and failing preflight cases.**
 
 The additional type imports below are appended with the new fixture functions;
 they may be grouped with the earlier imports during refactoring.
@@ -869,7 +880,7 @@ import {
 
 describe("Pair handoff preflight", () => {
   it.each(["agreed", "executing", "verifying", "completed"] as const)(
-    "reports only readiness for baseline and human review of a %s unit",
+    "reports only readiness for baseline and human review of a unit with status %s",
     status => {
       expect(assessPairHandoff(pairHandoffContext({
         snapshot: pairRuntime(pairWorkUnit({ status })),
@@ -913,7 +924,7 @@ describe("Pair handoff preflight", () => {
     "planned", "authorized", "started",
   ];
 
-  it.each(pendingStatuses)("waits for a %s operation to settle", status => {
+  it.each(pendingStatuses)("waits for an operation with status %s to settle", status => {
     expect(assessPairHandoff(pairHandoffContext({
       snapshot: pairRuntime(undefined, [pairOperation({ status })]),
     }))).toEqual({ status: "blocked", reason: "PAIR_OPERATIONS_PENDING" });
@@ -1055,7 +1066,7 @@ describe("Pair handoff preflight", () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused red test.**
+- [x] **Step 2: Run the focused red test.**
 
 ```sh
 npm exec -- vitest run packages/modes/test/pairHandoff.test.ts
@@ -1064,7 +1075,7 @@ npm exec -- vitest run packages/modes/test/pairHandoff.test.ts
 Expected: `assessPairHandoff` is not exported/implemented. Do not expose
 `pair_accept_handoff` or change a coordinator method to make this test pass.
 
-- [ ] **Step 3: Implement the complete preflight assessment.**
+- [x] **Step 3: Implement the complete preflight assessment.**
 
 **Create: `packages/modes/src/pairHandoff.ts`**
 
@@ -1187,7 +1198,7 @@ by changing its owner in place. P2 owns successor creation, relationship
 binding, the follow-up requirement, and durable history. Preflight readiness
 alone does not satisfy any of those transitions.
 
-- [ ] **Step 4: Run all policy tests and verify the fixed protocol boundary.**
+- [x] **Step 4: Run all policy tests and verify the fixed protocol boundary.**
 
 ```sh
 npm exec -- vitest run packages/modes/test
@@ -1213,7 +1224,7 @@ update the P1 status in `docs/design.md` and this plan, the observed evidence in
 `docs/research.md`, and the project-status wording in `README.md`. Preserve
 draft/approval/implementation distinctions for P2 and P3.
 
-- [ ] **Step 1: Review every contract against this acceptance matrix.**
+- [x] **Step 1: Review every contract against this acceptance matrix.**
 
 | Contract | Required case | Owner |
 |---|---|---|
@@ -1234,7 +1245,7 @@ No complete Pair Mode, runtime concurrency, filesystem-safety, model-behavior,
 or learning-efficacy claim can be inferred from this matrix. Review P1 as a
 pure contract milestone and leave P2/P3 gates open.
 
-- [ ] **Step 2: Run the full existing quality and distribution checks.**
+- [x] **Step 2: Run the full existing quality and distribution checks.**
 
 ```sh
 npm run check
@@ -1258,7 +1269,7 @@ case counts. Parameterized `it.each` rows are separate cases; multiple
 assertions or ordinary loop iterations inside one `it` are not. Keep those
 counts separate from additional assertion coverage and temporary review tests.
 
-- [ ] **Step 3: Update canonical status only from observed results.**
+- [x] **Step 3: Update canonical status only from observed results.**
 
 Record P1 as implemented only after its code exists and all required checks
 pass. Record human approval separately; tests do not approve a design. Keep
@@ -1266,7 +1277,7 @@ README and the preview guide explicit that the extension remains Growth-only.
 Do not publish a duplicate handoff report or copy local test logs, personal
 paths, or credentials into documentation.
 
-- [ ] **Step 4: Complete the pull request review loop.**
+- [x] **Step 4: Complete the pull request review loop at the recorded checkpoint.**
 
 Commit and push the scoped changes on the dedicated branch, open a pull request
 against `main`, and request review. Verify each finding against the policy
@@ -1276,7 +1287,12 @@ and evidence, or explain why no change is appropriate. Resolve only addressed
 threads, check follow-up feedback, and verify the required checks on the final
 revision. Report when ready to merge; wait for the user's merge decision.
 
-- [ ] **Step 5: Stop for P2 scope review.**
+This checkbox records the reviewed implementation checkpoint below, not an
+unverified claim about a later commit. Every subsequent revision, including a
+documentation-only update, still requires fresh final-head checks and
+follow-up review in PR #6 before readiness is reported.
+
+- [x] **Step 5: Keep P2 behind separate scope review.**
 
 Summarize changed files and fresh results. Ask for review of the policy
 decisions before designing the P2 protocol/runtime changes. A new P2 plan must
@@ -1291,16 +1307,53 @@ documentation PR does not itself authorize implementing the proposed policies.
 - [x] Assign known preview gaps and remaining release gates in the design roadmap.
 - [x] Complete plan-example validation and internal consistency review.
 - [x] Complete baseline host revalidation (17 smoke tests; runner exit code 0).
-- [ ] Obtain user review of the written P1 design and implementation plan.
-- [ ] Implement and verify Tasks 1–4 after approval.
+- [x] Obtain user review of the written P1 design and implementation plan.
+- [x] Implement and verify Tasks 1–3 after approval.
+- [x] Complete Task 4's contract matrix, local regression checks, and canonical
+  documentation update.
+- [x] Complete Task 4's PR review and CI checkpoint at `2364b41`.
+- [x] Integrate maintained `main` at `79d75ab` and revalidate P1, both dependency
+  graphs, isolated hosts, and packaging without expanding the product scope.
+- Final-head gate: verify every subsequent revision in PR #6 before reporting
+  readiness; do not infer a merge decision from this checklist.
 
-The checked items concern documentation, temporary example validation, and
-unchanged-preview regression checks only.
-The reviewed examples passed three red/green cycles with the unchanged
-repository TypeScript, Vitest, and ESLint configurations and the existing
-root/workspace dependency layout. Each stage typechecked and passed lint;
-the final 79 tests comprise 19 admission, 21 follow-up, 35 handoff, and four
-unchanged Growth cases. JSON snapshots avoid undeclared host globals in the
-immutability checks. These example results are not Pair runtime/host
-conformance evidence or user approval. No P1 source, handoff, or edit behavior
-is implemented in the repository by publication of this plan.
+The repository owner authorized P1 on September 16, 2026 by requesting the
+merge of reviewed PR #4 and continuation with the next increment. This is
+separate from the plan's earlier publication and does not approve P2 or P3.
+
+Tasks 1–3 are now implemented in repository source. Each new suite failed
+before its policy exports existed, then staged runs passed 23, 44, and 79
+tests with forced typecheck and lint. The final modes suite comprises 19
+admission, 21 follow-up, 35 handoff, and four unchanged Growth cases; fixture
+type imports were grouped without changing the contracts or case counts.
+Initial implementation validation passed 43 files and 671 tests, Stable VSIX
+verification, and all 17 isolated host smoke tests on VS Code 1.137.0 with
+runner exit code 0.
+The PR #6 review checkpoint at `2364b41` had no unresolved threads or pending
+review requests, and all four CI jobs passed. The initial checklist-clarity
+finding was fixed, replied to with verification evidence, and resolved in its
+original thread. Copilot's follow-up recommended approval with two
+non-blocking test-title grammar notes; those titles are corrected in the tests
+and executable examples without changing assertions or case counts.
+Independent AI review of the implementation at `0f2c85f` found no blocking
+or non-blocking defects; it does not constitute human approval.
+
+After maintenance PR #7 was merged on September 16, 2026, the P1 branch
+integrated `main` at `79d75ab` with the policy source and tests unchanged.
+Fresh validation passed typecheck, lint, 43 files and 673 tests, both full
+dependency audits with zero findings, and Stable VSIX verification. The main
+isolated host passed 17 cases; the separate POC passed six unit cases, one
+isolated host case, and packaging. The POC host's first download failed before
+tests began; the unchanged command passed on retry. See the
+[post-maintenance evidence](research.md#p1-post-maintenance-integration)
+for the distinct baseline, host, and audit results.
+
+This completion-record update itself still requires fresh review and checks
+on its own revision before merge readiness is reported. PR #6 is the live
+record for that final-head evidence. No merge or P2/P3 implementation is
+performed by closing this P1 checkpoint.
+
+These results establish pure P1 contracts and unchanged-preview regression
+coverage, not Pair runtime/host conformance, accepted handoff, edit authority,
+or learning efficacy. The earlier temporary-example evidence remains in
+`docs/research.md`; no duplicate active plan is created.
