@@ -354,7 +354,9 @@ preview; they do not establish Pair runtime integration or host edit safety.
 The stabilization branch replaces split store writes and direct snapshot
 replacement with atomic commits through one transition queue. Growth response
 release belongs to the host-independent runtime; native adapters retain UI,
-consent, and effect wiring. Only edit-episode continuity is persisted today;
+consent, and effect wiring. Model state queries expose bounded metadata rather
+than internal snapshots, diagnostics, operation payloads, or grants.
+Only edit-episode continuity is persisted today;
 durable authoritative session/ownership recovery remains future work.
 
 The completed Foundation and Growth implementation plan remains available in

@@ -24,6 +24,7 @@ export type ScopeReadResult =
     };
 
 export interface ScopeAccess {
+  canonicalPaths?(paths: readonly string[], signal: AbortSignal): Promise<readonly string[]>;
   readText(path: string, signal: AbortSignal): Promise<ScopeReadResult>;
   listPaths(
     pattern: string | undefined,
@@ -113,13 +114,8 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
     request: EffectRequest,
     signal: AbortSignal,
   ): Promise<EffectResult> {
-    const rawPath = request.payload["path"];
-    const path =
-      typeof rawPath === "string" ? canonicalRelative(rawPath) : undefined;
-    if (
-      path === undefined ||
-      !withinAllowedScope(path, request.allowedPaths)
-    ) {
+    const scope = await this.resolveReadScope(request, signal);
+    if (scope === undefined) {
       return result(
         request,
         "declined",
@@ -127,6 +123,7 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
         { reason: "path-outside-scope" },
       );
     }
+    const { path, allowedPaths } = scope;
 
     const startLine = positiveLine(request.payload["startLine"]) ?? 1;
     const requestedEnd =
@@ -155,7 +152,7 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
     const resolvedPath = canonicalRelative(read.path ?? path);
     if (
       resolvedPath === undefined ||
-      !withinAllowedScope(resolvedPath, request.allowedPaths)
+      !withinAllowedScope(resolvedPath, allowedPaths)
     ) {
       return result(
         request,
@@ -202,6 +199,33 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
     );
   }
 
+  private async canonicalPaths(paths: readonly string[], signal: AbortSignal): Promise<readonly string[]> {
+    const resolved = this.access.canonicalPaths === undefined
+      ? paths
+      : await this.access.canonicalPaths(paths, signal);
+    signal.throwIfAborted();
+    return resolved.map(canonicalRelative).filter((path): path is string => path !== undefined);
+  }
+
+  private async resolveReadScope(
+    request: EffectRequest,
+    signal: AbortSignal,
+  ): Promise<{ readonly path: string; readonly allowedPaths: readonly string[] } | undefined> {
+    const rawPath = request.payload["path"];
+    const path = typeof rawPath === "string" ? canonicalRelative(rawPath) : undefined;
+    if (path === undefined || request.allowedPaths.length === 0) {
+      return undefined;
+    }
+    const allowedPaths = await this.canonicalPaths(request.allowedPaths, signal);
+    if (allowedPaths.length === 0) {
+      return undefined;
+    }
+    const [resolvedPath] = await this.canonicalPaths([path], signal);
+    return resolvedPath !== undefined && withinAllowedScope(resolvedPath, allowedPaths)
+      ? { path, allowedPaths }
+      : undefined;
+  }
+
   private async search(
     request: EffectRequest,
     signal: AbortSignal,
@@ -219,17 +243,19 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
       typeof request.payload["pattern"] === "string"
         ? request.payload["pattern"]
         : undefined;
+    const allowedPaths = await this.canonicalPaths(request.allowedPaths, signal);
     const discovery = await this.access.listPaths(
       pattern,
       request.allowedPaths,
       signal,
     );
+    signal.throwIfAborted();
     const scopedPaths = discovery.paths
       .map(canonicalRelative)
       .filter(
         (path): path is string =>
           path !== undefined &&
-          withinAllowedScope(path, request.allowedPaths),
+          withinAllowedScope(path, allowedPaths),
       );
     const matches: { path: string; line: number; text: string }[] = [];
     let partial =
@@ -239,6 +265,7 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
     for (const path of scopedPaths.slice(0, MAX_SEARCH_FILES)) {
       signal.throwIfAborted();
       const read = await this.access.readText(path, signal);
+      signal.throwIfAborted();
       if (read.status !== "ok") {
         partial = true;
         continue;
@@ -246,7 +273,7 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
       const resolvedPath = canonicalRelative(read.path ?? path);
       if (
         resolvedPath === undefined ||
-        !withinAllowedScope(resolvedPath, request.allowedPaths)
+        !withinAllowedScope(resolvedPath, allowedPaths)
       ) {
         continue;
       }

@@ -276,21 +276,68 @@ review added two dirty-buffer findings, which are also required follow-up gates.
   re-review of the transfer continuation as well as initial publication.
 - [x] Validate malformed verification script manifests and Windows process-tree
   confirmation lifetime, including PID reuse, with independent re-review.
-- [ ] Probe and address operation admission, immutable request payload, and
+- [x] Probe and address operation admission, immutable request payload, and
   queued grant-cancellation boundaries in the authoritative runtime, including
   concurrent recovery rather than only reconciliation after invocation settles.
 - [x] Check the archive end-record scan's short-buffer and maximum-comment
   boundaries. These probes pass without changing the parser; request a concrete
   counterexample if a different archive concern remains.
-- [ ] Reject NUL-containing dirty scope buffers consistently with disk reads,
+- [x] Reject NUL-containing dirty scope buffers consistently with disk reads,
   and retain deleted dirty verification buffers addressed through safe aliases.
-- [ ] Complete independent follow-up reviews, full local/host/package gates,
+- [x] Complete independent follow-up reviews, full local/host/package gates,
   original-thread replies/resolution, and a fresh normal repository review.
 
-The follow-up local checkpoint passes forced typecheck, enforced lint, 972
+The `8fd60be` local checkpoint passes forced typecheck, enforced lint, 972
 workspace tests, both Stable hosts' 17 scenarios, Stable packaging, the separate
 POC's 8 unit tests/package/1 Insiders host case, and all four dependency audits.
 This is not a substitute for the remaining independent and repository review.
+
+### Second repository reassessment
+
+All four CI jobs pass at `8fd60be`, and the original three inline concerns have
+evidence replies and are resolved. The fresh repository assessment still reports
+five concerns: three published summary-only compositions and two runtime source
+locations without their full finding text. Previous scoped passes do not clear
+these newly identified compositions.
+
+- [x] Reproduce cancellation after queued local-command admission, preserve
+  grants/state when cancellation precedes commit, and retain actions already
+  committed before cancellation. Independent re-review passes on the frozen
+  cancellation patch, separately from the state-disclosure correction.
+- [x] Bind transfer identity and request data across asynchronous consent,
+  preparation, and publication without a new publication await.
+- [x] Preserve agreed in-root alias scope for read/search and valid unsaved
+  buffers while retaining canonical containment, secret/binary filtering, and
+  byte limits.
+- [x] Reproduce native/Growth state-query disclosure and replace full snapshots
+  with bounded allowlisted metadata. Keep grants and raw records behind the
+  trusted snapshot port; do not claim an unproven model privilege escalation.
+  Request clarification of unpublished finding text rather than inventing it.
+- [x] Close the independent transfer review's identical-session recreation
+  case using the committed start revision, without changing epoch semantics
+  or version-1 command/event payloads. Recheck the original review separately.
+- [x] Preserve valid reads/searches when an unrelated stale dirty document has
+  a regular-file ancestor; reject an invalid requested path without lexical
+  fallback or swallowing unavailable-identity/cancellation errors.
+- [ ] Recheck independent reviews, full affected validation, final-head CI,
+  and a fresh repository assessment after this round's fixes.
+
+The initial second-round source/test checkpoint passes forced typecheck, enforced lint,
+1,083 workspace tests across 87 files, Stable build/7-entry packaging, and the
+separate POC's 8 unit tests/9-entry package. All 17 isolated host scenarios pass
+on each Stable matrix version, the POC's Insiders host case passes, both installed
+dependency trees are valid, and all four full/production audits report zero
+findings. Transfer, scope, and state-projection independent reviews remain
+distinct pending gates; these local results do not describe a future remote
+head's CI. Independent review subsequently exposed the recreation and unrelated
+dirty-buffer cases above. The lifecycle correction passes its 52 focused cases,
+forced typecheck, and full lint. After both corrections, a fresh integrated run
+passes 1,105 tests across 89 files, forced typecheck, full lint, Stable build and
+7-entry VSIX verification, and all 17 host scenarios on each Stable matrix
+version. State-projection, cancellation, and scope independent reviews pass on
+their frozen artifacts. The original Growth reviewer is reassessing the
+lifecycle follow-up; that verdict and the next remote revision's review/checks
+remain pending.
 
 Merge is permitted only after those gates and the final revision's checks pass.
 Their live status belongs to the PR/check history, not a prospective approval

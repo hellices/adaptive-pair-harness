@@ -19,6 +19,7 @@ import type {
   PairToolResult,
 } from "./ports.js";
 import { commandForTool } from "./toolCommands.js";
+import { projectModelState } from "./modelStateProjection.js";
 
 type PendingOperation = {
   readonly authorityEpoch: number;
@@ -48,7 +49,8 @@ const effectKindFor = (descriptor: PairToolDescriptor): EffectRequest["kind"] =>
 };
 
 interface ToolExecutionOptions {
-  readonly state: Pick<PairCoordinatorPort, "snapshot" | "dispatch">;
+  readonly state: Pick<PairCoordinatorPort, "snapshot">;
+  readonly dispatchCommand: (command: PairCommand, signal: AbortSignal) => Promise<PairRuntimeSnapshot>;
   readonly effects: EffectPort;
   readonly ids: IdSource;
   readonly clock: Clock;
@@ -70,6 +72,7 @@ export class ToolExecutor {
     signal.throwIfAborted();
 
     const snapshot = await this.options.state.snapshot();
+    signal.throwIfAborted();
     const view = toolsFor(snapshot);
     const userActionGrant = this.materializeGrant(snapshot, name, options.userActionId);
     const decision = authorizeVisibleTool(view, {
@@ -86,15 +89,14 @@ export class ToolExecutor {
     }
 
     if (name === "pair_get_state") {
+      const projection = projectModelState(snapshot);
       return this.createResult(snapshot, {
         operationId: this.options.ids.next("state"),
         status: "confirmed",
-        summary: "Returned the current Pair snapshot.",
-        observation: {
-          snapshot,
-        },
+        summary: "Returned bounded Pair state metadata.",
+        observation: Object.freeze({ snapshot: projection.snapshot }),
         sensitiveData: false,
-        partial: false,
+        partial: projection.partial,
       });
     }
 
@@ -109,7 +111,7 @@ export class ToolExecutor {
       userActionGrantId,
     );
     if (localCommand !== undefined) {
-      const next = await this.options.state.dispatch(localCommand);
+      const next = await this.options.dispatchCommand(localCommand, signal);
       return this.createResult(next, {
         operationId: this.options.ids.next("state"),
         status: "confirmed",
@@ -141,7 +143,7 @@ export class ToolExecutor {
       throw new Error("WORK_UNIT_NOT_AGREED");
     }
 
-    const authorizedSnapshot = await this.options.state.dispatch({
+    const authorizedSnapshot = await this.options.dispatchCommand({
       protocolVersion: 1,
       commandId: this.options.ids.next("command"),
       expectedRevision: snapshot.revision,
@@ -153,7 +155,7 @@ export class ToolExecutor {
       input: structuredClone(input),
       ...(userActionGrantId === undefined ? {} : { userActionGrantId }),
       observedAt: this.options.clock.now(),
-    });
+    }, signal);
 
     const operation = this.requireOperation(
       authorizedSnapshot,

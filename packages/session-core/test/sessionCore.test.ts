@@ -101,6 +101,7 @@ it("starts a session with sequential immutable events", () => {
     },
     session: {
       sessionId: "session-1",
+      startedAtRevision: 1,
       authorityEpoch: 0,
       status: "briefing",
       mode: undefined,

@@ -1,5 +1,5 @@
 import { maximumHintLevelForSnapshot } from "@adaptive-pair/harness";
-import type { PairRuntimeSnapshot } from "@adaptive-pair/protocol";
+import type { OperatingMode, PairRuntimeSnapshot, WorkUnit } from "@adaptive-pair/protocol";
 import { guardGrowthResponse, type GrowthResponse } from "@adaptive-pair/restraint";
 import {
   growthFailureReason,
@@ -15,12 +15,40 @@ export type GrowthTurnCoordinator = Pick<
   "snapshot" | "prepareTurn"
 >;
 
+export interface GrowthTurnIntent {
+  readonly sessionId: string;
+  readonly startedAtRevision: number;
+  readonly authorityEpoch: number;
+  readonly mode: OperatingMode;
+  readonly workUnitId: string;
+  readonly objective: string;
+  readonly capability: WorkUnit["capability"];
+  readonly independentCheck: string | undefined;
+}
+
+export const isGrowthTurnIntentCurrent = (intent: GrowthTurnIntent, snapshot: PairRuntimeSnapshot): boolean => {
+  const session = snapshot.session;
+  const workUnit = session?.workUnit;
+  return session !== undefined && workUnit !== undefined &&
+    session.sessionId === intent.sessionId &&
+    session.startedAtRevision === intent.startedAtRevision &&
+    session.authorityEpoch === intent.authorityEpoch &&
+    session.mode === intent.mode &&
+    (session.status === "active" || session.status === "ready") &&
+    workUnit.id === intent.workUnitId &&
+    workUnit.status === "agreed" &&
+    workUnit.objective === intent.objective &&
+    workUnit.capability === intent.capability &&
+    session.learningAgreement?.independentCheck === intent.independentCheck;
+};
+
 export interface GuardedGrowthTurnInput {
   readonly coordinator: GrowthTurnCoordinator;
   readonly createModel: () => GrowthModel;
   readonly signal: AbortSignal;
   readonly userRequest?: string;
   readonly repositoryContext?: string;
+  readonly intent?: GrowthTurnIntent;
   readonly validate?: (response: GrowthResponse) => string | undefined;
 }
 
@@ -44,6 +72,7 @@ export interface ReadyGrowthTurn {
   readonly status: "ready";
   readonly response: GrowthResponse;
   readonly runtime: GrowthRuntimeBoundary;
+  readonly intent?: GrowthTurnIntent;
 }
 
 export type GrowthTurnRequestOutcome =
@@ -83,7 +112,11 @@ export const requestGuardedGrowthTurn = async (
   input: GuardedGrowthTurnInput,
 ): Promise<GrowthTurnRequestOutcome> => {
   try {
+    const intent = input.intent === undefined ? undefined : Object.freeze({ ...input.intent });
     const before = await input.coordinator.snapshot();
+    if (intent !== undefined && !isGrowthTurnIntentCurrent(intent, before)) {
+      return { status: "stale" };
+    }
     const prompt = input.userRequest ?? "";
     const prepared = await input.coordinator.prepareTurn({
       ...(prompt.length > 0 ? { userRequest: prompt } : {}),
@@ -130,7 +163,7 @@ export const requestGuardedGrowthTurn = async (
       return { status: "failed", reason: growthFailureReason(error) };
     }
 
-    return { status: "ready", response, runtime: expectedRuntime };
+    return { status: "ready", response, runtime: expectedRuntime, ...(intent === undefined ? {} : { intent }) };
   } catch (error) {
     return { status: "failed", reason: growthFailureReason(error) };
   }
@@ -143,6 +176,9 @@ export const finishGuardedGrowthTurn = (
 ): GrowthTurnOutcome => {
   try {
     const { response, runtime: expectedRuntime } = requested;
+    if (requested.intent !== undefined && !isGrowthTurnIntentCurrent(requested.intent, after)) {
+      return { status: "stale" };
+    }
     if (
       after.revision !== expectedRuntime.runtimeRevision ||
       after.session?.authorityEpoch !== expectedRuntime.authorityEpoch ||

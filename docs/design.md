@@ -677,6 +677,36 @@ cancellation. Explicit Growth actions bind grants to the revision and authority
 epoch the caller observed, and a multi-action reveal chains the next grant from
 the preceding action's committed result rather than silently adopting new intent.
 
+Transfer also captures a data-only intent before workspace consent: session and
+its start revision, authority epoch, mode, work unit, objective, capability, and
+independent check.
+Runtime preparation and finalization reject a different intent, and the host
+carries the accepted runtime boundary into the later transfer state/note
+continuation. A dialog completing does not approve replacement work. These
+checks retain synchronous finalization/publication rather than adding an await.
+
+The model-facing `pair_get_state` result is an allowlisted metadata projection,
+not the authoritative `PairRuntimeSnapshot`. Its `observation.snapshot` contains
+protocol/revision, Presence status, session/work-unit status and ownership, hint
+ceiling and evidence flags, and current verification status/pending count. Only
+1–128 character ASCII alphanumeric, underscore, or hyphen session/work-unit
+identifiers are included; other identifiers are omitted without replacement and
+mark the result partial. Workspace paths, diagnostics, free-text agreements,
+operation inputs/summaries, grants, and unknown future fields remain behind the
+trusted snapshot port. The fixed field set stays below the catalog's 8,000
+character result limit independently of operation history. Verification metadata
+counts only the current work unit and authority epoch's actual verification
+tool, not unrelated checks or commands. `latestStatus` describes operation
+settlement, not an assertion that product checks passed. Native and controlled Growth adapters
+share this projection; serialization does not grant authority or consume grants.
+
+Scope effects normalize requested and agreed paths into the same canonical
+permission snapshot before accessing buffers or disk, and validate canonical
+outputs against it. A permitted alias is not permission to follow a child link
+into another unagreed directory. Unsaved paths resolve through the nearest
+existing canonical directory, without bypassing workspace containment,
+secret/binary filtering, cancellation, or byte limits.
+
 Executable dependency tests inspect source and test imports, including type
 imports, re-exports, and literal dynamic imports. They compare the Stable
 workspace's manifests and TypeScript references, reject undeclared direct or
@@ -711,6 +741,16 @@ Pair Presence, and an optional task-scoped Pair Session. Commands and tool
 views use the runtime revision; only the active session carries an authority
 epoch.
 
+`PairSessionSnapshot.startedAtRevision` is derived from the existing
+`SessionStarted` event's revision. It distinguishes separate session lifetimes
+even when a session ID, work-unit ID, all agreement text, and the initial epoch
+are reused after Disable. Observations and ordinary transitions retain the
+marker. This internal snapshot addition does not change version-1 command/event
+payloads or epoch semantics; replay derives the same marker from existing event
+metadata. Inactive/synthetic snapshots may use the initial zero marker, while an
+authoritative session start always uses its committed revision. It neither
+implements durable recovery nor permits resuming old authority.
+
 ### 6.1 Pair Presence
 
 `PairPresence` is workspace-scoped and can outlive an individual task:
@@ -729,7 +769,7 @@ continuity and context to a task-scoped Pair Session.
 
 A `PairSession` snapshot contains:
 
-- session ID and authority epoch;
+- session ID, committed start revision, and authority epoch;
 - status and pause reason;
 - confirmed goal and observable completion criteria;
 - active operating mode and mode configuration;

@@ -11,6 +11,7 @@ export const growthRuntime = (
 ): PairRuntimeSnapshot => {
   const session: PairSessionSnapshot = {
     sessionId: "session-1",
+    startedAtRevision: 0,
     authorityEpoch: 0,
     status: "active",
     mode: "growth",

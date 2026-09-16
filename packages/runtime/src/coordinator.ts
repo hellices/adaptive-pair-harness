@@ -47,6 +47,9 @@ export class PairCoordinator implements PairCoordinatorPort, PairPresencePort {
   ) {
     this.toolExecutor = new ToolExecutor({
       ...options, state: this,
+      dispatchCommand: (command, signal) => this.enqueueTransition(() =>
+        this.commitCommand(command, signal),
+      ),
       observeResult: (operation, result) => this.observeResult(operation, result),
       admitReadRecovery: operationId => this.enqueueTransition(async () =>
         this.toolExecutor.admitReadRecovery(await this.snapshot(), operationId),

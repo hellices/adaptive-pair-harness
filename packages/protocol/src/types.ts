@@ -141,6 +141,7 @@ export interface PairPresence {
 
 export interface PairSessionSnapshot {
   readonly sessionId: string;
+  readonly startedAtRevision: number;
   readonly authorityEpoch: number;
   readonly status: SessionStatus;
   readonly mode: OperatingMode | undefined;

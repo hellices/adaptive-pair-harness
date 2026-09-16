@@ -3,6 +3,7 @@ import { basename, dirname, relative, resolve } from "node:path";
 import * as vscode from "vscode";
 import type { ActivityLedger } from "./activityLedger.js";
 import type { ScopeAccess, ScopeReadResult } from "./scopeEffect.js";
+import { filesystemErrorCode as errorCode, scopePathIdentity } from "./scopePathIdentity.js";
 import {
   canonicalRelative,
   isBinaryPath,
@@ -11,15 +12,6 @@ import {
 } from "./workspaceContext.js";
 import { withinRoot } from "./workspacePaths.js";
 
-
-
-const errorCode = (error: unknown): string | undefined => {
-  if (typeof error !== "object" || error === null) {
-    return undefined;
-  }
-  const code = (error as { readonly code?: unknown }).code;
-  return typeof code === "string" ? code : undefined;
-};
 
 
 const sameFilesystemIdentity = (left: string, right: string): boolean =>
@@ -58,6 +50,39 @@ export class VscodeScopeAccess implements ScopeAccess {
     private readonly ledger?: ActivityLedger,
   ) {}
 
+  public async canonicalPaths(paths: readonly string[], signal: AbortSignal): Promise<readonly string[]> {
+    signal.throwIfAborted();
+    this.ledger?.recordWorkspaceRead();
+    const canonicalRoot = await realpath(this.rootPath);
+    signal.throwIfAborted();
+    const identities = new Set<string>();
+    for (const rawPath of paths) {
+      signal.throwIfAborted();
+      const path = canonicalRelative(rawPath);
+      if (path === undefined || isSecretPath(path) || isBinaryPath(path)) {
+        continue;
+      }
+      let target: string;
+      try {
+        target = await scopePathIdentity(resolve(this.rootPath, path), signal);
+      } catch (error) {
+        signal.throwIfAborted();
+        if (errorCode(error) === "ENOENT") {
+          continue;
+        }
+        throw error;
+      }
+      if (!withinRoot(canonicalRoot, target)) {
+        continue;
+      }
+      const resolvedPath = canonicalRelative(relative(canonicalRoot, target).replace(/\\/gu, "/"));
+      if (resolvedPath !== undefined && !isSecretPath(resolvedPath) && !isBinaryPath(resolvedPath)) {
+        identities.add(resolvedPath);
+      }
+    }
+    return [...identities];
+  }
+
   public async readText(
     rawPath: string,
     signal: AbortSignal,
@@ -79,13 +104,15 @@ export class VscodeScopeAccess implements ScopeAccess {
     try {
       [canonicalRoot, canonicalTarget] = await Promise.all([
         realpath(this.rootPath),
-        realpath(absolute),
+        scopePathIdentity(absolute, signal),
       ]);
     } catch (error) {
+      signal.throwIfAborted();
       return errorCode(error) === "ENOENT"
         ? { status: "not-found" }
         : { status: "read-failed" };
     }
+    signal.throwIfAborted();
     if (!withinRoot(canonicalRoot, canonicalTarget)) {
       return { status: "unsafe-path" };
     }
@@ -139,6 +166,7 @@ export class VscodeScopeAccess implements ScopeAccess {
     signal.throwIfAborted();
     let document: vscode.TextDocument | undefined;
     for (const candidate of vscode.workspace.textDocuments) {
+      signal.throwIfAborted();
       if (candidate.isDirty !== true) {
         continue;
       }
@@ -152,8 +180,9 @@ export class VscodeScopeAccess implements ScopeAccess {
       const candidatePath = resolve(candidate.uri.fsPath);
       let candidateIdentity: string;
       try {
-        candidateIdentity = await realpath(candidatePath);
+        candidateIdentity = await scopePathIdentity(candidatePath, signal);
       } catch (error) {
+        signal.throwIfAborted();
         if (
           errorCode(error) === "ENOENT" ||
           errorCode(error) === "ENOTDIR"
@@ -165,6 +194,7 @@ export class VscodeScopeAccess implements ScopeAccess {
         }
         throw error;
       }
+      signal.throwIfAborted();
       if (sameFilesystemIdentity(candidateIdentity, canonicalTarget)) {
         document = candidate;
         break;

@@ -1,6 +1,6 @@
 import type * as vscode from "vscode";
 import type { HintLevel, PairSessionSnapshot } from "@adaptive-pair/protocol";
-import { growthFailureReason as failureReason } from "@adaptive-pair/runtime";
+import { growthFailureReason as failureReason, isGrowthTurnIntentCurrent } from "@adaptive-pair/runtime";
 import type { GrowthConsentResult, GrowthParticipantDependencies, GrowthTransientState } from "./growthHostState.js";
 import { bounded, ATTEMPT_REQUIRED_MESSAGE, REVEAL_REQUIRED_MESSAGE, CONSENT_DECLINED_MESSAGE, NO_WORK_UNIT_MESSAGE, TRANSFER_NOT_DISTINCT_MESSAGE, TRANSFER_NOT_DEMONSTRATED_NOTE } from "./growthPresentation.js";
 import { GrowthTurnPublisher } from "./growthTurnPublisher.js";
@@ -78,6 +78,16 @@ export class GrowthGuidanceRoutes {
       response.markdown(NO_WORK_UNIT_MESSAGE);
       return;
     }
+    const intent = Object.freeze({
+      sessionId: session.sessionId,
+      startedAtRevision: session.startedAtRevision,
+      authorityEpoch: session.authorityEpoch,
+      mode: session.mode,
+      workUnitId: workUnit.id,
+      objective: workUnit.objective,
+      capability: workUnit.capability,
+      independentCheck: session.learningAgreement?.independentCheck,
+    });
 
     const consent = await this.gatherConsentedContext(
       model,
@@ -99,6 +109,7 @@ export class GrowthGuidanceRoutes {
       signal,
       {
         userRequest: transferRequest(session, workUnit.objective, independentCheck),
+        intent,
         acceptedOutcome: "transfer-started",
         validate: result =>
           isDistinctVariation(result.text, workUnit.objective)
@@ -109,6 +120,15 @@ export class GrowthGuidanceRoutes {
     );
 
     if (accepted === undefined || signal.aborted) {
+      return;
+    }
+    const current = this.deps.snapshotNow();
+    if (
+      !isGrowthTurnIntentCurrent(intent, current) ||
+      current.revision !== accepted.runtime.runtimeRevision ||
+      current.session?.authorityEpoch !== accepted.runtime.authorityEpoch ||
+      current.session?.mode !== accepted.runtime.mode
+    ) {
       return;
     }
 

@@ -1,9 +1,11 @@
 import type * as vscode from "vscode";
-import { finishGuardedGrowthTurn, requestGuardedGrowthTurn } from "@adaptive-pair/runtime";
+import { finishGuardedGrowthTurn, requestGuardedGrowthTurn, type GrowthTurnIntent, type GrowthTurnOutcome } from "@adaptive-pair/runtime";
 import type { GrowthResponse } from "@adaptive-pair/restraint";
 import type { GrowthEvaluationOutcome, GrowthParticipantDependencies } from "./growthHostState.js";
 import { WITHHELD_RESPONSE_MESSAGE, STALE_TURN_MESSAGE, RESTRAINT_FAILURE_MESSAGE } from "./growthPresentation.js";
 import { createGrowthModel } from "./modelAdapter.js";
+
+type PublishedGrowthTurn = Extract<GrowthTurnOutcome, { readonly status: "delivered" }>;
 
 export class GrowthTurnPublisher {
   public constructor(
@@ -19,12 +21,13 @@ export class GrowthTurnPublisher {
     options: {
       /** Replaces the developer prompt as the trusted user-request layer. */
       readonly userRequest?: string;
+      readonly intent?: GrowthTurnIntent;
       readonly acceptedOutcome?: GrowthEvaluationOutcome;
       /** Returns a stable reason code to withhold an otherwise valid response. */
       readonly validate?: (result: GrowthResponse) => string | undefined;
       readonly withheldMessage?: string;
     } = {},
-  ): Promise<GrowthResponse | undefined> {
+  ): Promise<PublishedGrowthTurn | undefined> {
     const requested = await requestGuardedGrowthTurn({
       coordinator: this.deps.coordinator,
       createModel: () => (this.deps.createModel ??
@@ -32,6 +35,7 @@ export class GrowthTurnPublisher {
       signal,
       userRequest: options.userRequest ?? request.prompt ?? "",
       ...(taskContext === undefined ? {} : { repositoryContext: taskContext }),
+      ...(options.intent === undefined ? {} : { intent: options.intent }),
     });
     if (signal.aborted) {
       this.deps.evaluations.record({ outcome: "restraint-failure", reason: "GROWTH_CANCELLED" });
@@ -70,7 +74,7 @@ export class GrowthTurnPublisher {
           kind: outcome.response.kind,
         });
         response.markdown(outcome.response.text);
-        return outcome.response;
+        return outcome;
     }
   }
 

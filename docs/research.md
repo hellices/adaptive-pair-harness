@@ -553,7 +553,7 @@ merged P1 baseline; extracted responsibilities remain subject to the same limits
 | Verification adapter | 866 | 207 |
 | Core decision dispatcher | 578 | 61 |
 | Core event reducer dispatcher | 522 | 69 |
-| Runtime coordinator | 644 | 263 |
+| Runtime coordinator | 644 | 266 |
 
 The dependency checker has negative fixtures for forbidden/undeclared imports,
 project-reference mismatches, deep/relative package escapes, and graph cycles.
@@ -687,10 +687,114 @@ Node.js 24.20.0 completed successfully:
   audits at zero findings; external versions and both lockfiles are unchanged
   by these review follow-ups.
 
-These results do not grant merge approval. Outstanding independent integration
-review, original-thread replies/resolution, a fresh repository assessment, and
-final-head CI remain delivery gates recorded in PR #8. Existing Vite and native
-host diagnostics remain visible rather than suppressed.
+That checkpoint was committed as `8fd60be`; all four CI jobs passed, and the
+three original inline concerns received evidence replies and were resolved.
+The subsequent repository assessment still identified five concerns. Existing
+Vite and native host diagnostics remain visible rather than suppressed.
+
+##### Second PR reassessment
+
+Review `5226378228` publishes three summary-only composition findings: transfer
+intent changing during consent, agreed aliases rejected by the canonical result
+check, and missing dirty buffers rejected before they can be read. Its logs name
+two additional runtime locations without publishing their complete bodies. The
+review response requests those bodies; independently verified defects are not
+presented as reconstructed reviewer text.
+
+Cancellation of local commands during snapshot, queue, or validation waits
+first produced 14 failures with four controls. Passing an abort signal through
+the existing transition queue now preserves uncommitted grants/state and retains
+already committed actions. Independent review passed 68 relevant tests and 24
+additional in-memory probes on its frozen patch, including queue recovery and
+effect cancellation. The public coordinator dispatch API is unchanged.
+
+Transfer captures intent before consent and carries it through runtime
+preparation/finalization and the accepted result's later state/note continuation.
+The 35 real-coordinator cases initially had 18 failures and 17 controls;
+same-intent revision advances remain supported. Scope access and its effect
+runner now share a canonical per-operation permission snapshot. Real-filesystem
+composition tests initially produced 19 failures with 17 controls, then exposed
+one additional regular-file-ancestor defect. The corrected suite retains
+unagreed child-link rejection, missing-buffer safety, cancellation, and UTF-8
+limits instead of accepting arbitrary lexical result paths.
+
+The state-query investigation independently reproduced diagnostics, source
+paths, operation input, and available grant identifiers reaching both the native
+tool response and a later Growth model request. An accumulated response exceeded
+the catalog's 8,000-character limit while reporting non-sensitive, non-partial
+data. No model-side grant bypass was established: native confirmation, Growth
+direct-action restrictions, and the harness's object-bound grant checks remained
+effective. Data disclosure, not an invented privilege escalation, is the defect.
+
+The replacement is a small runtime-owned, frozen allowlist projection. Raw text,
+paths, operation records, and grants stay internal; safe bounded identifiers and
+status/hint/verification metadata remain available. Unsafe identifiers are
+omitted and flagged partial, not truncated into new identities. Verification
+counts only the actual verification tool for the current work unit and authority.
+Twenty-one authored runtime/native/Growth cases failed before the correction and
+pass after it, including long input histories, unsafe identifiers, unknown
+future fields, grant preservation, and one-shot reuse rejection.
+
+Independent state-projection review passes on its frozen patch: the real
+coordinator/native-tool/Growth-loop reproduction removes seven private canaries
+from model-visible results while preserving them internally. A 10,000-operation
+fixture produces a 683-character state result. The reviewer also checks 144
+identifier cases, three mixed-ID controls, 196 hint-policy combinations, pending
+verification settlement, recursive freezing, and native confirmation/one-shot
+controls. Its 166 scoped tests, no-emit typecheck, and typed lint pass. Output
+size is bounded, but verification aggregation still scans history; operation
+settlement is not a claim that product assertions passed. Native host/model
+interfaces are doubled in these independent probes.
+
+The initial integrated second-round source/test checkpoint passes forced typecheck,
+enforced lint, and **1,083 workspace tests across 87 files** under Node.js
+24.20.0. Stable build/7-entry packaging and the separate POC's 8 unit tests and
+9-entry package pass. All 17 isolated host scenarios pass on each Stable matrix
+version (1.136.2 and 1.137.0), and the POC's Insiders host case passes. Both
+Stable application commits are unchanged from the earlier checkpoint; the
+freshly downloaded POC host's application metadata is `1.139.0-insider` at
+`4dbe1643e6189ba7b1bbe542cc0e56a94d9ff132`, rather than the download log's older
+archive label. Both installed dependency trees are valid and all four
+full/production-only audits
+report zero findings. Independent transfer/scope/projection reviews, repository
+reassessment, and final-head CI remain gates; this checkpoint is not a
+prospective merge approval.
+
+Independent review then found an identical-session recreation case: Disable and
+a new `SessionStarted` can reuse all IDs and agreement values while resetting the
+epoch to zero. Six transfer probes failed despite the initial 35 tests passing.
+The correction derives `startedAtRevision` from committed event metadata and
+adds it to the transfer intent. It preserves harmless observation advances and
+existing epoch/command/event semantics instead of relying on user-supplied IDs,
+wall time, or an adapter-local counter. The new lifecycle cases and core snapshot
+assertion produced nine failures with 43 controls; all 52 pass after correction,
+along with forced typecheck and full lint. Replay checks respect the existing
+journal's deliberate pruning of history before Disable.
+
+Scope review also reproduced four valid-operation regressions caused by an
+unrelated stale dirty document whose ancestor became a regular file. The
+structural not-a-directory outcome now retains `ENOTDIR`: dirty-buffer matching
+skips the impossible candidate, but requested-path normalization propagates the
+error. Four new regressions failed before this correction; eight additional
+controls preserve EACCES and cancellation handling. The 49 composition cases
+and all 164 related scope tests pass without lexical fallback or weakened
+requested-path rejection.
+
+Independent scope re-review passes all 164 supplied cases, the prior 59
+adversarial probes, and 18 additional invalid-target, real EACCES/ELOOP, and
+cancellation-precedence controls. The four original stale-buffer regressions
+fail on the previous patch and pass on the correction. Its pinned no-emit
+typecheck, typed lint, and size checks pass; VS Code is mocked and native Windows
+execution is not part of that verdict.
+
+After the lifecycle and stale-buffer corrections, a fresh integrated run passes
+**1,105 tests across 89 files**, forced workspace typecheck, full enforced lint,
+Stable build and explicit **7-entry VSIX** verification, and **17 isolated host
+scenarios each on VS Code 1.136.2 and 1.137.0**. The isolated POC and dependency
+graphs are unchanged from their recorded second-round checks. The original
+Growth reviewer is reassessing the lifecycle follow-up before the next
+repository review and final-head CI; cancellation, disclosure, and scope
+reassessments pass. No future verdict is implied here.
 
 Current authoritative session state remains in memory; the durable edit-episode
 journal is a separate continuity feature, not proof of session or ownership

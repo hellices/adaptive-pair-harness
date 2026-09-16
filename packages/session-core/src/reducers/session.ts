@@ -14,7 +14,7 @@ export const sessionStarted: EventReducer<"SessionStarted"> = (snapshot, event) 
     throw new Error("SESSION_ALREADY_STARTED");
   }
 
-  const session = createSession(event.sessionId);
+  const session = createSession(event.sessionId, event.revision);
 
   return {
     protocolVersion: 1,
