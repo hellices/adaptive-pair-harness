@@ -1,7 +1,9 @@
 # Adaptive Pair v2: Product and System Design
 
-- **Updated:** September 14, 2026
-- **Status:** Complete initial v2 architecture; awaiting written-spec review.
+- **Updated:** September 16, 2026 (UTC)
+- **Status:** Initial v2 architecture and the next Pair increment await
+  written-spec review. The roadmap and P1 choices below are proposals, not
+  implementation approval.
 - **Implementation:** Stable Growth Mode preview implemented (Tasks 1–12):
   host-agnostic protocol, durable runtime, versioned harness kernel, Growth
   restraint, Pair Presence with join-in-progress capture, observed verification,
@@ -11,6 +13,11 @@
   *started* independent variation: completing a transfer, and any resulting
   Growth demonstration, is not implemented. Pair Mode AI edits, Delivery Mode
   commands, and the native Agent Plugin remain out of scope for this preview.
+- **Current plan:** `implementation-plan.md` proposes P1, the pure Pair policy
+  contract milestone. It deliberately replaces the completed Foundation plan,
+  retained at `ae1f095:docs/implementation-plan.md` in Git history. No Pair
+  runtime, edit adapter, or new extension control is implemented by this
+  documentation checkpoint.
 
 This document is the first complete product and architecture specification for
 Adaptive Pair v2. Every v2 behavior starts here as an initial design decision;
@@ -187,6 +194,95 @@ The stable v2.0 release includes:
 - local session recovery and explicit deletion;
 - explicit, local personal preferences;
 - offline deterministic tests and a local evaluation export.
+
+### Sequential delivery roadmap
+
+**Confirmed workflow choice:** proceed one bounded milestone at a time, without
+a calendar deadline. A session selects a concrete deliverable and its
+verification gate. A draft, a passing unit test, or the completion of an earlier
+milestone does not authorize the next implementation. Review the current plan
+before executing it; keep `implementation-plan.md` as the single current
+implementation sequence.
+
+**Confirmed delivery workflow:** start from `main`, submit each authorized
+increment through a dedicated pull request branch, request review, address
+findings with verified fixes or reasoned thread replies, and resolve addressed
+threads. Report readiness only after checking follow-up feedback and the final
+revision's required checks. Stop for the user's merge decision; do not merge
+or enable auto-merge implicitly. Review of this documentation does not itself
+authorize P1 implementation or the next milestone.
+
+**Proposed sequence:** retain the four program milestones from the Foundation
+plan, but split Pair into smaller reviewable increments. Dates and duration
+estimates are intentionally not assigned.
+
+| Milestone | Deliverable | Current state | Exit gate |
+|---|---|---|---|
+| M1 — Foundation and Growth preview | Shared protocol, durable runtime, Presence, Growth guidance, observed verification, Stable packaging | Implemented at `ae1f095`; preview scope only; baseline revalidation complete | Preserve the existing unit, property, contract, package, and isolated-host baseline |
+| M2 — Pair Mode | Meaningful human/AI work units, explicit handoff, guarded AI edits, complete Stable `@pair` flow | Specified, not implemented; P1 is the current planning target | Both initial owners complete a Pair session with observed checks, interruption/recovery, ownership reporting, and unchanged Growth/coexistence behavior |
+| M3 — Delivery and mode switching | Explicit delegation, classified commands, safe mode changes, separate outcome reporting | Future plan | Complete Delivery sessions; switches revoke old authority and require new agreement; no delegated work is reported as Growth or balanced pairing |
+| M4 — Completion, native adapters, and v2.0 | Finish preview gaps, validate optional native entry points, harden both channels, publish release evidence | Future plans and an existing Session Target proof of concept | Every gate in section 17 is satisfied; unavailable optional native capabilities are reported honestly and never required by Stable |
+
+**Baseline prerequisite R0 — complete:** on 2026-09-16, a full isolated
+Extension Host rerun on VS Code 1.137.0 passed all 17 smoke tests and exited
+with code 0. Unit, type, lint, and VSIX checks also passed on unchanged
+application source. Earlier interrupted attempts are not counted as passes;
+no source fix or confirmed termination cause is claimed. Details are in
+[the evidence checkpoint](research.md#implementation-evidence-for-the-next-pair-increment).
+Repeat the baseline checks when executing P1 and preserve the regression gates
+throughout the roadmap. Correctness and coexistence regressions block release
+in every increment; they are not postponed to M4.
+
+M2 has three ordered increments, not three competing active plans:
+
+1. **P1 — Pair policy contracts:** pure work-unit admission, related human
+   follow-up rules, and handoff preflight assessment in `packages/modes`.
+   Existing protocol types are inputs. No authority changes, persistence
+   migration, host effects, public tool additions, or Pair UI activation occur.
+   This is an open-core contract deliverable, not a usable Pair preview.
+2. **P2 — Runtime ownership and lifecycle:** consume reviewed P1 contracts in
+   the authoritative core. Add versioned handoff, work-unit completion and
+   history, human confirmation, operation quiescence, explicit reconciliation,
+   and replay/migration contracts. Track capability-category ownership without
+   converting it into a learning or typing-share score. Publish a separate
+   implementation plan only after P1 is reviewed and its contracts pass.
+3. **P3 — Stable Pair experience:** prove the host's guarded-edit boundary and
+   then wire native diff/confirmation, the Pair chat route, operational tool
+   declarations, and end-to-end verification. Reject stale document versions,
+   root/scope changes, dirty-entry ownership conflicts, and late results. If
+   enforcing the edit contract needs a prototype, use a bounded technical
+   spike and record its decision here; do not quietly relax the contract.
+
+The full Pair Mode gate still requires P1, P2, and P3. A pure policy returning
+an admissible result is not edit permission, a completed handoff, or evidence
+that a host can apply an edit safely. Stable remains Growth-only until P3 has a
+reviewed plan and its complete routes pass their release tests.
+
+#### Remaining work ownership
+
+These are proposed assignments of known gaps and release requirements, not
+claims that a later milestone is already planned in implementation detail.
+
+| Remaining requirement | Owning increment | Required evidence |
+|---|---|---|
+| Pair work-unit checks and related human follow-up policy | M2/P1 | Deterministic policy examples and negative cases; no state or host mutation |
+| Handoff acceptance, takeover, completion, successors, and replay | M2/P2 | Core and coordinator fault tests, durable human decisions, stale-grant rejection, no automatic replay of unknown mutations |
+| Pair capability-category ownership and reflection | M2/P2, surfaced in P3 | Observed work-unit history and correctable reflection; no score inferred from typing or model prose |
+| Bounded AI edits and complete Pair chat/tool routes | M2/P3 | Real fixture edits and observed checks, conflict/cancellation tests, native diff/confirmation, public-tool parity |
+| Delivery commands and cross-mode authority changes | M3 | Classified and consented effects, epoch invalidation, honest mode-specific outcomes |
+| Growth transfer completion and all five Growth demonstrations | M4 completion | A started task proves nothing; each claimed field requires its own recorded demonstration, with bypass/reveal kept visible |
+| Session metric aggregation, inspectable preferences, reflection, and evaluation export | M4 completion | Only observed values are aggregated; inspection/correction/deletion and a user-invoked, privacy-reviewed export work end to end |
+| Presence availability, low-noise interventions, and usability gaps | M4 completion | Enable/quiet/pause/off and resume work across entry paths; pilot observation distinguishes available controls from validated usability |
+| Native Agent/tool/Testing integration and target compatibility | M4 adapters | A capability matrix and mode-conformance results for each advertised combination; no inference from one host or target to another |
+| Insiders Session Target history, interruption, and shared behavior | M4 adapters | Harden the existing POC; prove Stable independence and shared runtime behavior without requiring proposed APIs on Stable |
+| Stable/Insiders replacement, uninstall, and inactive/coexistence guarantees | M4 release | Clean-profile installation, replacement and deletion tests; zero inactive observation/model/network activity; other extensions and user state unchanged |
+| Product evaluation, independent review, and pilot UX | M4 release | Native-baseline comparison, no open critical correctness/security/privacy/data-loss findings, observed pilot and interruption outcomes |
+| Release checksums, SBOM, dependency licensing, and contributor/security/privacy/governance documentation | M4 release | Reproducible release artifacts and published, reviewable project documentation |
+
+Growth preview completion must not hide its remaining transfer and export
+work. M4 cannot close while those requirements are missing. If an earlier
+increment needs one of these requirements, deliberately move its ownership in
+this table and review the changed scope rather than silently expanding a task.
 
 ### Experimental after v2.0
 
@@ -759,6 +855,52 @@ Use Pair Mode when delivery and active participation both matter.
 
 The session can start with either participant driving. AI ownership requires an
 agreed scope and a host capability that the runtime can enforce.
+
+#### P1 proposal: policy contracts before authority changes
+
+P1 is intentionally smaller than the full Pair Mode contract. It uses the
+existing `WorkUnit`, `LearningAgreement`, and `PairRuntimeSnapshot` types to
+answer three deterministic questions without changing those values:
+
+- Is a proposed Pair work unit sufficiently specified, does it respect the
+  agreement's human-owned capability categories, and is verified bounded-edit
+  support available if AI ownership is requested?
+- Does a proposed successor respect an outstanding related human work unit,
+  and would a completed human unit with observed verification satisfy that
+  requirement?
+- Can a matching handoff proposal proceed to human/baseline review once new
+  operation admission has stopped and outstanding operations are settled?
+
+The proposed decisions needing review are:
+
+1. A learning-relevant AI unit (`high` or `mixed`) creates a related human
+   follow-up requirement. An explicitly related, learning-relevant human unit
+   can be admitted; only its completed state plus observed passing verification
+   satisfies the requirement. Admission, a handoff, or an AI-written claim
+   alone does not. A low-learning mechanical unit cannot discharge or bypass
+   an outstanding requirement. Cross-capability follow-up is allowed when the
+   relationship is explicitly identified; capability equality is not used as
+   a proxy for relatedness.
+2. An AI-owned unit cannot claim a capability reserved to the human by the
+   current agreement. Renegotiation is an explicit future runtime transition,
+   not a conclusion inferred from `delegatableWork` prose.
+3. Handoff preflight reports readiness for baseline and human review, never
+   acceptance or a new epoch. Pending operations block readiness; unknown
+   state-changing completion requires reconciliation. A paused session or
+   stale proposal is not handoff-ready. Human editing and emergency pause
+   remain available independently of this assessment.
+
+Capability flags, relationship identifiers, stopped admission, and observed
+verification are host/core facts, not model-editable policy arguments at a
+public boundary. P1 tests may construct such facts, but those fixtures are not
+host capability evidence. P2 must bind them to durable, revision-correlated
+state before any public route can rely on the policy. P3 must prove the actual
+edit boundary before advertising AI ownership.
+
+P1 does not implement the full category-rotation ledger, action grants,
+handoff state machine, baseline refresh, version migration, edit adapter,
+Presence nudges, or Pair chat. Those remain allocated to the roadmap, and
+Growth's current runtime and manifest behavior must remain unchanged.
 
 ### 8.3 Delivery Mode
 
@@ -1783,4 +1925,5 @@ outbound-network probe and automated release-artifact verification. Product
 verification and the five Growth fields are reported independently, and no
 Growth outcome is claimed from a started transfer. The remaining Pair and
 Delivery behavior stays specified-but-unimplemented and empirically unvalidated
-pending its own plans.
+pending approved implementation plans and runtime/host validation. The P1
+planning checkpoint does not change that implementation status.

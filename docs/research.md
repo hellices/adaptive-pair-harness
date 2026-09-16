@@ -331,6 +331,52 @@ Growth, Pair, and Delivery are all hypotheses. They ship with local metrics and
 mode-specific completion claims rather than holding one mode to a stricter
 standard than another.
 
+### Implementation evidence for the next Pair increment
+
+This is a code-and-test checkpoint, not a new learning-science result or a
+revalidation of the platform references. Its source baseline is `ae1f095`, the
+merged Foundation and Growth preview. Unmerged local work is not treated as
+implemented product behavior.
+
+| Evidence in the baseline | What it establishes | What it does not establish |
+|---|---|---|
+| `packages/protocol/src/types.ts` defines `pair`, work-unit owner, capability category, revision, and authority epoch | Pair has shared vocabulary to build on | A complete Pair lifecycle, handoff protocol, or participation history |
+| `packages/modes/src/index.ts` exports only Growth policy | A host-independent policy package already exists | An implemented Pair policy |
+| `packages/session-core/src/decide.ts` declines `RequestEditOperation`, and `packages/harness/src/toolCatalog.ts` hides handoff | Mutation and handoff declarations are forward-looking | Permission to advertise either operation as usable |
+| `apps/vscode-extension/src/stableEffectPort.ts` implements scoped reads and observed verification, not mutation | The Stable preview has bounded effect seams | A guarded host edit implementation |
+| The preview's `/transfer` records a start and its export adapter has no user command | Limited preview behavior is explicitly documented | Completed transfer, demonstrated Growth, complete metric aggregation, or a usable export flow |
+
+The planning inference is to test pure Pair policies first, then bind them to
+the durable runtime, and only then enable a proven host edit route. This is an
+engineering sequencing proposal, not evidence that a policy-only library is
+already safe as an authority boundary. The assignments and review status are
+maintained in [the delivery roadmap](design.md#sequential-delivery-roadmap).
+
+The proposed relationship rule uses explicit work-unit identity rather than
+typing share, elapsed time, or guessed semantic similarity. Completing an
+observed related unit can satisfy a Pair participation requirement, but does
+not prove learning or populate any Growth demonstration field. These limits
+must survive the later runtime and adapter integration.
+
+Observed validation of this documentation checkpoint used Node.js 24.20.0 and
+the repository's pinned tools. Application source, manifests, lockfile, and
+test harness were unchanged from the baseline:
+
+| Check | Observed result | Interpretation |
+|---|---|---|
+| Exact P1 code examples assembled outside the repository | Three missing-export failures followed by green task runs of 22, 43, and 78 tests; each stage typechecked and the final examples passed ESLint | The plan's examples are executable. The final 78 include 74 proposed policy cases and four existing Growth cases; none were installed into repository source |
+| `npm run check` | Typecheck and lint passed; 40 test files and 596 tests passed | Existing non-host regression checks remain green, not proof that Pair is implemented |
+| `npm run package` and `node scripts/verify-vsix.mjs` | Stable VSIX built and passed artifact verification | The existing Growth preview packages correctly; this does not verify future Pair behavior |
+| `npm run test:host` on installed VS Code 1.137.0 | Complete isolated rerun passed all 17 smoke tests on 2026-09-16 and the runner exited with code 0 | Current baseline host revalidation is complete; no application source or harness change was needed |
+
+Two earlier isolated attempts ended with runner exit code 1 before the full
+suite completed. Their host logs recorded renderer-requested termination and
+host exit code 0, without a reported Mocha assertion failure. The initiating
+cause remains unconfirmed; those attempts are incomplete, not passes. The
+complete unchanged-baseline rerun closes R0 without claiming a source fix.
+Retain the interrupted-run artifacts locally rather than publishing logs or
+machine-specific paths, and rerun the regression gates during implementation.
+
 ## 7. Evaluation hypotheses
 
 The first studies test separate hypotheses:
