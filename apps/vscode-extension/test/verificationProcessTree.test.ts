@@ -54,9 +54,9 @@ describe("SystemProcessTreePort — Windows taskkill (mocked)", () => {
       const port = new SystemProcessTreePort();
       const child = childProcess(43_210);
 
-      expect(port.isAlive(child)).toBe(true);
+      expect(port.isAlive(child)).toBeUndefined();
       expect(port.signal(child, signal)).toBe(true);
-      expect(port.isAlive(child)).toBe(true);
+      expect(port.isAlive(child)).toBeUndefined();
       expect(taskkill).toHaveBeenCalledWith(
         "taskkill",
         ["/PID", "43210", "/T", ...(signal === "SIGKILL" ? ["/F"] : [])],
@@ -72,7 +72,7 @@ describe("SystemProcessTreePort — Windows taskkill (mocked)", () => {
     taskkill.mockReturnValue({ status });
 
     expect(port.signal(child, "SIGKILL")).toBe(false);
-    expect(port.isAlive(child)).toBe(true);
+    expect(port.isAlive(child)).toBeUndefined();
   });
 
   it("bounds each taskkill invocation without treating its timeout as tree-exit evidence", () => {
@@ -86,7 +86,7 @@ describe("SystemProcessTreePort — Windows taskkill (mocked)", () => {
       ["/PID", "43210", "/T", "/F"],
       taskkillOptions,
     );
-    expect(port.isAlive(child)).toBe(true);
+    expect(port.isAlive(child)).toBeUndefined();
   });
 
   it("does not infer descendant termination from a missing parent", () => {
@@ -98,7 +98,7 @@ describe("SystemProcessTreePort — Windows taskkill (mocked)", () => {
 
     expect(port.signal(child, "SIGKILL")).toBe(true);
     child.emit("close", null, "SIGKILL");
-    expect(port.isAlive(child)).toBe(true);
+    expect(port.isAlive(child)).toBeUndefined();
     expect(killProcess).not.toHaveBeenCalled();
   });
 
@@ -110,7 +110,7 @@ describe("SystemProcessTreePort — Windows taskkill (mocked)", () => {
     expect(port.signal(child, "SIGTERM")).toBe(true);
     expect(kill).toHaveBeenCalledWith("SIGTERM");
     expect(taskkill).not.toHaveBeenCalled();
-    expect(port.isAlive(child)).toBe(true);
+    expect(port.isAlive(child)).toBeUndefined();
   });
 });
 
@@ -123,8 +123,8 @@ describe("SystemProcessTreePort — child lifetime", () => {
       const replacementChild = childProcess(43_210);
 
       expect(port.signal(previousChild, signal)).toBe(true);
-      expect(port.isAlive(previousChild)).toBe(true);
-      expect(port.isAlive(replacementChild)).toBe(true);
+      expect(port.isAlive(previousChild)).toBeUndefined();
+      expect(port.isAlive(replacementChild)).toBeUndefined();
     },
   );
 
@@ -136,12 +136,12 @@ describe("SystemProcessTreePort — child lifetime", () => {
     taskkill.mockReturnValue({ status: 1 });
 
     expect(port.signal(replacementChild, "SIGKILL")).toBe(false);
-    expect(port.isAlive(replacementChild)).toBe(true);
+    expect(port.isAlive(replacementChild)).toBeUndefined();
 
     taskkill.mockReturnValue({ status: 0 });
     expect(port.signal(replacementChild, "SIGKILL")).toBe(true);
-    expect(port.isAlive(replacementChild)).toBe(true);
-    expect(port.isAlive(previousChild)).toBe(true);
+    expect(port.isAlive(replacementChild)).toBeUndefined();
+    expect(port.isAlive(previousChild)).toBeUndefined();
   });
 });
 
@@ -171,7 +171,7 @@ describe("SystemProcessTreePort — POSIX process groups", () => {
       });
 
       expect(port.signal(child, "SIGKILL")).toBe(false);
-      expect(port.isAlive(child)).toBe(code !== "ESRCH");
+      expect(port.isAlive(child)).toBe(code === "ESRCH" ? false : undefined);
     },
   );
 });
@@ -185,7 +185,7 @@ describe("NodeProcessRunPort — Windows tree lifetime (mocked taskkill)", () =>
     vi.useRealTimers();
   });
 
-  it("does not confirm a reused PID while the replacement tree survives parent close and escalation", async () => {
+  it("does not confirm or signal a reused PID after its parent closes", async () => {
     const tree = new SystemProcessTreePort();
     expect(tree.signal(childProcess(43_210), "SIGKILL")).toBe(true);
     taskkill.mockReturnValue({ status: 1 });
@@ -203,12 +203,12 @@ describe("NodeProcessRunPort — Windows tree lifetime (mocked taskkill)", () =>
     controller.abort();
     child.emit("close", null, "SIGTERM");
     await Promise.resolve();
-    expect(settled).toBe(false);
+    expect(settled).toBe(true);
 
     await vi.advanceTimersByTimeAsync(5_250);
     const result = await pending;
     expect(result.exitCode).toBeNull();
-    expect(result.signal).toBe("SIGKILL");
+    expect(result.signal).toBe("SIGTERM");
     expect(result.terminationConfirmed).toBe(false);
     expect(taskkill).toHaveBeenNthCalledWith(
       2,
@@ -216,19 +216,14 @@ describe("NodeProcessRunPort — Windows tree lifetime (mocked taskkill)", () =>
       ["/PID", "43210", "/T"],
       taskkillOptions,
     );
-    expect(taskkill).toHaveBeenNthCalledWith(
-      3,
-      "taskkill",
-      ["/PID", "43210", "/T", "/F"],
-      taskkillOptions,
-    );
+    expect(taskkill).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);
   });
 
   it.each([true, false].flatMap(parentClosed =>
     [0, 1, null].map(forceStatus => ({ parentClosed, forceStatus })),
   ))(
-    "keeps successful delivery unconfirmed through escalation (parentClosed=$parentClosed, forceStatus=$forceStatus)",
+    "keeps delivery unconfirmed through close or escalation (parentClosed=$parentClosed, forceStatus=$forceStatus)",
     async ({ parentClosed, forceStatus }) => {
       const child = new FakeChild(43_210);
       const { spawn } = spawningInto(child);
@@ -246,25 +241,31 @@ describe("NodeProcessRunPort — Windows tree lifetime (mocked taskkill)", () =>
         child.emit("close", null, "SIGTERM");
       }
       await Promise.resolve();
-      expect(onSettled).not.toHaveBeenCalled();
       expect(taskkill).toHaveBeenCalledTimes(1);
-
-      await vi.advanceTimersByTimeAsync(5_000);
-      expect(onSettled).not.toHaveBeenCalled();
-      expect(taskkill).toHaveBeenCalledTimes(2);
       expect(taskkill).toHaveBeenNthCalledWith(
         1, "taskkill", ["/PID", "43210", "/T"], taskkillOptions,
       );
-      expect(taskkill).toHaveBeenNthCalledWith(
-        2, "taskkill", ["/PID", "43210", "/T", "/F"], taskkillOptions,
-      );
 
-      await vi.advanceTimersByTimeAsync(249);
-      expect(onSettled).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(1);
+      if (parentClosed) {
+        expect(onSettled).toHaveBeenCalledTimes(1);
+        expect(vi.getTimerCount()).toBe(0);
+        await vi.advanceTimersByTimeAsync(5_250);
+        expect(taskkill).toHaveBeenCalledTimes(1);
+      } else {
+        expect(onSettled).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(onSettled).not.toHaveBeenCalled();
+        expect(taskkill).toHaveBeenCalledTimes(2);
+        expect(taskkill).toHaveBeenNthCalledWith(
+          2, "taskkill", ["/PID", "43210", "/T", "/F"], taskkillOptions,
+        );
+        await vi.advanceTimersByTimeAsync(249);
+        expect(onSettled).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+      }
       const result = await pending;
       expect(result.exitCode).toBeNull();
-      expect(result.signal).toBe("SIGKILL");
+      expect(result.signal).toBe(parentClosed ? "SIGTERM" : "SIGKILL");
       expect(result.terminationConfirmed).toBe(false);
       expect(vi.getTimerCount()).toBe(0);
       expect(killProcess).not.toHaveBeenCalled();
@@ -272,7 +273,7 @@ describe("NodeProcessRunPort — Windows tree lifetime (mocked taskkill)", () =>
       child.emit("close", null, "SIGKILL");
       await vi.advanceTimersByTimeAsync(10_000);
       expect(onSettled).toHaveBeenCalledExactlyOnceWith(result);
-      expect(taskkill).toHaveBeenCalledTimes(2);
+      expect(taskkill).toHaveBeenCalledTimes(parentClosed ? 1 : 2);
       expect(vi.getTimerCount()).toBe(0);
     },
   );

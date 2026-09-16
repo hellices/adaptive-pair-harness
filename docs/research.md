@@ -1004,6 +1004,73 @@ trees validate and their four full/production audits report zero findings. These
 local results and scoped independent passes do not replace original-thread
 responses, repository review, or final-head CI.
 
+The fourth-round corrections are committed as `db98654`. Original-thread replies
+and resolutions, the summary-only response, and CI `35156743700` are recorded in
+PR #8. All four CI jobs and their actual steps pass, including Insiders. A fifth
+repository assessment still requests further corrections.
+
+#### Fifth review: close settlement, validated values, and non-raw publication
+
+Review `5228948895` identifies delayed cancellation settlement after child close
+when Windows tree exit is unobservable. Fifteen failures with 27 controls reproduce
+the delay, including grace/confirmation boundaries and synchronous close inside
+signal delivery. The corrected port represents unknown separately from observed
+alive and proven stopped. Unknown aborted close settles promptly and unconfirmed,
+without leaving a later PID-targeted signal or reinstalled timer. Known-live
+POSIX groups and children that never close retain bounded escalation. The 56-case
+process checkpoint and scoped lint pass. Seventeen legacy expectations deliberately
+change from unknown-as-alive or post-close Windows escalation to the new explicit
+semantics; no-close and known-live controls remain active. These Windows syscalls
+are mocked, not native execution evidence.
+
+Two value-propagation comments are addressed by capturing `previewOnly` once,
+validating it, and carrying the captured value into the event and reduced state.
+The current protocol still requires literal true. Ten characterization cases pass
+before and after the behavior-preserving cleanup, including invalid values and
+read-once accessors; they are not presented as previously failing bug tests.
+
+The final broad integration review of `db98654` independently passes 293 maintained
+tests, full lint/typecheck, and Stable build/seven-entry package verification, but
+finds two residual gaps. Real coordinator scheduling lets `/brief` print a cleared
+agreement after Disable; input/output tokenizer errors can retain their supplied
+private text in in-memory evaluation reasons. No persistence or exfiltration is
+established. Promoted probes reproduce three failures with three controls; expanded
+sync/async input, response-text, and tool-call accounting cases produce seven
+failures with three controls. `/brief` now uses the final synchronous live snapshot,
+and accounting errors become a stable code after lifecycle checks. All ten cases
+and 18 local/publication controls pass with forced typecheck and full lint. The
+independent process/preview and broad-correction reassessments remain required.
+
+The independent process/preview re-review subsequently reports specification and
+quality passes on the exact seven-file overlay. It repeats the 15-failure/27-control
+RED, all 56 process cases, 99 combined cases, ten before/after characterizations,
+forced typecheck, and full lint. All 218 additional adversarial probes pass. The
+review explicitly justifies the 17 changed legacy expectations and verifies all
+out-of-scope tracked files unchanged. In a native Darwin probe, the descendant
+remains alive after parent close, receives escalation at approximately 5.003
+seconds, and settles confirmed at 5.256 seconds with zero residual groups. This
+native evidence covers POSIX, not Windows.
+
+The independent publication/privacy re-review also reports specification and
+quality passes on the exact final source overlay. It replays the original six
+probes unchanged and passes 279 cases across 17 files, forced root typecheck,
+and full lint. Additional real-participant compositions cover initial and
+follow-up accounting, response text, serialized calls, and completed-tool input,
+with no retained provider message or cause. Cancellation/deadline priority,
+dispatch stopping, and deterministic core reason codes remain intact. This is a
+bounded re-review, not a second whole-branch inventory or an independent rerun of
+host/package/audit gates. Accounting probes settle or reject; they do not prove
+a hard completion bound for an indefinitely unresponsive provider.
+
+The integrated fifth-round source checkpoint passes **1,448 tests across 108
+files**, forced root typecheck, full enforced lint, Stable build and seven-entry
+VSIX verification, and 17 isolated host cases on each of 1.136.2 and 1.137.0.
+The separate POC passes eight unit tests across four files, its nine-entry package,
+and one Insiders host case. Both installed dependency trees validate, and all four
+full/production-only audits report zero findings. The existing Vite native-config
+warning remains visible. These results describe this local source checkpoint,
+not an unreviewed future commit or a substitute for final-head CI.
+
 Current authoritative session state remains in memory; the durable edit-episode
 journal is a separate continuity feature, not proof of session or ownership
 recovery.

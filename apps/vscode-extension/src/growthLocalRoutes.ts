@@ -22,7 +22,8 @@ export class GrowthLocalRoutes {
    * dispatches a language-model request.
    */
   public async handleBrief(response: vscode.ChatResponseStream): Promise<void> {
-    const snapshot = await this.deps.coordinator.snapshot();
+    await this.deps.coordinator.snapshot();
+    const snapshot = this.deps.snapshotNow();
     const session = snapshot.session;
     if (session === undefined || session.status === "inactive") {
       response.markdown(NO_SESSION_MESSAGE);

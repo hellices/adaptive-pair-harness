@@ -78,10 +78,11 @@ export const requestHint: DecisionHandler<"RequestHint"> = (snapshot, command, e
 export const authorizeSolutionReveal: DecisionHandler<"AuthorizeSolutionReveal"> = (snapshot, command, event) => {
   return freezeDecision((() => {
     const session = requireBriefingOrActiveSession(snapshot.session);
+    const previewOnly = command.previewOnly;
     validateSolutionReveal(
       session,
       command.workUnitId,
-      command.previewOnly,
+      previewOnly,
     );
     const events = consumeHumanActionEvents(
       snapshot,
@@ -93,7 +94,7 @@ export const authorizeSolutionReveal: DecisionHandler<"AuthorizeSolutionReveal">
 
     events.push(event(events.length, "SolutionRevealAuthorized", {
       workUnitId: command.workUnitId,
-      previewOnly: true,
+      previewOnly,
     }));
 
     return events;

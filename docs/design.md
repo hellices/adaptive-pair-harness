@@ -706,9 +706,15 @@ display IDs are reused. Transfer and product-check caches carry the same
 workspace/session lifetime plus work-unit ID. Current-state reporting and the
 transfer accessor reject mismatches, and a check result must still match the
 live runtime revision and epoch at synchronous publication.
-The `/session` route takes a synchronous live snapshot after its asynchronous
-read, so both session details and cached summaries belong to the state current
-at publication rather than an expired snapshot.
+The `/brief` and `/session` routes take a synchronous live snapshot after their
+asynchronous read, so agreed details and cached summaries belong to the state
+current at publication rather than an expired snapshot.
+
+Provider token-accounting failures for input, response text, and tool-call
+payloads are normalized to a stable model error code before evaluation logging.
+Raw provider error messages are not evaluation reasons. Lifecycle checks around
+accounting preserve cancellation and deadline classification; deterministic core
+reason codes remain available through their existing boundary.
 
 The Growth model adapter advertises and accepts only `growth` mode selection.
 Every invocation must also belong to the immutable advertised tool view and
@@ -775,12 +781,17 @@ guards still return a bounded refusal rather than inventing an identity or
 rolling back a completed operation.
 
 On Windows, successful `taskkill /T` or `/T /F` delivery is not process-tree exit
-evidence. The adapter conservatively treats unknown liveness as live and reports
-cancelled runs as termination-unconfirmed rather than inventing confirmation.
+evidence. The process-tree port distinguishes observed alive, proven stopped,
+and unknown liveness. An aborted child close with unknown tree liveness settles
+immediately as termination-unconfirmed and clears later escalation timers rather
+than targeting a potentially reused parent PID. A known-live POSIX group still
+receives bounded escalation; a child that never closes still reaches the grace
+and confirmation deadlines. Synchronous close during a signal cannot reinstall
+a timer after settlement. Unknown liveness is never treated as proof of exit.
 Each helper request specifies a one-second timeout; the synchronous Node API
 still waits for the helper to exit, so this is not a proven hard wall-clock
-bound. POSIX process-group probes and escalation are unchanged. Windows syscall
-regressions use test doubles; native Windows execution is not established.
+bound. Windows syscall regressions use test doubles; native Windows execution
+is not established.
 
 Executable dependency tests inspect source and test imports, including type
 imports, re-exports, and literal dynamic imports. They compare the Stable

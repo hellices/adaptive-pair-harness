@@ -10,7 +10,7 @@ export interface ProcessTreePort {
     child: ChildProcessWithoutNullStreams,
     signal: TerminationSignal,
   ): boolean;
-  isAlive(child: ChildProcessWithoutNullStreams): boolean;
+  isAlive(child: ChildProcessWithoutNullStreams): boolean | undefined;
 }
 
 const errnoCode = (error: unknown): string | undefined => {
@@ -58,20 +58,20 @@ export class SystemProcessTreePort implements ProcessTreePort {
     }
   }
 
-  public isAlive(child: ChildProcessWithoutNullStreams): boolean {
+  public isAlive(child: ChildProcessWithoutNullStreams): boolean | undefined {
     const pid = child.pid;
     if (pid === undefined) {
-      return true;
+      return undefined;
     }
     if (process.platform === "win32") {
-      return true;
+      return undefined;
     }
 
     try {
       process.kill(-pid, 0);
       return true;
     } catch (error) {
-      return errnoCode(error) !== "ESRCH";
+      return errnoCode(error) === "ESRCH" ? false : undefined;
     }
   }
 }

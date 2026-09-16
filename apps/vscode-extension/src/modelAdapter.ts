@@ -108,7 +108,7 @@ class VscodeGrowthModel implements GrowthModel {
           runtime.authorityEpoch,
         );
 
-        totalInputTokens += await this.countInput(messages, token);
+        totalInputTokens += await this.countInput(messages, token, derived.signal, deadline);
         if (totalInputTokens > this.caps.maxInputTokens) {
           throw new GrowthModelFailure("GROWTH_INPUT_TOKEN_CAP");
         }
@@ -121,7 +121,7 @@ class VscodeGrowthModel implements GrowthModel {
         );
 
         if (text.length > 0) {
-          totalOutputTokens += await this.model.countTokens(text, token);
+          totalOutputTokens += await this.countTokens(text, token, derived.signal, deadline);
           if (totalOutputTokens > this.caps.maxOutputTokens) {
             throw new GrowthModelFailure("GROWTH_OUTPUT_TOKEN_CAP");
           }
@@ -133,9 +133,11 @@ class VscodeGrowthModel implements GrowthModel {
           // through the model's own token boundary before executing anything,
           // and reject an over-budget turn without invoking any tool.
           for (const toolCall of toolCalls) {
-            totalOutputTokens += await this.model.countTokens(
+            totalOutputTokens += await this.countTokens(
               serializeToolCall(toolCall),
               token,
+              derived.signal,
+              deadline,
             );
             if (totalOutputTokens > this.caps.maxOutputTokens) {
               throw new GrowthModelFailure("GROWTH_OUTPUT_TOKEN_CAP");
@@ -186,12 +188,31 @@ class VscodeGrowthModel implements GrowthModel {
   private async countInput(
     messages: readonly vscode.LanguageModelChatMessage[],
     token: vscode.CancellationToken,
+    signal: AbortSignal,
+    deadline: number,
   ): Promise<number> {
     let total = 0;
     for (const message of messages) {
-      total += await this.model.countTokens(messageText(message), token);
+      total += await this.countTokens(messageText(message), token, signal, deadline);
     }
     return total;
+  }
+
+  private async countTokens(
+    text: string,
+    token: vscode.CancellationToken,
+    signal: AbortSignal,
+    deadline: number,
+  ): Promise<number> {
+    try {
+      this.ensureLive(signal, deadline);
+      const count = await this.model.countTokens(text, token);
+      this.ensureLive(signal, deadline);
+      return count;
+    } catch {
+      this.ensureLive(signal, deadline);
+      throw new GrowthModelFailure("GROWTH_MODEL_ERROR");
+    }
   }
 
   private async dispatch(

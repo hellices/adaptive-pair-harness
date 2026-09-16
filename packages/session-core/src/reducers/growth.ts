@@ -75,7 +75,8 @@ export const hintRequested: EventReducer<"HintRequested"> = (snapshot, event) =>
 
 export const solutionRevealAuthorized: EventReducer<"SolutionRevealAuthorized"> = (snapshot, event) => {
   const session = requireWorkSession(snapshot.session);
-  validateSolutionReveal(session, event.workUnitId, event.previewOnly);
+  const previewOnly = event.previewOnly;
+  validateSolutionReveal(session, event.workUnitId, previewOnly);
 
   return {
     protocolVersion: 1,
@@ -87,7 +88,7 @@ export const solutionRevealAuthorized: EventReducer<"SolutionRevealAuthorized"> 
       assistance: withAssistance(session, assistance => ({
         ...assistance,
         solutionReveal: {
-          previewOnly: true,
+          previewOnly,
           recordedAt: event.recordedAt,
         },
       })),

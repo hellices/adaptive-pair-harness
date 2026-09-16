@@ -430,8 +430,42 @@ read/verification results.
   and both Stable hosts' 17 cases pass. Fresh POC/graph checks also pass.
 - [x] Complete independent reviews, including lifecycle/operation cleanup
   compositions and both result consumers, before publishing the correction.
-- [ ] Reply to all four inline findings and the summary-only finding, resolve
+- [x] Reply to all four inline findings and the summary-only finding, resolve
   addressed concerns, and obtain fresh repository review and final-head checks.
+
+The fourth-round correction is committed as `db98654`. All four original threads
+have evidence replies and are resolved; the summary-only finding has a grouped
+response. CI `35156743700` passes all four jobs and their actual steps, including
+Insiders. The fifth repository review still requests three corrections.
+
+### Fifth repository reassessment
+
+Review `5228948895` requests prompt aborted-child-close settlement and propagation
+of the validated `previewOnly` value in both decision and replay paths. The broad
+frozen-head integration review additionally reproduces stale `/brief` publication
+and raw token-accounting errors retained in evaluation reasons. These last two
+patterns predate the final delta but remain current contract gaps in this PR.
+
+- [x] Reproduce unknown-tree close delay with 15 failing cases and 27 controls.
+  Distinguish unknown liveness from observed live/stopped, settle unknown close
+  promptly without fake confirmation, and retain known-live/no-close escalation.
+- [x] Capture `previewOnly` once before validation and carry that value into
+  events/state. Preserve the true-only contract with ten characterization cases.
+- [x] Fence `/brief` at synchronous live publication, retaining the neutral
+  disabled response and the existing `/session` scheduling controls.
+- [x] Normalize input/text/tool-call token-accounting failures without raw
+  evaluation reasons or loss of cancellation/deadline/core classifications.
+- [x] Rerun full integration: 1,448 tests across 108 files, forced typecheck,
+  lint, Stable build/7-entry VSIX verification, and both Stable hosts' 17 cases
+  pass. The separate POC, installed dependency trees, and all four audits pass.
+- [x] Independently re-review process/preview corrections: specification and
+  quality pass, 218 additional probes pass, and a native POSIX descendant probe
+  confirms retained escalation and cleanup. Windows evidence remains mocked.
+- [x] Independently re-review publication/privacy corrections: specification
+  and quality pass with the original six probes unchanged, 279 cases across
+  17 files, forced root typecheck, and full lint.
+- [ ] Reply to the three original threads, resolve addressed concerns, and
+  obtain another repository assessment and final-head checks before merging.
 
 Merge is permitted only after those gates and the final revision's checks pass.
 Their live status belongs to the PR/check history, not a prospective approval

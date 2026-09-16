@@ -41,6 +41,9 @@ export class VerificationProcessLifecycle {
   private readonly onAbort = (): void => {
     this.aborting = true;
     this.processTree.signal(this.child, "SIGTERM");
+    if (this.settled) {
+      return;
+    }
     // If the process ignores SIGTERM, escalate and then report an
     // unconfirmed termination rather than hanging forever.
     this.graceHandle = setTimeout(() => {
@@ -50,14 +53,14 @@ export class VerificationProcessLifecycle {
 
   private escalate(): void {
     this.processTree.signal(this.child, "SIGKILL");
-    if (this.settleIfTreeStopped("SIGKILL")) {
+    if (this.settled || this.settleIfTreeStopped("SIGKILL")) {
       return;
     }
     this.confirmHandle = setTimeout(() => {
       this.settle(
         this.interruptedOutcome(
           "SIGKILL",
-          this.child.pid !== undefined && !this.processTree.isAlive(this.child),
+          this.treeLiveness() === false,
         ),
       );
     }, KILL_CONFIRM_MS);
@@ -66,7 +69,10 @@ export class VerificationProcessLifecycle {
   private onClose(code: number | null, terminationSignal: string | null): void {
     this.childClosed = true;
     if (this.aborting) {
-      this.settleIfTreeStopped(terminationSignal);
+      const liveness = this.treeLiveness();
+      if (liveness !== true) {
+        this.settle(this.interruptedOutcome(terminationSignal, liveness === false));
+      }
       return;
     }
     this.settle({
@@ -89,11 +95,14 @@ export class VerificationProcessLifecycle {
     };
   }
 
+  private treeLiveness(): boolean | undefined {
+    return this.child.pid === undefined && this.childClosed
+      ? false
+      : this.processTree.isAlive(this.child);
+  }
+
   private settleIfTreeStopped(terminationSignal: string | null): boolean {
-    if (
-      (this.child.pid === undefined && this.childClosed) ||
-      (this.child.pid !== undefined && !this.processTree.isAlive(this.child))
-    ) {
+    if (this.treeLiveness() === false) {
       this.settle(this.interruptedOutcome(terminationSignal, true));
       return true;
     }
