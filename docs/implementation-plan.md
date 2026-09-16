@@ -464,8 +464,29 @@ patterns predate the final delta but remain current contract gaps in this PR.
 - [x] Independently re-review publication/privacy corrections: specification
   and quality pass with the original six probes unchanged, 279 cases across
   17 files, forced root typecheck, and full lint.
-- [ ] Reply to the three original threads, resolve addressed concerns, and
-  obtain another repository assessment and final-head checks before merging.
+- [x] Reply to the three original threads, resolve addressed concerns, and
+  obtain another repository assessment and final-head checks.
+
+The fifth-round correction is committed as `e83d872`. CI `35160931543` passes
+all four jobs and every actual step, including all 17 Insiders host cases.
+Review `5229268443` adds no inline findings but records one summary-only cleanup
+and recommends closer final review because of the overall change size. Its job
+completion is not treated as approval.
+
+### Sixth repository reassessment
+
+- [x] Simplify the redundant process-signal error conditional to an explicit
+  `false` return. Preserve the separate tri-state liveness probe and all
+  Windows/no-PID paths. The same 56 process cases pass before and after;
+  this is characterization of a cleanup, not RED bug evidence.
+- [x] Rerun integration: 1,448 tests across 108 files, forced typecheck, lint,
+  Stable build/seven-entry VSIX, 17 cases on each Stable host, separate POC
+  check/package/host, installed dependency trees, and all four audits pass.
+- [x] Obtain bounded independent review: specification/quality pass, the same
+  56 process cases pass before/after, and extension/reference compilation plus
+  changed-file lint pass on the exact one-file overlay.
+- [ ] Respond to the summary-only finding and obtain a fresh repository
+  assessment plus the final committed head's actual check results.
 
 Merge is permitted only after those gates and the final revision's checks pass.
 Their live status belongs to the PR/check history, not a prospective approval

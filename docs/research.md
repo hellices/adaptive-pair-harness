@@ -1071,6 +1071,33 @@ full/production-only audits report zero findings. The existing Vite native-confi
 warning remains visible. These results describe this local source checkpoint,
 not an unreviewed future commit or a substitute for final-head CI.
 
+#### Sixth review: explicit signal-failure handling
+
+The fifth-round source and evidence are committed as `e83d872`. All three original
+threads have evidence replies and are resolved. CI `35160931543` passes all four
+jobs and every actual step, including 17 Insiders host cases. Review `5229268443`
+adds no inline findings, but its body identifies a redundant conditional in the
+process-group signal catch and recommends closer review of the overall change
+size. A completed review job is not approval.
+
+The catch now explicitly returns false for signal failure without inspecting an
+error code that could not change its result. This does not alter the separate
+tri-state liveness observation, Windows taskkill, or no-PID fallback paths. The
+same 56 process cases pass before and after the cleanup, including ESRCH, EPERM,
+EACCES, and EIO signal/probe distinctions. These are characterization passes,
+not previously failing regressions.
+
+Fresh integrated validation on the cleanup source again passes 1,448 tests across
+108 files, forced root typecheck, full lint, Stable build/seven-entry package
+verification, and 17 isolated cases on each Stable host. The separate POC again
+passes eight tests, nine-entry packaging, and one Insiders host case. Both
+installed dependency trees validate and all four full/production audits report
+zero findings. Bounded independent review subsequently passes specification and
+quality on the exact one-file overlay, independently repeats the same 56 cases
+before/after, and passes extension/reference compilation and changed-file lint.
+It does not claim a new native or whole-branch run. The summary-only response and
+new committed head's repository review/checks remain separate merge gates.
+
 Current authoritative session state remains in memory; the durable edit-episode
 journal is a separate continuity feature, not proof of session or ownership
 recovery.

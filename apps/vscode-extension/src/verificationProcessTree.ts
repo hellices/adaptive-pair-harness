@@ -53,8 +53,8 @@ export class SystemProcessTreePort implements ProcessTreePort {
     try {
       process.kill(-pid, signal);
       return true;
-    } catch (error) {
-      return errnoCode(error) === "ESRCH" ? false : false;
+    } catch {
+      return false;
     }
   }
 
