@@ -1256,7 +1256,10 @@ documentation PR does not itself authorize implementing the proposed policies.
 - [x] Complete plan-example validation and internal consistency review.
 - [x] Complete baseline host revalidation (17 smoke tests; runner exit code 0).
 - [x] Obtain user review of the written P1 design and implementation plan.
-- [ ] Implement and verify Tasks 1–4 after approval.
+- [x] Implement and verify Tasks 1–3 after approval.
+- [x] Complete Task 4's contract matrix, local regression checks, and canonical
+  documentation update.
+- [ ] Complete Task 4's PR review loop and final-revision checks.
 
 The repository owner authorized P1 on September 16, 2026 by requesting the
 merge of reviewed PR #4 and continuation with the next increment. This is
