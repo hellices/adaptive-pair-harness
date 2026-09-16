@@ -16,12 +16,14 @@ host edits belong to subsequent increments, not hidden wiring in this plan.
 
 **Tech Stack:** Node.js 24, TypeScript 6.0.3, npm workspaces, Vitest 5.0.0,
 Fast-Check 4.9.0, ESLint 10.10.0, and the existing version-1 Pair protocol.
-No dependency, protocol-version, package-version, or VS Code API change.
+Dependency and version changes follow the
+[maintenance policy](design.md#dependency-and-version-maintenance), not a
+blanket freeze.
 
 ## Global Constraints
 
 - Status: **P1 execution authorized; pure policies implemented and locally
-  verified; review checkpoint complete**. Final-revision review and check
+  verified; prior review checkpoint complete**. Final-revision review and check
   status are tracked in [PR #6](https://github.com/hellices/adaptive-pair-harness/pull/6).
 - This plan is M2/P1 in the
   [sequential delivery roadmap](design.md#sequential-delivery-roadmap).
@@ -36,7 +38,8 @@ No dependency, protocol-version, package-version, or VS Code API change.
   fixes, thread replies, and resolution of addressed feedback. Notify the user
   when ready to merge; do not merge or enable auto-merge implicitly.
 - No package under `packages/` may import `vscode` or a model-vendor SDK.
-- Add no runtime dependency and no production import of a test fixture.
+- Justify and validate any new runtime dependency against the package
+  boundaries. Never import a test fixture into production code.
 - Pair policies perform no I/O, timers, listeners, model calls, or network work.
 - Do not modify another extension, target, participant, tool, setting,
   keybinding, default, or native VS Code UI behavior.
@@ -51,17 +54,57 @@ No dependency, protocol-version, package-version, or VS Code API change.
   P1 does not populate any Growth or evaluation outcome.
 - Use red-green-refactor for each policy task. Keep every task reviewable and
   stop after its checks if a contract or scope question remains unresolved.
-- Preserve the existing preview manifest, storage formats, protocol schema,
-  core behavior, runtime behavior, and public tool contributions.
+- Preserve existing product behavior and compatibility. Necessary manifest,
+  dependency, version, and API updates are allowed; review any protocol or
+  storage migration explicitly and rerun the affected regression gates.
 - Do not copy this plan to another active-plan directory. The completed
   Foundation plan is retained in Git at
   `ae1f095:docs/implementation-plan.md`; historical v1 material stays untouched.
 
+## Authorized Maintenance Amendment
+
+On September 16, 2026, the owner authorized removal of the dependency and
+version freeze and necessary updates. This maintenance is independent of the
+P1 implementation review and does not authorize another product milestone.
+
+- [x] Replace the blanket restrictions in `AGENTS.md`, `docs/design.md`, and
+  this plan with the compatibility- and evidence-based maintenance policy.
+- [x] Inspect all 16 tracked manifests: 14 root/workspace/POC manifests and two
+  fixture/scripts manifests without external dependencies. Cross-check the 16
+  distinct external direct dependencies against metadata and upstream releases.
+  Include both active lockfiles and document the TypeScript, Node type, and
+  Mocha patch compatibility or availability retentions.
+- [x] Update `apps/vscode-extension/package.json` to Mocha 12.0.0 and VSCE
+  4.0.0 and root `package.json` to typescript-eslint 8.70.0, then regenerate
+  `package-lock.json` without forced audit fixes or transitive dependency
+  overrides. Update the isolated POC to VSCE 4.0.0 and regenerate its own lockfile.
+- [x] Update `.github/workflows/ci.yml` to the verified stable checkout 7.0.1,
+  setup-node 7.0.0, and upload-artifact 7.0.1 releases, pinned to their commit
+  SHAs. Separately install and audit the root workspace and isolated POC graphs
+  with `npm audit --audit-level=low`; use the POC directory prefix for its graph.
+  Contract-test each audit immediately after its own installation and require
+  the POC's compile/unit checks and packaging in `scripts/test/ciWorkflow.test.ts`.
+- [x] Verify a clean `npm ci`, full and production-only audits, `npm run check`,
+  `npm run package`, `node scripts/verify-vsix.mjs`, and `npm run test:host`.
+  Also verify the POC's clean install, full audit, compile/unit checks, isolated
+  Insiders host, and packaging. Record the versions and measured results in
+  `docs/research.md` and keep the spike's evidence current without closing its
+  remaining product questions.
+
+These boxes track implementation and local validation, not final-revision PR
+approval. Complete the review loop and verify the final revision's CI and
+review-thread status separately before reporting merge readiness. Do not merge
+implicitly.
+
 ## Baseline and Scope Boundary
 
 The runtime baseline is `ae1f095`, the merged Foundation and Growth preview.
-P1 execution starts from `f28de5f`, the merge of reviewed documentation PR #4;
+P1 execution started from `f28de5f`, the merge of reviewed documentation PR #4;
 application source is unchanged between those baselines.
+After the owner-authorized merge of maintenance PR #7, the P1 branch integrates
+`main` at `79d75ab` without rewriting its published implementation history.
+The maintenance policy and both dependency-audit gates remain in force;
+post-maintenance validation is distinct from the initial P1 checkpoint.
 The existing `WorkUnit` already contains mode, owner, capability, scope,
 verification plan, baseline, and status. `PairRuntimeSnapshot` already contains
 revision, authority epoch, and operations. At the execution baseline, the modes
@@ -73,7 +116,8 @@ P1 deliberately does **not** add:
 
 - Pair commands/events or new persisted snapshot fields;
 - an ownership/history ledger, completion command, or accepted handoff;
-- migration of the current protocol or journal;
+- protocol or journal migrations unrelated to necessary compatibility
+  maintenance;
 - admission barriers, cancellation, baseline refresh, or reconciliation effects;
 - guarded edits, a Pair participant route, a mode selector, or new public tools;
 - Delivery, cross-mode switching, Growth transfer completion, or evaluation UI.
@@ -1205,6 +1249,7 @@ pure contract milestone and leave P2/P3 gates open.
 
 ```sh
 npm run check
+npm audit --audit-level=low
 npm exec -- vitest run packages/modes --reporter=json
 npm run package
 node scripts/verify-vsix.mjs
@@ -1216,7 +1261,8 @@ Expected: successful typecheck, lint, all tests, a verified Stable VSIX, and
 successful isolated Extension Host checks on the observed host version.
 Record actual versions and results. If a host check cannot run, report it as
 unverified, not passed. Do not replace an isolated test profile with the user's
-profile. Do not upgrade dependencies or fix unrelated defects as part of P1.
+profile. Apply necessary dependency and version updates under the maintenance
+policy and repeat the affected checks; keep unrelated product work separate.
 
 Use the JSON reporter's `testResults[].assertionResults` to report per-file
 case counts. Parameterized `it.each` rows are separate cases; multiple
@@ -1266,6 +1312,8 @@ documentation PR does not itself authorize implementing the proposed policies.
 - [x] Complete Task 4's contract matrix, local regression checks, and canonical
   documentation update.
 - [x] Complete Task 4's PR review and CI checkpoint at `2364b41`.
+- [x] Integrate maintained `main` at `79d75ab` and revalidate P1, both dependency
+  graphs, isolated hosts, and packaging without expanding the product scope.
 - Final-head gate: verify every subsequent revision in PR #6 before reporting
   readiness; do not infer a merge decision from this checklist.
 
@@ -1278,8 +1326,9 @@ before its policy exports existed, then staged runs passed 23, 44, and 79
 tests with forced typecheck and lint. The final modes suite comprises 19
 admission, 21 follow-up, 35 handoff, and four unchanged Growth cases; fixture
 type imports were grouped without changing the contracts or case counts.
-Full validation passed 43 files and 671 tests, Stable VSIX verification, and
-all 17 isolated host smoke tests on VS Code 1.137.0 with runner exit code 0.
+Initial implementation validation passed 43 files and 671 tests, Stable VSIX
+verification, and all 17 isolated host smoke tests on VS Code 1.137.0 with
+runner exit code 0.
 The PR #6 review checkpoint at `2364b41` had no unresolved threads or pending
 review requests, and all four CI jobs passed. The initial checklist-clarity
 finding was fixed, replied to with verification evidence, and resolved in its
@@ -1288,6 +1337,16 @@ non-blocking test-title grammar notes; those titles are corrected in the tests
 and executable examples without changing assertions or case counts.
 Independent AI review of the implementation at `0f2c85f` found no blocking
 or non-blocking defects; it does not constitute human approval.
+
+After maintenance PR #7 was merged on September 16, 2026, the P1 branch
+integrated `main` at `79d75ab` with the policy source and tests unchanged.
+Fresh validation passed typecheck, lint, 43 files and 673 tests, both full
+dependency audits with zero findings, and Stable VSIX verification. The main
+isolated host passed 17 cases; the separate POC passed six unit cases, one
+isolated host case, and packaging. The POC host's first download failed before
+tests began; the unchanged command passed on retry. See the
+[post-maintenance evidence](research.md#p1-post-maintenance-integration)
+for the distinct baseline, host, and audit results.
 
 This completion-record update itself still requires fresh review and checks
 on its own revision before merge readiness is reported. PR #6 is the live

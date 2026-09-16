@@ -359,6 +359,38 @@ Dependency rules:
 This layout permits an alternate host later without creating a second pairing
 engine. No alternate UI is implemented in the first release.
 
+### Dependency and version maintenance
+
+The owner removed the blanket dependency and version freeze on September 16,
+2026. Dependencies, development tools, CI actions, package versions, protocol
+versions, and VS Code API versions may be updated when needed for security,
+compatibility, or authorized work. Check the actual current stable releases
+and their compatibility requirements rather than relying on remembered
+version numbers or upgrading indiscriminately.
+
+Inventory every active dependency graph, including isolated prototypes outside
+workspace globs, and cross-check direct dependency metadata and upstream release
+records. An empty `npm outdated` report does not prove that every upstream
+release is current. Record compatibility or availability reasons for retaining
+an older release and revisit that choice when those conditions change.
+
+Keep dependency declarations and their lockfiles synchronized. Review breaking
+changes, make any required protocol or storage migration explicit, and rerun
+the affected type, lint, unit, contract, isolated-host, and package checks.
+Audit development dependencies as well as production dependencies; an existing
+finding still needs triage and disposition. CI separately installs and runs
+`npm audit --audit-level=low` for the root workspace graph and the active
+`poc/session-target` graph, using `npm --prefix poc/session-target` for the latter.
+Both audits include development dependencies and block the build-and-package
+job on failure. The isolated POC also runs its compile/unit checks and packaging;
+it remains separate from the Stable VSIX and its spike remains in progress.
+
+A toolchain refresh does not itself require a product or protocol version bump
+or a higher host API floor. Preserve the package boundaries, permission
+contracts, additive integration, and inactive-zero behavior. This maintenance
+authorization does not start another product milestone or permit unrelated
+feature changes.
+
 ## 5. Architecture
 
 ```text

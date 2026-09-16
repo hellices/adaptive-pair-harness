@@ -262,6 +262,10 @@ reported separately: green tests alone do not prove learning, and learning
 controls do not excuse a broken product result.
 
 Read the complete initial [product and system design](docs/design.md).
+Dependency and platform versions are not frozen. Necessary security,
+compatibility, and version updates follow the
+[maintenance policy](docs/design.md#dependency-and-version-maintenance) and
+must pass the affected regression checks.
 The [sequential roadmap](docs/design.md#sequential-delivery-roadmap) covers the
 remaining work through v2.0. The current
 [Pair policy contract implementation plan](docs/implementation-plan.md) is a
@@ -300,11 +304,12 @@ authorized by P1 completion. Growth transfer completion and evaluation export
 remain release work, not completed preview features. Work proceeds one
 milestone at a time; there is no committed calendar release date.
 
-P1 validation passes typecheck, lint, 671 tests across 43 files, Stable VSIX
-verification, and all 17 isolated Extension Host smoke tests on VS Code
-1.137.0. The modes suite contains 75 new Pair cases and four unchanged Growth
-cases. See the
-[validation evidence](docs/research.md#implementation-evidence-for-the-next-pair-increment).
+P1 validation on the maintained `main` baseline passes typecheck, lint, 673
+tests across 43 files, Stable VSIX verification, and all 17 isolated Extension
+Host smoke tests on VS Code 1.137.0. The modes suite contains 75 new Pair cases
+and four unchanged Growth cases. Both active dependency graphs pass full audits;
+the isolated POC's six unit cases and one host case are counted separately.
+See the [validation evidence](docs/research.md#p1-post-maintenance-integration).
 These results verify the pure policies and preserve the existing Growth
 preview; they do not establish Pair runtime integration or host edit safety.
 

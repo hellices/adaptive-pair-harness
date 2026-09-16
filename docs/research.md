@@ -407,11 +407,13 @@ persistence, host edits, or new extension controls.
 The implementation adds three pure modules and three policy test suites in
 `packages/modes`, typed test fixtures, and public exports alongside unchanged
 Growth policy. The reviewed contracts are preserved; the fixture's type
-imports are grouped at the top of the file. No protocol, runtime, session-core,
-harness, extension, manifest, dependency, version, or lockfile change is part
-of this increment.
+imports are grouped at the top of the file. The initial P1 implementation
+changed no protocol, runtime, session-core, harness, extension, manifest,
+dependency, version, or lockfile. The separately reviewed maintenance below
+was subsequently merged into `main` in PR #7 and integrated into P1.
 
-Fresh checks used Node.js 24.20.0 and the repository's pinned configurations:
+The initial implementation checks used Node.js 24.20.0 and the repository's
+then-pinned configurations:
 
 | Check | Observed result | Interpretation |
 |---|---|---|
@@ -419,7 +421,7 @@ Fresh checks used Node.js 24.20.0 and the repository's pinned configurations:
 | Task 1 admission red/green | 19 tests failed because the export was absent; admission plus Growth then passed 23 tests, forced typecheck, and lint | Admission assesses declared scope, agreement reservations, and trusted edit capability without authorizing edits |
 | Task 2 follow-up red/green | 21 tests failed because the exports were absent; cumulative modes tests then passed 44 tests, forced typecheck, and lint | Explicit relatedness, meaningful observed completion, and no mechanical bypass are pure assessments |
 | Task 3 preflight red/green | 35 tests failed because the export was absent; cumulative modes tests then passed 79 tests, forced typecheck, and lint | Identity, revision, operational Presence, stopped admission, and settled operations gate review readiness, not authority transfer |
-| Final `npm run check` | Typecheck and lint passed; 43 test files and 671 tests passed | 75 new Pair policy cases preserve the 596-test baseline |
+| Initial implementation `npm run check` | Typecheck and lint passed; 43 test files and 671 tests passed | 75 new Pair policy cases preserve the 596-test baseline |
 | Modes JSON report | 19 admission, 21 follow-up, 35 handoff, and four Growth cases; 79 passed, zero failed | Counts are measured from `assertionResults`; ordinary assertion loops do not add cases |
 | `npm run package` and `node scripts/verify-vsix.mjs` | Stable VSIX built and verified with seven archive entries | Packaging remains the Growth-only preview; there is no Pair edit route |
 | `npm run test:host` on VS Code 1.137.0 | All 17 isolated smoke tests passed; runner exited with code 0 | Additive activation, zero inactive activity, Growth behavior, and coexistence remain verified |
@@ -439,11 +441,12 @@ titles and matching plan examples were corrected without changing assertions
 or case counts. Later revisions still require their own fresh review and CI
 before merge readiness; the live PR records that evidence.
 
-The baseline dependency installation reports three existing audit advisories
-(one low, one moderate, one high) and existing deprecation warnings. P1 does
-not change those dependencies or claim to resolve the advisories. The current
-Vite configuration and isolated host also emit their existing warnings; these
-are not counted as new passing assertions or silently reported as resolved.
+The original `f28de5f` dependency installation reported three audit advisories
+(one low, one moderate, one high) and deprecation warnings. The P1 policy code
+did not resolve them; the separately reviewed PR #7 maintenance below did.
+Those original findings are historical evidence, not the maintained graph's
+current audit result. Existing Vite and isolated-host diagnostics are not
+claimed to be fixed by that maintenance.
 
 The API's trusted-input conditions remain essential: the future core must
 derive accepted-work provenance, preserve outstanding follow-up requirements,
@@ -452,6 +455,161 @@ barriers and authority transitions. P1 neither proves those runtime bindings
 nor validates filesystem safety, complete Pair collaboration, or learning
 efficacy. The PR review loop and final-revision CI are tracked separately from
 these local results; P2 requires its own scope review and approved plan.
+
+#### P1 post-maintenance integration
+
+On September 16, 2026, the owner requested merging maintenance PR #7 and
+continuing. PR #7 was merged into `main` at `79d75ab`. The existing P1 branch
+integrates that baseline through a normal merge, preserving its published
+history, the maintenance policy, and both dependency-audit gates. The adjacent
+P1 and maintenance evidence sections were both retained when resolving the
+documentation conflict. The three policy modules, public exports, fixtures,
+and tests are unchanged from the previously reviewed P1 head `7732bb1`.
+
+Fresh validation used process-local Node.js 24.20.0 and npm 10.9.4 without
+changing the machine's default runtime or registry configuration:
+
+| Check | Observed result | Interpretation |
+|---|---|---|
+| Maintained `main` baseline: `npm run check` | Typecheck, lint, 40 files and 598 tests passed before integration | Includes the two audit-contract cases added by PR #7 |
+| Integrated P1: clean install, forced typecheck, and `npm run check` | Typecheck, lint, 43 files and 673 tests passed | Preserves 598 baseline cases plus the same 75 P1 cases; no new product behavior |
+| Modes JSON report | 19 admission, 21 follow-up, 35 handoff, and four Growth cases passed | The policy suite still contains 79 cases, counted from `assertionResults` |
+| Separate root and POC clean installs, installed-tree checks, full audits, and production-only audits | Both installed trees are valid; all four audits report zero findings | Includes development dependencies in the full audits; manifests and both lockfiles match maintained `main` |
+| Stable packaging and archive verification | Passed with seven entries | The shipped extension remains the Growth-only preview |
+| Main isolated host on VS Code 1.137.0 | 17 cases passed; runner exit code 0 | Revalidates the existing inactive-zero, Growth, and coexistence behavior |
+| Separate POC compilation, unit tests, and packaging | Four files and six unit cases passed; eight-entry VSIX built | These cases are not added to the workspace's 673 cases |
+| Separate POC isolated Insiders host | One case passed; runner exit code 0 | Native target/provider smoke only, not completion of the open spike |
+
+The first POC host attempt stopped before test execution because DNS lookup
+for `update.code.visualstudio.com` returned `ENOTFOUND`. A subsequent DNS probe
+succeeded and the unchanged `npm --prefix poc/session-target run test:host`
+command passed on retry. The failed attempt is not counted as a pass and no
+source or test workaround was applied. The downloader reported identifier
+`07b4ff1883f94da91f6d698744fc7c3638b59720`; the tested application's bundled
+metadata reported version `1.139.0-insider` and commit
+`c74ba73b780a4a33173c006e52560d61432f53d6`. These are distinct observations,
+not interchangeable build identifiers or a claim to have tested all Insiders
+versions.
+
+Local validation does not approve the integrated revision. PR #6 remains the
+live record for fresh final-head CI, requested reviews, original-thread
+responses, and resolutions. This integration does not merge PR #6, authorize
+P2/P3, change the Stable host floor or protocol, or expose Pair runtime or
+editing controls.
+
+### Dependency and tooling maintenance evidence (September 16, 2026)
+
+The owner authorized removing the blanket dependency and version freeze and
+applying necessary updates. This maintenance starts from the reviewed `main`
+baseline `f28de5f`, independently of the P1 implementation PR. It does not
+implement Pair runtime behavior or begin a new product milestone.
+
+Release selection cross-checks direct metadata for all 16 distinct external
+dependencies and upstream stable release records. All 16 tracked manifests
+were inspected: 14 root/workspace/POC manifests and two fixture/scripts
+manifests without external dependencies. Both active lockfiles are included:
+the root workspace graph and the isolated `poc/session-target` graph. The
+initial `npm outdated --json --workspaces --include-workspace-root` query
+reported two packages and returned `{}` after the first update. Review exposed
+its incomplete coverage: direct metadata still reported a newer linter, and
+GitHub reported a Mocha patch absent from the configured registry. An empty
+outdated report is not treated as proof of a complete upstream inventory. A
+follow-up review also identified the active POC outside the workspace globs;
+its eight direct dependencies are now included in the inventory. Its additional
+`@vscode/dts` dependency remains at 0.4.1, matching both registry metadata and
+the upstream package manifest.
+
+| Component | Previous | Selected stable release |
+| --- | --- | --- |
+| Mocha | 11.8.0 | [12.0.0](https://github.com/mochajs/mocha/releases/tag/v12.0.0) |
+| VSCE | 3.9.2 | [4.0.0](https://github.com/microsoft/vscode-vsce/releases/tag/v4.0.0) |
+| typescript-eslint | 8.69.0 | [8.70.0](https://github.com/typescript-eslint/typescript-eslint/releases/tag/v8.70.0) |
+| Checkout action | v4 | [7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1) |
+| Setup Node action | v4 | [7.0.0](https://github.com/actions/setup-node/releases/tag/v7.0.0) |
+| Upload Artifact action | v4 | [7.0.1](https://github.com/actions/upload-artifact/releases/tag/v7.0.1) |
+
+The following retentions are explicit compatibility or availability decisions,
+not a reinstatement of the version freeze:
+
+- TypeScript 6.0.3 is the latest published 6.x version available in the registry.
+  TypeScript 7.0.2 is available, but typescript-eslint 8.70.0 declares the peer
+  range `>=4.8.4 <6.1.0`; upgrading the compiler would leave the supported lint
+  toolchain range.
+- `@types/node` 24.13.3 is the latest available Node 24 type release. The registry
+  advertises 26.5.0, but the types must describe the supported Node 24 host floor,
+  not silently allow APIs that require Node 26.
+- Upstream [Mocha 12.0.1](https://github.com/mochajs/mocha/releases/tag/v12.0.1)
+  was published on September 11, 2026, but an exact registry lookup returns
+  `E404`. Retain the obtainable 12.0.0 release with the patched
+  `serialize-javascript` 7.1.1 resolution, rather than substituting an untested
+  Git snapshot. Recheck the patch when registry availability changes.
+
+The isolated POC keeps the same validated TypeScript and Node type line as the
+repository rather than introducing an independent major-version toolchain.
+This does not change its existing Node.js 22.13 minimum or vendored proposed-API
+declarations.
+
+The CI actions are pinned to their verified release commit SHAs and run on
+Node.js 24. Mocha and VSCE support the repository's Node.js 24 baseline. VSCE 4
+raises its minimum to Node.js 22 and replaces several legacy dependencies;
+the existing packaging CLI path remains compatible. No product or protocol
+version bump, runtime source change, or higher VS Code API floor was needed.
+
+Before the update, the root `npm audit --audit-level=low --json` exited 1 and
+reported three vulnerable package entries: one low, one moderate, and one high. The
+Mocha dependency graph now resolves `diff` 9.0.0 instead of 7.0.0 and
+`serialize-javascript` 7.1.1 instead of 6.0.2. After a clean `npm ci`, the same
+full workspace audit and the production-only audit both exited 0 with zero
+findings.
+There are no forced audit fixes, dependency overrides, or severity exclusions.
+CI now runs separate clean installs and full audits for both active dependency
+graphs as required steps in its build-and-package job. The POC uses
+`npm --prefix poc/session-target`, so its lockfile cannot silently fall outside
+the root workspace audit. POC compilation, unit tests, and packaging also run
+in that job. Neither audit omits development dependencies.
+These are point-in-time audit results, not a guarantee against undiscovered
+vulnerabilities.
+
+The CI workflow contract gained two tests that require each complete audit
+immediately after its own installation. The initial named-step-only guard
+incorrectly passed with an intervening unnamed `run` step; the new POC case
+first failed because its installation and audit were absent. Both guards now
+recognize unnamed `run` and `uses` entries, including bare-dash forms. Fifteen
+temporary mutations cover a missing, late, or production-only audit and the
+four unnamed step forms for each graph, plus a POC audit missing its directory
+prefix. Each mutation produced one failed and five passed CI contract tests.
+The proposed workflow was restored byte-for-byte after every mutation; the
+normal workflow passed all six cases. These mutation runs do not add extra
+cases to the full-suite count.
+
+Local validation used Node.js 24.20.0. The baseline and initial dependency
+refresh passed 40 files and 596 tests. After the review-driven tests and linter
+update, typecheck, lint, all 40 test files, and 598 tests passed. Stable VSIX
+packaging and archive verification passed with seven entries. The isolated
+VS Code 1.137.0 Extension Host passed all 17 smoke tests with runner exit code
+0, including additive activation and inactive-zero assertions. All five
+external production dependencies retain their previous versions and integrity
+values, including the nested `ajv` and `json-schema-traverse` packages under
+`packages/protocol/node_modules`; the audit's total dependency count fell from
+601 to 401. The clean installation emitted no deprecation warnings. Existing
+Vite and isolated-host diagnostics are not claimed to be fixed by this
+maintenance.
+
+The isolated POC already had zero audit findings before its VSCE 3.9.2 to 4.0.0
+update. After regenerating its lockfile and a clean install, both its full and
+production-only audits still reported zero findings; its audit dependency
+count fell from 406 to 257. Under Node.js 24.20.0, POC compilation, four unit-test
+files with six cases, the isolated Insiders host's one case, and an eight-entry
+VSIX all passed. The Insiders build was `07b4ff1883f94da91f6d698744fc7c3638b59720`.
+POC checks and packaging also passed under the existing Node.js 22.22.1 runner.
+These six unit cases and one host case are separate from the workspace's test
+counts. No POC runtime source or vendored API declaration changed, and its
+unimplemented history, Pair tools, cancellation, and broader coexistence work
+remain open rather than being claimed as completed by dependency maintenance.
+
+Local verification is separate from PR approval. The published PR records the
+final revision's CI, review feedback, fixes, and thread resolutions; these
+local results alone do not establish merge readiness.
 
 ## 7. Evaluation hypotheses
 

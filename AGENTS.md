@@ -21,6 +21,13 @@
 - Notify the user when the pull request is ready to merge. Do not merge or enable auto-merge without explicit user direction.
 - A documentation pull request does not itself authorize implementation of a draft design or the next milestone.
 
+## Dependency and version maintenance
+
+- Dependencies, tooling, package versions, protocol versions, and VS Code API versions are not frozen. Update them when needed for security, compatibility, or authorized work after checking current upstream stable releases and compatibility requirements.
+- Inventory every active dependency graph, including isolated prototypes outside workspace globs, and audit each lockfile. Cross-check direct dependency metadata and upstream release records. An empty outdated report is not a complete inventory; document compatibility or availability reasons for retaining an older release.
+- Keep manifests and lockfiles consistent, document material compatibility changes and migrations, and rerun the affected tests, host checks, and packaging checks. Do not dismiss an audit finding merely because it predates the current change.
+- Version maintenance does not authorize unrelated product features or weaken package boundaries, permission contracts, additive integration, or inactive-zero behavior.
+
 ## Integration
 
 - Adaptive Pair is additive and opt-in. Do not modify another extension, Session Target, participant, tool, session, setting, keybinding, default selection, or native VS Code UI behavior.
