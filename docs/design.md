@@ -354,6 +354,29 @@ Dependency rules:
 This layout permits an alternate host later without creating a second pairing
 engine. No alternate UI is implemented in the first release.
 
+### Dependency and version maintenance
+
+The owner removed the blanket dependency and version freeze on September 16,
+2026. Dependencies, development tools, CI actions, package versions, protocol
+versions, and VS Code API versions may be updated when needed for security,
+compatibility, or authorized work. Check the actual current stable releases
+and their compatibility requirements rather than relying on remembered
+version numbers or upgrading indiscriminately.
+
+Keep dependency declarations and the lockfile synchronized. Review breaking
+changes, make any required protocol or storage migration explicit, and rerun
+the affected type, lint, unit, contract, isolated-host, and package checks.
+Audit development dependencies as well as production dependencies; an existing
+finding still needs triage and disposition. CI runs `npm audit --audit-level=low`
+against the complete dependency graph so a successful production-only audit
+cannot hide vulnerable test or build tools.
+
+A toolchain refresh does not itself require a product or protocol version bump
+or a higher host API floor. Preserve the package boundaries, permission
+contracts, additive integration, and inactive-zero behavior. This maintenance
+authorization does not start another product milestone or permit unrelated
+feature changes.
+
 ## 5. Architecture
 
 ```text

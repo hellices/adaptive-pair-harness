@@ -262,6 +262,10 @@ reported separately: green tests alone do not prove learning, and learning
 controls do not excuse a broken product result.
 
 Read the complete initial [product and system design](docs/design.md).
+Dependency and platform versions are not frozen. Necessary security,
+compatibility, and version updates follow the
+[maintenance policy](docs/design.md#dependency-and-version-maintenance) and
+must pass the affected regression checks.
 The [sequential roadmap](docs/design.md#sequential-delivery-roadmap) covers the
 remaining work through v2.0. The current
 [Pair policy contract implementation plan](docs/implementation-plan.md) is a

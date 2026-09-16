@@ -392,6 +392,56 @@ complete unchanged-baseline rerun closes R0 without claiming a source fix.
 Retain the interrupted-run artifacts locally rather than publishing logs or
 machine-specific paths, and rerun the regression gates during implementation.
 
+### Dependency and tooling maintenance evidence (September 16, 2026)
+
+The owner authorized removing the blanket dependency and version freeze and
+applying necessary updates. This maintenance starts from the reviewed `main`
+baseline `f28de5f`, independently of the P1 implementation PR. It does not
+implement Pair runtime behavior or begin a new product milestone.
+
+The configured npm registry's current stable tags and the upstream stable
+release records were checked before updating. The maintained npm workspaces
+had two outdated direct dependencies; after the update,
+`npm outdated --json --workspaces --include-workspace-root` returned `{}`.
+
+| Component | Previous | Verified stable update |
+| --- | --- | --- |
+| Mocha | 11.8.0 | [12.0.0](https://github.com/mochajs/mocha/releases/tag/v12.0.0) |
+| VSCE | 3.9.2 | [4.0.0](https://github.com/microsoft/vscode-vsce/releases/tag/v4.0.0) |
+| Checkout action | v4 | [7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1) |
+| Setup Node action | v4 | [7.0.0](https://github.com/actions/setup-node/releases/tag/v7.0.0) |
+| Upload Artifact action | v4 | [7.0.1](https://github.com/actions/upload-artifact/releases/tag/v7.0.1) |
+
+The CI actions are pinned to their verified release commit SHAs and run on
+Node.js 24. Mocha and VSCE support the repository's Node.js 24 baseline. VSCE 4
+raises its minimum to Node.js 22 and replaces several legacy dependencies;
+the existing packaging CLI path remains compatible. No product or protocol
+version bump, runtime source change, or higher VS Code API floor was needed.
+
+Before the update, `npm audit --audit-level=low --json` exited 1 and reported
+three vulnerable package entries: one low, one moderate, and one high. The
+Mocha dependency graph now resolves `diff` 9.0.0 instead of 7.0.0 and
+`serialize-javascript` 7.1.1 instead of 6.0.2. After a clean `npm ci`, the same
+full audit and the production-only audit both exited 0 with zero findings.
+There are no forced audit fixes, dependency overrides, or severity exclusions.
+CI now runs the full audit as a required step in its build-and-package job.
+These are point-in-time audit results, not a guarantee against undiscovered
+vulnerabilities.
+
+Local validation used Node.js 24.20.0. Typecheck and lint passed; all 40 test
+files and 596 tests passed before and after the dependency update. Stable VSIX
+packaging and archive verification passed with seven entries. The isolated
+VS Code 1.137.0 Extension Host passed all 17 smoke tests with runner exit code
+0, including additive activation and inactive-zero assertions. The three
+external production dependencies retain their previous versions and integrity
+values; the audit's total dependency count fell from 601 to 401. The clean
+installation emitted no deprecation warnings. Existing Vite and isolated-host
+diagnostics are not claimed to be fixed by this maintenance.
+
+Local verification is separate from PR approval. The published PR records the
+final revision's CI, review feedback, fixes, and thread resolutions; these
+local results alone do not establish merge readiness.
+
 ## 7. Evaluation hypotheses
 
 The first studies test separate hypotheses:
