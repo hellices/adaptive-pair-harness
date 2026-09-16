@@ -265,8 +265,9 @@ Read the complete initial [product and system design](docs/design.md).
 The [sequential roadmap](docs/design.md#sequential-delivery-roadmap) covers the
 remaining work through v2.0. The current
 [Pair policy contract implementation plan](docs/implementation-plan.md) is a
-review draft for the next bounded milestone, not approval to implement Pair
-Mode or a claim that it is available in the extension.
+record of the authorized P1 increment: implemented pure policies, their tests,
+and the pull request review gate. It does not authorize P2/P3 runtime work or
+claim that Pair Mode is available in the extension.
 
 ## Research
 
@@ -289,18 +290,23 @@ restraint, join-in-progress capture, observed verification, and a clean-profile
 Extension Host smoke plus packaging and CI. Pair Mode AI edits, Delivery Mode
 commands, and the native Agent Plugin remain out of scope for this preview.
 
-The next proposed milestone defines and tests pure Pair policy contracts before
-changing the runtime or exposing new controls. Runtime handoff, guarded edits,
-and the complete Stable Pair experience follow in separately reviewed
-increments. Growth transfer completion and evaluation export remain release
-work, not completed preview features. Work proceeds one milestone at a time;
-there is no committed calendar release date.
+P1 adds tested, side-effect-free Pair work-unit admission, related human
+follow-up, and handoff-preflight contracts to `@adaptive-pair/modes`. These
+assessments change no authority or persisted state and are not wired to the
+runtime or extension. The Stable preview remains Growth-only. P2 runtime
+ownership and lifecycle is the next scope-review milestone; guarded edits and
+the complete Stable Pair experience follow in P3. Neither increment is
+authorized by P1 completion. Growth transfer completion and evaluation export
+remain release work, not completed preview features. Work proceeds one
+milestone at a time; there is no committed calendar release date.
 
-Baseline revalidation is complete, including all 17 isolated Extension Host
-smoke tests on VS Code 1.137.0. See the
+P1 validation passes typecheck, lint, 671 tests across 43 files, Stable VSIX
+verification, and all 17 isolated Extension Host smoke tests on VS Code
+1.137.0. The modes suite contains 75 new Pair cases and four unchanged Growth
+cases. See the
 [validation evidence](docs/research.md#implementation-evidence-for-the-next-pair-increment).
-These results verify the existing Growth preview, not the proposed Pair
-policies or their future runtime integration.
+These results verify the pure policies and preserve the existing Growth
+preview; they do not establish Pair runtime integration or host edit safety.
 
 The completed Foundation and Growth implementation plan remains available in
 Git history at `ae1f095:docs/implementation-plan.md`. Only one implementation

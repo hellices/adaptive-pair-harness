@@ -334,9 +334,11 @@ standard than another.
 ### Implementation evidence for the next Pair increment
 
 This is a code-and-test checkpoint, not a new learning-science result or a
-revalidation of the platform references. Its source baseline is `ae1f095`, the
-merged Foundation and Growth preview. Unmerged local work is not treated as
-implemented product behavior.
+revalidation of the platform references. It separates the `ae1f095` Foundation
+and Growth baseline, the reviewed documentation examples, and the subsequent
+P1 implementation evidence. The documentation merge `f28de5f` changes no
+application source. Locally verified P1 contracts are not treated as a released
+or usable Pair Mode experience.
 
 | Evidence in the baseline | What it establishes | What it does not establish |
 |---|---|---|
@@ -357,6 +359,8 @@ typing share, elapsed time, or guessed semantic similarity. Completing an
 observed related unit can satisfy a Pair participation requirement, but does
 not prove learning or populate any Growth demonstration field. These limits
 must survive the later runtime and adapter integration.
+
+#### Reviewed documentation checkpoint
 
 Observed validation of this documentation checkpoint used Node.js 24.20.0 and
 the repository's pinned tools. Application source, manifests, lockfile, and
@@ -391,6 +395,48 @@ cause remains unconfirmed; those attempts are incomplete, not passes. The
 complete unchanged-baseline rerun closes R0 without claiming a source fix.
 Retain the interrupted-run artifacts locally rather than publishing logs or
 machine-specific paths, and rerun the regression gates during implementation.
+
+#### P1 implementation validation
+
+On September 16, 2026, the repository owner authorized the next P1 increment
+after reviewing PR #4 and requesting its merge and continuation. Execution
+started from the merged `main` baseline `f28de5f` on a dedicated PR branch.
+This approval covers pure policies only; it does not authorize P2/P3 authority,
+persistence, host edits, or new extension controls.
+
+The implementation adds three pure modules and three policy test suites in
+`packages/modes`, typed test fixtures, and public exports alongside unchanged
+Growth policy. The reviewed contracts are preserved; the fixture's type
+imports are grouped at the top of the file. No protocol, runtime, session-core,
+harness, extension, manifest, dependency, version, or lockfile change is part
+of this increment.
+
+Fresh checks used Node.js 24.20.0 and the repository's pinned configurations:
+
+| Check | Observed result | Interpretation |
+|---|---|---|
+| Execution baseline: `npm ci`, `npm run check`, and `npm run test:host` | Typecheck/lint, 40 files and 596 tests, and 17 isolated host tests passed before policy changes | Distinguishes the existing Growth baseline from P1 additions |
+| Task 1 admission red/green | 19 tests failed because the export was absent; admission plus Growth then passed 23 tests, forced typecheck, and lint | Admission assesses declared scope, agreement reservations, and trusted edit capability without authorizing edits |
+| Task 2 follow-up red/green | 21 tests failed because the exports were absent; cumulative modes tests then passed 44 tests, forced typecheck, and lint | Explicit relatedness, meaningful observed completion, and no mechanical bypass are pure assessments |
+| Task 3 preflight red/green | 35 tests failed because the export was absent; cumulative modes tests then passed 79 tests, forced typecheck, and lint | Identity, revision, operational Presence, stopped admission, and settled operations gate review readiness, not authority transfer |
+| Final `npm run check` | Typecheck and lint passed; 43 test files and 671 tests passed | 75 new Pair policy cases preserve the 596-test baseline |
+| Modes JSON report | 19 admission, 21 follow-up, 35 handoff, and four Growth cases; 79 passed, zero failed | Counts are measured from `assertionResults`; ordinary assertion loops do not add cases |
+| `npm run package` and `node scripts/verify-vsix.mjs` | Stable VSIX built and verified with seven archive entries | Packaging remains the Growth-only preview; there is no Pair edit route |
+| `npm run test:host` on VS Code 1.137.0 | All 17 isolated smoke tests passed; runner exited with code 0 | Additive activation, zero inactive activity, Growth behavior, and coexistence remain verified |
+
+The baseline dependency installation reports three existing audit advisories
+(one low, one moderate, one high) and existing deprecation warnings. P1 does
+not change those dependencies or claim to resolve the advisories. The current
+Vite configuration and isolated host also emit their existing warnings; these
+are not counted as new passing assertions or silently reported as resolved.
+
+The API's trusted-input conditions remain essential: the future core must
+derive accepted-work provenance, preserve outstanding follow-up requirements,
+correlate observed verification with the agreed unit, and enforce admission
+barriers and authority transitions. P1 neither proves those runtime bindings
+nor validates filesystem safety, complete Pair collaboration, or learning
+efficacy. The PR review loop and final-revision CI are tracked separately from
+these local results; P2 requires its own scope review and approved plan.
 
 ## 7. Evaluation hypotheses
 
