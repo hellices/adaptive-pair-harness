@@ -9,6 +9,7 @@
   },
   "references": [
     { "path": "../protocol" },
+    { "path": "../restraint" },
     { "path": "../session-core" },
     { "path": "../harness" },
     { "path": "../testkit" }

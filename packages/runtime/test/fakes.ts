@@ -1,5 +1,6 @@
 import type { PairEvent, PairRuntimeSnapshot } from "@adaptive-pair/protocol";
 import { growthRuntime } from "@adaptive-pair/testkit";
+import { InMemoryJournal } from "../src/journal.js";
 import type {
   EffectPort,
   EffectRequest,
@@ -15,19 +16,16 @@ type DeferredResult = {
 
 export class FakePairStore implements PairStore {
   public readonly loadedStreamIds: string[] = [];
-  public readonly appendedStreamIds: string[] = [];
-  public readonly savedStreamIds: string[] = [];
-  private snapshotValue: PairRuntimeSnapshot;
-  private readonly commandIds = new Set<string>();
-  private readonly eventsValue: PairEvent[] = [];
-  private failNextAppend = false;
-  private failNextSave = false;
+  public readonly committedStreamIds: string[] = [];
+  private readonly journal: InMemoryJournal;
+  private failNextCommit = false;
 
   public constructor(
     private readonly order: string[],
     initialSnapshot: PairRuntimeSnapshot = growthRuntime(),
+    streamId = "workspace-1",
   ) {
-    this.snapshotValue = structuredClone(initialSnapshot);
+    this.journal = new InMemoryJournal(streamId, initialSnapshot);
   }
 
   public load(streamId: string): Promise<{
@@ -35,53 +33,37 @@ export class FakePairStore implements PairStore {
     readonly seenCommandIds: ReadonlySet<string>;
   }> {
     this.loadedStreamIds.push(streamId);
-    return Promise.resolve({
-      snapshot: structuredClone(this.snapshotValue),
-      seenCommandIds: new Set(this.commandIds),
-    });
+    return this.journal.load(streamId);
   }
 
-  public append(streamId: string, events: readonly PairEvent[]): Promise<void> {
-    this.appendedStreamIds.push(streamId);
-    if (this.failNextAppend) {
-      this.failNextAppend = false;
-      return Promise.reject(new Error("STORE_APPEND_FAILED"));
+  public async commit(
+    streamId: string,
+    expectedRevision: number,
+    events: readonly PairEvent[],
+  ): Promise<PairRuntimeSnapshot> {
+    this.committedStreamIds.push(streamId);
+    if (this.failNextCommit) {
+      this.failNextCommit = false;
+      throw new Error("STORE_COMMIT_FAILED");
     }
 
+    const snapshot = await this.journal.commit(streamId, expectedRevision, events);
     for (const event of events) {
-      this.order.push(`append:${event.type}`);
-      this.commandIds.add(event.commandId);
-      this.eventsValue.push(structuredClone(event));
+      this.order.push(`commit:${event.type}`);
     }
-
-    return Promise.resolve();
-  }
-
-  public saveSnapshot(streamId: string, snapshot: PairRuntimeSnapshot): Promise<void> {
-    this.savedStreamIds.push(streamId);
-    if (this.failNextSave) {
-      this.failNextSave = false;
-      return Promise.reject(new Error("STORE_SAVE_FAILED"));
-    }
-
-    this.snapshotValue = structuredClone(snapshot);
-    return Promise.resolve();
+    return snapshot;
   }
 
   public snapshot(): PairRuntimeSnapshot {
-    return structuredClone(this.snapshotValue);
+    return this.journal.snapshotNow();
   }
 
   public events(): readonly PairEvent[] {
-    return Object.freeze(this.eventsValue.map(event => structuredClone(event)));
+    return this.journal.events();
   }
 
-  public failSavingOnce(): void {
-    this.failNextSave = true;
-  }
-
-  public failAppendingOnce(): void {
-    this.failNextAppend = true;
+  public failCommittingOnce(): void {
+    this.failNextCommit = true;
   }
 }
 

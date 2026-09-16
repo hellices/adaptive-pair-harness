@@ -1,21 +1,20 @@
 import * as vscode from "vscode";
 import type {
-  EntrySnapshot,
   PairCommand,
   PairRuntimeSnapshot,
   PairSessionSnapshot,
-  PresenceStatus,
 } from "@adaptive-pair/protocol";
-import { WorkspaceContext } from "./workspaceContext.js";
-import { VscodeWorkspaceContextAccess } from "./workspaceContextAccess.js";
 import {
+  InMemoryJournal,
   PairCoordinator,
   type Clock,
   type EffectPort,
   type IdSource,
   type PairCoordinatorPort,
-  type PairStore,
+  type PairPresencePort,
 } from "@adaptive-pair/runtime";
+import { WorkspaceContext } from "./workspaceContext.js";
+import { VscodeWorkspaceContextAccess } from "./workspaceContextAccess.js";
 import { ActivityLedger } from "./activityLedger.js";
 import { StableEffectPort } from "./stableEffectPort.js";
 
@@ -28,122 +27,10 @@ type DispatchablePairCommand = {
   >;
 }[PairCommand["type"]];
 
-const freezeSnapshot = (snapshot: PairRuntimeSnapshot): PairRuntimeSnapshot => {
-  const cloned = structuredClone(snapshot);
-
-  if (cloned.session?.entrySnapshot !== undefined) {
-    Object.freeze(cloned.session.entrySnapshot.dirtyPaths);
-    Object.freeze(cloned.session.entrySnapshot.openPaths);
-    Object.freeze(cloned.session.entrySnapshot.diagnostics);
-    Object.freeze(cloned.session.entrySnapshot.protectedPaths);
-    Object.freeze(cloned.session.entrySnapshot);
-  }
-
-  if (cloned.session?.learningAgreement !== undefined) {
-    Object.freeze(cloned.session.learningAgreement.learningGoals);
-    Object.freeze(cloned.session.learningAgreement.familiarAreas);
-    Object.freeze(cloned.session.learningAgreement.humanOwnedCapabilities);
-    Object.freeze(cloned.session.learningAgreement.delegatableWork);
-    Object.freeze(cloned.session.learningAgreement);
-  }
-
-  if (cloned.session?.workUnit !== undefined) {
-    Object.freeze(cloned.session.workUnit.allowedPaths);
-    Object.freeze(cloned.session.workUnit.acceptanceChecks);
-    Object.freeze(cloned.session.workUnit.baseline);
-    Object.freeze(cloned.session.workUnit);
-  }
-
-  if (cloned.session !== undefined) {
-    Object.freeze(cloned.session.criteria);
-    Object.freeze(cloned.session.operations);
-    Object.freeze(cloned.session.userActionGrants);
-    Object.freeze(cloned.session.assistance ?? {});
-    Object.freeze(cloned.session);
-  }
-
-  Object.freeze(cloned.presence);
-  return Object.freeze(cloned);
-};
-
-const createRuntimeSnapshot = (workspaceId: string): PairRuntimeSnapshot =>
-  freezeSnapshot({
-    protocolVersion: 1,
-    revision: 0,
-    presence: {
-      workspaceId,
-      observationRevision: 0,
-      status: "off",
-      activeSessionId: undefined,
-    },
-    session: undefined,
-  });
-
 const hasLiveSession = (
   session: PairSessionSnapshot | undefined,
 ): session is PairSessionSnapshot =>
-  session !== undefined &&
-  session.status !== "inactive" &&
-  session.status !== "closed";
-
-const isPausableSession = (
-  session: PairSessionSnapshot | undefined,
-): session is PairSessionSnapshot =>
-  session !== undefined &&
-  (session.status === "ready" ||
-    session.status === "active" ||
-    session.status === "reconciling");
-
-class MemoryPairStore implements PairStore {
-  private snapshotValue: PairRuntimeSnapshot;
-  private readonly commandIds = new Set<string>();
-
-  public constructor(initialSnapshot: PairRuntimeSnapshot) {
-    this.snapshotValue = freezeSnapshot(initialSnapshot);
-  }
-
-  public snapshotNow(): PairRuntimeSnapshot {
-    return this.snapshotValue;
-  }
-
-  public replace(snapshot: PairRuntimeSnapshot): PairRuntimeSnapshot {
-    this.snapshotValue = freezeSnapshot(snapshot);
-    return this.snapshotValue;
-  }
-
-  public load(streamId: string): Promise<{
-    readonly snapshot: PairRuntimeSnapshot;
-    readonly seenCommandIds: ReadonlySet<string>;
-  }> {
-    void streamId;
-    return Promise.resolve({
-      snapshot: this.snapshotNow(),
-      seenCommandIds: new Set(this.commandIds),
-    });
-  }
-
-  public append(
-    streamId: string,
-    events: readonly {
-      readonly commandId: string;
-    }[],
-  ): Promise<void> {
-    void streamId;
-    for (const event of events) {
-      this.commandIds.add(event.commandId);
-    }
-    return Promise.resolve();
-  }
-
-  public saveSnapshot(
-    streamId: string,
-    snapshot: PairRuntimeSnapshot,
-  ): Promise<void> {
-    void streamId;
-    this.replace(snapshot);
-    return Promise.resolve();
-  }
-}
+  session !== undefined && session.status !== "inactive" && session.status !== "closed";
 
 class SystemClock implements Clock {
   public now(): number {
@@ -166,14 +53,14 @@ export interface SessionControllerOptions {
 }
 
 export class SessionController implements vscode.Disposable {
-  private readonly store = new MemoryPairStore(
-    createRuntimeSnapshot(PLACEHOLDER_WORKSPACE_ID),
-  );
+  private readonly store = new InMemoryJournal(PLACEHOLDER_WORKSPACE_ID);
   private readonly ids = new IncrementingIds();
   private readonly clock = new SystemClock();
   private readonly ledger: ActivityLedger | undefined;
-  private readonly coordinatorPort: PairCoordinatorPort;
+  private readonly coordinatorPort: PairCoordinatorPort & PairPresencePort;
   private readonly workspaceContext: WorkspaceContext;
+  private captureLifetime = new AbortController();
+  private disposed = false;
 
   public constructor(options: SessionControllerOptions = {}) {
     this.ledger = options.ledger;
@@ -197,159 +84,89 @@ export class SessionController implements vscode.Disposable {
     return this.store.snapshotNow();
   }
 
-  public async snapshot(): Promise<PairRuntimeSnapshot> {
-    return await this.coordinatorPort.snapshot();
+  public snapshot(): Promise<PairRuntimeSnapshot> {
+    return this.coordinatorPort.snapshot();
   }
 
   public enablePresence(): Promise<PairRuntimeSnapshot> {
-    const current = this.ensureWorkspaceIdentity();
-    if (current.session?.status === "paused") {
-      return Promise.resolve(current);
-    }
-
-    if (
-      current.presence.status === "observing" ||
-      current.presence.status === "engaged" ||
-      current.presence.status === "quiet"
-    ) {
-      return Promise.resolve(current);
-    }
-
-    const status = hasLiveSession(current.session) ? "engaged" : "observing";
-    return Promise.resolve(this.replacePresence(current, status));
+    this.ensureUsable();
+    return this.coordinatorPort.setPresence("observing", this.resolveWorkspaceId());
   }
 
-  public async stayQuiet(): Promise<PairRuntimeSnapshot> {
-    let current = this.ensureWorkspaceIdentity();
-    if (current.session?.status === "paused") {
-      return current;
-    }
-
-    if (current.presence.status === "off") {
-      current = await this.enablePresence();
-    }
-
-    if (current.presence.status === "quiet") {
-      return current;
-    }
-
-    return this.replacePresence(current, "quiet");
+  public stayQuiet(): Promise<PairRuntimeSnapshot> {
+    this.ensureUsable();
+    return this.coordinatorPort.setPresence("quiet", this.resolveWorkspaceId());
   }
 
-  public async pausePresence(): Promise<PairRuntimeSnapshot> {
-    const current = this.snapshotNow();
-    if (current.presence.status === "paused") {
-      return current;
-    }
-
-    if (isPausableSession(current.session)) {
-      await this.dispatch({
-        type: "PauseSession",
-        reason: "The developer paused Pair Presence.",
-      });
-      return this.snapshotNow();
-    }
-
-    if (current.presence.status === "off") {
-      return current;
-    }
-
-    return this.replacePresence(current, "paused");
+  public pausePresence(): Promise<PairRuntimeSnapshot> {
+    this.invalidateCapture();
+    return this.coordinatorPort.setPresence("paused");
   }
 
   public async startSession(): Promise<PairRuntimeSnapshot> {
-    let current = this.ensureWorkspaceIdentity();
-    if (current.session?.status === "paused") {
-      return current;
-    }
-
-    if (hasLiveSession(current.session)) {
-      if (
-        current.presence.status === "off" ||
-        current.presence.status === "paused"
-      ) {
-        current = this.replacePresence(current, "engaged");
-      }
-      return current;
-    }
-
-    if (current.presence.status === "off" || current.presence.status === "paused") {
-      this.replacePresence(current, "observing");
-    }
-
-    await this.dispatch({
-      type: "StartSession",
-      sessionId: this.ids.next("session"),
-    });
-    return this.snapshotNow();
+    const signal = this.captureLifetime.signal;
+    const current = await this.enablePresence();
+    signal.throwIfAborted();
+    return this.startIfNeeded(current);
   }
 
   public async joinInProgress(): Promise<PairRuntimeSnapshot> {
-    let current = this.ensureWorkspaceIdentity();
+    const signal = this.captureLifetime.signal;
+    let current = await this.enablePresence();
+    signal.throwIfAborted();
 
     if (current.session?.status === "paused") {
-      await this.dispatch({
-        type: "ResumeSession",
-        entry: await this.createEntrySnapshot(),
-      });
-      return this.snapshotNow();
+      return this.dispatchEntry("ResumeSession", current, signal);
     }
 
-    if (!hasLiveSession(current.session)) {
-      current = await this.startSession();
-    } else if (current.presence.status === "paused") {
-      current = this.replacePresence(current, "engaged");
-    }
-
+    current = await this.startIfNeeded(current);
+    signal.throwIfAborted();
     if (current.session?.status === "briefing") {
-      await this.dispatch({
-        type: "CaptureEntry",
-        entry: await this.createEntrySnapshot(),
-      });
-      return this.snapshotNow();
+      return this.dispatchEntry("CaptureEntry", current, signal);
     }
-
     return current;
   }
 
-  public bumpObservationRevision(): PairRuntimeSnapshot {
-    const current = this.snapshotNow();
-    if (current.presence.status === "off" || current.presence.status === "paused") {
-      return current;
-    }
-
-    return this.store.replace({
-      ...current,
-      revision: current.revision + 1,
-      presence: {
-        ...current.presence,
-        observationRevision: current.presence.observationRevision + 1,
-      },
-    });
+  public bumpObservationRevision(): Promise<PairRuntimeSnapshot> {
+    return this.coordinatorPort.observeWorkspace();
   }
 
-  public disablePresence(): PairRuntimeSnapshot {
-    const workspaceId = this.snapshotNow().presence.workspaceId;
-    return this.store.replace(createRuntimeSnapshot(workspaceId));
+  public disablePresence(): Promise<PairRuntimeSnapshot> {
+    this.invalidateCapture();
+    return this.coordinatorPort.setPresence("off");
   }
 
-  public dispose(): void {}
+  public dispose(): void {
+    this.disposed = true;
+    this.captureLifetime.abort(new Error("SESSION_ACTION_CANCELLED"));
+  }
 
-  private ensureWorkspaceIdentity(): PairRuntimeSnapshot {
-    const current = this.snapshotNow();
-    const workspaceId = this.resolveWorkspaceId();
-    if (current.presence.workspaceId === workspaceId) {
-      return current;
+  private ensureUsable(): void {
+    if (this.disposed) {
+      throw new Error("SESSION_CONTROLLER_DISPOSED");
     }
+  }
 
-    return this.store.replace({
-      ...current,
-      revision: current.revision + 1,
-      presence: {
-        ...current.presence,
-        workspaceId,
-      },
-    });
+  private invalidateCapture(): void {
+    this.captureLifetime.abort(new Error("SESSION_ACTION_CANCELLED"));
+    this.captureLifetime = new AbortController();
+  }
+
+  private async dispatchEntry(
+    type: "ResumeSession" | "CaptureEntry",
+    snapshot: PairRuntimeSnapshot,
+    signal: AbortSignal,
+  ): Promise<PairRuntimeSnapshot> {
+    const entry = await this.workspaceContext.capture(signal);
+    signal.throwIfAborted();
+    return this.dispatch({ type, entry }, snapshot);
+  }
+
+  private startIfNeeded(snapshot: PairRuntimeSnapshot): Promise<PairRuntimeSnapshot> {
+    if (hasLiveSession(snapshot.session)) {
+      return Promise.resolve(snapshot);
+    }
+    return this.dispatch({ type: "StartSession", sessionId: this.ids.next("session") }, snapshot);
   }
 
   private resolveWorkspaceId(): string {
@@ -358,38 +175,17 @@ export class SessionController implements vscode.Disposable {
     return firstFolder?.uri.toString() ?? PLACEHOLDER_WORKSPACE_ID;
   }
 
-  private replacePresence(
-    snapshot: PairRuntimeSnapshot,
-    status: PresenceStatus,
-  ): PairRuntimeSnapshot {
-    return this.store.replace({
-      ...snapshot,
-      revision: snapshot.revision + 1,
-      presence: {
-        ...snapshot.presence,
-        status,
-        activeSessionId:
-          status === "off"
-            ? undefined
-            : snapshot.session?.sessionId ?? snapshot.presence.activeSessionId,
-      },
-    });
-  }
-
-  private async dispatch(
+  private dispatch(
     command: DispatchablePairCommand,
-  ): Promise<void> {
-    await this.coordinatorPort.dispatch({
+    snapshot: PairRuntimeSnapshot,
+  ): Promise<PairRuntimeSnapshot> {
+    return this.coordinatorPort.dispatch({
       ...command,
       protocolVersion: 1,
       commandId: this.ids.next("command"),
-      expectedRevision: this.snapshotNow().revision,
+      expectedRevision: snapshot.revision,
       actor: "human",
       observedAt: this.clock.now(),
     });
-  }
-
-  private async createEntrySnapshot(): Promise<EntrySnapshot> {
-    return await this.workspaceContext.capture();
   }
 }

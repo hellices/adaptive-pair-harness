@@ -151,6 +151,7 @@ export const createExtensionRuntime = (
 
   const growthParticipant = new GrowthParticipant({
     coordinator,
+    snapshotNow: () => sessionController.snapshotNow(),
     consent: new ModelConsentRegistry(),
     evaluations: new GrowthEvaluationLog(),
     createModel: accountedModelFactory(ledger, model =>

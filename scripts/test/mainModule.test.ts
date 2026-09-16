@@ -157,6 +157,8 @@ describe("release scripts in a checkout whose path needs URL decoding", () => {
       "build-extension.mjs",
       "assert-package-staging.mjs",
       "verify-vsix.mjs",
+      "vsixArchive.mjs",
+      "vsixPolicy.mjs",
       "package-extension.mjs",
     ]) {
       await copyFile(join(scriptsDir, name), join(checkout, "scripts", name));

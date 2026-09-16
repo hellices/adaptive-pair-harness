@@ -134,6 +134,7 @@ export const createHostTestApi = (deps: HostTestApiDependencies): HostTestApi =>
     const evaluations = new GrowthEvaluationLog();
     const participant = new GrowthParticipant({
       coordinator: deps.coordinator,
+      snapshotNow: () => deps.sessionController.snapshotNow(),
       consent,
       evaluations,
       createModel: accountedModelFactory(deps.ledger, () => options.model),

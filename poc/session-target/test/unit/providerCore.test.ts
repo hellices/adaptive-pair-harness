@@ -3,6 +3,26 @@ import { SessionTargetProviderCore } from "../../src/sessionTargetProviderCore";
 import { SessionTargetStore } from "../../src/sessionTargetStore";
 
 describe("SessionTargetProviderCore", () => {
+  it("retains immediate streaming with a Promise-returning completion contract", async () => {
+    const store = new SessionTargetStore(() => "session-1");
+    const core = new SessionTargetProviderCore(store, () => 100);
+    const session = core.create("Start pairing");
+    const chunks: string[] = [];
+
+    const pending = core.respond(session.resource, "Inspect", new AbortController().signal, chunk => chunks.push(chunk));
+
+    expect(chunks).toHaveLength(2);
+    expect(store.get(session.resource)?.status).toBe("completed");
+    await expect(pending).resolves.toBeUndefined();
+  });
+
+  it("rejects an unknown response resource through its Promise contract", async () => {
+    const core = new SessionTargetProviderCore(new SessionTargetStore(() => "session-1"), () => 100);
+
+    await expect(core.respond("missing", "Inspect", new AbortController().signal, () => undefined))
+      .rejects.toThrow("Unknown Adaptive Pair session");
+  });
+
   it("streams a request through the stored session and completes it", async () => {
     const store = new SessionTargetStore(() => "session-1");
     const core = new SessionTargetProviderCore(store, () => 100);

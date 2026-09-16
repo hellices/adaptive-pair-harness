@@ -148,256 +148,255 @@ afterEach(() => {
   git.reset();
 });
 
-describe("VscodeWorkspaceContextAccess — production branch currentness", () => {
-  it("collects duplicate-path open documents only from the first workspace root", () => {
-    git.state.additionalWorkspaceRoots = ["/other-workspace"];
-    git.state.textDocuments = [
-      {
-        uri: git.createUri("/workspace/src/main.ts"),
-        version: 3,
-        isDirty: false,
-        getText: () => "first root",
-      },
-      {
-        uri: git.createUri("/other-workspace/src/main.ts"),
-        version: 9,
-        isDirty: true,
-        getText: () => "second root",
-      },
-    ];
+it("collects duplicate-path open documents only from the first workspace root", () => {
+  git.state.additionalWorkspaceRoots = ["/other-workspace"];
+  git.state.textDocuments = [
+    {
+      uri: git.createUri("/workspace/src/main.ts"),
+      version: 3,
+      isDirty: false,
+      getText: () => "first root",
+    },
+    {
+      uri: git.createUri("/other-workspace/src/main.ts"),
+      version: 9,
+      isDirty: true,
+      getText: () => "second root",
+    },
+  ];
 
-    const documents = new VscodeWorkspaceContextAccess(clock).openDocuments();
+  const documents = new VscodeWorkspaceContextAccess(clock).openDocuments();
 
-    expect(documents).toEqual([
-      {
-        relativePath: "src/main.ts",
-        version: 3,
-        isDirty: false,
-        byteLength: 10,
-      },
-    ]);
-  });
+  expect(documents).toEqual([
+    {
+      relativePath: "src/main.ts",
+      version: 3,
+      isDirty: false,
+      byteLength: 10,
+    },
+  ]);
+});
 
-  it("collects duplicate-path diagnostics only from the first workspace root", () => {
-    git.state.additionalWorkspaceRoots = ["/other-workspace"];
+it("collects duplicate-path diagnostics only from the first workspace root", () => {
+  git.state.additionalWorkspaceRoots = ["/other-workspace"];
+  git.state.diagnostics = [
+    [
+      git.createUri("/workspace/src/main.ts"),
+      [{ range: { start: { line: 4 } }, message: "first-root diagnostic" }],
+    ],
+    [
+      git.createUri("/other-workspace/src/main.ts"),
+      [{ range: { start: { line: 8 } }, message: "second-root diagnostic" }],
+    ],
+  ];
+
+  const diagnostics = new VscodeWorkspaceContextAccess(
+    clock,
+    undefined,
+    path => path,
+  ).diagnostics();
+
+  expect(diagnostics).toEqual([
+    {
+      relativePath: "src/main.ts",
+      line: 4,
+      message: "first-root diagnostic",
+    },
+  ]);
+});
+
+it("excludes diagnostics that escape through an ancestor symlink", async () => {
+  const root = await mkdtemp(join(tmpdir(), "adaptive-pair-root-"));
+  const outside = await mkdtemp(join(tmpdir(), "adaptive-pair-outside-"));
+  try {
+    await writeFile(join(outside, "secret.ts"), "secret", "utf8");
+    await symlink(outside, join(root, "linked"), "dir");
+    git.state.workspaceRoot = root;
     git.state.diagnostics = [
       [
-        git.createUri("/workspace/src/main.ts"),
-        [{ range: { start: { line: 4 } }, message: "first-root diagnostic" }],
-      ],
-      [
-        git.createUri("/other-workspace/src/main.ts"),
-        [{ range: { start: { line: 8 } }, message: "second-root diagnostic" }],
+        git.createUri(join(root, "linked", "secret.ts")),
+        [{ range: { start: { line: 2 } }, message: "escaped diagnostic" }],
       ],
     ];
 
-    const diagnostics = new VscodeWorkspaceContextAccess(
-      clock,
-      undefined,
-      path => path,
-    ).diagnostics();
-
-    expect(diagnostics).toEqual([
-      {
-        relativePath: "src/main.ts",
-        line: 4,
-        message: "first-root diagnostic",
-      },
-    ]);
-  });
-
-  it("excludes diagnostics that escape through an ancestor symlink", async () => {
-    const root = await mkdtemp(join(tmpdir(), "adaptive-pair-root-"));
-    const outside = await mkdtemp(join(tmpdir(), "adaptive-pair-outside-"));
-    try {
-      await writeFile(join(outside, "secret.ts"), "secret", "utf8");
-      await symlink(outside, join(root, "linked"), "dir");
-      git.state.workspaceRoot = root;
-      git.state.diagnostics = [
-        [
-          git.createUri(join(root, "linked", "secret.ts")),
-          [{ range: { start: { line: 2 } }, message: "escaped diagnostic" }],
-        ],
-      ];
-
-      const diagnostics = new VscodeWorkspaceContextAccess(clock).diagnostics();
-
-      expect(diagnostics).toEqual([]);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-      await rm(outside, { recursive: true, force: true });
-    }
-  });
-
-  it.each([
-    "/workspace",
-    "/workspace/src/main.ts",
-  ])("fails closed when identity cannot be established for %s", failedPath => {
-    const targetPath = "/workspace/src/main.ts";
-    git.state.diagnostics = [
-      [
-        git.createUri(targetPath),
-        [{ range: { start: { line: 3 } }, message: "unverified diagnostic" }],
-      ],
-    ];
-    const filesystemIdentity = (path: string): string => {
-      if (path === failedPath) {
-        throw new Error("identity unavailable");
-      }
-      return path;
-    };
-
-    const diagnostics = new VscodeWorkspaceContextAccess(
-      clock,
-      undefined,
-      filesystemIdentity,
-    ).diagnostics();
+    const diagnostics = new VscodeWorkspaceContextAccess(clock).diagnostics();
 
     expect(diagnostics).toEqual([]);
-  });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
 
-  it("uses dirty open documents only from the selected root without a git repository", async () => {
-    git.state.additionalWorkspaceRoots = ["/other-workspace"];
-    git.state.textDocuments = [
-      {
-        uri: git.createUri("/workspace/src/main.ts"),
-        isDirty: true,
-        getText: () => "first root",
-      },
-      {
-        uri: git.createUri("/other-workspace/src/main.ts"),
-        isDirty: true,
-        getText: () => "second root",
-      },
-    ];
-    const access = new VscodeWorkspaceContextAccess(clock);
-    const folder = access.workspaceFolder();
-
-    expect(folder).toBeDefined();
-    await expect(access.readGitMetadata(folder!)).resolves.toMatchObject({
-      dirtyPaths: ["src/main.ts"],
-    });
-  });
-
-  it("marks a regular file below an escaping ancestor symlink outside the root", async () => {
-    const root = await mkdtemp(join(tmpdir(), "adaptive-pair-root-"));
-    const outside = await mkdtemp(join(tmpdir(), "adaptive-pair-outside-"));
-    try {
-      await mkdir(join(outside, "nested"));
-      await writeFile(join(outside, "nested", "secret.txt"), "secret", "utf8");
-      await symlink(join(outside, "nested"), join(root, "linked"), "dir");
-      git.state.workspaceRoot = root;
-
-      const inspected = await new VscodeWorkspaceContextAccess(clock).inspectPath(
-        "linked/secret.txt",
-      );
-
-      expect(inspected).toMatchObject({
-        exists: true,
-        isFile: true,
-        isSymbolicLink: false,
-        withinRoot: false,
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-      await rm(outside, { recursive: true, force: true });
+it.each([
+  "/workspace",
+  "/workspace/src/main.ts",
+])("fails closed when identity cannot be established for %s", failedPath => {
+  const targetPath = "/workspace/src/main.ts";
+  git.state.diagnostics = [
+    [
+      git.createUri(targetPath),
+      [{ range: { start: { line: 3 } }, message: "unverified diagnostic" }],
+    ],
+  ];
+  const filesystemIdentity = (path: string): string => {
+    if (path === failedPath) {
+      throw new Error("identity unavailable");
     }
-  });
+    return path;
+  };
 
-  it("fails closed when HEAD changes on the workspace repository during capture", async () => {
-    git.state.repositories = [
-      {
-        rootUri: git.createUri("/workspace"),
-        state: {
-          HEAD: { name: "feature/retry" },
-          workingTreeChanges: [],
-          indexChanges: [],
-          untrackedChanges: [{ uri: git.createUri("/workspace/notes/scratch.md") }],
-        },
-      },
-    ];
+  const diagnostics = new VscodeWorkspaceContextAccess(
+    clock,
+    undefined,
+    filesystemIdentity,
+  ).diagnostics();
 
-    git.state.onDiagnostics = () => {
-      const repository = git.state.repositories[0];
-      if (repository !== undefined) {
-        repository.state.HEAD = { name: "main" };
-      }
-    };
+  expect(diagnostics).toEqual([]);
+});
 
-    const access = new VscodeWorkspaceContextAccess(
-      clock,
-      undefined,
-      path => path,
-    );
+it("uses dirty open documents only from the selected root without a git repository", async () => {
+  git.state.additionalWorkspaceRoots = ["/other-workspace"];
+  git.state.textDocuments = [
+    {
+      uri: git.createUri("/workspace/src/main.ts"),
+      isDirty: true,
+      getText: () => "first root",
+    },
+    {
+      uri: git.createUri("/other-workspace/src/main.ts"),
+      isDirty: true,
+      getText: () => "second root",
+    },
+  ];
+  const access = new VscodeWorkspaceContextAccess(clock);
+  const folder = access.workspaceFolder();
 
-    await expect(new WorkspaceContext(access).capture()).rejects.toBeInstanceOf(
-      WorkspaceContextChangedError,
-    );
-  });
-
-  it("reads git metadata from the repository matching the workspace root", async () => {
-    git.state.repositories = [
-      {
-        rootUri: git.createUri("/other/project"),
-        state: {
-          HEAD: { name: "unrelated" },
-          workingTreeChanges: [],
-          indexChanges: [],
-          untrackedChanges: [],
-        },
-      },
-      {
-        rootUri: git.createUri("/workspace"),
-        state: {
-          HEAD: { name: "main" },
-          workingTreeChanges: [{ uri: git.createUri("/workspace/src/a.ts") }],
-          indexChanges: [],
-          untrackedChanges: [],
-        },
-      },
-    ];
-
-    const access = new VscodeWorkspaceContextAccess(clock);
-    const snapshot = await new WorkspaceContext(access).capture();
-
-    expect(snapshot.branch).toBe("main");
-  });
-
-  it("filters ancestor-repository changes to the first workspace root", async () => {
-    git.state.workspaceRoot = "/monorepo/first";
-    git.state.additionalWorkspaceRoots = ["/monorepo/second"];
-    git.state.repositories = [
-      {
-        rootUri: git.createUri("/monorepo"),
-        state: {
-          HEAD: { name: "main" },
-          workingTreeChanges: [
-            { uri: git.createUri("/monorepo/first/src/shared.ts") },
-            { uri: git.createUri("/monorepo/second/src/shared.ts") },
-          ],
-          indexChanges: [
-            { uri: git.createUri("/monorepo/first/test/shared.test.ts") },
-            { uri: git.createUri("/monorepo/second/test/shared.test.ts") },
-          ],
-          untrackedChanges: [
-            { uri: git.createUri("/monorepo/first/notes/shared.md") },
-            { uri: git.createUri("/monorepo/second/notes/shared.md") },
-          ],
-        },
-      },
-    ];
-    const access = new VscodeWorkspaceContextAccess(clock);
-    const folder = access.workspaceFolder();
-
-    expect(folder).toBeDefined();
-    await expect(access.readGitMetadata(folder!)).resolves.toEqual({
-      branch: "main",
-      dirtyPaths: ["src/shared.ts"],
-      stagedPaths: ["test/shared.test.ts"],
-      untrackedPaths: ["notes/shared.md"],
-    });
+  expect(folder).toBeDefined();
+  await expect(access.readGitMetadata(folder!)).resolves.toMatchObject({
+    dirtyPaths: ["src/main.ts"],
   });
 });
+
+it("marks a regular file below an escaping ancestor symlink outside the root", async () => {
+  const root = await mkdtemp(join(tmpdir(), "adaptive-pair-root-"));
+  const outside = await mkdtemp(join(tmpdir(), "adaptive-pair-outside-"));
+  try {
+    await mkdir(join(outside, "nested"));
+    await writeFile(join(outside, "nested", "secret.txt"), "secret", "utf8");
+    await symlink(join(outside, "nested"), join(root, "linked"), "dir");
+    git.state.workspaceRoot = root;
+
+    const inspected = await new VscodeWorkspaceContextAccess(clock).inspectPath(
+      "linked/secret.txt",
+    );
+
+    expect(inspected).toMatchObject({
+      exists: true,
+      isFile: true,
+      isSymbolicLink: false,
+      withinRoot: false,
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+it("fails closed when HEAD changes on the workspace repository during capture", async () => {
+  git.state.repositories = [
+    {
+      rootUri: git.createUri("/workspace"),
+      state: {
+        HEAD: { name: "feature/retry" },
+        workingTreeChanges: [],
+        indexChanges: [],
+        untrackedChanges: [{ uri: git.createUri("/workspace/notes/scratch.md") }],
+      },
+    },
+  ];
+
+  git.state.onDiagnostics = () => {
+    const repository = git.state.repositories[0];
+    if (repository !== undefined) {
+      repository.state.HEAD = { name: "main" };
+    }
+  };
+
+  const access = new VscodeWorkspaceContextAccess(
+    clock,
+    undefined,
+    path => path,
+  );
+
+  await expect(new WorkspaceContext(access).capture()).rejects.toBeInstanceOf(
+    WorkspaceContextChangedError,
+  );
+});
+
+it("reads git metadata from the repository matching the workspace root", async () => {
+  git.state.repositories = [
+    {
+      rootUri: git.createUri("/other/project"),
+      state: {
+        HEAD: { name: "unrelated" },
+        workingTreeChanges: [],
+        indexChanges: [],
+        untrackedChanges: [],
+      },
+    },
+    {
+      rootUri: git.createUri("/workspace"),
+      state: {
+        HEAD: { name: "main" },
+        workingTreeChanges: [{ uri: git.createUri("/workspace/src/a.ts") }],
+        indexChanges: [],
+        untrackedChanges: [],
+      },
+    },
+  ];
+
+  const access = new VscodeWorkspaceContextAccess(clock);
+  const snapshot = await new WorkspaceContext(access).capture();
+
+  expect(snapshot.branch).toBe("main");
+});
+
+it("filters ancestor-repository changes to the first workspace root", async () => {
+  git.state.workspaceRoot = "/monorepo/first";
+  git.state.additionalWorkspaceRoots = ["/monorepo/second"];
+  git.state.repositories = [
+    {
+      rootUri: git.createUri("/monorepo"),
+      state: {
+        HEAD: { name: "main" },
+        workingTreeChanges: [
+          { uri: git.createUri("/monorepo/first/src/shared.ts") },
+          { uri: git.createUri("/monorepo/second/src/shared.ts") },
+        ],
+        indexChanges: [
+          { uri: git.createUri("/monorepo/first/test/shared.test.ts") },
+          { uri: git.createUri("/monorepo/second/test/shared.test.ts") },
+        ],
+        untrackedChanges: [
+          { uri: git.createUri("/monorepo/first/notes/shared.md") },
+          { uri: git.createUri("/monorepo/second/notes/shared.md") },
+        ],
+      },
+    },
+  ];
+  const access = new VscodeWorkspaceContextAccess(clock);
+  const folder = access.workspaceFolder();
+
+  expect(folder).toBeDefined();
+  await expect(access.readGitMetadata(folder!)).resolves.toEqual({
+    branch: "main",
+    dirtyPaths: ["src/shared.ts"],
+    stagedPaths: ["test/shared.test.ts"],
+    untrackedPaths: ["notes/shared.md"],
+  });
+});
+
 
 describe("VscodeScopeAccess", () => {
   it("reads dirty buffers, discovers files, and rejects unsafe paths", async () => {

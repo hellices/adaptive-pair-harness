@@ -491,11 +491,120 @@ metadata reported version `1.139.0-insider` and commit
 not interchangeable build identifiers or a claim to have tested all Insiders
 versions.
 
-Local validation does not approve the integrated revision. PR #6 remains the
-live record for fresh final-head CI, requested reviews, original-thread
-responses, and resolutions. This integration does not merge PR #6, authorize
-P2/P3, change the Stable host floor or protocol, or expose Pair runtime or
-editing controls.
+At that integration checkpoint, local validation did not approve or merge the
+revision; PR #6 remained the record for final-head CI, reviews, original-thread
+responses, and resolutions. The owner subsequently directed its merge, recorded
+at `9eebbf19e201b0ff6642868728ef217738ad31f7`. That merge does not authorize
+P2/P3, change the Stable host floor, or expose Pair runtime or editing controls.
+
+#### Runtime boundary stabilization
+
+After P1 merged, the owner authorized pragmatic architecture refactoring before
+the next product increment and explicitly required bounded code units. The
+canonical implementation plan replaces the completed P1 plan; this is not P2
+implementation or new evidence of learning effectiveness.
+
+The audit reproduced defects despite a green 673-test baseline: the production
+store could acknowledge two commands at the same revision while retaining only
+one result; direct snapshot replacement let a pending command undo Disable or
+overwrite an observation. The implementation replaces split append/save and
+out-of-band replacement with one queued, atomic core transition path. Tests use
+the same store contract rather than a more permissive substitute.
+
+The Growth response-release workflow and model contracts move inward to the
+runtime. Independent AI review caught a new extraction regression: an await
+between final validation and Markdown/evaluation publication allowed Pause to
+commit before stale output was displayed. A second review reproduced an earlier
+gap: awaiting a final snapshot can return state captured before a queued Pause
+commits. Both plain and runtime-bearing model results then appeared delivered
+while the authoritative store was paused. Those two full-participant regressions
+failed before replacing the async final read with a required synchronous live
+view of the same store. Asynchronous request work now ends before that read;
+finalization, evaluation, and Markdown publication stay in one continuation.
+The two incoming-snapshot regressions and all eight existing publication
+interleavings pass, retaining their live-state and delivered-output assertions.
+
+Review also reproduced obsolete host intent, stale listener/status projections,
+and workspace capture continuing after Disable. Twelve focused lifecycle cases
+now cover trust waits, deferred Enable/Disable completion, stale callbacks,
+disposal, and capture interrupted by Disable/Pause/dispose. Independent AI
+re-review reported 360 passing Disable interleavings, delayed projection and
+stale-callback probes, and cancellation checks across metadata and native
+filesystem waits. This is engineering verification, not human approval or a
+replacement for final-branch CI and host checks.
+
+Typed ESLint existed before this work, but file/function size rules did not.
+Ten code-size policy cases failed before the rules were enabled, then passed.
+Production/release files and functions are limited to 400/100 effective lines;
+tests, fixtures, and host cases use 600/200. A further negative probe exposed
+ESLint's default exemption for immediately invoked functions; explicit `IIFEs`
+enforcement closes it in both rule configurations. Inline suppression is disabled
+and warnings fail lint. Large modules and suites are split by responsibility while
+preserving their assertions. The isolated POC is also linted; its Promise-based
+completion and immediate streaming behavior are characterized separately.
+
+The same ESLint blank/comment accounting measures these reductions against the
+merged P1 baseline; extracted responsibilities remain subject to the same limits:
+
+| Module | Before | After (effective lines) |
+|---|---:|---:|
+| Growth participant | 947 | 106 |
+| Model adapter | 598 | 249 |
+| Verification adapter | 866 | 207 |
+| Core decision dispatcher | 578 | 61 |
+| Core event reducer dispatcher | 522 | 69 |
+| Runtime coordinator | 644 | 256 |
+
+The dependency checker has negative fixtures for forbidden/undeclared imports,
+project-reference mismatches, deep/relative package escapes, and graph cycles.
+It reproduced the extension's missing direct protocol declaration before that
+manifest and the lockfile were corrected. Independent integration review found
+two further gaps: reference-only edges lacked declaration/direction checks, and
+authored host fixtures plus root/POC configurations escaped lint. Thirteen added
+cases failed before these fixes. The final guard suites contain 22 architecture
+and 22 code-size tests; all pass, including actual oversized fixture/configuration
+and IIFE probes. Standalone configurations and intentionally incomplete host
+fixtures use syntactic lint, not type-aware checks; the size/suppression rules
+remain enforced. Fixture-only unused function parameters preserve the deliberate
+bug exercised by the unchanged host scenarios. The original reviewer rechecked
+both fixes and reported specification and quality passes.
+
+Separate independent reviews preserved all 17 host scenario names/order and 100
+assertions, all 28 verification exports and their original test cases, and the
+POC's immediate Promise-executor behavior. Verification extraction review matched
+512 baseline/candidate traces; core/runtime extraction review matched 8,426
+decision and 3,411 reducer comparisons. These are bounded differential probes,
+not an exhaustive proof or a substitute for the repository PR review.
+
+The only lockfile changes add the extension's protocol edge and runtime's
+restraint edge; external versions are unchanged.
+
+Final local refactoring validation, run with Node.js 24.20.0 after the guard
+follow-ups, completed successfully:
+
+- Clean installation of both dependency graphs, forced workspace typecheck,
+  expanded lint, and **834 tests across 70 files**.
+- Stable bundle and VSIX creation/inspection, with **7 archive entries**.
+- **17 isolated host scenarios on each of VS Code 1.136.2 and 1.137.0**, both
+  exiting 0. The tests retain inactive-zero, production-wiring, and coexistence
+  assertions; they never use the developer's profile.
+- Separate POC compilation, **8 unit tests across 4 files**, a **9-entry VSIX**,
+  and **1 Insiders host test** exiting 0. The cached application reports
+  `1.139.0-insider`; the downloader's build identifier is not its application
+  commit or an additional tested host.
+- Both installed dependency trees validate, and all four full/production-only
+  audits return zero vulnerabilities.
+
+The existing native Vite configuration-loader warning and host diagnostics were
+not suppressed. These are local execution and independent AI-review results,
+not claims about a future PR revision. The PR's review/check history remains
+the record of repository review, follow-up handling, and final-head CI. The
+owner explicitly authorized merging this refactoring after those gates pass,
+then proceeding to the next reviewed increment.
+
+Current authoritative session state remains in memory; the durable edit-episode
+journal is a separate continuity feature, not proof of session or ownership
+recovery.
 
 ### Dependency and tooling maintenance evidence (September 16, 2026)
 

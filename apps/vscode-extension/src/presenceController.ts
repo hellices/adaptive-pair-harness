@@ -1,25 +1,19 @@
-import * as vscode from "vscode";
+import { EditEpisodeAggregator, type EditEpisode, type Scheduler } from "@adaptive-pair/evidence";
 import { ObservationWindow } from "@adaptive-pair/presence";
-import {
-  EditEpisodeAggregator,
-  type EditEpisode,
-  type Scheduler,
-} from "@adaptive-pair/evidence";
 import type { PresenceStatus } from "@adaptive-pair/protocol";
+import * as vscode from "vscode";
+import { ActivityLedger } from "./activityLedger.js";
+import { observationScheduler } from "./observationScheduler.js";
 import { SessionController } from "./sessionController.js";
 import { StatusView } from "./statusView.js";
 import {
-  LocalJournal,
   JournalIntegrityError,
+  LocalJournal,
   NodeJournalFileSystem,
   type JournalEvent,
   type JournalFileSystem,
 } from "./storageAdapter.js";
-import {
-  PairToolContext,
-  type PairToolContextValues,
-} from "./tools/pairToolContext.js";
-import { ActivityLedger } from "./activityLedger.js";
+import { PairToolContext, type PairToolContextValues } from "./tools/pairToolContext.js";
 
 export interface AdaptivePairExtensionApi {
   getState(): {
@@ -44,6 +38,7 @@ export class PresenceController implements vscode.Disposable {
   private observationWindow = new ObservationWindow(OBSERVATION_CAPACITY);
   private documentListener: vscode.Disposable | undefined;
   private disposed = false;
+  private lifecycleGeneration = 0;
   private journal: LocalJournal | undefined;
   private editAggregator: EditEpisodeAggregator | undefined;
   private journalRestorationGeneration = 0;
@@ -60,21 +55,7 @@ export class PresenceController implements vscode.Disposable {
     this.ledger = options.ledger;
     this.journalFileSystem =
       options.journalFileSystem ?? new NodeJournalFileSystem();
-    const baseScheduler: Scheduler = options.scheduler ?? {
-      schedule: (delayMs, callback) => setTimeout(callback, delayMs),
-      cancel: handle => {
-        if (handle !== undefined) {
-          clearTimeout(handle as ReturnType<typeof setTimeout>);
-        }
-      },
-    };
-    this.scheduler = {
-      schedule: (delayMs, callback) => {
-        this.ledger?.recordTimerScheduled();
-        return baseScheduler.schedule(delayMs, callback);
-      },
-      cancel: handle => baseScheduler.cancel(handle),
-    };
+    this.scheduler = observationScheduler(options.scheduler, this.ledger);
     this.toolContext.clear();
     this.statusView.render("off");
   }
@@ -135,6 +116,7 @@ export class PresenceController implements vscode.Disposable {
     }
 
     this.disposed = true;
+    this.lifecycleGeneration += 1;
     this.detachObservationListener();
     this.editAggregator?.dispose();
     this.toolContext.dispose();
@@ -142,29 +124,21 @@ export class PresenceController implements vscode.Disposable {
     this.sessionController.dispose();
   }
 
-  private async enablePresence(): Promise<void> {
-    if (!(await this.ensureTrustedWorkspace())) {
-      return;
-    }
-
-    await this.applySnapshot(await this.sessionController.enablePresence());
+  private enablePresence(): Promise<void> {
+    return this.runTrustedAction("enablePresence");
   }
 
-  private async stayQuiet(): Promise<void> {
-    if (!(await this.ensureTrustedWorkspace())) {
-      return;
-    }
-
-    await this.applySnapshot(await this.sessionController.stayQuiet());
+  private stayQuiet(): Promise<void> {
+    return this.runTrustedAction("stayQuiet");
   }
 
   private async pausePresence(): Promise<void> {
+    this.lifecycleGeneration += 1;
     this.editAggregator?.clear();
     this.toolContext.clear();
     this.detachObservationListener();
-    const snapshot = await this.sessionController.pausePresence();
-    this.statusView.render(snapshot.presence.status);
-    await this.toolContext.accept(snapshot);
+    await this.sessionController.pausePresence();
+    await this.applyCurrentSnapshot();
   }
 
   private async disablePresence(): Promise<void> {
@@ -187,15 +161,15 @@ export class PresenceController implements vscode.Disposable {
    * while exercising the real clearing and journal-deletion path.
    */
   public async performDisable(): Promise<void> {
+    this.lifecycleGeneration += 1;
     this.journalRestorationGeneration += 1;
     this.editAggregator?.clear();
     this.toolContext.clear();
     this.detachObservationListener();
     this.observationWindow = new ObservationWindow(OBSERVATION_CAPACITY);
-    const snapshot = this.sessionController.disablePresence();
+    await this.sessionController.disablePresence();
     await this.clearJournal();
-    this.statusView.render(snapshot.presence.status);
-    await this.toolContext.accept(snapshot);
+    await this.applyCurrentSnapshot();
   }
 
   /**
@@ -214,29 +188,55 @@ export class PresenceController implements vscode.Disposable {
     await this.reconcileJournal();
   }
 
-  private async startSession(): Promise<void> {
-    if (!(await this.ensureTrustedWorkspace())) {
+  private startSession(): Promise<void> {
+    return this.runTrustedAction("startSession");
+  }
+
+  private joinInProgress(): Promise<void> {
+    return this.runTrustedAction("joinInProgress");
+  }
+
+  private async runTrustedAction(
+    action: "enablePresence" | "stayQuiet" | "startSession" | "joinInProgress",
+  ): Promise<void> {
+    const generation = this.lifecycleGeneration;
+    if (
+      this.disposed ||
+      !(await this.ensureTrustedWorkspace()) ||
+      !this.isCurrentGeneration(generation)
+    ) {
       return;
     }
 
-    const snapshot = await this.sessionController.startSession();
-    if (snapshot.session?.status === "paused") {
-      await vscode.window.showInformationMessage(
-        "Use Join Work in Progress to resume the paused Pair session.",
-      );
+    try {
+      await this.sessionController[action]();
+      if (!this.isCurrentGeneration(generation)) {
+        return;
+      }
+      if (action === "startSession" && this.sessionController.snapshotNow().session?.status === "paused") {
+        await vscode.window.showInformationMessage(
+          "Use Join Work in Progress to resume the paused Pair session.",
+        );
+      }
+      if (this.isCurrentGeneration(generation)) {
+        await this.applyCurrentSnapshot();
+      }
+    } catch (error) {
+      if (this.isCurrentGeneration(generation)) {
+        throw error;
+      }
     }
-    await this.applySnapshot(snapshot);
   }
 
-  private async joinInProgress(): Promise<void> {
-    if (!(await this.ensureTrustedWorkspace())) {
+  private isCurrentGeneration(generation: number): boolean {
+    return !this.disposed && generation === this.lifecycleGeneration;
+  }
+
+  private async applyCurrentSnapshot(): Promise<void> {
+    if (this.disposed) {
       return;
     }
-
-    await this.applySnapshot(await this.sessionController.joinInProgress());
-  }
-
-  private async applySnapshot(snapshot: ReturnType<SessionController["snapshotNow"]>): Promise<void> {
+    const snapshot = this.sessionController.snapshotNow();
     this.statusView.render(snapshot.presence.status);
     if (snapshot.presence.status === "off" || snapshot.presence.status === "paused") {
       this.detachObservationListener();
@@ -265,8 +265,14 @@ export class PresenceController implements vscode.Disposable {
       return;
     }
 
+    const generation = this.lifecycleGeneration;
     this.documentListener = vscode.workspace.onDidChangeTextDocument(event => {
-      if (event.contentChanges.length === 0) {
+      const status = this.sessionController.snapshotNow().presence.status;
+      if (
+        !this.isCurrentGeneration(generation) ||
+        status === "off" || status === "paused" ||
+        event.contentChanges.length === 0
+      ) {
         return;
       }
 
@@ -279,7 +285,16 @@ export class PresenceController implements vscode.Disposable {
         summary: `Observed local change in ${vscode.workspace.asRelativePath(event.document.uri)}.`,
         observedAt: Date.now(),
       });
-      this.sessionController.bumpObservationRevision();
+      void this.sessionController.bumpObservationRevision()
+        .catch(() => {
+          if (this.isCurrentGeneration(generation)) {
+            return this.failClosed("state-commit", "workspace observation");
+          }
+        })
+        .catch(() => {
+          this.toolContext.clear();
+          this.detachObservationListener();
+        });
       this.recordEditObservation(event);
     });
     this.ledger?.recordListenerAttached();
@@ -422,15 +437,13 @@ export class PresenceController implements vscode.Disposable {
     void this.failClosed(reason);
   }
 
-  private async failClosed(reason: string): Promise<void> {
-    this.editAggregator?.clear();
-    this.toolContext.clear();
-    this.detachObservationListener();
-    const snapshot = await this.sessionController.pausePresence();
-    this.statusView.render(snapshot.presence.status);
-    await this.toolContext.accept(snapshot);
+  private async failClosed(reason: string, source = "local journal"): Promise<void> {
+    await this.pausePresence();
+    if (this.disposed) {
+      return;
+    }
     await vscode.window.showWarningMessage(
-      `Adaptive Pair paused: local journal unavailable (${reason}).`,
+      `Adaptive Pair paused: ${source} unavailable (${reason}).`,
     );
   }
 }
