@@ -66,12 +66,18 @@ P1 implementation review and does not authorize another product milestone.
 
 - [x] Replace the blanket restrictions in `AGENTS.md`, `docs/design.md`, and
   this plan with the compatibility- and evidence-based maintenance policy.
+- [x] Cross-check metadata for all 15 external direct dependencies across the
+  13 root/workspace manifests and upstream release records. Document the TypeScript,
+  Node type, and Mocha patch compatibility or availability retentions.
 - [x] Update `apps/vscode-extension/package.json` to Mocha 12.0.0 and VSCE
-  4.0.0, then regenerate `package-lock.json` without forced audit fixes or
-  transitive dependency overrides.
+  4.0.0 and root `package.json` to typescript-eslint 8.70.0, then regenerate
+  `package-lock.json` without forced audit fixes or transitive dependency
+  overrides.
 - [x] Update `.github/workflows/ci.yml` to the verified stable checkout 7.0.1,
   setup-node 7.0.0, and upload-artifact 7.0.1 releases, pinned to their commit
-  SHAs, and run `npm audit --audit-level=low` after installation.
+  SHAs, and run `npm audit --audit-level=low` after installation. Contract-test
+  the audit's position immediately after installation in
+  `scripts/test/ciWorkflow.test.ts`.
 - [x] Verify a clean `npm ci`, full and production-only audits, `npm run check`,
   `npm run package`, `node scripts/verify-vsix.mjs`, and `npm run test:host`.
   Record the versions and measured results in `docs/research.md`.

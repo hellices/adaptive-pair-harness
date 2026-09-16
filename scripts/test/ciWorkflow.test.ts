@@ -39,6 +39,18 @@ describe("CI clean-checkout ordering", () => {
     ]);
   });
 
+  it("audits the full dependency graph immediately after installation", () => {
+    const steps = job("  build-and-package:", "  host-smoke:")
+      .split("\n      - name: ")
+      .slice(1);
+    const installIndex = steps.findIndex((step) => /^ {8}run: npm ci$/mu.test(step));
+
+    expect(installIndex).toBeGreaterThanOrEqual(0);
+    expect(steps[installIndex + 1]?.trim()).toBe(
+      "Audit all dependencies\n        run: npm audit --audit-level=low",
+    );
+  });
+
   it("builds workspace exports before both stable host smoke jobs", () => {
     expectOrdered(job("  host-smoke:", "  host-insiders:"), [
       "run: npm ci",

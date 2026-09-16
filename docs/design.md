@@ -363,6 +363,11 @@ compatibility, or authorized work. Check the actual current stable releases
 and their compatibility requirements rather than relying on remembered
 version numbers or upgrading indiscriminately.
 
+Cross-check direct dependency metadata and upstream release records. An empty
+`npm outdated` report does not prove that every upstream release is current.
+Record compatibility or availability reasons for retaining an older release
+and revisit that choice when those conditions change.
+
 Keep dependency declarations and the lockfile synchronized. Review breaking
 changes, make any required protocol or storage migration explicit, and rerun
 the affected type, lint, unit, contract, isolated-host, and package checks.

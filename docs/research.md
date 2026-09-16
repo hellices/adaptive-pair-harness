@@ -399,18 +399,38 @@ applying necessary updates. This maintenance starts from the reviewed `main`
 baseline `f28de5f`, independently of the P1 implementation PR. It does not
 implement Pair runtime behavior or begin a new product milestone.
 
-The configured npm registry's current stable tags and the upstream stable
-release records were checked before updating. The maintained npm workspaces
-had two outdated direct dependencies; after the update,
-`npm outdated --json --workspaces --include-workspace-root` returned `{}`.
+Release selection cross-checks direct metadata for all 15 external dependencies
+across the 13 root/workspace manifests and upstream stable release records. The
+initial `npm outdated --json --workspaces --include-workspace-root` query
+reported two packages and returned `{}` after the first update. Review exposed
+its incomplete coverage: direct metadata still reported a newer linter, and
+GitHub reported a Mocha patch absent from the configured registry. An empty
+outdated report is not treated as proof of a complete upstream inventory.
 
-| Component | Previous | Verified stable update |
+| Component | Previous | Selected stable release |
 | --- | --- | --- |
 | Mocha | 11.8.0 | [12.0.0](https://github.com/mochajs/mocha/releases/tag/v12.0.0) |
 | VSCE | 3.9.2 | [4.0.0](https://github.com/microsoft/vscode-vsce/releases/tag/v4.0.0) |
+| typescript-eslint | 8.69.0 | [8.70.0](https://github.com/typescript-eslint/typescript-eslint/releases/tag/v8.70.0) |
 | Checkout action | v4 | [7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1) |
 | Setup Node action | v4 | [7.0.0](https://github.com/actions/setup-node/releases/tag/v7.0.0) |
 | Upload Artifact action | v4 | [7.0.1](https://github.com/actions/upload-artifact/releases/tag/v7.0.1) |
+
+The following retentions are explicit compatibility or availability decisions,
+not a reinstatement of the version freeze:
+
+- TypeScript 6.0.3 is the latest published 6.x version available in the registry.
+  TypeScript 7.0.2 is available, but typescript-eslint 8.70.0 declares the peer
+  range `>=4.8.4 <6.1.0`; upgrading the compiler would leave the supported lint
+  toolchain range.
+- `@types/node` 24.13.3 is the latest available Node 24 type release. The registry
+  advertises 26.5.0, but the types must describe the supported Node 24 host floor,
+  not silently allow APIs that require Node 26.
+- Upstream [Mocha 12.0.1](https://github.com/mochajs/mocha/releases/tag/v12.0.1)
+  was published on September 11, 2026, but an exact registry lookup returns
+  `E404`. Retain the obtainable 12.0.0 release with the patched
+  `serialize-javascript` 7.1.1 resolution, rather than substituting an untested
+  Git snapshot. Recheck the patch when registry availability changes.
 
 The CI actions are pinned to their verified release commit SHAs and run on
 Node.js 24. Mocha and VSCE support the repository's Node.js 24 baseline. VSCE 4
@@ -428,15 +448,25 @@ CI now runs the full audit as a required step in its build-and-package job.
 These are point-in-time audit results, not a guarantee against undiscovered
 vulnerabilities.
 
-Local validation used Node.js 24.20.0. Typecheck and lint passed; all 40 test
-files and 596 tests passed before and after the dependency update. Stable VSIX
+The CI workflow contract gained one test that requires the complete audit step
+immediately after `npm ci`. Three temporary mutations, removing the audit,
+moving it after the workspace build, and replacing it with a production-only
+audit, each produced one failed and four passed CI contract tests. Restoring
+the full audit in its required position passed all five cases. These mutation
+runs do not add extra cases to the full-suite count.
+
+Local validation used Node.js 24.20.0. The baseline and initial dependency
+refresh passed 40 files and 596 tests. After the review-driven test and linter
+update, typecheck, lint, all 40 test files, and 597 tests passed. Stable VSIX
 packaging and archive verification passed with seven entries. The isolated
 VS Code 1.137.0 Extension Host passed all 17 smoke tests with runner exit code
-0, including additive activation and inactive-zero assertions. The three
+0, including additive activation and inactive-zero assertions. All five
 external production dependencies retain their previous versions and integrity
-values; the audit's total dependency count fell from 601 to 401. The clean
-installation emitted no deprecation warnings. Existing Vite and isolated-host
-diagnostics are not claimed to be fixed by this maintenance.
+values, including the nested `ajv` and `json-schema-traverse` packages under
+`packages/protocol/node_modules`; the audit's total dependency count fell from
+601 to 401. The clean installation emitted no deprecation warnings. Existing
+Vite and isolated-host diagnostics are not claimed to be fixed by this
+maintenance.
 
 Local verification is separate from PR approval. The published PR records the
 final revision's CI, review feedback, fixes, and thread resolutions; these
