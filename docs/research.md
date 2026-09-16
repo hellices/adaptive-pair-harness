@@ -1098,6 +1098,40 @@ before/after, and passes extension/reference compilation and changed-file lint.
 It does not claim a new native or whole-branch run. The summary-only response and
 new committed head's repository review/checks remain separate merge gates.
 
+#### Seventh review: POC controller construction ordering
+
+The sixth correction is committed as `6a591ff`; its summary response is posted
+and CI `35161728080` passes all four jobs and every actual step. Review
+`5229347240` identifies a POC `ReferenceError` if the item-controller factory
+invokes its refresh callback before returning the controller. Thirteen focused
+tests plus the eight existing POC cases reproduce seven failures with 14 controls.
+The failures originate from the real binding's uninitialized `controller`, not
+from a compile or mock-resolution error. Native synchronous callback invocation
+is not established; the reproduction supplies an eager host double.
+
+The correction defers only the refresh body with a resolved-Promise continuation.
+It checks cancellation after construction and reads the current records before
+replacing items. Reverting to the old unassigned `let` variable alone would not
+solve construction ordering. Ordinary refresh, status/resource/title/timing
+mapping, cancelled refresh, refresh errors, repeated initial calls, immediate
+new-session creation, and its cancellation contract are tested. All 21 POC cases
+and full repository lint pass without changes to existing assertions or vendored
+declarations; other POC provider behavior and the Stable dependency graph are
+unchanged.
+
+Fresh integration passes 1,448 root tests across 108 files, forced root typecheck,
+full lint, Stable build/seven-entry VSIX verification, and 17 cases on each Stable
+host. The separate POC passes 21 tests across five files, nine-entry packaging,
+and one native Insiders host case. Both installed dependency trees validate and
+all four full/production audits report zero findings. The native host pass does
+not turn the eager-callback double into a reproduced native failure. Bounded
+independent re-review subsequently passes specification and quality on the exact
+two-file overlay. Identical tests independently reproduce seven failures with
+14 controls before and all 21 passes after; forced root typecheck, POC compilation,
+full lint, and effective size rules pass. No native invocation, upstream lookup,
+or whole-branch retest is attributed to that re-review. The summary response and
+final committed-head repository review/checks remain separate gates.
+
 Current authoritative session state remains in memory; the durable edit-episode
 journal is a separate continuity feature, not proof of session or ownership
 recovery.

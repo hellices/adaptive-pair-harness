@@ -485,8 +485,31 @@ completion is not treated as approval.
 - [x] Obtain bounded independent review: specification/quality pass, the same
   56 process cases pass before/after, and extension/reference compilation plus
   changed-file lint pass on the exact one-file overlay.
-- [ ] Respond to the summary-only finding and obtain a fresh repository
+- [x] Respond to the summary-only finding and obtain a fresh repository
   assessment plus the final committed head's actual check results.
+
+The sixth-round cleanup is committed as `6a591ff`. The summary-only response is
+posted and CI `35161728080` passes all four jobs and every actual step. Review
+`5229347240` nevertheless identifies an initialization-order hazard in the
+isolated POC controller; it is not cleared by the successful review job.
+
+### Seventh repository reassessment
+
+- [x] Reproduce eager controller refresh with seven failures and 14 controls
+  across the POC suite. A host double invokes the refresh callback during
+  construction; native eager-callback behavior is not claimed.
+- [x] Defer only refresh work until construction completes, then recheck
+  cancellation and read current records. Preserve immediate new-session
+  creation and provider streaming; all 21 POC cases pass.
+- [x] Rerun full integration: 1,448 root tests, forced typecheck, lint, Stable
+  build/seven-entry VSIX, both Stable hosts' 17 cases, 21 POC tests/five files,
+  nine-entry POC packaging, one Insiders POC case, both installed trees, and
+  all four dependency audits pass.
+- [x] Obtain bounded independent review: specification/quality pass on the
+  exact two-file overlay, identical tests reproduce seven failures/14 controls
+  before and 21 passes after, and forced typecheck/POC compile/full lint pass.
+- [ ] Reply to the summary-only finding and check the new committed head's
+  fresh repository assessment and actual CI steps before merging.
 
 Merge is permitted only after those gates and the final revision's checks pass.
 Their live status belongs to the PR/check history, not a prospective approval

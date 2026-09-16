@@ -1307,6 +1307,13 @@ The first executable POC has confirmed:
 - content-provider loading;
 - request completion through the default dynamic participant.
 
+The extracted POC controller defers refresh work until controller construction
+has completed, then checks cancellation and reads the current in-memory records.
+This prevents an eager host callback from using an uninitialized controller.
+Unit tests reproduce construction-time callbacks through a host double; they do
+not establish that the current native host calls refresh synchronously. Ordinary
+refresh, immediate new-session creation, and provider streaming remain covered.
+
 The POC has not yet confirmed persisted history, Pair tool routing, native
 interruption, complete target-list coexistence, or visual quality.
 

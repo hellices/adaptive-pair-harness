@@ -230,6 +230,14 @@ zero findings. See the [maintenance evidence](../research.md) for the selected
 versions, audit scope, and compatibility retentions. No runtime source or
 vendored declaration changed, and the spike's remaining questions stay open.
 
+Runtime-boundary stabilization subsequently extracts the POC bindings and guards
+item refresh against construction-time reentrancy. The current separate POC
+checkpoint passes 21 unit cases across five files, one native Insiders host case,
+and nine-entry packaging. Eager callback failure and cancellation ordering are
+verified with a host double, not claimed as observed native-host behavior. See
+the [stabilization evidence](../research.md#runtime-boundary-stabilization) for
+the RED/GREEN and independent-review record; the product questions remain open.
+
 Critical proposed-API rules discovered from documentation and confirmed by
 the POC:
 

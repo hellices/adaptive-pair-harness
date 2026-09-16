@@ -83,9 +83,8 @@ export const createSessionItemController = (
 ): vscode.ChatSessionItemController => {
   const controller = vscode.chat.createChatSessionItemController(
     sessionType,
-    token => new Promise<void>(resolve => {
+    token => Promise.resolve().then(() => {
       if (token.isCancellationRequested) {
-        resolve();
         return;
       }
       controller.items.replace(
@@ -107,7 +106,6 @@ export const createSessionItemController = (
           return item;
         }),
       );
-      resolve();
     }),
   );
 
