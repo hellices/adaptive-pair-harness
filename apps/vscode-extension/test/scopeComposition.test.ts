@@ -261,7 +261,11 @@ describe("Scope composition — missing buffer safety and bounds", () => {
     const result = await run("pair_read_scope", ["src"], { path: "src/new.ts" });
 
     expect(result).toMatchObject({ status: "confirmed", partial: true });
-    expect(result.observation?.["text"]).toHaveLength(12_000);
+    const displayed = String(result.observation?.["text"]);
+    expect(displayed.length).toBeGreaterThan(0);
+    expect(displayed.length).toBeLessThan(12_000);
+    expect(displayed).toBe("é".repeat(displayed.length));
+    expect(JSON.stringify(result).length).toBeLessThanOrEqual(12_000);
   });
 
   it.each(["inside", "outside"])("does not invent an identity through a dangling %s alias", async location => {

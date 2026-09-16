@@ -1,10 +1,16 @@
-import { enabledPresenceStatus } from "../presence.js";
+import { enabledPresenceStatus, requiresWorkspaceReset } from "../presence.js";
 import { pauseSession } from "./session.js";
 import { freezeDecision, isPausableStatus, type DecisionHandler } from "./support.js";
 
 export const enablePresence: DecisionHandler<"EnablePresence"> = (snapshot, command, event) => {
   if (command.actor !== "human") {
     throw new Error("HUMAN_ACTION_REQUIRED");
+  }
+  if (requiresWorkspaceReset(snapshot, command.workspaceId)) {
+    return freezeDecision([
+      event(0, "PresenceChanged", { status: "off" }),
+      event(1, "PresenceEnabled", { workspaceId: command.workspaceId }),
+    ]);
   }
   if (
     snapshot.presence.workspaceId === command.workspaceId &&

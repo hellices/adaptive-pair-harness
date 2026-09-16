@@ -359,7 +359,9 @@ than internal snapshots, diagnostics, operation payloads, or grants.
 Growth consent and cached transfer/check results are bound to the committed
 workspace/session lifetime, not reusable IDs. The participant rejects unsupported
 modes before consent, and a committed model-tool contract ends the turn so the
-next request compiles fresh instructions and tools. Windows cancellation never
+next request compiles fresh instructions and tools. Switching workspace bindings
+clears the old session authority and requires a fresh session agreement.
+Windows cancellation never
 treats successful `taskkill` delivery as proof that the process tree exited;
 without that evidence it reports termination as unconfirmed.
 Only edit-episode continuity is persisted today;

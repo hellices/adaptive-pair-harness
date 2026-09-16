@@ -914,9 +914,95 @@ complete-result/prefix reviews, each third-round correction has a scoped
 independent pass. These are AI technical reviews, not a native-host guarantee
 or whole-product certification.
 
-The third-round source patches still require original-thread responses and a
-fresh repository assessment and CI at their eventual committed head. No future
-CI or merge verdict is implied.
+The third-round correction is committed as `6236a06`. Both original inline
+threads have evidence replies and are resolved, and all four CI jobs pass,
+including the actual Insiders test step. Review `5228345791` then requests five
+more corrections; the green checks do not clear those findings.
+
+#### Fourth review: workspace authority and useful bounded results
+
+Two inline findings expose the same workspace-rebinding defect: changing the
+Presence workspace preserves an existing session and authority epoch. Sixteen
+new failures with seven controls establish the lifecycle cases, followed by two
+reused-ID result-admission failures. The correction emits an atomic disable/enable
+batch, rejects a replayed rebind without a reset, and correlates late results with
+their original authorization revision. All 25 focused cases and 424 core/runtime
+cases pass. Independent review of cancellation and cleanup compositions remains
+a separate gate; cancellation cannot undo an external action already performed.
+
+Multi-root pattern tests produce 20 failures with 38 controls. A pattern qualified
+by one agreed root was incorrectly searched relative to other roots. The fix
+classifies qualification across all canonical/lexical scopes before discovery;
+58 pattern cases and 238 related scope/context cases pass, including physical and
+aliased workspace roots and the existing permission/binary/cancellation controls.
+
+Eight failing native/runtime/Growth cases with six controls show that capping
+only read text or verification output still overflows complete representations.
+Shared runtime result assembly and Growth text serialization now drive prefix
+selection with metadata overhead reserved, including escaped identities and
+large numeric revisions. Truncation preserves code-point boundaries and keeps
+ordinary large reads/checks useful instead of replacing them with size failures.
+Two legacy body-only exact-length assertions are deliberately replaced with
+complete-result bounds, nonempty prefix checks, and truncation flags, retaining
+their byte-limit and sensitivity assertions. Additional immutable-identity cases
+retain the bounded-failure backstop without falsifying IDs or undoing committed
+operations. The 176-case combined result/scope checkpoint, forced typecheck, and
+full lint pass. These tests simulate host/model APIs.
+
+The initial integrated fourth-round source tree passes **1,343 tests across 102
+files**, forced typecheck, full lint, Stable build/seven-entry VSIX verification,
+and 17 isolated cases on each Stable host. Independent re-review and the eventual
+committed head's repository review/checks remain required; this checkpoint does
+not pre-approve merge or a later source revision.
+
+The independent cancellation review then reproduces a pending-registry ownership
+defect. An abort-resistant old invocation or recovered read can settle after a
+replacement reuses its operation ID. Its unconditional cleanup deletes the new
+entry, so later Pause/Disable misses the replacement controller and explicit
+reconciliation can dispatch a duplicate read. Promoting the review's regressions
+and controls produces 20 failures with 28 passes before the correction. Both
+cleanup paths now compare controller identity before deleting an entry, while
+still unlinking and aborting their own controller. All 48 maintained cases and
+68 surrounding workspace/lifecycle/recovery cases pass with forced typecheck
+and scoped lint. Independent specification and quality re-review passes 235
+cases across 18 files: 64 unchanged original probes, 25 workspace cases, the
+48 promoted cases, 82 surrounding controls, and 16 additional parent-signal
+probes. The promoted cases overlap the original probes, rather than representing
+48 new independent scenarios. All 20 previously failing cases pass unchanged;
+old cleanup preserves the replacement's listener for shared or distinct parent
+signals. This evidence uses the real coordinator/journal with deferred effects,
+not a native-host execution claim.
+
+Independent result-envelope review passes 47 additional serialization probes,
+14 actual Growth-loop probes, 187 supplied tests, and 158 surrounding controls
+on its frozen scope. It also identifies two pattern-selection defects: a root
+file's implicit dot parent incorrectly qualifies relative patterns globally,
+and a missing permitted file loses its parent-prefix qualification. Four new
+regressions and six residual cases fail; the observed wrong selections remain
+within the allowed-path union, not demonstrated escapes beyond that union.
+The main-tree reproduction confirms ten failures with 70 passing controls after
+promoting these cases and relative-pattern union controls. The correction excludes
+the implicit dot parent from global qualification and retains missing-target
+prefixes only after safe identity and containment checks. Missing files constrain
+selection but are not newly enumerated. Independent specification and quality
+re-review freshly reproduces the ten failures on the previous artifact, then
+passes all 36 original probes unchanged on the final source. Another 28 probes
+cover missing ancestors, exact-file aliases, ENOTDIR, dangling links, real
+filesystem EACCES, fallback-await cancellation/failure, and outside-root
+retargeting. Together with 47 envelope probes, 14 Growth probes, 209 supplied
+tests, and 158 surrounding controls, 492 final-artifact test executions pass.
+Pinned no-emit typecheck and scoped lint pass. These tests use the real macOS
+filesystem and mocked host/process APIs, not native Windows evidence or an
+exhaustive proof of filesystem interleavings.
+
+Fresh integrated validation after the ownership and qualifier corrections passes
+**1,413 tests across 104 files**, forced typecheck, full enforced lint, Stable
+build/seven-entry VSIX verification, and 17 isolated cases on each Stable host
+version. The unchanged POC is freshly checked too: eight tests across four files,
+a nine-entry package, and one Insiders host case pass. Both installed dependency
+trees validate and their four full/production audits report zero findings. These
+local results and scoped independent passes do not replace original-thread
+responses, repository review, or final-head CI.
 
 Current authoritative session state remains in memory; the durable edit-episode
 journal is a separate continuity feature, not proof of session or ownership

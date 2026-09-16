@@ -1,5 +1,6 @@
 import type { EffectRequest, EffectResult } from "@adaptive-pair/runtime";
 import { canonicalRelative } from "./workspaceContext.js";
+import { boundEffectResultText } from "./effectResultBudget.js";
 
 const MAX_READ_LINES = 200;
 const MAX_RESULT_CHARACTERS = 12_000;
@@ -219,13 +220,11 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
       lines.length,
     );
     const selected = lines.slice(startLine - 1, boundedEnd).join("\n");
-    const text = selected.slice(0, MAX_RESULT_CHARACTERS);
     const partial =
       read.partial === true ||
-      (explicitEnd ? requestedEnd > maximumEnd : lines.length > maximumEnd) ||
-      text.length < selected.length;
+      (explicitEnd ? requestedEnd > maximumEnd : lines.length > maximumEnd);
 
-    return result(
+    return boundEffectResultText(selected, MAX_RESULT_CHARACTERS, text => result(
       request,
       "confirmed",
       "Read bounded text from the agreed work-unit scope.",
@@ -235,8 +234,8 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
         endLine: boundedEnd,
         text,
       },
-      partial,
-    );
+      partial || text.length < selected.length,
+    ));
   }
 
   private async canonicalPaths(paths: readonly string[], signal: AbortSignal): Promise<readonly string[]> {

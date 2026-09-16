@@ -370,7 +370,7 @@ review job's successful completion.
 - [x] Rerun integrated validation after the complete-result and overlapping
   prefix corrections, including both Stable hosts and the separate POC.
 - [x] Complete independent re-review of the final source patches.
-- [ ] Reply in both original new inline threads, resolve addressed concerns,
+- [x] Reply in both original new inline threads, resolve addressed concerns,
   and obtain a fresh repository assessment plus final-head checks.
 
 The initial third-round integrated checkpoint passes **1,194 tests across 94
@@ -400,8 +400,38 @@ Independent Windows, model-transition, complete-result/prefix, and
 consent/route-boundary reviews now report specification and quality passes in
 their respective frozen scopes. The route reviewer replays all 58 original
 probes unchanged, all 101 promoted/transfer-intent cases, and 226 additional
-focused/prior regressions. Original-thread responses, repository reassessment,
-and the new committed head's checks still gate merge.
+focused/prior regressions. The two original threads have evidence replies and
+are resolved at `6236a06`; all four CI jobs and their actual steps pass. The next
+repository assessment nevertheless requests five additional corrections.
+
+### Fourth repository reassessment
+
+Review `5228345791` reports four inline findings and one summary-only finding.
+The two workspace findings describe one missing authoritative lifecycle boundary;
+the remaining findings cover multi-root pattern qualification and useful bounded
+read/verification results.
+
+- [x] Make workspace rebinding an atomic disable/enable boundary, reject replay
+  without a reset, and fence late result admission with its authorization revision.
+- [x] Classify qualified patterns across all lexical/canonical agreed scopes;
+  skip unmatched roots without changing genuinely relative pattern behavior.
+- [x] Reserve complete effect/runtime/Growth overhead before shortening read
+  text or verification output. Preserve byte/sensitivity checks, exact identities,
+  execution metadata, Unicode boundaries, and explicit truncation flags.
+- [x] Rerun full local validation: 1,343 tests across 102 files, forced typecheck,
+  full lint, Stable build/7-entry VSIX verification, and both hosts' 17 cases pass.
+- [x] Reproduce stale invocation/recovery cleanup deleting a replacement's
+  pending entry when operation IDs are reused. Preserve registry ownership,
+  later cancellation, and no-duplicate recovery with 48 maintained cases.
+- [x] Address independent pattern review's dot-relative regression and missing
+  file-scope qualification gap without weakening canonical permission checks.
+- [x] Rerun integrated checks after these additional corrections: 1,413 tests
+  across 104 files, forced typecheck, lint, Stable build/7-entry VSIX verification,
+  and both Stable hosts' 17 cases pass. Fresh POC/graph checks also pass.
+- [x] Complete independent reviews, including lifecycle/operation cleanup
+  compositions and both result consumers, before publishing the correction.
+- [ ] Reply to all four inline findings and the summary-only finding, resolve
+  addressed concerns, and obtain fresh repository review and final-head checks.
 
 Merge is permitted only after those gates and the final revision's checks pass.
 Their live status belongs to the PR/check history, not a prospective approval

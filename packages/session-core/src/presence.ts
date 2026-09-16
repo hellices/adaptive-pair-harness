@@ -1,5 +1,13 @@
 import type { PairRuntimeSnapshot, PresenceStatus } from "@adaptive-pair/protocol";
 
+export const requiresWorkspaceReset = (snapshot: PairRuntimeSnapshot, workspaceId: string): boolean =>
+  snapshot.presence.workspaceId !== workspaceId && (
+    snapshot.presence.status !== "off" ||
+    snapshot.session !== undefined ||
+    snapshot.presence.observationRevision !== 0 ||
+    snapshot.presence.activeSessionId !== undefined
+  );
+
 export const enabledPresenceStatus = (snapshot: PairRuntimeSnapshot): PresenceStatus => {
   if (snapshot.session?.status === "paused") {
     return "paused";

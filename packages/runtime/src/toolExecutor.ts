@@ -20,6 +20,7 @@ import type {
 } from "./ports.js";
 import { commandForTool } from "./toolCommands.js";
 import { projectModelState } from "./modelStateProjection.js";
+import { createPairToolResult } from "./toolResult.js";
 
 type PendingOperation = {
   readonly authorityEpoch: number;
@@ -31,8 +32,6 @@ interface ReadRecovery {
   readonly request: EffectRequest;
   readonly controller: AbortController;
 }
-
-const EMPTY_OBSERVATION = Object.freeze({}) as Readonly<Record<string, unknown>>;
 
 const isEffectfulDescriptor = (descriptor: PairToolDescriptor): boolean =>
   descriptor.effectClass === "read" ||
@@ -207,7 +206,9 @@ export class ToolExecutor {
 
       return this.createResult(observed.snapshot, result, descriptor.maximumResultCharacters);
     } finally {
-      this.pendingOperations.delete(operation.id);
+      if (this.pendingOperations.get(operation.id)?.controller === controller) {
+        this.pendingOperations.delete(operation.id);
+      }
       unlinkAbort();
       controller.abort();
     }
@@ -231,7 +232,9 @@ export class ToolExecutor {
         const result = await this.options.effects.execute(recovery.request, recovery.controller.signal);
         await this.options.observeResult(recovery.operation, result);
       } finally {
-        this.pendingOperations.delete(recovery.operation.id);
+        if (this.pendingOperations.get(recovery.operation.id)?.controller === recovery.controller) {
+          this.pendingOperations.delete(recovery.operation.id);
+        }
         recovery.controller.abort();
       }
     }
@@ -348,16 +351,10 @@ export class ToolExecutor {
     },
     maximumResultCharacters: number,
   ): PairToolResult {
-    const completed = Object.freeze({
-      operationId: result.operationId,
+    const completed = createPairToolResult({
       runtimeRevision: snapshot.revision,
       authorityEpoch: snapshot.session?.authorityEpoch,
-      status: result.status,
-      summary: result.summary,
-      observation: result.observation ?? EMPTY_OBSERVATION,
-      sensitiveData: result.sensitiveData,
-      partial: result.partial,
-    });
+    }, result);
     if (JSON.stringify(completed).length > maximumResultCharacters) {
       throw new Error("TOOL_RESULT_TOO_LARGE");
     }

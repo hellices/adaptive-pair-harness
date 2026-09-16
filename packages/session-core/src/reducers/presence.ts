@@ -1,10 +1,13 @@
 import { createPresence } from "../initialState.js";
-import { enabledPresenceStatus } from "../presence.js";
+import { enabledPresenceStatus, requiresWorkspaceReset } from "../presence.js";
 import { isPausableStatus, type EventReducer } from "./support.js";
 
 export const presenceEnabled: EventReducer<"PresenceEnabled"> = (snapshot, event) => {
   if (event.actor !== "human") {
     throw new Error("HUMAN_ACTION_REQUIRED");
+  }
+  if (requiresWorkspaceReset(snapshot, event.workspaceId)) {
+    throw new Error("WORKSPACE_RESET_REQUIRED");
   }
   return {
     ...snapshot,

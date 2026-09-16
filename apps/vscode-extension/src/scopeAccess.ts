@@ -24,6 +24,17 @@ const isUnsafeSearchPattern = (pattern: string): boolean =>
   /^[A-Za-z]:/u.test(pattern) ||
   pattern.split(/[\\/]/u).includes("..");
 
+const matchesSearchPrefix = (pattern: string, prefix: string): boolean =>
+  pattern === prefix || pattern.startsWith(`${prefix}/`);
+
+interface ScopeSearch {
+  readonly target: string;
+  readonly isFile: boolean;
+  readonly base: string;
+  readonly scopedPattern: string;
+  readonly qualified: boolean;
+}
+
 const scopeSearch = (
   pattern: string | undefined,
   requestedPattern: string,
@@ -31,7 +42,7 @@ const scopeSearch = (
   canonicalRoot: string,
   target: string,
   isFile: boolean,
-): { readonly base: string; readonly scopedPattern: string } => {
+): ScopeSearch => {
   const base = isFile ? dirname(target) : target;
   const canonicalScope = relative(canonicalRoot, target).replace(/\\/gu, "/");
   const prefixes = isFile
@@ -39,8 +50,7 @@ const scopeSearch = (
     : [scope, canonicalScope];
   const matchedScope = prefixes
     .sort((left, right) => right.length - left.length)
-    .find(prefix =>
-      requestedPattern === prefix || requestedPattern.startsWith(`${prefix}/`));
+    .find(prefix => matchesSearchPrefix(requestedPattern, prefix));
   const relativePattern =
     matchedScope === undefined
       ? requestedPattern
@@ -55,7 +65,13 @@ const scopeSearch = (
         ? basename(target)
         : "**/*"
       : relativePattern;
-  return { base, scopedPattern };
+  return {
+    target,
+    isFile,
+    base,
+    scopedPattern,
+    qualified: matchedScope !== undefined && matchedScope !== ".",
+  };
 };
 
 export class VscodeScopeAccess implements ScopeAccess {
@@ -228,6 +244,72 @@ export class VscodeScopeAccess implements ScopeAccess {
     return undefined;
   }
 
+  private async searchScopes(
+    pattern: string | undefined,
+    requestedPattern: string,
+    allowedPaths: readonly string[],
+    canonicalRoot: string,
+    signal: AbortSignal,
+  ): Promise<readonly ScopeSearch[]> {
+    const scopes = [
+      ...new Set(
+        allowedPaths
+          .map(canonicalRelative)
+          .filter(
+            (path): path is string =>
+              path !== undefined &&
+              !isSecretPath(path) &&
+              !isBinaryPath(path),
+          ),
+      ),
+    ];
+    const searches: ScopeSearch[] = [];
+    let qualified = scopes.some(scope => matchesSearchPrefix(requestedPattern, scope));
+
+    for (const scope of scopes) {
+      signal.throwIfAborted();
+      let target: string;
+      let targetStat: Awaited<ReturnType<typeof stat>>;
+      try {
+        target = await realpath(resolve(this.rootPath, scope));
+        targetStat = await stat(target);
+      } catch (error) {
+        if (errorCode(error) === "ENOENT") {
+          const missingTarget = await scopePathIdentity(resolve(this.rootPath, scope), signal);
+          signal.throwIfAborted();
+          if (!withinRoot(canonicalRoot, missingTarget)) {
+            throw error;
+          }
+          qualified ||= scopeSearch(
+            pattern,
+            requestedPattern,
+            scope,
+            canonicalRoot,
+            missingTarget,
+            true,
+          ).qualified;
+          continue;
+        }
+        throw error;
+      }
+      if (!withinRoot(canonicalRoot, target)) {
+        continue;
+      }
+
+      const search = scopeSearch(
+        pattern,
+        requestedPattern,
+        scope,
+        canonicalRoot,
+        target,
+        targetStat.isFile(),
+      );
+      searches.push(search);
+      qualified ||= search.qualified;
+    }
+    return qualified ? searches.filter(search => search.qualified) : searches;
+  }
+
   public async listPaths(
     pattern: string | undefined,
     allowedPaths: readonly string[],
@@ -244,53 +326,18 @@ export class VscodeScopeAccess implements ScopeAccess {
     }
 
     const canonicalRoot = await realpath(this.rootPath);
+    const searches = await this.searchScopes(pattern, requestedPattern, allowedPaths, canonicalRoot, signal);
     const paths = new Set<string>();
     let truncated = false;
-    const scopes = [
-      ...new Set(
-        allowedPaths
-          .map(canonicalRelative)
-          .filter(
-            (path): path is string =>
-              path !== undefined &&
-              !isSecretPath(path) &&
-              !isBinaryPath(path),
-          ),
-      ),
-    ];
-
-    for (const scope of scopes) {
+    for (const search of searches) {
       signal.throwIfAborted();
-      let target: string;
-      let targetStat: Awaited<ReturnType<typeof stat>>;
-      try {
-        target = await realpath(resolve(this.rootPath, scope));
-        targetStat = await stat(target);
-      } catch (error) {
-        if (errorCode(error) === "ENOENT") {
-          continue;
-        }
-        throw error;
-      }
-      if (!withinRoot(canonicalRoot, target)) {
-        continue;
-      }
-
-      const { base, scopedPattern } = scopeSearch(
-        pattern,
-        requestedPattern,
-        scope,
-        canonicalRoot,
-        target,
-        targetStat.isFile(),
-      );
       const remaining = 5_000 - paths.size;
       if (remaining <= 0) {
         truncated = true;
         break;
       }
       const uris = await vscode.workspace.findFiles(
-        new vscode.RelativePattern(vscode.Uri.file(base), scopedPattern),
+        new vscode.RelativePattern(vscode.Uri.file(search.base), search.scopedPattern),
         "**/{.git,node_modules,.ssh,.aws,.gnupg,.gpg,.docker,.kube,secrets,.secrets}/**",
         remaining + 1,
       );
@@ -308,9 +355,9 @@ export class VscodeScopeAccess implements ScopeAccess {
         }
         if (
           !withinRoot(canonicalRoot, discoveredTarget) ||
-          (targetStat.isFile()
-            ? !sameFilesystemIdentity(target, discoveredTarget)
-            : !withinRoot(target, discoveredTarget))
+          (search.isFile
+            ? !sameFilesystemIdentity(search.target, discoveredTarget)
+            : !withinRoot(search.target, discoveredTarget))
         ) {
           continue;
         }

@@ -1,6 +1,7 @@
 import { StringDecoder } from "node:string_decoder";
 import type { EffectResult } from "@adaptive-pair/runtime";
 import type { RunOutcome } from "./verificationContracts.js";
+import { boundEffectResultText } from "./effectResultBudget.js";
 
 export const MAX_OUTPUT_BYTES = 128 * 1024;
 
@@ -95,7 +96,7 @@ export const interpretVerificationOutcome = (
   const sensitive = containsSensitive(bounded.text);
   const display = sensitive
     ? "[redacted: potential secret detected in verification output]"
-    : bounded.text.slice(0, DISPLAY_LIMIT);
+    : bounded.text;
 
   // Only the adapter's own 120s deadline sets timedOut. A manual caller
   // cancellation aborts the same controller but must never be labelled a
@@ -121,19 +122,21 @@ export const interpretVerificationOutcome = (
     signal: outcome.signal,
     timedOut,
     terminationConfirmed: outcome.terminationConfirmed,
-    output: display,
-    outputTruncatedForDisplay: !sensitive && bounded.text.length > DISPLAY_LIMIT,
   };
   if (status === "confirmed") {
     observation["passed"] = passed;
   }
 
-  return {
+  return boundEffectResultText(display, DISPLAY_LIMIT, output => ({
     operationId,
     status,
     summary: summarize(status, passed, timedOut),
-    observation,
+    observation: {
+      ...observation,
+      output,
+      outputTruncatedForDisplay: !sensitive && output.length < bounded.text.length,
+    },
     sensitiveData: sensitive,
     partial,
-  };
+  }));
 };

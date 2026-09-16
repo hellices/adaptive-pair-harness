@@ -504,6 +504,15 @@ execution never hold it.
 Presence enable/quiet/pause/disable and host workspace observations are core
 commands, not host-side snapshot replacement. Disable keeps the runtime
 revision monotonic while clearing the current session and observation state.
+Binding a different workspace first commits a disable/enable event batch. Old
+session authority, grants, work units, operations, and observations are removed
+atomically; replay rejects a changed workspace without that reset. Initial clean
+binding and same-workspace enablement preserve their existing behavior. Late
+operation results must match the original authorization revision as well as
+their ID and authority epoch, so reused IDs cannot revive an expired operation.
+Invocation and read-recovery cleanup remove a pending entry only while its
+controller still owns that entry. A late completion cannot erase a replacement
+operation's cancellation tracking or cause reconciliation to dispatch it again.
 Host lifecycle generations cancel obsolete intent before a deferred trusted
 action can enable Presence again, and UI/listener projections use current
 authoritative state after cleanup. Entry capture carries a lifecycle-bound
@@ -735,6 +744,13 @@ Search accepts both agreed-alias-relative and canonical workspace-relative
 patterns without searching a duplicated directory prefix. When lexical and
 canonical prefixes overlap, discovery uses the longest applicable prefix;
 canonical permission checks still determine which files can be returned.
+Qualification is determined across all agreed scopes before discovery. A
+workspace-qualified pattern searches only matching scopes; genuinely relative
+patterns may search each agreed root, without reinterpreting a qualified pattern
+under an unrelated root. A root-level file's implicit dot parent does not qualify
+relative patterns globally. Missing agreed targets contribute restrictive
+lexical/canonical parent qualifiers only after safe path-identity and root
+validation; they are not newly enumerated by search.
 The exact query must fit the complete effect result, including its metadata,
 before any workspace discovery. Match accumulation and empty-result returns
 use the same 12,000-character budget, not an observation-only allowance.
@@ -747,6 +763,16 @@ queries, paths, identities, or JSON. A native refusal is a small explicit
 `result-too-large` failure; Growth stops before another model dispatch. Such a
 refusal does not roll back an operation or state change that already committed,
 and must not be presented as evidence that the action did not occur.
+
+Scope reads and verification displays shorten only their text/output prefixes,
+reserving complete effect and runtime metadata plus the actual Growth text
+representation. Shared runtime assembly and Growth serialization keep that
+budget aligned with consumers. The adapter reserves the widest numeric revision
+and epoch representation and does not split a Unicode surrogate pair. Existing
+byte limits, full bounded-output secret scanning, execution status, and
+truncation flags are retained. If immutable metadata alone cannot fit, the final
+guards still return a bounded refusal rather than inventing an identity or
+rolling back a completed operation.
 
 On Windows, successful `taskkill /T` or `/T /F` delivery is not process-tree exit
 evidence. The adapter conservatively treats unknown liveness as live and reports

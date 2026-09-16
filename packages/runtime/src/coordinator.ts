@@ -256,6 +256,7 @@ export class PairCoordinator implements PairCoordinatorPort, PairPresencePort {
 
       if (
         liveOperation === undefined ||
+        liveOperation.runtimeRevision !== operation.runtimeRevision ||
         isTerminalOperationStatus(liveOperation.status) ||
         current.session?.authorityEpoch !== operation.authorityEpoch
       ) {
