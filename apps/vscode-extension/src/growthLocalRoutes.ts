@@ -182,6 +182,7 @@ export class GrowthLocalRoutes {
     const grantId = await this.deps.coordinator.grantUserAction(
       "pair_run_verification",
       signal,
+      { runtimeRevision: snapshot.revision, authorityEpoch: session.authorityEpoch },
     );
     const result = await this.deps.coordinator.invokeTool(
       "pair_run_verification",
@@ -264,6 +265,7 @@ export class GrowthLocalRoutes {
         bypassed: false,
       },
       signal,
+      { runtimeRevision: snapshot.revision, authorityEpoch: snapshot.session?.authorityEpoch },
     );
 
     response.markdown(

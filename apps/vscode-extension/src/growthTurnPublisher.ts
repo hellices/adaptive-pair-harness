@@ -33,6 +33,10 @@ export class GrowthTurnPublisher {
       userRequest: options.userRequest ?? request.prompt ?? "",
       ...(taskContext === undefined ? {} : { repositoryContext: taskContext }),
     });
+    if (signal.aborted) {
+      this.deps.evaluations.record({ outcome: "restraint-failure", reason: "GROWTH_CANCELLED" });
+      return undefined;
+    }
     const outcome = requested.status === "ready"
       ? finishGuardedGrowthTurn(requested, this.deps.snapshotNow(), options.validate)
       : requested;

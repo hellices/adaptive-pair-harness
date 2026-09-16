@@ -11,6 +11,12 @@ const isFileNotFound = (error: unknown): boolean =>
 
 const defaultReadText: ReadTextFile = (path) => readFileSync(path, "utf8");
 
+const isScriptMap = (value: unknown): value is Readonly<Record<string, string>> =>
+  typeof value === "object" &&
+  value !== null &&
+  !Array.isArray(value) &&
+  Object.values(value).every((script: unknown) => typeof script === "string");
+
 export class NodePackageScriptPort implements PackageScriptPort {
   public constructor(
     private readonly rootPath: string,
@@ -41,9 +47,9 @@ export class NodePackageScriptPort implements PackageScriptPort {
     if (scripts === undefined) {
       return { status: "ok", scripts: {} };
     }
-    if (typeof scripts !== "object" || scripts === null || Array.isArray(scripts)) {
+    if (!isScriptMap(scripts)) {
       return { status: "unreadable" };
     }
-    return { status: "ok", scripts: scripts as Record<string, string> };
+    return { status: "ok", scripts };
   }
 }

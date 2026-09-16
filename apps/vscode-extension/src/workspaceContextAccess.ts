@@ -1,8 +1,9 @@
-import { realpathSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
 import { lstat, realpath, stat } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import * as vscode from "vscode";
 import type { ActivityLedger } from "./activityLedger.js";
+import { isSecretPath } from "./workspaceContext.js";
 import type {
   DiagnosticInfo,
   GitMetadata,
@@ -40,6 +41,9 @@ const documentByteLength = (document: vscode.TextDocument): number => {
     return 0;
   }
 };
+
+const isMissingPathError = (error: unknown): boolean =>
+  typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 
 export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
   public constructor(
@@ -117,7 +121,7 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
     }
 
     return vscode.workspace.textDocuments.flatMap(document => {
-      const relativePath = this.relativePathWithinRoot(rootPath, document.uri);
+      const relativePath = this.openDocumentPath(rootPath, document.uri);
       return relativePath === undefined
         ? []
         : [{
@@ -247,12 +251,54 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
       if (document.isDirty !== true) {
         return [];
       }
-      const relativePath = this.relativePathWithinRoot(
+      const relativePath = this.openDocumentPath(
         folder.rootPath,
         document.uri,
       );
       return relativePath === undefined ? [] : [relativePath];
     });
+  }
+
+  private openDocumentPath(rootPath: string, uri: vscode.Uri): string | undefined {
+    const relativePath = this.relativePathWithinRoot(rootPath, uri);
+    if (relativePath === undefined || isSecretPath(relativePath)) {
+      return undefined;
+    }
+    try {
+      const rootIdentity = this.filesystemIdentity(rootPath);
+      const targetIdentity = this.openDocumentIdentity(resolve(uri.fsPath));
+      if (!withinRoot(rootIdentity, targetIdentity) ||
+          isSecretPath(relative(rootIdentity, targetIdentity).replace(/\\/gu, "/"))) {
+        return undefined;
+      }
+      return relativePath;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private openDocumentIdentity(absolute: string): string {
+    try {
+      return this.filesystemIdentity(absolute);
+    } catch (error) {
+      if (!isMissingPathError(error)) {
+        throw error;
+      }
+      let missing = false;
+      try {
+        lstatSync(absolute);
+      } catch (inspectionError) {
+        if (!isMissingPathError(inspectionError)) {
+          throw inspectionError;
+        }
+        missing = true;
+      }
+      const parent = dirname(absolute);
+      if (!missing || parent === absolute) {
+        throw error;
+      }
+      return join(this.openDocumentIdentity(parent), basename(absolute));
+    }
   }
 
   private relativePathWithinRoot(

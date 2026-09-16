@@ -92,7 +92,7 @@ class VscodeGrowthModel implements GrowthModel {
       signal.addEventListener("abort", relayAbort, { once: true });
     }
     const timer = setTimeout(
-      () => derived.abort(),
+      () => derived.abort(new GrowthModelFailure("GROWTH_TIME_CAP")),
       Math.max(0, deadline - this.now()),
     );
     const token = tokenFromSignal(derived.signal);
@@ -102,7 +102,7 @@ class VscodeGrowthModel implements GrowthModel {
 
     try {
       for (let call = 0; call < this.caps.maxModelCalls; call += 1) {
-        this.ensureLive(signal, deadline);
+        this.ensureLive(derived.signal, deadline);
         runtime = await this.toolRunner.captureRuntime(
           runtime.runtimeRevision,
           runtime.authorityEpoch,
@@ -113,10 +113,10 @@ class VscodeGrowthModel implements GrowthModel {
           throw new GrowthModelFailure("GROWTH_INPUT_TOKEN_CAP");
         }
 
-        const response = await this.dispatch(messages, chatTools, token, signal, deadline);
+        const response = await this.dispatch(messages, chatTools, token, derived.signal, deadline);
         const { text, toolCalls } = await this.consume(
           response,
-          signal,
+          derived.signal,
           deadline,
         );
 
@@ -152,6 +152,7 @@ class VscodeGrowthModel implements GrowthModel {
           continue;
         }
 
+        this.ensureLive(derived.signal, deadline);
         return Object.freeze({
           response: parseEnvelope(text),
           runtime,
@@ -159,6 +160,9 @@ class VscodeGrowthModel implements GrowthModel {
       }
 
       throw new GrowthModelFailure("GROWTH_MODEL_CALL_CAP");
+    } catch (error) {
+      this.rethrowLifecycle(error, derived.signal, deadline);
+      throw error;
     } finally {
       clearTimeout(timer);
       signal.removeEventListener("abort", relayAbort);
@@ -166,7 +170,12 @@ class VscodeGrowthModel implements GrowthModel {
   }
 
   private ensureLive(signal: AbortSignal, deadline: number): void {
-    if (this.now() >= deadline) {
+    if (
+      this.now() >= deadline ||
+      (signal.aborted &&
+        signal.reason instanceof GrowthModelFailure &&
+        signal.reason.code === "GROWTH_TIME_CAP")
+    ) {
       throw new GrowthModelFailure("GROWTH_TIME_CAP");
     }
     if (signal.aborted) {
@@ -193,6 +202,7 @@ class VscodeGrowthModel implements GrowthModel {
     deadline: number,
   ): Promise<vscode.LanguageModelChatResponse> {
     try {
+      this.ensureLive(signal, deadline);
       return await this.model.sendRequest(
         messages,
         {
@@ -239,6 +249,7 @@ class VscodeGrowthModel implements GrowthModel {
       );
     }
 
+    this.ensureLive(signal, deadline);
     return { text: chunks.join(""), toolCalls };
   }
 
@@ -250,12 +261,7 @@ class VscodeGrowthModel implements GrowthModel {
     if (error instanceof GrowthModelFailure) {
       throw error;
     }
-    if (this.now() >= deadline) {
-      throw new GrowthModelFailure("GROWTH_TIME_CAP");
-    }
-    if (signal.aborted) {
-      throw new GrowthModelFailure("GROWTH_CANCELLED");
-    }
+    this.ensureLive(signal, deadline);
   }
 }
 

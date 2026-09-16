@@ -175,6 +175,9 @@ export class VscodeScopeAccess implements ScopeAccess {
       if (Buffer.byteLength(text, "utf8") > MAX_CONTEXT_FILE_BYTES) {
         return { status: "too-large" };
       }
+      if (text.includes("\0")) {
+        return { status: "binary" };
+      }
       return { status: "ok", path: resolvedPath, text };
     }
 

@@ -1,5 +1,5 @@
-import { realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { lstatSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import * as vscode from "vscode";
 import { canonicalRelative } from "./workspaceContext.js";
 import { TargetBufferIdentityUnavailableError } from "./verificationContracts.js";
@@ -7,13 +7,33 @@ import type { BufferInspectionPort, FilesystemIdentity } from "./verificationCon
 
 type FilesystemIdentityResolution =
   | { readonly status: "resolved"; readonly identity: string }
-  | { readonly status: "missing" }
   | { readonly status: "unavailable" };
+
+type ExistingFilesystemIdentityResolution =
+  | FilesystemIdentityResolution
+  | { readonly status: "missing" };
+
+const filesystemErrorCode = (error: unknown): unknown =>
+  typeof error === "object" && error !== null
+    ? (error as { readonly code?: unknown }).code
+    : undefined;
 
 // --- Production port bindings ------------------------------------------------
 
-export const defaultFilesystemIdentity: FilesystemIdentity = path =>
-  realpathSync.native(path);
+export const defaultFilesystemIdentity: FilesystemIdentity = path => {
+  try {
+    return realpathSync.native(path);
+  } catch (error) {
+    const code = filesystemErrorCode(error);
+    if (
+      (code === "ENOENT" || code === "ENOTDIR") &&
+      lstatSync(path, { throwIfNoEntry: false }) !== undefined
+    ) {
+      return undefined;
+    }
+    throw error;
+  }
+};
 
 const comparableFilesystemIdentity = (path: string): string =>
   process.platform === "win32" ? path.toLowerCase() : path;
@@ -59,16 +79,14 @@ export class VscodeBufferInspectionPort implements BufferInspectionPort {
         continue;
       }
       targetPaths.push(target);
-      const targetResolution = this.identityFor(resolve(root, target));
-      if (targetResolution.status === "unavailable") {
+      const targetResolution = this.identityWithAncestors(resolve(root, target));
+      if (
+        targetResolution.status === "unavailable" ||
+        !withinFilesystemRoot(rootIdentity, targetResolution.identity)
+      ) {
         throw new TargetBufferIdentityUnavailableError([target]);
       }
-      if (targetResolution.status === "resolved") {
-        if (!withinFilesystemRoot(rootIdentity, targetResolution.identity)) {
-          throw new TargetBufferIdentityUnavailableError([target]);
-        }
-        targetIdentities.push(targetResolution.identity);
-      }
+      targetIdentities.push(targetResolution.identity);
     }
 
     const dirty = new Set<string>();
@@ -87,17 +105,7 @@ export class VscodeBufferInspectionPort implements BufferInspectionPort {
       const lexicalPath = canonicalRelative(
         relative(root, documentPath).replace(/\\/gu, "/"),
       );
-      const documentResolution = this.identityFor(documentPath);
-      if (documentResolution.status === "missing") {
-        if (
-          lexicalPath !== undefined &&
-          (inspectAll ||
-            targetPaths.some(target => withinPathScope(target, lexicalPath)))
-        ) {
-          dirty.add(lexicalPath);
-        }
-        continue;
-      }
+      const documentResolution = this.identityWithAncestors(documentPath);
       if (documentResolution.status === "unavailable") {
         if (!withinFilesystemRoot(root, documentPath)) {
           if (this.isWithinAnotherWorkspaceRoot(root, documentPath)) {
@@ -133,17 +141,36 @@ export class VscodeBufferInspectionPort implements BufferInspectionPort {
     return [...dirty];
   }
 
-  private identityFor(path: string): FilesystemIdentityResolution {
+  private identityWithAncestors(path: string): FilesystemIdentityResolution {
+    let ancestor = path;
+    const missingSuffix: string[] = [];
+    while (true) {
+      const resolution = this.identityFor(ancestor);
+      if (resolution.status !== "missing") {
+        return resolution.status === "resolved"
+          ? {
+              status: "resolved",
+              identity: resolve(resolution.identity, ...missingSuffix.reverse()),
+            }
+          : resolution;
+      }
+      const parent = dirname(ancestor);
+      if (parent === ancestor) {
+        return { status: "unavailable" };
+      }
+      missingSuffix.push(basename(ancestor));
+      ancestor = parent;
+    }
+  }
+
+  private identityFor(path: string): ExistingFilesystemIdentityResolution {
     try {
       const identity = this.filesystemIdentity(path);
       return identity === undefined
         ? { status: "unavailable" }
         : { status: "resolved", identity };
     } catch (error) {
-      const code =
-        typeof error === "object" && error !== null
-          ? (error as { readonly code?: unknown }).code
-          : undefined;
+      const code = filesystemErrorCode(error);
       if (code === "ENOENT" || code === "ENOTDIR") {
         return { status: "missing" };
       }

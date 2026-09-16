@@ -1,12 +1,13 @@
 import type { PairToolName } from "@adaptive-pair/harness";
-import type { PairCoordinatorPort } from "@adaptive-pair/runtime";
+import type { GrantUserActionOptions, PairCoordinatorPort, PairToolResult } from "@adaptive-pair/runtime";
 
 export const invokeGrowthUserAction = async (
   coordinator: PairCoordinatorPort,
   name: PairToolName,
   input: Readonly<Record<string, unknown>>,
   signal: AbortSignal,
-): Promise<void> => {
-  const grantId = await coordinator.grantUserAction(name, signal);
-  await coordinator.invokeTool(name, input, signal, { userActionId: grantId });
+  observed: GrantUserActionOptions,
+): Promise<PairToolResult> => {
+  const grantId = await coordinator.grantUserAction(name, signal, observed);
+  return coordinator.invokeTool(name, input, signal, { userActionId: grantId });
 };

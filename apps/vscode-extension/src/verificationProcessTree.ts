@@ -20,7 +20,7 @@ const errnoCode = (error: unknown): string | undefined => {
 };
 
 export class SystemProcessTreePort implements ProcessTreePort {
-  private readonly terminatedWindowsTrees = new Set<number>();
+  private readonly terminatedWindowsTrees = new WeakSet<ChildProcessWithoutNullStreams>();
 
   public signal(
     child: ChildProcessWithoutNullStreams,
@@ -43,7 +43,7 @@ export class SystemProcessTreePort implements ProcessTreePort {
         { stdio: "ignore", windowsHide: true },
       );
       if (result.status === 0) {
-        this.terminatedWindowsTrees.add(pid);
+        this.terminatedWindowsTrees.add(child);
         return true;
       }
       return false;
@@ -63,7 +63,7 @@ export class SystemProcessTreePort implements ProcessTreePort {
       return true;
     }
     if (process.platform === "win32") {
-      return !this.terminatedWindowsTrees.has(pid);
+      return !this.terminatedWindowsTrees.has(child);
     }
 
     try {

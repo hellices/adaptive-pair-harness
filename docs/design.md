@@ -485,6 +485,13 @@ The internal `ToolExecutor` owns invocation, effect cancellation, and bounded
 read reconciliation; the coordinator retains commit ordering. Native tool
 input-to-command mapping is separate from both responsibilities.
 
+Recovery re-admits each candidate read on that same transition queue using a
+fresh authoritative snapshot. It excludes in-flight invocations/recoveries and
+registers cancellation before executing outside the queue. Pause or Disable can
+therefore invalidate a recovered effect without waiting for it to settle. Only
+eligible authorized reads are retried; unknown state-changing effects are never
+automatically replayed.
+
 `PairStore.load` returns immutable state and committed command IDs.
 `PairStore.commit(streamId, expectedRevision, events)` must validate the entire
 batch before publishing any state, history, or IDs. A rejected batch leaves all
@@ -660,6 +667,15 @@ The convenience
 `runGuardedGrowthTurn` returns data, not an atomic publication guarantee for a
 caller that later displays it. Consent dialogs, cancellation-token conversion,
 model-vendor transport, and native presentation stay in the extension.
+
+The shell checks Chat cancellation before finalization and again before a
+transfer command's later synchronous state/publication continuation. The model
+transport uses the same derived cancellation signal at dispatch and completion;
+timer expiry retains its time-cap reason even if the wall clock moves backward.
+Token-accounting completion cannot start another model dispatch after
+cancellation. Explicit Growth actions bind grants to the revision and authority
+epoch the caller observed, and a multi-action reveal chains the next grant from
+the preceding action's committed result rather than silently adopting new intent.
 
 Executable dependency tests inspect source and test imports, including type
 imports, re-exports, and literal dynamic imports. They compare the Stable

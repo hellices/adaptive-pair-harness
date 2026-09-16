@@ -12,6 +12,60 @@ import {
 } from "./growthTestHarness.js";
 
 describe("GrowthModel turn caps", () => {
+  it.each([
+    { phase: "stream", reason: "deadline", code: "GROWTH_TIME_CAP" },
+    { phase: "stream", reason: "cancellation", code: "GROWTH_CANCELLED" },
+    { phase: "accounting", reason: "deadline", code: "GROWTH_TIME_CAP" },
+    { phase: "accounting", reason: "cancellation", code: "GROWTH_CANCELLED" },
+  ])("rejects a late successful $phase completion after $reason", async ({ phase, reason, code }) => {
+    const coordinator = new FakeCoordinator(growthSnapshot({ runtimeRevision: 4 }));
+    const controller = new AbortController();
+    const responseText = JSON.stringify({ level: 1, kind: "question", text: "bounded hint" });
+    let now = 0;
+    const expire = (): void => {
+      if (reason === "deadline") {
+        now = 100;
+      } else {
+        controller.abort();
+      }
+    };
+    class LateCompletionModel extends FakeModel {
+      public override async sendRequest(
+        ...args: Parameters<FakeModel["sendRequest"]>
+      ): Promise<Awaited<ReturnType<FakeModel["sendRequest"]>>> {
+        const response = await super.sendRequest(...args);
+        async function* stream(): AsyncIterable<unknown> {
+          yield* response.stream;
+          if (phase === "stream") {
+            expire();
+          }
+        }
+        return { ...response, stream: stream() };
+      }
+    }
+    const model = new LateCompletionModel([{ text: responseText }], {
+      countText: text => {
+        if (phase === "accounting" && text === responseText) {
+          expire();
+        }
+        return text.length;
+      },
+    });
+    const prepared = await coordinator.prepareTurn({});
+    const growthModel = createGrowthModel(asModel(model), coordinator, {
+      caps: { ...GROWTH_TURN_CAPS, deadlineMs: 100 },
+      now: () => now,
+    });
+
+    await expect(growthModel.request(
+      prepared.instructions,
+      prepared.tools,
+      controller.signal,
+    )).rejects.toMatchObject({ code });
+    expect(model.sendCount).toBe(1);
+    expect(coordinator.invokeCalls).toEqual([]);
+  });
+
   it("does not execute a confirmed tool after the turn deadline", async () => {
     const snapshot = growthSnapshot({
       runtimeRevision: 4,

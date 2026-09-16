@@ -165,7 +165,11 @@ it("collects duplicate-path open documents only from the first workspace root", 
     },
   ];
 
-  const documents = new VscodeWorkspaceContextAccess(clock).openDocuments();
+  const documents = new VscodeWorkspaceContextAccess(
+    clock,
+    undefined,
+    path => path,
+  ).openDocuments();
 
   expect(documents).toEqual([
     {
@@ -269,7 +273,7 @@ it("uses dirty open documents only from the selected root without a git reposito
       getText: () => "second root",
     },
   ];
-  const access = new VscodeWorkspaceContextAccess(clock);
+  const access = new VscodeWorkspaceContextAccess(clock, undefined, path => path);
   const folder = access.workspaceFolder();
 
   expect(folder).toBeDefined();

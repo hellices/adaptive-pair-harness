@@ -48,6 +48,9 @@ export class PairCoordinator implements PairCoordinatorPort, PairPresencePort {
     this.toolExecutor = new ToolExecutor({
       ...options, state: this,
       observeResult: (operation, result) => this.observeResult(operation, result),
+      admitReadRecovery: operationId => this.enqueueTransition(async () =>
+        this.toolExecutor.admitReadRecovery(await this.snapshot(), operationId),
+      ),
     });
   }
 
@@ -122,8 +125,10 @@ export class PairCoordinator implements PairCoordinatorPort, PairPresencePort {
     return result;
   }
 
-  private async commitCommand(command: PairCommand): Promise<PairRuntimeSnapshot> {
+  private async commitCommand(command: PairCommand, signal?: AbortSignal): Promise<PairRuntimeSnapshot> {
+    signal?.throwIfAborted();
     const { snapshot, seenCommandIds } = await this.loadState();
+    signal?.throwIfAborted();
     const streamId = this.streamId();
 
     if (seenCommandIds.has(command.commandId)) {
@@ -151,6 +156,7 @@ export class PairCoordinator implements PairCoordinatorPort, PairPresencePort {
   ): Promise<string> {
     signal.throwIfAborted();
     const current = await this.snapshot();
+    signal.throwIfAborted();
     if (
       options !== undefined &&
       (options.runtimeRevision !== current.revision ||
@@ -179,7 +185,7 @@ export class PairCoordinator implements PairCoordinatorPort, PairPresencePort {
 
     const grantId = this.options.ids.next("grant");
 
-    await this.dispatch({
+    const command: PairCommand = {
       protocolVersion: 1,
       commandId: this.options.ids.next("command"),
       expectedRevision: current.revision,
@@ -188,7 +194,9 @@ export class PairCoordinator implements PairCoordinatorPort, PairPresencePort {
       grantId,
       nativeToolName: nativeToolName(name),
       observedAt: this.options.clock.now(),
-    });
+    };
+
+    await this.enqueueTransition(() => this.commitCommand(command, signal));
 
     return grantId;
   }

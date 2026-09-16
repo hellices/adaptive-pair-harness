@@ -1,7 +1,6 @@
 import {
   authorizeVisibleTool,
   issuePairUserActionGrant,
-  PAIR_TOOL_CATALOG,
   PAIR_TOOL_CATALOG_VERSION,
   type PairToolDescriptor,
   type PairToolName,
@@ -26,6 +25,12 @@ type PendingOperation = {
   readonly controller: AbortController;
 };
 
+interface ReadRecovery {
+  readonly operation: OperationRecord;
+  readonly request: EffectRequest;
+  readonly controller: AbortController;
+}
+
 const EMPTY_OBSERVATION = Object.freeze({}) as Readonly<Record<string, unknown>>;
 
 const isEffectfulDescriptor = (descriptor: PairToolDescriptor): boolean =>
@@ -48,6 +53,7 @@ interface ToolExecutionOptions {
   readonly ids: IdSource;
   readonly clock: Clock;
   readonly observeResult: (operation: OperationRecord, result: EffectResult) => Promise<{ readonly snapshot: PairRuntimeSnapshot; readonly accepted: boolean }>;
+  readonly admitReadRecovery: (operationId: string) => Promise<ReadRecovery | undefined>;
 }
 
 export class ToolExecutor {
@@ -154,14 +160,21 @@ export class ToolExecutor {
       authorizedSnapshot.session?.operations.at(-1)?.id,
     );
     const controller = new AbortController();
-    this.linkAbort(signal, controller);
+    const unlinkAbort = this.linkAbort(signal, controller);
     this.pendingOperations.set(operation.id, {
       authorityEpoch: operation.authorityEpoch,
       controller,
     });
 
     try {
-      const result = await this.options.effects.execute(
+      const result: EffectResult = controller.signal.aborted ? {
+        operationId: operation.id,
+        status: "cancelled",
+        summary: "Operation was cancelled before effect dispatch.",
+        observation: { reason: "cancelled-before-dispatch" },
+        sensitiveData: false,
+        partial: false,
+      } : await this.options.effects.execute(
         {
           operationId: operation.id,
           workspaceId: snapshot.presence.workspaceId,
@@ -169,7 +182,7 @@ export class ToolExecutor {
           allowedPaths: [...workUnit.allowedPaths],
           toolName: name,
           kind: operation.kind,
-          payload: structuredClone(input),
+          payload: structuredClone(operation.input),
           runtimeRevision: operation.runtimeRevision,
           authorityEpoch: operation.authorityEpoch,
         },
@@ -193,57 +206,78 @@ export class ToolExecutor {
       return this.createResult(observed.snapshot, result);
     } finally {
       this.pendingOperations.delete(operation.id);
+      unlinkAbort();
       controller.abort();
     }
   }
 
   public async reconcile(): Promise<PairRuntimeSnapshot> {
-    let snapshot = await this.options.state.snapshot();
-    const operations = snapshot.session?.operations ?? [];
+    const snapshot = await this.options.state.snapshot();
 
-    for (const operation of operations) {
-      if (operation.status !== "authorized" || operation.kind !== "read") {
+    for (const candidate of snapshot.session?.operations ?? []) {
+      if (candidate.status !== "authorized" || candidate.kind !== "read") {
         continue;
       }
-
-      const descriptor = PAIR_TOOL_CATALOG.find(
-        candidate => candidate.name === operation.toolName,
-      );
-
-      if (
-        descriptor === undefined ||
-        descriptor.retry !== "bounded-read" ||
-        !isEffectfulDescriptor(descriptor)
-      ) {
+      const recovery = await this.options.admitReadRecovery(candidate.id);
+      if (recovery === undefined) {
         continue;
       }
-      const workUnit = snapshot.session?.workUnit;
-      if (
-        workUnit === undefined ||
-        workUnit.id !== operation.workUnitId ||
-        workUnit.status !== "agreed"
-      ) {
-        continue;
+      try {
+        if (recovery.controller.signal.aborted) {
+          continue;
+        }
+        const result = await this.options.effects.execute(recovery.request, recovery.controller.signal);
+        await this.options.observeResult(recovery.operation, result);
+      } finally {
+        this.pendingOperations.delete(recovery.operation.id);
+        recovery.controller.abort();
       }
-
-      const result = await this.options.effects.execute(
-        {
-          operationId: operation.id,
-          workspaceId: snapshot.presence.workspaceId,
-          workUnitId: operation.workUnitId,
-          allowedPaths: [...workUnit.allowedPaths],
-          toolName: descriptor.name,
-          kind: operation.kind,
-          payload: structuredClone(operation.input),
-          runtimeRevision: operation.runtimeRevision,
-          authorityEpoch: operation.authorityEpoch,
-        },
-        new AbortController().signal,
-      );
-      snapshot = (await this.options.observeResult(operation, result)).snapshot;
     }
 
-    return snapshot;
+    return this.options.state.snapshot();
+  }
+
+  public admitReadRecovery(snapshot: PairRuntimeSnapshot, operationId: string): ReadRecovery | undefined {
+    const operation = snapshot.session?.operations.find(candidate => candidate.id === operationId);
+    if (
+      operation === undefined ||
+      operation.status !== "authorized" ||
+      operation.kind !== "read" ||
+      operation.authorityEpoch !== snapshot.session?.authorityEpoch ||
+      this.pendingOperations.has(operationId)
+    ) {
+      return undefined;
+    }
+    const descriptor = toolsFor(snapshot).tools.find(candidate => candidate.name === operation.toolName);
+    const workUnit = snapshot.session?.workUnit;
+    if (
+      descriptor === undefined ||
+      descriptor.retry !== "bounded-read" ||
+      descriptor.effectClass !== "read" ||
+      workUnit === undefined ||
+      workUnit.id !== operation.workUnitId ||
+      workUnit.status !== "agreed"
+    ) {
+      return undefined;
+    }
+
+    const request: EffectRequest = {
+      operationId: operation.id,
+      workspaceId: snapshot.presence.workspaceId,
+      workUnitId: operation.workUnitId,
+      allowedPaths: [...workUnit.allowedPaths],
+      toolName: descriptor.name,
+      kind: operation.kind,
+      payload: structuredClone(operation.input),
+      runtimeRevision: operation.runtimeRevision,
+      authorityEpoch: operation.authorityEpoch,
+    };
+    const controller = new AbortController();
+    this.pendingOperations.set(operation.id, {
+      authorityEpoch: operation.authorityEpoch,
+      controller,
+    });
+    return { operation, request, controller };
   }
 
   private materializeGrant(
@@ -340,12 +374,14 @@ export class ToolExecutor {
     }
   }
 
-  private linkAbort(parent: AbortSignal, controller: AbortController): void {
+  private linkAbort(parent: AbortSignal, controller: AbortController): () => void {
     if (parent.aborted) {
       controller.abort();
-      return;
+      return () => undefined;
     }
 
-    parent.addEventListener("abort", () => controller.abort(), { once: true });
+    const onAbort = (): void => controller.abort();
+    parent.addEventListener("abort", onAbort, { once: true });
+    return () => parent.removeEventListener("abort", onAbort);
   }
 }

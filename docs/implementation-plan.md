@@ -229,7 +229,7 @@ ESLint already exists, but the baseline has no file/function size rules.
   were rerun unless actually executed.
 - [x] Update `docs/design.md`, `docs/research.md`, and applicable README
   validation/roadmap text. Keep P2/P3 separately gated.
-- [ ] Commit, push, open the PR, and obtain independent technical review and
+- [x] Commit, push, open the PR, and obtain independent technical review and
   the normal repository PR review.
 - [ ] Verify findings, reply in original threads, resolve only addressed
   concerns, and recheck follow-ups plus final-head CI.
@@ -249,14 +249,49 @@ npm --prefix poc/session-target audit --audit-level=low
 
 ## Completion record
 
-Tasks 1–5 are implemented and independently re-reviewed. Original reviewers
+Tasks 1–5 were implemented and independently re-reviewed before PR #8. Original reviewers
 report no remaining findings in their atomic state/lifecycle, Growth publication,
-verification extraction, or dependency/size-guard scopes. Final local validation
-passes: 834 workspace tests, 17 Stable host scenarios on each supported matrix
+verification extraction, or dependency/size-guard scopes. Pre-PR local validation
+passed: 834 workspace tests, 17 Stable host scenarios on each supported matrix
 version, Stable packaging, and the separate POC's 8 unit cases, package, and
 1 Insiders host case. Both graphs pass full and production-only audits.
 
-The detailed evidence is in `docs/research.md`. Commit/PR delivery, normal
-repository review, follow-up resolution, final-head CI, and the authorized merge
-are still separate gates. Their live status belongs to the PR/check history,
-not a claim about an unexecuted future revision in this document.
+The detailed pre-PR evidence is in `docs/research.md`. Commit `41d9af7` opened
+PR #8; all four CI jobs passed on that revision. The first normal repository
+review nevertheless requested changes. Its inline finding and five summary-only
+findings are all in scope, together with independently verified issues at
+additional locations exposed in the completed review's logs. A second repository
+review added two dirty-buffer findings, which are also required follow-up gates.
+
+### PR #8 follow-up gates
+
+- [x] Reproduce and fix open-document filesystem-identity escapes, retaining
+  safe unsaved buffers and avoiding reads of rejected buffers; independent
+  review remains a separate gate.
+- [x] Reproduce and fix successful stream/token-accounting completion after
+  cancellation or the model deadline, including a latched timer cancellation
+  after clock rollback and a liveness gate before model dispatch.
+- [x] Reproduce and fix cancelled Growth publication and human-action grants
+  detached from the caller's observed revision/authority; obtain independent
+  re-review of the transfer continuation as well as initial publication.
+- [x] Validate malformed verification script manifests and Windows process-tree
+  confirmation lifetime, including PID reuse, with independent re-review.
+- [ ] Probe and address operation admission, immutable request payload, and
+  queued grant-cancellation boundaries in the authoritative runtime, including
+  concurrent recovery rather than only reconciliation after invocation settles.
+- [x] Check the archive end-record scan's short-buffer and maximum-comment
+  boundaries. These probes pass without changing the parser; request a concrete
+  counterexample if a different archive concern remains.
+- [ ] Reject NUL-containing dirty scope buffers consistently with disk reads,
+  and retain deleted dirty verification buffers addressed through safe aliases.
+- [ ] Complete independent follow-up reviews, full local/host/package gates,
+  original-thread replies/resolution, and a fresh normal repository review.
+
+The follow-up local checkpoint passes forced typecheck, enforced lint, 972
+workspace tests, both Stable hosts' 17 scenarios, Stable packaging, the separate
+POC's 8 unit tests/package/1 Insiders host case, and all four dependency audits.
+This is not a substitute for the remaining independent and repository review.
+
+Merge is permitted only after those gates and the final revision's checks pass.
+Their live status belongs to the PR/check history, not a prospective approval
+in this document.

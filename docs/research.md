@@ -549,11 +549,11 @@ merged P1 baseline; extracted responsibilities remain subject to the same limits
 | Module | Before | After (effective lines) |
 |---|---:|---:|
 | Growth participant | 947 | 106 |
-| Model adapter | 598 | 249 |
+| Model adapter | 598 | 255 |
 | Verification adapter | 866 | 207 |
 | Core decision dispatcher | 578 | 61 |
 | Core event reducer dispatcher | 522 | 69 |
-| Runtime coordinator | 644 | 256 |
+| Runtime coordinator | 644 | 263 |
 
 The dependency checker has negative fixtures for forbidden/undeclared imports,
 project-reference mismatches, deep/relative package escapes, and graph cycles.
@@ -579,7 +579,7 @@ not an exhaustive proof or a substitute for the repository PR review.
 The only lockfile changes add the extension's protocol edge and runtime's
 restraint edge; external versions are unchanged.
 
-Final local refactoring validation, run with Node.js 24.20.0 after the guard
+Pre-PR local refactoring validation, run with Node.js 24.20.0 after the guard
 follow-ups, completed successfully:
 
 - Clean installation of both dependency graphs, forced workspace typecheck,
@@ -601,6 +601,96 @@ not claims about a future PR revision. The PR's review/check history remains
 the record of repository review, follow-up handling, and final-head CI. The
 owner explicitly authorized merging this refactoring after those gates pass,
 then proceeding to the next reviewed increment.
+
+PR #8's initial four CI jobs passed at `41d9af7`, but its first repository review
+requested changes. Follow-up probes reproduced the open-buffer filesystem
+identity bypass, cancelled publication, stale human-action grants, late model
+completion, malformed package scripts, and process-ID reuse. A second repository
+review identified inconsistent binary rejection for dirty scope buffers and a
+missing-file alias gap in verification's dirty-buffer check. Passing baseline
+tests did not disprove those findings, and out-of-date review locations were not
+treated as resolved concerns.
+
+Open-document context now resolves filesystem identities before reading buffer
+content. Missing/new files resolve through existing ancestors; dangling links,
+escaping identities, and secret aliases remain excluded. Twelve authored cases
+include ten pre-fix failures and two positive controls. Scope reads additionally
+apply the disk path's NUL-content rejection to dirty buffers, including safe
+symlink aliases; six cases failed before that correction, with five controls
+preserving text, byte-limit precedence, and binary disk rejection.
+
+Growth publication and explicit-action tests first reproduced twenty failures
+with five controls. Independent re-review then found a separate transfer
+continuation after the initial publication; four more timing cases failed before
+the continuation gained its own cancellation guard. The independent reviewer
+reported all 98 final timing/intent probes passing, including pre-abort
+publication, late-cancellation controls, and all 28 grant-binding probes. Native
+Chat tokens and models were simulated; this is not a host-test claim.
+
+Model transport probes distinguish stream completion, final token accounting,
+and model dispatch. Four initial late-success failures led to completion gates;
+independent review exposed that the timer cancelled a derived signal while those
+gates still consulted the caller's signal. Four additional cases reproduced
+clock-rollback success and dispatch after input-accounting cancellation. The
+derived timer reason is now latched and checked throughout the turn. Four more
+cases verify that rejected input/output token accounting retains time-cap or
+user-cancellation classification instead of leaking a provider error.
+Independent re-review reported all 46 model tests, 35 additional transport probes,
+and 120 actually token-cancelled real-clock trials passing; ordinary provider
+errors and timer/listener cleanup were also checked.
+
+Verification manifest validation rejects every non-string script value before
+confirmation or execution. Windows termination confirmation is held by child
+object identity in a weak set, not a permanent PID set. Eleven pre-fix failures
+and 21 controls pass after the fixes. Independent verification reported 57
+additional manifest/lifecycle probes passing and collection of 10,000 released
+child objects, compared with retention under a strong-set mutation. Windows
+system calls were mocked; native Windows execution was not tested.
+
+Deleted/new dirty verification buffers now resolve through the nearest existing
+canonical ancestor, retaining safe alias membership without inventing a usable
+identity for dangling links or unavailable roots. Fourteen cases failed before
+this correction and four controls already passed. The 18 authored cases use
+temporary real filesystem trees; access-denial faults use the existing identity
+seam. Construction remains lazy and performs no identity lookup.
+
+Runtime follow-ups dispatch a clone of the persisted operation input, check
+cancellation across grant snapshot/queue/load boundaries, and remove parent abort
+listeners when an invocation settles. Eight pre-fix failures led to those
+corrections. Independent review found no ordinary-invocation admission race in
+198 schedules per revision, but reproduced a concurrent-reconciliation escape:
+an aborted read could be redispatched through an unlinked recovery controller.
+Ten additional failing cases and two controls led to queued fresh recovery
+admission, in-flight exclusion, and registered cancellation, with effects still
+outside the mutation queue. The recovery tests also preserve safe orphaned-read
+retry, failure cleanup, and no automatic replay of unknown mutations.
+
+Archive end-record boundary probes did not reproduce a defect. Independent
+review rejected 193 short-buffer variants with the typed archive error and
+accepted 12 valid boundary archives, including maximum-length ZIP comments. The
+parser is unchanged; the permanent short-buffer/comment tests characterize its
+existing behavior rather than claiming a speculative parser fix.
+
+After these follow-ups, local validation on the frozen source/test tree with
+Node.js 24.20.0 completed successfully:
+
+- Forced workspace typecheck, full enforced lint, and **972 tests across 81
+  files**.
+- Stable bundle, **7-entry VSIX**, and explicit archive verification.
+- **17 isolated host scenarios on each of VS Code 1.136.2 and 1.137.0**, both
+  exiting 0 with inactive-zero and coexistence assertions intact.
+- Separate POC compilation, **8 unit tests across 4 files**, **9-entry VSIX**,
+  and **1 Insiders host test** exiting 0. Application metadata again identifies
+  the tested Insiders cache as `1.139.0-insider` at
+  `c74ba73b780a4a33173c006e52560d61432f53d6`.
+- Both installed dependency trees valid and all four full/production-only
+  audits at zero findings; external versions and both lockfiles are unchanged
+  by these review follow-ups.
+
+These results do not grant merge approval. Outstanding independent integration
+review, original-thread replies/resolution, a fresh repository assessment, and
+final-head CI remain delivery gates recorded in PR #8. Existing Vite and native
+host diagnostics remain visible rather than suppressed.
 
 Current authoritative session state remains in memory; the durable edit-episode
 journal is a separate continuity feature, not proof of session or ownership

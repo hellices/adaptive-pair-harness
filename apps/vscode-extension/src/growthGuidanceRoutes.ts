@@ -108,7 +108,7 @@ export class GrowthGuidanceRoutes {
       },
     );
 
-    if (accepted === undefined) {
+    if (accepted === undefined || signal.aborted) {
       return;
     }
 
@@ -157,17 +157,19 @@ export class GrowthGuidanceRoutes {
       return;
     }
 
-    await invokeGrowthUserAction(
+    const revealed = await invokeGrowthUserAction(
       this.deps.coordinator,
       "pair_reveal_solution",
       { workUnitId },
       signal,
+      { runtimeRevision: snapshot.revision, authorityEpoch: snapshot.session?.authorityEpoch },
     );
     await invokeGrowthUserAction(
       this.deps.coordinator,
       "pair_request_hint",
       { workUnitId, level: 5 },
       signal,
+      { runtimeRevision: revealed.runtimeRevision, authorityEpoch: revealed.authorityEpoch },
     );
 
     await this.publisher.run(model, request, consent.taskContext, response, signal);
@@ -219,10 +221,11 @@ export class GrowthGuidanceRoutes {
 
     try {
       await invokeGrowthUserAction(
-      this.deps.coordinator,
+        this.deps.coordinator,
         "pair_request_hint",
         { workUnitId, level: requested },
         signal,
+        { runtimeRevision: snapshot.revision, authorityEpoch: snapshot.session?.authorityEpoch },
       );
       return true;
     } catch (error) {
