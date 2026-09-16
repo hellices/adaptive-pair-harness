@@ -270,7 +270,7 @@ claims that a later milestone is already planned in implementation detail.
 | Pair capability-category ownership and reflection | M2/P2, surfaced in P3 | Observed work-unit history and correctable reflection; no score inferred from typing or model prose |
 | Bounded AI edits and complete Pair chat/tool routes | M2/P3 | Real fixture edits and observed checks, conflict/cancellation tests, native diff/confirmation, public-tool parity |
 | Delivery commands and cross-mode authority changes | M3 | Classified and consented effects, epoch invalidation, honest mode-specific outcomes |
-| Growth transfer completion and all five Growth demonstrations | M4 completion | A started task proves nothing; each claimed field requires its own recorded demonstration, with bypass/reveal kept visible |
+| Growth transfer completion, four demonstration fields, and the next-assistance proposal | M4 completion | A started task proves nothing; demonstrations require observed evidence, next assistance remains a separate correctable proposal, and bypass/reveal stays visible |
 | Session metric aggregation, inspectable preferences, reflection, and evaluation export | M4 completion | Only observed values are aggregated; inspection/correction/deletion and a user-invoked, privacy-reviewed export work end to end |
 | Presence availability, low-noise interventions, and usability gaps | M4 completion | Enable/quiet/pause/off and resume work across entry paths; pilot observation distinguishes available controls from validated usability |
 | Native Agent/tool/Testing integration and target compatibility | M4 adapters | A capability matrix and mode-conformance results for each advertised combination; no inference from one host or target to another |

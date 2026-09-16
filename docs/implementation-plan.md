@@ -274,7 +274,8 @@ describe("Pair work-unit policy", () => {
     [{ mode: "growth" }, "PAIR_MODE_REQUIRED"],
     [{ mode: "delivery" }, "PAIR_MODE_REQUIRED"],
     [{ status: "agreed" }, "PAIR_PROPOSAL_REQUIRED"],
-    [{ id: " " }, "PAIR_OBJECTIVE_REQUIRED"],
+    [{ id: "" }, "PAIR_WORK_UNIT_ID_REQUIRED"],
+    [{ id: " " }, "PAIR_WORK_UNIT_ID_REQUIRED"],
     [{ objective: " " }, "PAIR_OBJECTIVE_REQUIRED"],
     [{ allowedPaths: [] }, "PAIR_SCOPE_REQUIRED"],
     [{ allowedPaths: [" "] }, "PAIR_SCOPE_REQUIRED"],
@@ -292,7 +293,7 @@ describe("Pair work-unit policy", () => {
   it("does not change the unit, agreement, or capability facts", () => {
     const workUnit = pairWorkUnit();
     const context = pairPolicyContext();
-    const before = structuredClone({ workUnit, context });
+    const before = JSON.stringify({ workUnit, context });
     Object.freeze(workUnit.allowedPaths);
     Object.freeze(workUnit.acceptanceChecks);
     Object.freeze(workUnit);
@@ -300,7 +301,7 @@ describe("Pair work-unit policy", () => {
     Object.freeze(context.learningAgreement);
     Object.freeze(context);
     assessPairWorkUnit(workUnit, context);
-    expect({ workUnit, context }).toEqual(before);
+    expect(JSON.stringify({ workUnit, context })).toBe(before);
   });
 });
 ```
@@ -331,6 +332,7 @@ export interface PairWorkUnitPolicyContext {
 export type PairWorkUnitRejection =
   | "PAIR_MODE_REQUIRED"
   | "PAIR_PROPOSAL_REQUIRED"
+  | "PAIR_WORK_UNIT_ID_REQUIRED"
   | "PAIR_OBJECTIVE_REQUIRED"
   | "PAIR_SCOPE_REQUIRED"
   | "PAIR_ACCEPTANCE_REQUIRED"
@@ -357,7 +359,10 @@ export const assessPairWorkUnit = (
   if (workUnit.status !== "proposed") {
     return { admissible: false, reason: "PAIR_PROPOSAL_REQUIRED" };
   }
-  if (workUnit.id.trim() === "" || workUnit.objective.trim() === "") {
+  if (workUnit.id.trim() === "") {
+    return { admissible: false, reason: "PAIR_WORK_UNIT_ID_REQUIRED" };
+  }
+  if (workUnit.objective.trim() === "") {
     return { admissible: false, reason: "PAIR_OBJECTIVE_REQUIRED" };
   }
   if (workUnit.allowedPaths.length === 0 ||
@@ -573,9 +578,9 @@ describe("Pair human follow-up policy", () => {
 
   it("does not change the proposed unit or requirement", () => {
     const workUnit = Object.freeze(pairWorkUnit());
-    const before = structuredClone({ workUnit, requirement });
+    const before = JSON.stringify({ workUnit, requirement });
     assessPairSuccessor(workUnit, requirement, "ai-unit-1");
-    expect({ workUnit, requirement }).toEqual(before);
+    expect(JSON.stringify({ workUnit, requirement })).toBe(before);
   });
 });
 ```
@@ -907,11 +912,12 @@ describe("Pair handoff preflight", () => {
     }
   });
 
-  it("rejects inactive Presence and a different Presence session", () => {
+  it("rejects inactive or observing Presence and a different Presence session", () => {
     const snapshot = pairRuntime();
     for (const presence of [
       { ...snapshot.presence, status: "off" as const },
       { ...snapshot.presence, status: "paused" as const },
+      { ...snapshot.presence, status: "observing" as const },
       { ...snapshot.presence, activeSessionId: "other-session" },
     ]) {
       expect(assessPairHandoff(pairHandoffContext({
@@ -981,7 +987,7 @@ describe("Pair handoff preflight", () => {
 
   it("does not change ownership, epoch, operations, or the proposal", () => {
     const context = pairHandoffContext();
-    const before = structuredClone(context);
+    const before = JSON.stringify(context);
     Object.freeze(context.proposal);
     Object.freeze(context.snapshot.session?.workUnit);
     Object.freeze(context.snapshot.session?.operations);
@@ -990,7 +996,7 @@ describe("Pair handoff preflight", () => {
     Object.freeze(context);
     expect(assessPairHandoff(context))
       .toEqual({ status: "ready-for-baseline-review" });
-    expect(context).toEqual(before);
+    expect(JSON.stringify(context)).toBe(before);
   });
 });
 ```
@@ -1069,7 +1075,7 @@ export const assessPairHandoff = (
     return { status: "blocked", reason: "PAIR_MODE_REQUIRED" };
   }
   if ((session.status !== "ready" && session.status !== "active") ||
-      snapshot.presence.status === "off" || snapshot.presence.status === "paused" ||
+      (snapshot.presence.status !== "engaged" && snapshot.presence.status !== "quiet") ||
       snapshot.presence.activeSessionId !== session.sessionId ||
       (workUnit.status !== "agreed" && workUnit.status !== "executing" &&
        workUnit.status !== "verifying" && workUnit.status !== "completed")) {
@@ -1167,7 +1173,7 @@ draft/approval/implementation distinctions for P2 and P3.
 | Interrupted work does not erase participation obligations | Previously accepted AI units retain the requirement after failure/interruption; a mere proposal creates none | Task 2; provenance binding in P2 |
 | Handoff is not automatic | Identity, owner, revision, epoch, and stopped admission are checked; a review-ready result has no authority payload | Task 3 |
 | Started work settles before acceptance | Pending operations block; unknown edits/checks require reconciliation | Task 3; real cancellation/reconciliation in P2 |
-| Pause outranks handoff | Paused/reconciling sessions and inactive Presence cannot become ready | Task 3; emergency control stays outside this policy |
+| Pause outranks handoff | Paused/reconciling sessions and Presence outside `engaged`/`quiet` cannot become ready | Task 3; emergency control stays outside this policy |
 | Growth and other surfaces are unchanged | Existing Growth, manifest, runtime, package, and isolated-host checks pass | This task |
 
 No complete Pair Mode, runtime concurrency, filesystem-safety, model-behavior,
@@ -1228,8 +1234,11 @@ documentation PR does not itself authorize implementing the proposed policies.
 
 The checked items concern documentation, temporary example validation, and
 unchanged-preview regression checks only.
-The exact examples passed three red/green cycles, stage-by-stage typechecking,
-78 final tests including four unchanged Growth cases, and ESLint. These example
-results are not Pair runtime/host conformance evidence or user approval. No P1
-source, handoff, or edit behavior is implemented in the repository by
-publication of this plan.
+The reviewed examples passed three red/green cycles with the unchanged
+repository TypeScript, Vitest, and ESLint configurations and the existing
+root/workspace dependency layout. Each stage typechecked and passed lint;
+the final 79 tests comprise 19 admission, 21 follow-up, 35 handoff, and four
+unchanged Growth cases. JSON snapshots avoid undeclared host globals in the
+immutability checks. These example results are not Pair runtime/host
+conformance evidence or user approval. No P1 source, handoff, or edit behavior
+is implemented in the repository by publication of this plan.

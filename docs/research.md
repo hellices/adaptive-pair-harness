@@ -364,10 +364,20 @@ test harness were unchanged from the baseline:
 
 | Check | Observed result | Interpretation |
 |---|---|---|
-| Exact P1 code examples assembled outside the repository | Three missing-export failures followed by green task runs of 22, 43, and 78 tests; each stage typechecked and the final examples passed ESLint | The plan's examples are executable. The final 78 include 74 proposed policy cases and four existing Growth cases; none were installed into repository source |
+| Reviewed P1 code examples assembled outside the repository with unchanged TypeScript, Vitest, and ESLint configurations and the existing dependency layout | Three missing-export failures followed by green task runs of 23, 44, and 79 tests; every stage typechecked and passed ESLint | The final 79 comprise 19 admission, 21 follow-up, 35 handoff, and four existing Growth cases: 75 proposed policy cases, none installed into repository source |
 | `npm run check` | Typecheck and lint passed; 40 test files and 596 tests passed | Existing non-host regression checks remain green, not proof that Pair is implemented |
 | `npm run package` and `node scripts/verify-vsix.mjs` | Stable VSIX built and passed artifact verification | The existing Growth preview packages correctly; this does not verify future Pair behavior |
 | `npm run test:host` on installed VS Code 1.137.0 | Complete isolated rerun passed all 17 smoke tests on 2026-09-16 and the runner exited with code 0 | Current baseline host revalidation is complete; no application source or harness change was needed |
+
+Review reproduced missing-global type and lint errors in the original
+immutability examples; the earlier isolated check had not established
+compatibility with the modes package's compiler scope. The reviewed examples
+use JSON snapshots rather than `structuredClone`, without adding ambient Node
+declarations or changing package configuration. The original runtime count of
+78 was reproducible (18 admission, 21 follow-up, 35 handoff, four Growth); the
+additional empty-ID case brings the reviewed total to 79. Separate red/green
+counterexamples also verified the corrected ID rejection reason and rejection
+of handoff readiness while Presence is only `observing`.
 
 Two earlier isolated attempts ended with runner exit code 1 before the full
 suite completed. Their host logs recorded renderer-requested termination and
