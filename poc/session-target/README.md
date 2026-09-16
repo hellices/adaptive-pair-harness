@@ -7,7 +7,8 @@ chat request in VS Code Insiders.
 ## Run
 
 ```bash
-npm install
+npm ci
+npm audit --audit-level=low
 npx @vscode/dts main
 npx @vscode/dts dev
 npm run check
@@ -18,6 +19,14 @@ npm run package
 The host runner downloads an isolated VS Code Insiders build, uses temporary
 workspace, user-data, and extension directories, and enables proposed API only
 for `adaptive-pair.adaptive-pair`.
+
+This directory has its own lockfile and is outside the root workspace globs.
+CI separately runs its clean install, full dependency audit, compile/unit
+checks, and packaging; a root-only audit does not cover it. Declaration
+downloads are not part of dependency CI because they change the vendored API
+snapshot. The repository's [maintenance policy](../../docs/design.md#dependency-and-version-maintenance)
+also applies to this active prototype. Passing these checks does not close the
+spike's remaining product questions or make proposed APIs available on Stable.
 
 ## Verified in the POC
 

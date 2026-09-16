@@ -35,6 +35,18 @@ jobs:
       - name: Audit all dependencies
         run: npm audit --audit-level=low
 
+      - name: Install Session Target POC dependencies
+        run: npm --prefix poc/session-target ci
+
+      - name: Audit Session Target POC dependencies
+        run: npm --prefix poc/session-target audit --audit-level=low
+
+      - name: Check Session Target POC
+        run: npm --prefix poc/session-target run check
+
+      - name: Package Session Target POC
+        run: npm --prefix poc/session-target run package
+
       - name: Build workspace package exports
         run: npm run typecheck
 

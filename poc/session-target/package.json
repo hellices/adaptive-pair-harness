@@ -61,7 +61,7 @@
     "@types/node": "24.13.3",
     "@vscode/dts": "0.4.1",
     "@vscode/test-electron": "3.1.0",
-    "@vscode/vsce": "3.9.2",
+    "@vscode/vsce": "4.0.0",
     "mocha": "12.0.0",
     "typescript": "6.0.3",
     "vitest": "5.0.0"

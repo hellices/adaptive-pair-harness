@@ -221,6 +221,15 @@ Observed results:
 - one Extension Host test passes;
 - an eight-file, 6.85-KiB VSIX packages without source maps or test code.
 
+A dependency-only revalidation on September 16, 2026 updated the isolated POC to
+VSCE 4.0.0 and added its own clean install, full audit, compile/unit checks, and
+packaging to CI. Under Node.js 24.20.0, the existing six unit cases, one isolated
+Insiders host case, and an eight-entry VSIX passed; checks and packaging also
+passed under Node.js 22.22.1. Both pre-update and post-update POC audits reported
+zero findings. See the [maintenance evidence](../research.md) for the selected
+versions, audit scope, and compatibility retentions. No runtime source or
+vendored declaration changed, and the spike's remaining questions stay open.
+
 Critical proposed-API rules discovered from documentation and confirmed by
 the POC:
 
@@ -360,6 +369,7 @@ additional Adaptive Pair contribution.
 | 2026-09-14 | 🔴 Not Started | Spike question created |
 | 2026-09-14 | 🟡 In Progress | Static API and source research complete; Insiders proof pending |
 | 2026-09-14 | 🟡 In Progress | Target registration and native request flow proven; conformance hardening remains |
+| 2026-09-16 | 🟡 In Progress | Dependency maintenance revalidated the existing POC and added its isolated graph to CI; remaining product questions stay open |
 
 ---
 

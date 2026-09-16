@@ -399,13 +399,20 @@ applying necessary updates. This maintenance starts from the reviewed `main`
 baseline `f28de5f`, independently of the P1 implementation PR. It does not
 implement Pair runtime behavior or begin a new product milestone.
 
-Release selection cross-checks direct metadata for all 15 external dependencies
-across the 13 root/workspace manifests and upstream stable release records. The
+Release selection cross-checks direct metadata for all 16 distinct external
+dependencies and upstream stable release records. All 16 tracked manifests
+were inspected: 14 root/workspace/POC manifests and two fixture/scripts
+manifests without external dependencies. Both active lockfiles are included:
+the root workspace graph and the isolated `poc/session-target` graph. The
 initial `npm outdated --json --workspaces --include-workspace-root` query
 reported two packages and returned `{}` after the first update. Review exposed
 its incomplete coverage: direct metadata still reported a newer linter, and
 GitHub reported a Mocha patch absent from the configured registry. An empty
-outdated report is not treated as proof of a complete upstream inventory.
+outdated report is not treated as proof of a complete upstream inventory. A
+follow-up review also identified the active POC outside the workspace globs;
+its eight direct dependencies are now included in the inventory. Its additional
+`@vscode/dts` dependency remains at 0.4.1, matching both registry metadata and
+the upstream package manifest.
 
 | Component | Previous | Selected stable release |
 | --- | --- | --- |
@@ -432,37 +439,47 @@ not a reinstatement of the version freeze:
   `serialize-javascript` 7.1.1 resolution, rather than substituting an untested
   Git snapshot. Recheck the patch when registry availability changes.
 
+The isolated POC keeps the same validated TypeScript and Node type line as the
+repository rather than introducing an independent major-version toolchain.
+This does not change its existing Node.js 22.13 minimum or vendored proposed-API
+declarations.
+
 The CI actions are pinned to their verified release commit SHAs and run on
 Node.js 24. Mocha and VSCE support the repository's Node.js 24 baseline. VSCE 4
 raises its minimum to Node.js 22 and replaces several legacy dependencies;
 the existing packaging CLI path remains compatible. No product or protocol
 version bump, runtime source change, or higher VS Code API floor was needed.
 
-Before the update, `npm audit --audit-level=low --json` exited 1 and reported
-three vulnerable package entries: one low, one moderate, and one high. The
+Before the update, the root `npm audit --audit-level=low --json` exited 1 and
+reported three vulnerable package entries: one low, one moderate, and one high. The
 Mocha dependency graph now resolves `diff` 9.0.0 instead of 7.0.0 and
 `serialize-javascript` 7.1.1 instead of 6.0.2. After a clean `npm ci`, the same
-full audit and the production-only audit both exited 0 with zero findings.
+full workspace audit and the production-only audit both exited 0 with zero
+findings.
 There are no forced audit fixes, dependency overrides, or severity exclusions.
-CI now runs the full audit as a required step in its build-and-package job.
+CI now runs separate clean installs and full audits for both active dependency
+graphs as required steps in its build-and-package job. The POC uses
+`npm --prefix poc/session-target`, so its lockfile cannot silently fall outside
+the root workspace audit. POC compilation, unit tests, and packaging also run
+in that job. Neither audit omits development dependencies.
 These are point-in-time audit results, not a guarantee against undiscovered
 vulnerabilities.
 
-The CI workflow contract gained one test that requires the complete audit step
-immediately after `npm ci`. The initial named-step-only splitter incorrectly
-passed all five cases when an unnamed `run` step intervened. The corrected
-splitter recognizes every step entry at the job's indentation, including
-unnamed `run` and `uses` steps and bare-dash forms. Seven temporary mutations,
-removing the audit, moving it after the workspace build, replacing it with a
-production-only audit, and inserting each of those four unnamed step forms,
-each produced one failed and four passed CI contract tests. The workflow was
-restored byte-for-byte after every mutation; restoring the full audit in its
-required position passed all five cases. These mutation runs do not add extra
+The CI workflow contract gained two tests that require each complete audit
+immediately after its own installation. The initial named-step-only guard
+incorrectly passed with an intervening unnamed `run` step; the new POC case
+first failed because its installation and audit were absent. Both guards now
+recognize unnamed `run` and `uses` entries, including bare-dash forms. Fifteen
+temporary mutations cover a missing, late, or production-only audit and the
+four unnamed step forms for each graph, plus a POC audit missing its directory
+prefix. Each mutation produced one failed and five passed CI contract tests.
+The proposed workflow was restored byte-for-byte after every mutation; the
+normal workflow passed all six cases. These mutation runs do not add extra
 cases to the full-suite count.
 
 Local validation used Node.js 24.20.0. The baseline and initial dependency
-refresh passed 40 files and 596 tests. After the review-driven test and linter
-update, typecheck, lint, all 40 test files, and 597 tests passed. Stable VSIX
+refresh passed 40 files and 596 tests. After the review-driven tests and linter
+update, typecheck, lint, all 40 test files, and 598 tests passed. Stable VSIX
 packaging and archive verification passed with seven entries. The isolated
 VS Code 1.137.0 Extension Host passed all 17 smoke tests with runner exit code
 0, including additive activation and inactive-zero assertions. All five
@@ -472,6 +489,18 @@ values, including the nested `ajv` and `json-schema-traverse` packages under
 601 to 401. The clean installation emitted no deprecation warnings. Existing
 Vite and isolated-host diagnostics are not claimed to be fixed by this
 maintenance.
+
+The isolated POC already had zero audit findings before its VSCE 3.9.2 to 4.0.0
+update. After regenerating its lockfile and a clean install, both its full and
+production-only audits still reported zero findings; its audit dependency
+count fell from 406 to 257. Under Node.js 24.20.0, POC compilation, four unit-test
+files with six cases, the isolated Insiders host's one case, and an eight-entry
+VSIX all passed. The Insiders build was `07b4ff1883f94da91f6d698744fc7c3638b59720`.
+POC checks and packaging also passed under the existing Node.js 22.22.1 runner.
+These six unit cases and one host case are separate from the workspace's test
+counts. No POC runtime source or vendored API declaration changed, and its
+unimplemented history, Pair tools, cancellation, and broader coexistence work
+remain open rather than being claimed as completed by dependency maintenance.
 
 Local verification is separate from PR approval. The published PR records the
 final revision's CI, review feedback, fixes, and thread resolutions; these

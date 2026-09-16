@@ -66,21 +66,27 @@ P1 implementation review and does not authorize another product milestone.
 
 - [x] Replace the blanket restrictions in `AGENTS.md`, `docs/design.md`, and
   this plan with the compatibility- and evidence-based maintenance policy.
-- [x] Cross-check metadata for all 15 external direct dependencies across the
-  13 root/workspace manifests and upstream release records. Document the TypeScript,
-  Node type, and Mocha patch compatibility or availability retentions.
+- [x] Inspect all 16 tracked manifests: 14 root/workspace/POC manifests and two
+  fixture/scripts manifests without external dependencies. Cross-check the 16
+  distinct external direct dependencies against metadata and upstream releases.
+  Include both active lockfiles and document the TypeScript, Node type, and
+  Mocha patch compatibility or availability retentions.
 - [x] Update `apps/vscode-extension/package.json` to Mocha 12.0.0 and VSCE
   4.0.0 and root `package.json` to typescript-eslint 8.70.0, then regenerate
   `package-lock.json` without forced audit fixes or transitive dependency
-  overrides.
+  overrides. Update the isolated POC to VSCE 4.0.0 and regenerate its own lockfile.
 - [x] Update `.github/workflows/ci.yml` to the verified stable checkout 7.0.1,
   setup-node 7.0.0, and upload-artifact 7.0.1 releases, pinned to their commit
-  SHAs, and run `npm audit --audit-level=low` after installation. Contract-test
-  the audit's position immediately after installation in
-  `scripts/test/ciWorkflow.test.ts`.
+  SHAs. Separately install and audit the root workspace and isolated POC graphs
+  with `npm audit --audit-level=low`; use the POC directory prefix for its graph.
+  Contract-test each audit immediately after its own installation and require
+  the POC's compile/unit checks and packaging in `scripts/test/ciWorkflow.test.ts`.
 - [x] Verify a clean `npm ci`, full and production-only audits, `npm run check`,
   `npm run package`, `node scripts/verify-vsix.mjs`, and `npm run test:host`.
-  Record the versions and measured results in `docs/research.md`.
+  Also verify the POC's clean install, full audit, compile/unit checks, isolated
+  Insiders host, and packaging. Record the versions and measured results in
+  `docs/research.md` and keep the spike's evidence current without closing its
+  remaining product questions.
 
 These boxes track implementation and local validation, not final-revision PR
 approval. Complete the review loop and verify the final revision's CI and
