@@ -262,8 +262,11 @@ reported separately: green tests alone do not prove learning, and learning
 controls do not excuse a broken product result.
 
 Read the complete initial [product and system design](docs/design.md).
-The first executable milestone is specified in the
-[Foundation and Growth Mode implementation plan](docs/implementation-plan.md).
+The [sequential roadmap](docs/design.md#sequential-delivery-roadmap) covers the
+remaining work through v2.0. The current
+[Pair policy contract implementation plan](docs/implementation-plan.md) is a
+review draft for the next bounded milestone, not approval to implement Pair
+Mode or a claim that it is available in the extension.
 
 ## Research
 
@@ -279,12 +282,29 @@ AI universally improves speed, quality, learning, or satisfaction.
 
 ## Project status
 
-This branch contains the first complete v2 design, its first implementation
-plan, and the installable **Stable Growth Mode preview** (Tasks 1–12): the Pair
+This branch contains the initial v2 design and the installable **Stable Growth
+Mode preview** (Foundation Tasks 1–12): the Pair
 Presence shell, the versioned harness kernel, the durable runtime, Growth
 restraint, join-in-progress capture, observed verification, and a clean-profile
 Extension Host smoke plus packaging and CI. Pair Mode AI edits, Delivery Mode
 commands, and the native Agent Plugin remain out of scope for this preview.
+
+The next proposed milestone defines and tests pure Pair policy contracts before
+changing the runtime or exposing new controls. Runtime handoff, guarded edits,
+and the complete Stable Pair experience follow in separately reviewed
+increments. Growth transfer completion and evaluation export remain release
+work, not completed preview features. Work proceeds one milestone at a time;
+there is no committed calendar release date.
+
+Baseline revalidation is complete, including all 17 isolated Extension Host
+smoke tests on VS Code 1.137.0. See the
+[validation evidence](docs/research.md#implementation-evidence-for-the-next-pair-increment).
+These results verify the existing Growth preview, not the proposed Pair
+policies or their future runtime integration.
+
+The completed Foundation and Growth implementation plan remains available in
+Git history at `ae1f095:docs/implementation-plan.md`. Only one implementation
+plan is current; replacing it does not approve the successor.
 
 The earlier runnable experiment remains on
 `feature/realtime-pair-vertical-slice`. It is a test and behavior baseline plus

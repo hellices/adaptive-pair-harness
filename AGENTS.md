@@ -12,6 +12,15 @@
 - Keep provenance traceable through Git history. Do not present an English synthesis as a verbatim copy of an earlier source, or copy local session logs, credentials, and machine-specific paths into public documentation.
 - Preserve the historical v1 material as reference; do not execute its plan or carry its constraints into v2 without an explicit decision.
 
+## Delivery workflow
+
+- Start from the current `main` baseline and use a dedicated pull request branch. Do not push changes directly to `main` or disturb unrelated worktrees.
+- Carry each authorized change through commit, push, pull request creation, and review rather than stopping at local implementation or validation.
+- Verify review findings against the repository, make necessary fixes, and reply in each original review thread with the change and verification evidence or a reasoned explanation when no change is appropriate.
+- Resolve a review thread only after its concern has been addressed. Recheck follow-up feedback and the final revision's required checks before reporting readiness.
+- Notify the user when the pull request is ready to merge. Do not merge or enable auto-merge without explicit user direction.
+- A documentation pull request does not itself authorize implementation of a draft design or the next milestone.
+
 ## Integration
 
 - Adaptive Pair is additive and opt-in. Do not modify another extension, Session Target, participant, tool, session, setting, keybinding, default selection, or native VS Code UI behavior.
