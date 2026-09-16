@@ -356,6 +356,12 @@ replacement with atomic commits through one transition queue. Growth response
 release belongs to the host-independent runtime; native adapters retain UI,
 consent, and effect wiring. Model state queries expose bounded metadata rather
 than internal snapshots, diagnostics, operation payloads, or grants.
+Growth consent and cached transfer/check results are bound to the committed
+workspace/session lifetime, not reusable IDs. The participant rejects unsupported
+modes before consent, and a committed model-tool contract ends the turn so the
+next request compiles fresh instructions and tools. Windows cancellation never
+treats successful `taskkill` delivery as proof that the process tree exited;
+without that evidence it reports termination as unconfirmed.
 Only edit-episode continuity is persisted today;
 durable authoritative session/ownership recovery remains future work.
 

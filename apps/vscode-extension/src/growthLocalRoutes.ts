@@ -1,7 +1,8 @@
 import type * as vscode from "vscode";
 import type { PairToolName } from "@adaptive-pair/harness";
-import type { GrowthParticipantDependencies, GrowthTransientState } from "./growthHostState.js";
-import { bounded, boundedList, NO_SESSION_MESSAGE, NO_WORK_UNIT_MESSAGE } from "./growthPresentation.js";
+import type { PairRuntimeSnapshot } from "@adaptive-pair/protocol";
+import { isGrowthWorkUnitCurrent, type GrowthParticipantDependencies, type GrowthTransientState } from "./growthHostState.js";
+import { bounded, boundedList, NO_SESSION_MESSAGE, NO_WORK_UNIT_MESSAGE, STALE_TURN_MESSAGE } from "./growthPresentation.js";
 import { invokeGrowthUserAction } from "./growthUserActions.js";
 import { parseVerificationScript } from "./verificationPlan.js";
 
@@ -69,7 +70,8 @@ export class GrowthLocalRoutes {
    * ever inferred from a delivered hint.
    */
   public async handleSession(response: vscode.ChatResponseStream): Promise<void> {
-    const snapshot = await this.deps.coordinator.snapshot();
+    await this.deps.coordinator.snapshot();
+    const snapshot = this.deps.snapshotNow();
     const session = snapshot.session;
     if (session === undefined || session.status === "inactive") {
       response.markdown(NO_SESSION_MESSAGE);
@@ -91,16 +93,10 @@ export class GrowthLocalRoutes {
       `- Solution reveal authorized: ${
         assistance?.solutionReveal === undefined ? "no" : "yes"
       }`,
-      `- Transfer: ${this.transferSummary(
-        session.sessionId,
-        session.workUnit?.id,
-      )}`,
+      `- Transfer: ${this.transferSummary(snapshot)}`,
       "",
       "**Outcomes — reported independently**",
-      `- Product verification: ${this.productSummary(
-        session.sessionId,
-        session.workUnit?.id,
-      )}`,
+      `- Product verification: ${this.productSummary(snapshot)}`,
       "- Similar generation: not assessed",
       "- Varied debugging: not assessed",
       "- Explanation: not assessed",
@@ -114,13 +110,11 @@ export class GrowthLocalRoutes {
   }
 
   private transferSummary(
-    currentSessionId: string,
-    currentWorkUnitId: string | undefined,
+    snapshot: PairRuntimeSnapshot,
   ): string {
     if (
       this.state.transfer === undefined ||
-      this.state.transfer.sessionId !== currentSessionId ||
-      this.state.transfer.workUnitId !== currentWorkUnitId
+      !isGrowthWorkUnitCurrent(this.state.transfer, snapshot)
     ) {
       return "not started";
     }
@@ -130,13 +124,11 @@ export class GrowthLocalRoutes {
   }
 
   private productSummary(
-    currentSessionId: string,
-    currentWorkUnitId: string | undefined,
+    snapshot: PairRuntimeSnapshot,
   ): string {
     if (
       this.state.lastCheck === undefined ||
-      this.state.lastCheck.sessionId !== currentSessionId ||
-      this.state.lastCheck.workUnitId !== currentWorkUnitId
+      !isGrowthWorkUnitCurrent(this.state.lastCheck, snapshot)
     ) {
       return "no check observed in this session";
     }
@@ -192,14 +184,30 @@ export class GrowthLocalRoutes {
     );
 
     const passed = result.observation["passed"];
-    this.state.lastCheck = Object.freeze({
+    const check = Object.freeze({
+      workspaceId: snapshot.presence.workspaceId,
       sessionId: session.sessionId,
+      startedAtRevision: session.startedAtRevision,
       workUnitId: workUnit.id,
       script,
       status: result.status,
       passed: typeof passed === "boolean" ? passed : undefined,
       observedAt: (this.deps.now ?? Date.now)(),
     });
+    if (signal.aborted) {
+      return;
+    }
+    const current = this.deps.snapshotNow();
+    if (
+      !isGrowthWorkUnitCurrent(check, current) ||
+      current.revision !== result.runtimeRevision ||
+      current.session?.authorityEpoch !== result.authorityEpoch ||
+      result.observation["stale"] === true
+    ) {
+      response.markdown(STALE_TURN_MESSAGE);
+      return;
+    }
+    this.state.lastCheck = check;
 
     const outcome =
       result.status !== "confirmed"

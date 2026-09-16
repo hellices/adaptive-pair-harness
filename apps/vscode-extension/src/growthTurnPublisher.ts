@@ -2,7 +2,7 @@ import type * as vscode from "vscode";
 import { finishGuardedGrowthTurn, requestGuardedGrowthTurn, type GrowthTurnIntent, type GrowthTurnOutcome } from "@adaptive-pair/runtime";
 import type { GrowthResponse } from "@adaptive-pair/restraint";
 import type { GrowthEvaluationOutcome, GrowthParticipantDependencies } from "./growthHostState.js";
-import { WITHHELD_RESPONSE_MESSAGE, STALE_TURN_MESSAGE, RESTRAINT_FAILURE_MESSAGE } from "./growthPresentation.js";
+import { WITHHELD_RESPONSE_MESSAGE, STALE_TURN_MESSAGE, REPREPARE_TURN_MESSAGE, RESTRAINT_FAILURE_MESSAGE } from "./growthPresentation.js";
 import { createGrowthModel } from "./modelAdapter.js";
 
 type PublishedGrowthTurn = Extract<GrowthTurnOutcome, { readonly status: "delivered" }>;
@@ -46,6 +46,9 @@ export class GrowthTurnPublisher {
       : requested;
 
     switch (outcome.status) {
+      case "reprepare":
+        response.markdown(REPREPARE_TURN_MESSAGE);
+        return undefined;
       case "stale":
         this.rejectStale(response);
         return undefined;

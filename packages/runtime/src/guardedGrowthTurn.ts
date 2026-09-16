@@ -16,6 +16,7 @@ export type GrowthTurnCoordinator = Pick<
 >;
 
 export interface GrowthTurnIntent {
+  readonly workspaceId: string;
   readonly sessionId: string;
   readonly startedAtRevision: number;
   readonly authorityEpoch: number;
@@ -29,7 +30,8 @@ export interface GrowthTurnIntent {
 export const isGrowthTurnIntentCurrent = (intent: GrowthTurnIntent, snapshot: PairRuntimeSnapshot): boolean => {
   const session = snapshot.session;
   const workUnit = session?.workUnit;
-  return session !== undefined && workUnit !== undefined &&
+  return session !== undefined && workUnit !== undefined && snapshot.presence.status !== "off" &&
+    snapshot.presence.workspaceId === intent.workspaceId &&
     session.sessionId === intent.sessionId &&
     session.startedAtRevision === intent.startedAtRevision &&
     session.authorityEpoch === intent.authorityEpoch &&
@@ -59,6 +61,7 @@ export type GrowthTurnOutcome =
       readonly runtime: GrowthRuntimeBoundary;
     }
   | { readonly status: "stale" }
+  | { readonly status: "reprepare" }
   | {
       readonly status: "withheld";
       readonly response: GrowthResponse;
@@ -77,7 +80,7 @@ export interface ReadyGrowthTurn {
 
 export type GrowthTurnRequestOutcome =
   | ReadyGrowthTurn
-  | Extract<GrowthTurnOutcome, { readonly status: "stale" | "failed" }>;
+  | Extract<GrowthTurnOutcome, { readonly status: "stale" | "reprepare" | "failed" }>;
 
 const stem = (path: string): string | undefined => {
   const base = path.split(/[\\/]/u).pop() ?? "";
@@ -154,6 +157,9 @@ export const requestGuardedGrowthTurn = async (
         response = output;
       }
     } catch (error) {
+      if (error instanceof GrowthModelFailure && error.code === "GROWTH_REPREPARE_REQUIRED") {
+        return { status: "reprepare" };
+      }
       if (
         error instanceof GrowthModelFailure &&
         error.code === "GROWTH_STALE_TURN"

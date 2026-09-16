@@ -85,7 +85,14 @@ export const toGrowthChatTools = (
     .map(descriptor => ({
       name: nativeToolName(descriptor.name),
       description: toolDescription(descriptor),
-      inputSchema: { type: "object", additionalProperties: true },
+      inputSchema: descriptor.name === "pair_select_mode"
+        ? {
+            type: "object",
+            properties: { mode: { type: "string", enum: ["growth"] } },
+            required: ["mode"],
+            additionalProperties: false,
+          }
+        : { type: "object", additionalProperties: true },
     }));
 
 export class GrowthModelToolRunner {
@@ -114,13 +121,17 @@ export class GrowthModelToolRunner {
 
       const input = isRecord(toolCall.input) ? toolCall.input : {};
       const descriptor = tools.tools.find(tool => tool.name === pairName);
+      if (descriptor === undefined) {
+        throw new GrowthModelFailure("GROWTH_TOOL_TRANSLATION_FAILED");
+      }
+      if (pairName === "pair_select_mode" && input["mode"] !== "growth") {
+        throw new GrowthModelFailure("GROWTH_UNSUPPORTED_MODE");
+      }
+      if (!isModelCallableTool(descriptor)) {
+        throw new GrowthModelFailure("GROWTH_DIRECT_USER_ACTION_REQUIRED");
+      }
       let userActionId: string | undefined;
-      if (descriptor?.requiresExplicitUserAction === true) {
-        if (!MODEL_CONFIRMABLE_TOOLS.has(pairName)) {
-          throw new GrowthModelFailure(
-            "GROWTH_DIRECT_USER_ACTION_REQUIRED",
-          );
-        }
+      if (descriptor.requiresExplicitUserAction) {
         const confirmationSnapshot = await this.coordinator.snapshot();
         if (
           confirmationSnapshot.revision !== runtime.runtimeRevision ||
@@ -175,8 +186,11 @@ export class GrowthModelToolRunner {
         throw new GrowthModelFailure("GROWTH_STALE_TURN");
       }
       runtime = nextRuntime;
+      if (result.status === "confirmed" && descriptor.effectClass === "state") {
+        throw new GrowthModelFailure("GROWTH_REPREPARE_REQUIRED");
+      }
 
-      resultParts.push(untrustedToolResult(toolCall.callId, result));
+      resultParts.push(untrustedToolResult(toolCall.callId, result, descriptor.maximumResultCharacters));
     }
 
     messages.push(vscode.LanguageModelChatMessage.User(resultParts));

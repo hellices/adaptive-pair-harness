@@ -41,7 +41,7 @@ const actionHarness = () => {
     { text: JSON.stringify({ level: 1, kind: "question", text: "What have you tried?" }) },
   ]);
   const { participant, consent, evaluations } = buildParticipant(coordinator);
-  consent.grant(asModel(model));
+  consent.grant(asModel(model), coordinator.snapshotNow());
   return { before, store, coordinator, model, participant, evaluations, ...createResponseStream() };
 };
 

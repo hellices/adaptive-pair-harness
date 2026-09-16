@@ -82,6 +82,13 @@ const createTurn = (
 };
 
 describe("Growth turn request preparation", () => {
+  it("preserves the need to reprepare after a committed model tool contract", async () => {
+    const turn = createTurn();
+    turn.model.request.mockRejectedValue(new GrowthModelFailure("GROWTH_REPREPARE_REQUIRED"));
+
+    await expect(runGuardedGrowthTurn(turn.input)).resolves.toEqual({ status: "reprepare" });
+  });
+
   it("prepares plain request data and dispatches one model request with the same ports", async () => {
     const turn = createTurn();
 

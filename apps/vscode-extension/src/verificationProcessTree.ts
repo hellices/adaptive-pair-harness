@@ -3,6 +3,8 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 type TerminationSignal = "SIGTERM" | "SIGKILL";
 
+const TASKKILL_TIMEOUT_MS = 1_000;
+
 export interface ProcessTreePort {
   signal(
     child: ChildProcessWithoutNullStreams,
@@ -20,8 +22,6 @@ const errnoCode = (error: unknown): string | undefined => {
 };
 
 export class SystemProcessTreePort implements ProcessTreePort {
-  private readonly terminatedWindowsTrees = new WeakSet<ChildProcessWithoutNullStreams>();
-
   public signal(
     child: ChildProcessWithoutNullStreams,
     signal: TerminationSignal,
@@ -40,13 +40,14 @@ export class SystemProcessTreePort implements ProcessTreePort {
           "/T",
           ...(signal === "SIGKILL" ? ["/F"] : []),
         ],
-        { stdio: "ignore", windowsHide: true },
+        {
+          stdio: "ignore",
+          windowsHide: true,
+          timeout: TASKKILL_TIMEOUT_MS,
+          killSignal: "SIGKILL",
+        },
       );
-      if (result.status === 0) {
-        this.terminatedWindowsTrees.add(child);
-        return true;
-      }
-      return false;
+      return result.status === 0;
     }
 
     try {
@@ -63,7 +64,7 @@ export class SystemProcessTreePort implements ProcessTreePort {
       return true;
     }
     if (process.platform === "win32") {
-      return !this.terminatedWindowsTrees.has(child);
+      return true;
     }
 
     try {

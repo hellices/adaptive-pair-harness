@@ -139,7 +139,7 @@ describe("GrowthParticipant workspace consent", () => {
     // modelB has a different identity so consent must not transfer.
     Object.defineProperty(modelB, "id", { value: "other-model-id" });
     const consent = new ModelConsentRegistry();
-    consent.grant(asModel(modelA));
+    consent.grant(asModel(modelA), coordinator.snapshotNow());
     const { participant } = buildParticipant(coordinator, {
       consent,
       requestWorkspaceConsent: () => Promise.resolve(false),
@@ -182,7 +182,7 @@ describe("GrowthParticipant consented guidance", () => {
       },
     ]);
     const consent = new ModelConsentRegistry();
-    consent.grant(asModel(model));
+    consent.grant(asModel(model), coordinator.snapshotNow());
     const { participant, evaluations } = buildParticipant(coordinator, {
       consent,
     });
@@ -251,7 +251,7 @@ describe("GrowthParticipant response restraint", () => {
       },
     ]);
     const consent = new ModelConsentRegistry();
-    consent.grant(asModel(model));
+    consent.grant(asModel(model), coordinator.snapshotNow());
     const { participant, evaluations } = buildParticipant(coordinator, { consent });
     const { stream, collected } = createResponseStream();
 
@@ -293,7 +293,7 @@ describe("GrowthParticipant response restraint", () => {
       },
     ]);
     const consent = new ModelConsentRegistry();
-    consent.grant(asModel(model));
+    consent.grant(asModel(model), coordinator.snapshotNow());
     const { participant, evaluations } = buildParticipant(coordinator, { consent });
     const { stream, collected } = createResponseStream();
 
@@ -316,7 +316,7 @@ describe("GrowthParticipant response restraint", () => {
     const coordinator = new FakeCoordinator(snapshot);
     const model = new FakeModel([{ text: "Sure! Here is the whole fixed file for you." }]);
     const consent = new ModelConsentRegistry();
-    consent.grant(asModel(model));
+    consent.grant(asModel(model), coordinator.snapshotNow());
     const { participant, evaluations } = buildParticipant(coordinator, { consent });
     const { stream, collected } = createResponseStream();
 
@@ -351,7 +351,7 @@ describe("GrowthParticipant response restraint", () => {
     // Flip the snapshot only after the model has produced its response.
     coordinator.snapshotProvider = () => (model.sendCount === 0 ? before : after);
     const consent = new ModelConsentRegistry();
-    consent.grant(asModel(model));
+    consent.grant(asModel(model), coordinator.snapshotNow());
     const { participant, evaluations } = buildParticipant(coordinator, { consent });
     const { stream, collected } = createResponseStream();
 
@@ -394,7 +394,7 @@ describe("GrowthParticipant hint and reveal authority", () => {
       { text: JSON.stringify({ level: 2, kind: "hint", text: "clue" }) },
     ]);
     const consent = new ModelConsentRegistry();
-    consent.grant(asModel(model));
+    consent.grant(asModel(model), coordinator.snapshotNow());
     const { participant } = buildParticipant(coordinator, { consent });
     const { stream, collected } = createResponseStream();
 
@@ -442,7 +442,7 @@ describe("GrowthParticipant hint and reveal authority", () => {
       },
     ]);
     const consent = new ModelConsentRegistry();
-    consent.grant(asModel(model));
+    consent.grant(asModel(model), coordinator.snapshotNow());
     const confirmReveal = vi.fn(() => Promise.resolve(true));
     const { participant } = buildParticipant(coordinator, {
       consent,
@@ -475,7 +475,7 @@ describe("GrowthParticipant hint and reveal authority", () => {
       { text: JSON.stringify({ level: 5, kind: "solution-preview", text: "answer" }) },
     ]);
     const consent = new ModelConsentRegistry();
-    consent.grant(asModel(model));
+    consent.grant(asModel(model), coordinator.snapshotNow());
     const { participant } = buildParticipant(coordinator, {
       consent,
       confirmSolutionReveal: () => Promise.resolve(false),

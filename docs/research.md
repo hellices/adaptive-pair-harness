@@ -640,8 +640,10 @@ and 120 actually token-cancelled real-clock trials passing; ordinary provider
 errors and timer/listener cleanup were also checked.
 
 Verification manifest validation rejects every non-string script value before
-confirmation or execution. Windows termination confirmation is held by child
-object identity in a weak set, not a permanent PID set. Eleven pre-fix failures
+confirmation or execution. The first Windows correction replaced a permanent
+PID set with weak child-object keys. It addressed retention and PID reuse, not
+proof of tree exit; the third reassessment below supersedes that confirmation
+mechanism. Eleven pre-fix failures
 and 21 controls pass after the fixes. Independent verification reported 57
 additional manifest/lifecycle probes passing and collection of 10,000 released
 child objects, compared with retention under a strong-set mutation. Windows
@@ -791,10 +793,130 @@ After the lifecycle and stale-buffer corrections, a fresh integrated run passes
 **1,105 tests across 89 files**, forced workspace typecheck, full enforced lint,
 Stable build and explicit **7-entry VSIX** verification, and **17 isolated host
 scenarios each on VS Code 1.136.2 and 1.137.0**. The isolated POC and dependency
-graphs are unchanged from their recorded second-round checks. The original
-Growth reviewer is reassessing the lifecycle follow-up before the next
-repository review and final-head CI; cancellation, disclosure, and scope
-reassessments pass. No future verdict is implied here.
+graphs are unchanged from their recorded second-round checks. The final Growth
+lifecycle reassessment subsequently passes, alongside cancellation, disclosure,
+and scope review. All four CI jobs pass at `d84c4fe`, including the Insiders
+test step. Repository review `5227383478` then requests additional changes;
+neither the scoped approvals nor successful CI clear those new findings.
+
+#### Third review: consent lifetime, tool boundaries, and termination evidence
+
+Real coordinator Disable/recreation tests reuse the same session and work-unit
+IDs. Twelve initial failures with one control expose a model-only consent cache
+and lifetime-unaware transfer/check records, including deferred consent. The
+fix binds destination grants and transient state to workspace, session ID, and
+committed `startedAtRevision`; it preserves repeated consented requests within
+one lifetime. Three additional failures expose a confirmed check being rendered
+after recreation, pause, or an observation commits; synchronous final publication
+now rejects those stale results without assigning them to the new state.
+
+Independent route review later finds three publication/admission gaps: a
+`/session` continuation can display expired cached outcomes, reveal confirmation
+can open after admission changes, and a declined modal can write after Chat
+cancellation. The 58 focused reproduction/control cases are promoted into the
+repository: 25 fail before correction and all 58 pass afterward. Ordinary
+coordinator scheduling reproduces 14 of the failures without a snapshot mock.
+Session display now uses the live synchronous snapshot; reveal is fenced before
+confirmation; neither declined modal writes after cancellation. Two existing
+transfer controls also require a non-cancelled decline to remain neutral across
+lifecycle changes. They initially expose an overly broad stale-intent check;
+the corrected cancellation gate preserves those assertions rather than changing
+them. The combined route/transfer-intent checkpoint passes all 101 cases,
+forced typecheck, and full lint. Native dialogs and models are still simulated.
+
+Fourteen mode/intent failures with four controls show non-Growth routes opening
+dialogs or dispatching, a reveal modal adopting replacement state, and a model
+returning a different workspace's runtime boundary. The context-consent adapter
+captures the original Growth intent before any dialog, and the pure runtime
+checks the workspace as well as session/work-unit lifetime during finalization.
+
+Ten model-tool/use-case failures establish unsupported mode selection,
+same-response and follow-up reuse of an outdated tool view, unadvertised calls,
+and incorrect outcome classification. The correction limits host mode selection
+to Growth and ends a confirmed state-contract turn before further model work.
+It keeps the committed action but asks for freshly prepared context and tools;
+that transition records neither a hint outcome nor a restraint failure.
+The combined Growth, accounting, and guarded-use-case checkpoint passes
+**260 tests across 18 files**, forced typecheck, and enforced scoped lint.
+Native model APIs are simulated in these focused tests.
+
+Scope regressions first produce seven canonical/alias discovery failures and
+four oversized 12,025-character observations. The same 86 focused cases pass
+after prefix normalization and shared exact-query/observation budgeting.
+The worker's 201 related scope cases pass with typed lint and size limits;
+independent whole-boundary review then identifies two remaining defects.
+
+An agreed file alias and its canonical file can have overlapping parent
+prefixes. Choosing the first rather than longest prefix duplicates the nested
+directory. Four reproductions fail before correction; the expanded 30-case
+pattern suite covers both orders without widening canonical permissions.
+
+Observation-only budgeting also misses result metadata and the Growth trust
+prefix. An exact 11,975-character query produces a 12,000-character observation
+but a 12,211-character native result and 12,238-character Growth text. A short
+query with many matches can overflow the complete representation too. Thirteen
+additional failures with 16 controls exercise complete effect, runtime, native,
+and Growth result limits. These layers now reject oversized representations
+without truncating queries or identifiers; an already committed operation is
+not rolled back. The combined result-envelope and prefix checkpoint passes
+59 tests across five files, forced typecheck, and full enforced lint. Independent
+reassessment subsequently reports specification and quality passes: 54
+policy-adjusted original probes, 62 additional boundary probes, 223 supplied
+cases, and 89 surrounding runtime/adapter controls pass. Its unchanged original
+replay is explicitly retained as 50 passes and four failures: two formerly
+accepted oversized queries now decline before discovery, and crowded-match
+cases stop at 34 unchanged matches with `partial: true`. A separate policy copy
+asserts those bounded outcomes rather than silently dropping the four cases.
+Exact-boundary probes preserve committed operations and accept a 12,000-character
+Growth text representation while refusing one additional character. Filesystem
+evidence is native macOS; VS Code/model APIs are simulated.
+
+The Windows regression suite first has 14 failures and eight controls. Successful
+`taskkill` delivery had been cached as termination, so parent close or escalation
+could falsely confirm a still-unknown tree exit. The correction removes that
+inference: known-PID Windows cancellation remains unconfirmed without liveness
+proof, including after `/F` succeeds. All 22 platform tests and 118 verification
+tests pass. Independent review passes the same 118 cases, 18 additional probes,
+two RED/GREEN false-confirmation reproductions, and a native macOS descendant
+exercise. Windows syscalls remain mocked. A one-second helper timeout is requested,
+but `spawnSync` waiting for helper exit is not a proven hard wall-clock bound.
+
+The initial third-round integrated checkpoint passes **1,194 tests across 94
+files**, forced typecheck, full lint, Stable build and **7-entry VSIX** inspection,
+and **17 isolated host scenarios on each of VS Code 1.136.2 and 1.137.0**. The
+unchanged isolated POC passes its eight unit tests, nine-entry package, and one
+Insiders host case. Both installed dependency trees validate; all four full and
+production-only audits report zero findings.
+
+After the overlapping-prefix and complete-result corrections, fresh integrated
+validation passes **1,216 tests across 97 files**, forced typecheck, and full
+enforced lint. Stable build/package/explicit verification again produces seven
+VSIX entries, and each Stable host version passes all 17 isolated scenarios.
+The separate POC again passes its eight unit cases, nine-entry package, and one
+Insiders host case. Both installed dependency trees validate and all four full
+and production-only audits again report zero findings. The existing Vite native
+configuration warning remains visible; it is not suppressed or a passing lint
+exception.
+
+After the route-publication/modal corrections and neutral-decline controls,
+fresh forced typecheck, full lint, and **1,274 tests across 99 files** pass.
+Stable build, seven-entry VSIX verification, and both Stable hosts' 17 scenarios
+also pass again. The isolated POC and both installed dependency graphs remain
+unchanged from the successful checks above; those commands are not claimed as
+rerun by this route-only checkpoint.
+
+Independent consent/route reassessment now reports specification and quality
+passes on the corrected frozen artifact. All 58 original probes pass without
+assertion changes, as do 101 promoted/transfer-intent cases and 226 focused/prior
+regressions. The model-transition review separately passes 120 independent
+probes and its 288-case related suite. Together with the Windows and
+complete-result/prefix reviews, each third-round correction has a scoped
+independent pass. These are AI technical reviews, not a native-host guarantee
+or whole-product certification.
+
+The third-round source patches still require original-thread responses and a
+fresh repository assessment and CI at their eventual committed head. No future
+CI or merge verdict is implied.
 
 Current authoritative session state remains in memory; the durable edit-episode
 journal is a separate continuity feature, not proof of session or ownership

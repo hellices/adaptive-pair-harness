@@ -22,24 +22,36 @@ export interface GrowthEvaluationRecord {
   readonly recordedAt: number;
 }
 
+export interface GrowthWorkUnitIdentity {
+  readonly workspaceId: string;
+  readonly sessionId: string;
+  readonly startedAtRevision: number;
+  readonly workUnitId: string;
+}
+
+export const isGrowthWorkUnitCurrent = (
+  identity: GrowthWorkUnitIdentity | undefined,
+  snapshot: PairRuntimeSnapshot,
+): boolean => identity !== undefined && snapshot.presence.status !== "off" &&
+  snapshot.presence.workspaceId === identity.workspaceId &&
+  snapshot.session?.sessionId === identity.sessionId &&
+  snapshot.session.startedAtRevision === identity.startedAtRevision &&
+  snapshot.session.workUnit?.id === identity.workUnitId;
+
 /**
  * The state of the independent transfer task for the current work unit. A
  * started transfer is never a demonstrated one: `demonstrated` stays `false`
  * until an independent completion is separately observed and recorded.
  */
-export interface GrowthTransferState {
+export interface GrowthTransferState extends GrowthWorkUnitIdentity {
   readonly status: "started";
-  readonly sessionId: string;
-  readonly workUnitId: string;
   readonly independentCheck: string;
   readonly demonstrated: false;
   readonly startedAt: number;
 }
 
 /** The last observed product check, recorded only from a real run result. */
-export interface GrowthCheckState {
-  readonly sessionId: string;
-  readonly workUnitId: string;
+export interface GrowthCheckState extends GrowthWorkUnitIdentity {
   readonly script: string;
   readonly status: PairToolResult["status"];
   readonly passed: boolean | undefined;
@@ -76,17 +88,35 @@ export class GrowthEvaluationLog {
 }
 
 export const modelConsentKey = (model: vscode.LanguageModelChat): string =>
-  `${model.vendor}::${model.family}::${model.id}::${model.version}`;
+  JSON.stringify([model.vendor, model.family, model.id, model.version]);
+
+const growthSessionKey = (snapshot: PairRuntimeSnapshot): string | undefined =>
+  snapshot.presence.status === "off" || snapshot.session === undefined
+    ? undefined
+    : JSON.stringify([
+        snapshot.presence.workspaceId,
+        snapshot.session.sessionId,
+        snapshot.session.startedAtRevision,
+      ]);
 
 export class ModelConsentRegistry {
   private readonly granted = new Set<string>();
+  private sessionKey: string | undefined;
 
-  public has(model: vscode.LanguageModelChat): boolean {
-    return this.granted.has(modelConsentKey(model));
+  public has(model: vscode.LanguageModelChat, snapshot: PairRuntimeSnapshot): boolean {
+    const key = growthSessionKey(snapshot);
+    return key !== undefined && key === this.sessionKey && this.granted.has(modelConsentKey(model));
   }
 
-  public grant(model: vscode.LanguageModelChat): void {
-    this.granted.add(modelConsentKey(model));
+  public grant(model: vscode.LanguageModelChat, snapshot: PairRuntimeSnapshot): void {
+    const key = growthSessionKey(snapshot);
+    if (key !== this.sessionKey) {
+      this.granted.clear();
+      this.sessionKey = key;
+    }
+    if (key !== undefined) {
+      this.granted.add(modelConsentKey(model));
+    }
   }
 
   public revoke(model: vscode.LanguageModelChat): void {
@@ -96,7 +126,7 @@ export class ModelConsentRegistry {
 
 export type GrowthConsentResult =
   | { readonly status: "granted"; readonly taskContext: string | undefined }
-  | { readonly status: "declined" };
+  | { readonly status: "declined" | "stale" };
 
 export interface GrowthParticipantDependencies {
   readonly coordinator: PairCoordinatorPort;

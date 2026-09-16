@@ -1,12 +1,11 @@
 import type * as vscode from "vscode";
 import type { HintLevel, PairSessionSnapshot } from "@adaptive-pair/protocol";
 import { growthFailureReason as failureReason, isGrowthTurnIntentCurrent } from "@adaptive-pair/runtime";
-import type { GrowthConsentResult, GrowthParticipantDependencies, GrowthTransientState } from "./growthHostState.js";
-import { bounded, ATTEMPT_REQUIRED_MESSAGE, REVEAL_REQUIRED_MESSAGE, CONSENT_DECLINED_MESSAGE, NO_WORK_UNIT_MESSAGE, TRANSFER_NOT_DISTINCT_MESSAGE, TRANSFER_NOT_DEMONSTRATED_NOTE } from "./growthPresentation.js";
+import type { GrowthParticipantDependencies, GrowthTransientState } from "./growthHostState.js";
+import { bounded, ATTEMPT_REQUIRED_MESSAGE, REVEAL_REQUIRED_MESSAGE, TRANSFER_NOT_DISTINCT_MESSAGE, TRANSFER_NOT_DEMONSTRATED_NOTE } from "./growthPresentation.js";
+import { GrowthContextConsent, type GrowthGuidanceContext } from "./growthContextConsent.js";
 import { GrowthTurnPublisher } from "./growthTurnPublisher.js";
 import { invokeGrowthUserAction } from "./growthUserActions.js";
-
-const MAX_CONTEXT_CHARS = 6_000;
 
 const normalizeForComparison = (value: string): string =>
   value
@@ -51,12 +50,14 @@ const transferRequest = (
 
 export class GrowthGuidanceRoutes {
   private readonly publisher: GrowthTurnPublisher;
+  private readonly contextConsent: GrowthContextConsent;
 
   public constructor(
     private readonly deps: GrowthParticipantDependencies,
     private readonly state: GrowthTransientState,
   ) {
     this.publisher = new GrowthTurnPublisher(deps);
+    this.contextConsent = new GrowthContextConsent(deps);
   }
 
   /**
@@ -71,31 +72,21 @@ export class GrowthGuidanceRoutes {
     response: vscode.ChatResponseStream,
     signal: AbortSignal,
   ): Promise<void> {
-    const snapshot = await this.deps.coordinator.snapshot();
-    const session = snapshot.session;
-    const workUnit = session?.workUnit;
-    if (session === undefined || workUnit === undefined || session.mode !== "growth") {
-      response.markdown(NO_WORK_UNIT_MESSAGE);
+    const captured = await this.contextConsent.capture(response);
+    if (captured === undefined) {
       return;
     }
-    const intent = Object.freeze({
-      sessionId: session.sessionId,
-      startedAtRevision: session.startedAtRevision,
-      authorityEpoch: session.authorityEpoch,
-      mode: session.mode,
-      workUnitId: workUnit.id,
-      objective: workUnit.objective,
-      capability: workUnit.capability,
-      independentCheck: session.learningAgreement?.independentCheck,
-    });
+    const { snapshot, session, workUnit, intent } = captured;
 
-    const consent = await this.gatherConsentedContext(
+    const consent = await this.contextConsent.gather(
+      captured,
       model,
       request,
       context,
       response,
+      signal,
     );
-    if (consent.status === "declined") {
+    if (consent.status !== "granted") {
       return;
     }
 
@@ -134,7 +125,9 @@ export class GrowthGuidanceRoutes {
 
     this.state.transfer = Object.freeze({
       status: "started" as const,
+      workspaceId: snapshot.presence.workspaceId,
       sessionId: session.sessionId,
+      startedAtRevision: session.startedAtRevision,
       workUnitId: workUnit.id,
       independentCheck,
       demonstrated: false as const,
@@ -150,32 +143,40 @@ export class GrowthGuidanceRoutes {
     response: vscode.ChatResponseStream,
     signal: AbortSignal,
   ): Promise<void> {
+    const captured = await this.contextConsent.capture(response);
+    if (captured === undefined || !this.contextConsent.isCurrent(captured, response, signal)) {
+      return;
+    }
     const confirmed = await this.deps.confirmSolutionReveal(model);
-    if (!confirmed) {
+    if (!confirmed && !signal.aborted) {
       response.markdown(
         "Solution reveal cancelled. Your work was not changed; keep going or ask for a smaller clue.",
       );
       return;
     }
+    if (!this.contextConsent.isCurrent(captured, response, signal)) {
+      return;
+    }
 
     // Gate workspace consent before any reveal/hint state transition so a
     // decline leaves assistance state untouched and never dispatches the model.
-    const consent = await this.gatherConsentedContext(
+    const consent = await this.contextConsent.gather(
+      captured,
       model,
       request,
       context,
       response,
+      signal,
     );
-    if (consent.status === "declined") {
+    if (consent.status !== "granted") {
       return;
     }
 
     const snapshot = await this.deps.coordinator.snapshot();
-    const workUnitId = snapshot.session?.workUnit?.id;
-    if (workUnitId === undefined) {
-      response.markdown("Start a Growth work unit before revealing a solution.");
+    if (!this.contextConsent.isCurrent(captured, response, signal)) {
       return;
     }
+    const workUnitId = captured.workUnit.id;
 
     const revealed = await invokeGrowthUserAction(
       this.deps.coordinator,
@@ -192,7 +193,7 @@ export class GrowthGuidanceRoutes {
       { runtimeRevision: revealed.runtimeRevision, authorityEpoch: revealed.authorityEpoch },
     );
 
-    await this.publisher.run(model, request, consent.taskContext, response, signal);
+    await this.publisher.run(model, request, consent.taskContext, response, signal, { intent: captured.intent });
   }
 
   public async handleGuidance(
@@ -203,37 +204,43 @@ export class GrowthGuidanceRoutes {
     signal: AbortSignal,
     options: { readonly escalate: boolean; readonly level: HintLevel | undefined },
   ): Promise<void> {
-    const consent = await this.gatherConsentedContext(
+    const captured = await this.contextConsent.capture(response);
+    if (captured === undefined) {
+      return;
+    }
+    const consent = await this.contextConsent.gather(
+      captured,
       model,
       request,
       context,
       response,
+      signal,
     );
-    if (consent.status === "declined") {
+    if (consent.status !== "granted") {
       return;
     }
 
     if (options.escalate) {
-      const escalated = await this.escalateHint(options.level, response, signal);
+      const escalated = await this.escalateHint(captured, options.level, response, signal);
       if (!escalated) {
         return;
       }
     }
 
-    await this.publisher.run(model, request, consent.taskContext, response, signal);
+    await this.publisher.run(model, request, consent.taskContext, response, signal, { intent: captured.intent });
   }
 
   private async escalateHint(
+    captured: GrowthGuidanceContext,
     explicitLevel: HintLevel | undefined,
     response: vscode.ChatResponseStream,
     signal: AbortSignal,
   ): Promise<boolean> {
     const snapshot = await this.deps.coordinator.snapshot();
-    const workUnitId = snapshot.session?.workUnit?.id;
-    if (workUnitId === undefined) {
-      response.markdown("Start a Growth work unit before requesting a hint.");
+    if (!this.contextConsent.isCurrent(captured, response, signal)) {
       return false;
     }
+    const workUnitId = captured.workUnit.id;
 
     const current = snapshot.session?.assistance?.hint?.level ?? 0;
     const requested =
@@ -262,60 +269,4 @@ export class GrowthGuidanceRoutes {
     }
   }
 
-  private gatherConsentedContext(
-    model: vscode.LanguageModelChat,
-    request: vscode.ChatRequest,
-    context: vscode.ChatContext,
-    response: vscode.ChatResponseStream,
-  ): Promise<GrowthConsentResult> {
-    return this.resolveConsent(model, request, context, response);
-  }
-
-  private async resolveConsent(
-    model: vscode.LanguageModelChat,
-    request: vscode.ChatRequest,
-    context: vscode.ChatContext,
-    response: vscode.ChatResponseStream,
-  ): Promise<GrowthConsentResult> {
-    if (this.deps.consent.has(model)) {
-      return { status: "granted", taskContext: this.gatherTaskContext(request, context) };
-    }
-
-    const granted = await this.deps.requestWorkspaceConsent(model);
-    if (granted) {
-      this.deps.consent.grant(model);
-      return { status: "granted", taskContext: this.gatherTaskContext(request, context) };
-    }
-
-    // Decline short-circuits the whole turn: no compiled trusted work-unit
-    // layer, no model dispatch, and no assistance state transition. The neutral
-    // message is the only side effect.
-    response.markdown(CONSENT_DECLINED_MESSAGE);
-    return { status: "declined" };
-  }
-
-  private gatherTaskContext(
-    request: vscode.ChatRequest,
-    context: vscode.ChatContext,
-  ): string | undefined {
-    const excerpts: string[] = [];
-    for (const turn of context.history ?? []) {
-      const prompt = (turn as { readonly prompt?: unknown }).prompt;
-      if (typeof prompt === "string" && prompt.length > 0) {
-        excerpts.push(prompt);
-      }
-    }
-
-    for (const reference of request.references ?? []) {
-      const value = (reference as { readonly value?: unknown }).value;
-      if (typeof value === "string" && value.length > 0) {
-        excerpts.push(value);
-      }
-    }
-
-    if (excerpts.length === 0) {
-      return undefined;
-    }
-    return excerpts.join("\n").slice(0, MAX_CONTEXT_CHARS);
-  }
 }

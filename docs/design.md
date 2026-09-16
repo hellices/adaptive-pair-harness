@@ -677,13 +677,37 @@ cancellation. Explicit Growth actions bind grants to the revision and authority
 epoch the caller observed, and a multi-action reveal chains the next grant from
 the preceding action's committed result rather than silently adopting new intent.
 
-Transfer also captures a data-only intent before workspace consent: session and
-its start revision, authority epoch, mode, work unit, objective, capability, and
-independent check.
+All Growth guidance routes capture a data-only intent before workspace consent:
+workspace, session and its committed start revision, authority epoch, mode, work
+unit, objective, capability, and independent check. Solution reveal captures it
+before its separate confirmation dialog. Non-Growth or non-operational work
+units are rejected before either dialog or any model/action dispatch.
 Runtime preparation and finalization reject a different intent, and the host
 carries the accepted runtime boundary into the later transfer state/note
 continuation. A dialog completing does not approve replacement work. These
 checks retain synchronous finalization/publication rather than adding an await.
+Reveal checks the live intent immediately before opening confirmation. Neither
+modal's declined response is published after Chat cancellation; a non-cancelled
+decline remains neutral even if the session changed while the dialog was open.
+
+Model consent is keyed by the workspace/session/start-revision tuple and the
+model's vendor, family, ID, and version. The registry retains one session's
+destination grants; it cannot authorize a recreated session even when all
+display IDs are reused. Transfer and product-check caches carry the same
+workspace/session lifetime plus work-unit ID. Current-state reporting and the
+transfer accessor reject mismatches, and a check result must still match the
+live runtime revision and epoch at synchronous publication.
+The `/session` route takes a synchronous live snapshot after its asynchronous
+read, so both session details and cached summaries belong to the state current
+at publication rather than an expired snapshot.
+
+The Growth model adapter advertises and accepts only `growth` mode selection.
+Every invocation must also belong to the immutable advertised tool view and
+remain independently authorized by the coordinator. A confirmed state-contract
+action ends the model loop, including any remaining calls in the same response.
+The committed action is retained, but no hint or Growth outcome is inferred;
+the next explicit request compiles instructions and tools from a fresh snapshot.
+This does not add Pair/Delivery host behavior or change their pure core contracts.
 
 The model-facing `pair_get_state` result is an allowlisted metadata projection,
 not the authoritative `PairRuntimeSnapshot`. Its `observation.snapshot` contains
@@ -706,6 +730,31 @@ outputs against it. A permitted alias is not permission to follow a child link
 into another unagreed directory. Unsaved paths resolve through the nearest
 existing canonical directory, without bypassing workspace containment,
 secret/binary filtering, cancellation, or byte limits.
+
+Search accepts both agreed-alias-relative and canonical workspace-relative
+patterns without searching a duplicated directory prefix. When lexical and
+canonical prefixes overlap, discovery uses the longest applicable prefix;
+canonical permission checks still determine which files can be returned.
+The exact query must fit the complete effect result, including its metadata,
+before any workspace discovery. Match accumulation and empty-result returns
+use the same 12,000-character budget, not an observation-only allowance.
+
+The runtime separately checks every complete serialized tool result against its
+catalog descriptor's limit. Native serialization checks the actual returned
+payload, and Growth checks the complete model-readable text including its trust
+prefix. Any layer can refuse an oversized representation rather than truncate
+queries, paths, identities, or JSON. A native refusal is a small explicit
+`result-too-large` failure; Growth stops before another model dispatch. Such a
+refusal does not roll back an operation or state change that already committed,
+and must not be presented as evidence that the action did not occur.
+
+On Windows, successful `taskkill /T` or `/T /F` delivery is not process-tree exit
+evidence. The adapter conservatively treats unknown liveness as live and reports
+cancelled runs as termination-unconfirmed rather than inventing confirmation.
+Each helper request specifies a one-second timeout; the synchronous Node API
+still waits for the helper to exit, so this is not a proven hard wall-clock
+bound. POSIX process-group probes and escalation are unchanged. Windows syscall
+regressions use test doubles; native Windows execution is not established.
 
 Executable dependency tests inspect source and test imports, including type
 imports, re-exports, and literal dynamic imports. They compare the Stable

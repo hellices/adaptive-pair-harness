@@ -168,7 +168,7 @@ describe.each(["plain", "runtime"] as const)("Growth %s deferred transfer consen
     expectStaleTransfer(fixture, 0);
     expect(fixture.store.snapshotNow()).toEqual(changed);
     expect(fixture.requestWorkspaceConsent).toHaveBeenCalledTimes(1);
-    expect(fixture.consent.has(asModel(fixture.model))).toBe(true);
+    expect(fixture.consent.has(asModel(fixture.model), changed)).toBe(false);
   });
 
   it.each(["unchanged", "observed"] as const)("keeps explicit consent for an %s intent", async change => {
@@ -201,7 +201,7 @@ describe.each(["plain", "runtime"] as const)("Growth %s deferred transfer consen
     expect(fixture.collected.markdown).toEqual([CONSENT_DECLINED_MESSAGE]);
     expect(fixture.evaluations.records).toEqual([]);
     expect(fixture.participant.transferStatus()).toBeUndefined();
-    expect(fixture.consent.has(asModel(fixture.model))).toBe(false);
+    expect(fixture.consent.has(asModel(fixture.model), fixture.store.snapshotNow())).toBe(false);
   });
 });
 

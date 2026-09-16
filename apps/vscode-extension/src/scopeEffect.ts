@@ -64,6 +64,46 @@ const result = (
   partial,
 });
 
+interface ScopeSearchMatch {
+  readonly path: string;
+  readonly line: number;
+  readonly text: string;
+}
+
+const SEARCH_SUMMARY = "Searched bounded text inside the agreed work-unit scope.";
+
+const fitsSearchResult = (
+  request: EffectRequest,
+  query: string,
+  matches: readonly ScopeSearchMatch[],
+  partial = false,
+): boolean =>
+  query.length <= MAX_RESULT_CHARACTERS &&
+  JSON.stringify(result(request, "confirmed", SEARCH_SUMMARY, { query, matches }, partial)).length <= MAX_RESULT_CHARACTERS;
+
+const searchResult = (
+  request: EffectRequest,
+  query: string,
+  matches: readonly ScopeSearchMatch[],
+  partial = false,
+): EffectResult => {
+  if (!fitsSearchResult(request, query, matches, partial)) {
+    return result(
+      request,
+      "declined",
+      "The exact search query and matches exceed the bounded result limit.",
+      { reason: "search-result-too-large" },
+    );
+  }
+  return result(
+    request,
+    "confirmed",
+    SEARCH_SUMMARY,
+    { query, matches },
+    partial,
+  );
+};
+
 const positiveLine = (value: unknown): number | undefined =>
   typeof value === "number" &&
   Number.isSafeInteger(value) &&
@@ -239,6 +279,9 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
         { reason: "invalid-search-query" },
       );
     }
+    if (!fitsSearchResult(request, query, [])) {
+      return searchResult(request, query, []);
+    }
     const pattern =
       typeof request.payload["pattern"] === "string"
         ? request.payload["pattern"]
@@ -257,7 +300,7 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
           path !== undefined &&
           withinAllowedScope(path, allowedPaths),
       );
-    const matches: { path: string; line: number; text: string }[] = [];
+    const matches: ScopeSearchMatch[] = [];
     let partial =
       discovery.truncated || scopedPaths.length > MAX_SEARCH_FILES;
     const needle = query.toLocaleLowerCase();
@@ -291,34 +334,20 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
           text: line.slice(0, MAX_MATCH_CHARACTERS),
         };
         matches.push(match);
+        const withinBudget = fitsSearchResult(request, query, matches);
         if (
           matches.length >= MAX_SEARCH_MATCHES ||
-          JSON.stringify({ query, matches }).length > MAX_RESULT_CHARACTERS
+          !withinBudget
         ) {
-          if (
-            JSON.stringify({ query, matches }).length >
-            MAX_RESULT_CHARACTERS
-          ) {
+          if (!withinBudget) {
             matches.pop();
           }
           partial = true;
-          return result(
-            request,
-            "confirmed",
-            "Searched bounded text inside the agreed work-unit scope.",
-            { query, matches },
-            partial,
-          );
+          return searchResult(request, query, matches, partial);
         }
       }
     }
 
-    return result(
-      request,
-      "confirmed",
-      "Searched bounded text inside the agreed work-unit scope.",
-      { query, matches },
-      partial,
-    );
+    return searchResult(request, query, matches, partial);
   }
 }

@@ -40,7 +40,7 @@ describe.each(["plain", "runtime"] as const)("GrowthParticipant %s publication b
     });
     const model = new FakeModel([]);
     const consent = new ModelConsentRegistry();
-    consent.grant(asModel(model));
+    consent.grant(asModel(model), coordinator.snapshotNow());
     const answer = { level: 1, kind: "question", text: "What have you tried?" } as const;
     const participant = new GrowthParticipant({
       coordinator,
@@ -134,7 +134,7 @@ describe.each(["plain", "runtime"] as const)("GrowthParticipant %s publication b
     });
     const model = new FakeModel([]);
     const consent = new ModelConsentRegistry();
-    consent.grant(asModel(model));
+    consent.grant(asModel(model), coordinator.snapshotNow());
     const answer = { level: 1, kind: "question", text: "What have you tried?" } as const;
     const participant = new GrowthParticipant({
       coordinator,

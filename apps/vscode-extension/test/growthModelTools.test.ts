@@ -236,7 +236,7 @@ describe("GrowthModel tool confirmation", () => {
           {
             callId: "call-mode",
             name: nativeToolName("pair_select_mode"),
-            input: { mode: "delivery" },
+            input: { mode: "growth" },
           },
         ],
       },
@@ -262,8 +262,8 @@ describe("GrowthModel tool confirmation", () => {
 
     expect(confirmToolAction).toHaveBeenCalledWith(
       "pair_select_mode",
-      { mode: "delivery" },
-      expect.stringContaining("Mode: delivery"),
+      { mode: "growth" },
+      expect.stringContaining("Mode: growth"),
       expect.anything(),
     );
     expect(coordinator.grantCalls).toEqual([]);
@@ -338,7 +338,7 @@ describe("GrowthModel tool confirmation", () => {
 });
 
 describe("GrowthModel confirmed authority", () => {
-  it("uses the post-grant tool view when an explicit contract action is confirmed", async () => {
+  it("passes the one-time grant to a committed contract and requests a fresh turn", async () => {
     const snapshot = growthSnapshot({ runtimeRevision: 4 });
     const coordinator = new FakeCoordinator(snapshot);
     const model = new FakeModel([
@@ -364,11 +364,11 @@ describe("GrowthModel confirmed authority", () => {
       confirmToolAction: () => Promise.resolve(true),
     });
 
-    await growthModel.request(
+    await expect(growthModel.request(
       prepared.instructions,
       viewWith([explicitModeDescriptor], snapshot.revision),
       new AbortController().signal,
-    );
+    )).rejects.toMatchObject({ code: "GROWTH_REPREPARE_REQUIRED" });
 
     expect(coordinator.grantCalls).toEqual(["pair_select_mode"]);
     expect(coordinator.invokeCalls[0]?.options).toEqual({
@@ -376,7 +376,7 @@ describe("GrowthModel confirmed authority", () => {
     });
   });
 
-  it("applies a confirmed mode selection through the real coordinator", async () => {
+  it("commits a confirmed Growth selection before requesting a fresh turn", async () => {
     const snapshot = growthSnapshot({
       runtimeRevision: 4,
       session: {
@@ -410,20 +410,16 @@ describe("GrowthModel confirmed authority", () => {
       confirmToolAction: () => Promise.resolve(true),
     });
 
-    const result = await growthModel.request(
+    await expect(growthModel.request(
       prepared.instructions,
       prepared.tools,
       new AbortController().signal,
-    );
+    )).rejects.toMatchObject({ code: "GROWTH_REPREPARE_REQUIRED" });
 
-    expect(isGrowthModelResult(result)).toBe(true);
     expect(await coordinator.snapshot()).toMatchObject({
       session: { mode: "growth" },
     });
-    if (isGrowthModelResult(result)) {
-      expect(result.runtime.mode).toBe("growth");
-      expect(result.response.text).toContain("now selected");
-    }
+    expect(model.sendCount).toBe(1);
   });
 
   it("rejects a confirmed contract action if the runtime changed while the modal was open", async () => {
@@ -443,7 +439,7 @@ describe("GrowthModel confirmed authority", () => {
           {
             callId: "call-mode",
             name: nativeToolName("pair_select_mode"),
-            input: { mode: "pair" },
+            input: { mode: "growth" },
           },
         ],
       },

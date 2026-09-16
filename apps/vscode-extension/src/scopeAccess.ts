@@ -18,23 +18,37 @@ const sameFilesystemIdentity = (left: string, right: string): boolean =>
   process.platform === "win32"
     ? left.toLowerCase() === right.toLowerCase()
     : left === right;
+
+const isUnsafeSearchPattern = (pattern: string): boolean =>
+  pattern.startsWith("/") ||
+  /^[A-Za-z]:/u.test(pattern) ||
+  pattern.split(/[\\/]/u).includes("..");
+
 const scopeSearch = (
   pattern: string | undefined,
   requestedPattern: string,
   scope: string,
+  canonicalRoot: string,
   target: string,
   isFile: boolean,
 ): { readonly base: string; readonly scopedPattern: string } => {
   const base = isFile ? dirname(target) : target;
-  const scopePrefix = `${scope}/`;
+  const canonicalScope = relative(canonicalRoot, target).replace(/\\/gu, "/");
+  const prefixes = isFile
+    ? [scope, canonicalScope, dirname(scope), dirname(canonicalScope)]
+    : [scope, canonicalScope];
+  const matchedScope = prefixes
+    .sort((left, right) => right.length - left.length)
+    .find(prefix =>
+      requestedPattern === prefix || requestedPattern.startsWith(`${prefix}/`));
   const relativePattern =
-    requestedPattern === scope
-      ? isFile
-        ? basename(target)
-        : "**/*"
-      : requestedPattern.startsWith(scopePrefix)
-        ? requestedPattern.slice(scopePrefix.length)
-        : requestedPattern;
+    matchedScope === undefined
+      ? requestedPattern
+      : requestedPattern === matchedScope
+        ? isFile
+          ? basename(target)
+          : "**/*"
+        : requestedPattern.slice(matchedScope.length + 1);
   const scopedPattern =
     pattern === undefined || pattern.trim().length === 0
       ? isFile
@@ -225,11 +239,7 @@ export class VscodeScopeAccess implements ScopeAccess {
     signal.throwIfAborted();
     this.ledger?.recordWorkspaceRead();
     const requestedPattern = pattern?.trim() || "**/*";
-    if (
-      requestedPattern.startsWith("/") ||
-      /^[A-Za-z]:/u.test(requestedPattern) ||
-      requestedPattern.split(/[\\/]/u).includes("..")
-    ) {
+    if (isUnsafeSearchPattern(requestedPattern)) {
       return { paths: [], truncated: false };
     }
 
@@ -266,7 +276,14 @@ export class VscodeScopeAccess implements ScopeAccess {
         continue;
       }
 
-      const { base, scopedPattern } = scopeSearch(pattern, requestedPattern, scope, target, targetStat.isFile());
+      const { base, scopedPattern } = scopeSearch(
+        pattern,
+        requestedPattern,
+        scope,
+        canonicalRoot,
+        target,
+        targetStat.isFile(),
+      );
       const remaining = 5_000 - paths.size;
       if (remaining <= 0) {
         truncated = true;

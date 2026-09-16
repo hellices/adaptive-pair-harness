@@ -7,6 +7,9 @@ export const WITHHELD_RESPONSE_MESSAGE = [
 export const STALE_TURN_MESSAGE =
   "Adaptive Pair discarded this response because the session mode or authority changed while it was generating. Your work was not changed. Ask again for a fresh, in-boundary response.";
 
+export const REPREPARE_TURN_MESSAGE =
+  "The session contract was updated. Ask again to continue with fresh context and tools. No hint or Growth outcome was recorded for this transition.";
+
 export const RESTRAINT_FAILURE_MESSAGE =
   "Adaptive Pair could not produce an in-boundary response, so nothing was shown. Your work was not changed. Try again or ask for a smaller clue.";
 

@@ -319,7 +319,7 @@ these newly identified compositions.
 - [x] Preserve valid reads/searches when an unrelated stale dirty document has
   a regular-file ancestor; reject an invalid requested path without lexical
   fallback or swallowing unavailable-identity/cancellation errors.
-- [ ] Recheck independent reviews, full affected validation, final-head CI,
+- [x] Recheck independent reviews, full affected validation, final-head CI,
   and a fresh repository assessment after this round's fixes.
 
 The initial second-round source/test checkpoint passes forced typecheck, enforced lint,
@@ -334,10 +334,74 @@ dirty-buffer cases above. The lifecycle correction passes its 52 focused cases,
 forced typecheck, and full lint. After both corrections, a fresh integrated run
 passes 1,105 tests across 89 files, forced typecheck, full lint, Stable build and
 7-entry VSIX verification, and all 17 host scenarios on each Stable matrix
-version. State-projection, cancellation, and scope independent reviews pass on
-their frozen artifacts. The original Growth reviewer is reassessing the
-lifecycle follow-up; that verdict and the next remote revision's review/checks
-remain pending.
+version. State-projection, cancellation, scope, and the final Growth lifecycle
+independent reviews subsequently pass on their frozen artifacts. All four CI
+jobs pass at `d84c4fe`, including the actual Insiders test step. The next repository
+assessment still requests changes; successful CI does not clear those findings.
+
+### Third repository reassessment
+
+Review `5227383478` reports two inline threads and nine summary-only locations.
+Repeated transfer-cache locations describe one underlying lifetime defect;
+each distinct concern must still be verified rather than inferred from the
+review job's successful completion.
+
+- [x] Reproduce reused consent and transfer/check summaries after Disable with
+  identical session/work-unit IDs; bind caches to workspace and committed
+  session start identity. Keep pending consent on its original intent.
+- [x] Reject non-Growth guidance before consent, reveal, escalation, or model
+  dispatch. Bind all guidance routes through preparation and publication.
+- [x] Restrict host-facing mode selection to Growth and end confirmed state
+  contract turns before another call uses outdated instructions/tools. Preserve
+  the accepted state change and request a fresh turn without a Growth claim.
+- [x] Preserve canonical and alias-relative search patterns, choosing the
+  longest applicable prefix when they overlap. Reject oversized exact queries
+  before discovery and bound complete effect/runtime/native/Growth results,
+  including metadata and the model-readable trust prefix.
+- [x] Remove Windows termination claims based only on `taskkill` success.
+  Preserve escalation, keep unknown tree exit unconfirmed, and distinguish
+  mocked Windows evidence from native POSIX checks.
+- [x] Reproduce and suppress check publication after a committed result's
+  runtime is recreated, paused, or observed before the host continuation.
+- [x] Reproduce stale `/session` cache publication and reveal admission with
+  ordinary coordinator scheduling. Fence the live publication/modal boundaries
+  and suppress declined-modal output after Chat cancellation, retaining neutral
+  non-cancelled declines and the existing transfer-intent assertions.
+- [x] Rerun integrated validation after the complete-result and overlapping
+  prefix corrections, including both Stable hosts and the separate POC.
+- [x] Complete independent re-review of the final source patches.
+- [ ] Reply in both original new inline threads, resolve addressed concerns,
+  and obtain a fresh repository assessment plus final-head checks.
+
+The initial third-round integrated checkpoint passes **1,194 tests across 94
+files**, forced typecheck, full lint, Stable build and 7-entry VSIX inspection,
+and all 17 isolated host scenarios on each Stable matrix version. The unchanged
+POC also passes its 8 tests, 9-entry package, and one Insiders host case. Both
+installed dependency trees validate and all four audits report zero findings.
+Windows independent review passes; the Growth and scope reassessments are still
+pending at this checkpoint. These local results do not pre-approve a future
+committed head or repository review.
+
+After the overlapping-prefix and complete-result follow-ups, fresh integrated
+validation passes **1,216 tests across 97 files**, forced typecheck, full lint,
+Stable build and 7-entry VSIX verification, and 17 isolated scenarios on each
+Stable host version. The separate POC again passes its 8 unit tests, 9-entry
+package, and one Insiders host case. Both installed trees validate and all four
+dependency audits again report zero findings. Independent re-review and the
+eventual committed head's repository review/checks remain separate gates.
+
+The subsequent route-publication/modal follow-up passes **1,274 tests across
+99 files**, forced typecheck, full lint, Stable build/7-entry VSIX verification,
+and all 17 isolated cases on each Stable host. The separate POC and both
+dependency graphs are unchanged from the immediately preceding successful
+checks; their earlier evidence is not relabeled as a new execution.
+
+Independent Windows, model-transition, complete-result/prefix, and
+consent/route-boundary reviews now report specification and quality passes in
+their respective frozen scopes. The route reviewer replays all 58 original
+probes unchanged, all 101 promoted/transfer-intent cases, and 226 additional
+focused/prior regressions. Original-thread responses, repository reassessment,
+and the new committed head's checks still gate merge.
 
 Merge is permitted only after those gates and the final revision's checks pass.
 Their live status belongs to the PR/check history, not a prospective approval

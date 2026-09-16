@@ -97,7 +97,7 @@ export class ToolExecutor {
         observation: Object.freeze({ snapshot: projection.snapshot }),
         sensitiveData: false,
         partial: projection.partial,
-      });
+      }, decision.descriptor.maximumResultCharacters);
     }
 
     const userActionGrantId = decision.descriptor.requiresExplicitUserAction
@@ -121,7 +121,7 @@ export class ToolExecutor {
         },
         sensitiveData: false,
         partial: false,
-      });
+      }, decision.descriptor.maximumResultCharacters);
     }
 
     return this.executeOperation(snapshot, decision.descriptor, input, signal, userActionGrantId);
@@ -202,10 +202,10 @@ export class ToolExecutor {
           },
           sensitiveData: result.sensitiveData,
           partial: result.partial,
-        });
+        }, descriptor.maximumResultCharacters);
       }
 
-      return this.createResult(observed.snapshot, result);
+      return this.createResult(observed.snapshot, result, descriptor.maximumResultCharacters);
     } finally {
       this.pendingOperations.delete(operation.id);
       unlinkAbort();
@@ -346,8 +346,9 @@ export class ToolExecutor {
       readonly sensitiveData: boolean;
       readonly partial: boolean;
     },
+    maximumResultCharacters: number,
   ): PairToolResult {
-    return Object.freeze({
+    const completed = Object.freeze({
       operationId: result.operationId,
       runtimeRevision: snapshot.revision,
       authorityEpoch: snapshot.session?.authorityEpoch,
@@ -357,6 +358,10 @@ export class ToolExecutor {
       sensitiveData: result.sensitiveData,
       partial: result.partial,
     });
+    if (JSON.stringify(completed).length > maximumResultCharacters) {
+      throw new Error("TOOL_RESULT_TOO_LARGE");
+    }
+    return completed;
   }
 
   public invalidate(snapshot: PairRuntimeSnapshot): void {

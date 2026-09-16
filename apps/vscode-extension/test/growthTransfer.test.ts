@@ -54,7 +54,9 @@ describe("GrowthParticipant transfer validation", () => {
 
     expect(participant.transferStatus()).toEqual({
       status: "started",
+      workspaceId: "workspace-1",
       sessionId: "session-1",
+      startedAtRevision: coordinator.snapshotNow().session?.startedAtRevision,
       workUnitId: "unit-1",
       independentCheck: "Implement a varied timeout retry",
       demonstrated: false,

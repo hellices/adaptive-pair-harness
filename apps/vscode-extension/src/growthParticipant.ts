@@ -1,6 +1,6 @@
 import type * as vscode from "vscode";
 import { growthFailureReason as failureReason } from "@adaptive-pair/runtime";
-import type { GrowthParticipantDependencies, GrowthTransferState, GrowthTransientState } from "./growthHostState.js";
+import { isGrowthWorkUnitCurrent, type GrowthParticipantDependencies, type GrowthTransferState, type GrowthTransientState } from "./growthHostState.js";
 import { GrowthLocalRoutes } from "./growthLocalRoutes.js";
 import { GrowthGuidanceRoutes } from "./growthGuidanceRoutes.js";
 import { interpretGrowthIntent } from "./growthIntent.js";
@@ -44,7 +44,9 @@ export class GrowthParticipant {
 
   /** The current independent transfer state, or `undefined` when none started. */
   public transferStatus(): GrowthTransferState | undefined {
-    return this.state.transfer;
+    return isGrowthWorkUnitCurrent(this.state.transfer, this.deps.snapshotNow())
+      ? this.state.transfer
+      : undefined;
   }
 
   public handler(): vscode.ChatRequestHandler {

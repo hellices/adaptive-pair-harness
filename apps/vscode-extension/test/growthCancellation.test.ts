@@ -54,7 +54,7 @@ describe.each(["plain", "runtime"] as const)("Growth %s response cancellation", 
     const coordinator = realCoordinator(before);
     const model = new FakeModel([]);
     const consent = new ModelConsentRegistry();
-    consent.grant(asModel(model));
+    consent.grant(asModel(model), coordinator.snapshotNow());
     const evaluations = new GrowthEvaluationLog();
     const { stream, collected } = createResponseStream();
     const { token, cancel } = cancellableToken();
@@ -117,12 +117,14 @@ describe.each(["plain", "runtime"] as const)("Growth %s transfer continuation ca
     const coordinator = realCoordinator(before);
     const model = new FakeModel([]);
     const consent = new ModelConsentRegistry();
-    consent.grant(asModel(model));
+    consent.grant(asModel(model), coordinator.snapshotNow());
     const evaluations = new GrowthEvaluationLog();
     const { stream, collected } = createResponseStream();
     const { token, cancel } = cancellableToken();
     const requestStarted = deferred<AbortSignal>();
     const reply = deferred<GrowthModelOutput>();
+    let publicationProbeArmed = false;
+    let snapshotCancellationQueued = false;
     const cancelledAtEvaluation: boolean[] = [];
     const cancelledAtMarkdown: boolean[] = [];
     const record = evaluations.record.bind(evaluations);
@@ -148,7 +150,8 @@ describe.each(["plain", "runtime"] as const)("Growth %s transfer continuation ca
       coordinator,
       snapshotNow: () => {
         const current = coordinator.snapshotNow();
-        if (timing === "snapshot-return") {
+        if (timing === "snapshot-return" && publicationProbeArmed && !snapshotCancellationQueued) {
+          snapshotCancellationQueued = true;
           queueMicrotask(cancelChat);
         }
         return current;
@@ -167,6 +170,7 @@ describe.each(["plain", "runtime"] as const)("Growth %s transfer continuation ca
 
     const pending = participant.handle(createRequest(model, { command: "transfer" }), createContext(), stream, token);
     const signal = await requestStarted.promise;
+    publicationProbeArmed = true;
     reply.resolve(format === "plain" ? answer : {
       response: answer,
       runtime: { runtimeRevision: before.revision, authorityEpoch: 2, mode: "growth" },

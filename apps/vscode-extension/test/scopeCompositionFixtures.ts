@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { glob, mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EffectRequest } from "@adaptive-pair/runtime";
@@ -11,6 +11,7 @@ const workspace = vi.hoisted(() => ({
     readonly getText: () => string;
   }[],
   foundPaths: [] as string[],
+  filesystemDiscovery: false,
   searches: [] as {
     readonly baseUri: { readonly fsPath: string };
     readonly pattern: string;
@@ -31,13 +32,26 @@ vi.mock("vscode", () => ({
     get textDocuments() {
       return workspace.documents;
     },
-    findFiles: (
+    findFiles: async (
       include: { readonly baseUri: { readonly fsPath: string }; readonly pattern: string },
       exclude: string,
       maximum: number,
     ) => {
       workspace.searches.push({ ...include, exclude, maximum });
-      return Promise.resolve(workspace.foundPaths.slice(0, maximum).map(fsPath => ({ fsPath })));
+      if (!workspace.filesystemDiscovery) {
+        return workspace.foundPaths.slice(0, maximum).map(fsPath => ({ fsPath }));
+      }
+      const paths: { fsPath: string }[] = [];
+      for await (const entry of glob(include.pattern, { cwd: include.baseUri.fsPath, exclude: [exclude] })) {
+        const fsPath = join(include.baseUri.fsPath, entry);
+        if ((await stat(fsPath)).isFile()) {
+          paths.push({ fsPath });
+        }
+        if (paths.length >= maximum) {
+          break;
+        }
+      }
+      return paths;
     },
   },
 }));
@@ -58,6 +72,7 @@ beforeEach(async () => {
   await linkDirectory(filesystem.source, join(filesystem.root, "linked"));
   workspace.documents = [];
   workspace.foundPaths = [join(filesystem.source, "main.ts")];
+  workspace.filesystemDiscovery = false;
   workspace.searches = [];
 });
 
