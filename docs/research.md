@@ -392,6 +392,120 @@ complete unchanged-baseline rerun closes R0 without claiming a source fix.
 Retain the interrupted-run artifacts locally rather than publishing logs or
 machine-specific paths, and rerun the regression gates during implementation.
 
+### Dependency and tooling maintenance evidence (September 16, 2026)
+
+The owner authorized removing the blanket dependency and version freeze and
+applying necessary updates. This maintenance starts from the reviewed `main`
+baseline `f28de5f`, independently of the P1 implementation PR. It does not
+implement Pair runtime behavior or begin a new product milestone.
+
+Release selection cross-checks direct metadata for all 16 distinct external
+dependencies and upstream stable release records. All 16 tracked manifests
+were inspected: 14 root/workspace/POC manifests and two fixture/scripts
+manifests without external dependencies. Both active lockfiles are included:
+the root workspace graph and the isolated `poc/session-target` graph. The
+initial `npm outdated --json --workspaces --include-workspace-root` query
+reported two packages and returned `{}` after the first update. Review exposed
+its incomplete coverage: direct metadata still reported a newer linter, and
+GitHub reported a Mocha patch absent from the configured registry. An empty
+outdated report is not treated as proof of a complete upstream inventory. A
+follow-up review also identified the active POC outside the workspace globs;
+its eight direct dependencies are now included in the inventory. Its additional
+`@vscode/dts` dependency remains at 0.4.1, matching both registry metadata and
+the upstream package manifest.
+
+| Component | Previous | Selected stable release |
+| --- | --- | --- |
+| Mocha | 11.8.0 | [12.0.0](https://github.com/mochajs/mocha/releases/tag/v12.0.0) |
+| VSCE | 3.9.2 | [4.0.0](https://github.com/microsoft/vscode-vsce/releases/tag/v4.0.0) |
+| typescript-eslint | 8.69.0 | [8.70.0](https://github.com/typescript-eslint/typescript-eslint/releases/tag/v8.70.0) |
+| Checkout action | v4 | [7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1) |
+| Setup Node action | v4 | [7.0.0](https://github.com/actions/setup-node/releases/tag/v7.0.0) |
+| Upload Artifact action | v4 | [7.0.1](https://github.com/actions/upload-artifact/releases/tag/v7.0.1) |
+
+The following retentions are explicit compatibility or availability decisions,
+not a reinstatement of the version freeze:
+
+- TypeScript 6.0.3 is the latest published 6.x version available in the registry.
+  TypeScript 7.0.2 is available, but typescript-eslint 8.70.0 declares the peer
+  range `>=4.8.4 <6.1.0`; upgrading the compiler would leave the supported lint
+  toolchain range.
+- `@types/node` 24.13.3 is the latest available Node 24 type release. The registry
+  advertises 26.5.0, but the types must describe the supported Node 24 host floor,
+  not silently allow APIs that require Node 26.
+- Upstream [Mocha 12.0.1](https://github.com/mochajs/mocha/releases/tag/v12.0.1)
+  was published on September 11, 2026, but an exact registry lookup returns
+  `E404`. Retain the obtainable 12.0.0 release with the patched
+  `serialize-javascript` 7.1.1 resolution, rather than substituting an untested
+  Git snapshot. Recheck the patch when registry availability changes.
+
+The isolated POC keeps the same validated TypeScript and Node type line as the
+repository rather than introducing an independent major-version toolchain.
+This does not change its existing Node.js 22.13 minimum or vendored proposed-API
+declarations.
+
+The CI actions are pinned to their verified release commit SHAs and run on
+Node.js 24. Mocha and VSCE support the repository's Node.js 24 baseline. VSCE 4
+raises its minimum to Node.js 22 and replaces several legacy dependencies;
+the existing packaging CLI path remains compatible. No product or protocol
+version bump, runtime source change, or higher VS Code API floor was needed.
+
+Before the update, the root `npm audit --audit-level=low --json` exited 1 and
+reported three vulnerable package entries: one low, one moderate, and one high. The
+Mocha dependency graph now resolves `diff` 9.0.0 instead of 7.0.0 and
+`serialize-javascript` 7.1.1 instead of 6.0.2. After a clean `npm ci`, the same
+full workspace audit and the production-only audit both exited 0 with zero
+findings.
+There are no forced audit fixes, dependency overrides, or severity exclusions.
+CI now runs separate clean installs and full audits for both active dependency
+graphs as required steps in its build-and-package job. The POC uses
+`npm --prefix poc/session-target`, so its lockfile cannot silently fall outside
+the root workspace audit. POC compilation, unit tests, and packaging also run
+in that job. Neither audit omits development dependencies.
+These are point-in-time audit results, not a guarantee against undiscovered
+vulnerabilities.
+
+The CI workflow contract gained two tests that require each complete audit
+immediately after its own installation. The initial named-step-only guard
+incorrectly passed with an intervening unnamed `run` step; the new POC case
+first failed because its installation and audit were absent. Both guards now
+recognize unnamed `run` and `uses` entries, including bare-dash forms. Fifteen
+temporary mutations cover a missing, late, or production-only audit and the
+four unnamed step forms for each graph, plus a POC audit missing its directory
+prefix. Each mutation produced one failed and five passed CI contract tests.
+The proposed workflow was restored byte-for-byte after every mutation; the
+normal workflow passed all six cases. These mutation runs do not add extra
+cases to the full-suite count.
+
+Local validation used Node.js 24.20.0. The baseline and initial dependency
+refresh passed 40 files and 596 tests. After the review-driven tests and linter
+update, typecheck, lint, all 40 test files, and 598 tests passed. Stable VSIX
+packaging and archive verification passed with seven entries. The isolated
+VS Code 1.137.0 Extension Host passed all 17 smoke tests with runner exit code
+0, including additive activation and inactive-zero assertions. All five
+external production dependencies retain their previous versions and integrity
+values, including the nested `ajv` and `json-schema-traverse` packages under
+`packages/protocol/node_modules`; the audit's total dependency count fell from
+601 to 401. The clean installation emitted no deprecation warnings. Existing
+Vite and isolated-host diagnostics are not claimed to be fixed by this
+maintenance.
+
+The isolated POC already had zero audit findings before its VSCE 3.9.2 to 4.0.0
+update. After regenerating its lockfile and a clean install, both its full and
+production-only audits still reported zero findings; its audit dependency
+count fell from 406 to 257. Under Node.js 24.20.0, POC compilation, four unit-test
+files with six cases, the isolated Insiders host's one case, and an eight-entry
+VSIX all passed. The Insiders build was `07b4ff1883f94da91f6d698744fc7c3638b59720`.
+POC checks and packaging also passed under the existing Node.js 22.22.1 runner.
+These six unit cases and one host case are separate from the workspace's test
+counts. No POC runtime source or vendored API declaration changed, and its
+unimplemented history, Pair tools, cancellation, and broader coexistence work
+remain open rather than being claimed as completed by dependency maintenance.
+
+Local verification is separate from PR approval. The published PR records the
+final revision's CI, review feedback, fixes, and thread resolutions; these
+local results alone do not establish merge readiness.
+
 ## 7. Evaluation hypotheses
 
 The first studies test separate hypotheses:
