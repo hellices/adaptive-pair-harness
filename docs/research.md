@@ -379,6 +379,11 @@ additional empty-ID case brings the reviewed total to 79. Separate red/green
 counterexamples also verified the corrected ID rejection reason and rejection
 of handoff readiness while Presence is only `observing`.
 
+These counts come from Vitest's JSON `assertionResults`, not a manual count of
+assertions. The `observing` scenario was added to an ordinary loop inside an
+existing handoff test, so handoff remains 35 test cases. Only the added
+empty-ID `it.each` row increases the published case count.
+
 Two earlier isolated attempts ended with runner exit code 1 before the full
 suite completed. Their host logs recorded renderer-requested termination and
 host exit code 0, without a reported Mocha assertion failure. The initiating

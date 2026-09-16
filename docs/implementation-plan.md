@@ -79,6 +79,13 @@ revision/epoch, and the whole capability-ownership history. P3 proves and
 implements the host edit boundary and full Stable Pair flow. Neither follows
 automatically from P1 passing.
 
+The baseline core's `SelectMode` guard requires an agreement only for Growth;
+that is not a complete Pair entry policy. P2 must enforce the proposed
+required-agreement contract before admitting Pair work or handoff. An optional
+`PairSessionSnapshot.learningAgreement` represents incomplete state; it does
+not authorize substituting an empty agreement. This plan changes neither the
+current guard nor the snapshot representation.
+
 ## Interface Map
 
 All interfaces below are **proposed P1 exports**, not existing APIs.
@@ -106,6 +113,13 @@ machine. A future core derives it from accepted AI work and persists its
 outstanding status. A helper result must never create an obligation from a
 mere model proposal or clear an existing obligation because a later mechanical
 unit returns `undefined`.
+
+Lifecycle status alone is not evidence of acceptance. A cancelled or failed
+unit is a valid `humanFollowUpFor` input only when the core has established
+that the same unit was previously accepted. Raw proposed/decoded units must
+not enter this projection solely because their status changed. P2 must test
+that entry precondition and preserve the existing outstanding requirement;
+P1 neither validates a journal nor manufactures acceptance evidence.
 
 `passed` verification is a future host/core observation correlated with the
 completed human work unit and all its agreed checks. It can represent the
@@ -1184,6 +1198,7 @@ pure contract milestone and leave P2/P3 gates open.
 
 ```sh
 npm run check
+npm exec -- vitest run packages/modes --reporter=json
 npm run package
 node scripts/verify-vsix.mjs
 npm run test:host
@@ -1195,6 +1210,11 @@ successful isolated Extension Host checks on the observed host version.
 Record actual versions and results. If a host check cannot run, report it as
 unverified, not passed. Do not replace an isolated test profile with the user's
 profile. Do not upgrade dependencies or fix unrelated defects as part of P1.
+
+Use the JSON reporter's `testResults[].assertionResults` to report per-file
+case counts. Parameterized `it.each` rows are separate cases; multiple
+assertions or ordinary loop iterations inside one `it` are not. Keep those
+counts separate from additional assertion coverage and temporary review tests.
 
 - [ ] **Step 3: Update canonical status only from observed results.**
 
