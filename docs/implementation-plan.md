@@ -21,7 +21,8 @@ No dependency, protocol-version, package-version, or VS Code API change.
 ## Global Constraints
 
 - Status: **P1 execution authorized; pure policies implemented and locally
-  verified; pull request review remains open**.
+  verified; review checkpoint complete**. Final-revision review and check
+  status are tracked in [PR #6](https://github.com/hellices/adaptive-pair-harness/pull/6).
 - This plan is M2/P1 in the
   [sequential delivery roadmap](design.md#sequential-delivery-roadmap).
 - The P1 policy choices are recorded in
@@ -835,7 +836,7 @@ import {
 
 describe("Pair handoff preflight", () => {
   it.each(["agreed", "executing", "verifying", "completed"] as const)(
-    "reports only readiness for baseline and human review of a %s unit",
+    "reports only readiness for baseline and human review of a unit with status %s",
     status => {
       expect(assessPairHandoff(pairHandoffContext({
         snapshot: pairRuntime(pairWorkUnit({ status })),
@@ -879,7 +880,7 @@ describe("Pair handoff preflight", () => {
     "planned", "authorized", "started",
   ];
 
-  it.each(pendingStatuses)("waits for a %s operation to settle", status => {
+  it.each(pendingStatuses)("waits for an operation with status %s to settle", status => {
     expect(assessPairHandoff(pairHandoffContext({
       snapshot: pairRuntime(undefined, [pairOperation({ status })]),
     }))).toEqual({ status: "blocked", reason: "PAIR_OPERATIONS_PENDING" });
@@ -1230,7 +1231,7 @@ README and the preview guide explicit that the extension remains Growth-only.
 Do not publish a duplicate handoff report or copy local test logs, personal
 paths, or credentials into documentation.
 
-- [ ] **Step 4: Complete the pull request review loop.**
+- [x] **Step 4: Complete the pull request review loop at the recorded checkpoint.**
 
 Commit and push the scoped changes on the dedicated branch, open a pull request
 against `main`, and request review. Verify each finding against the policy
@@ -1240,7 +1241,12 @@ and evidence, or explain why no change is appropriate. Resolve only addressed
 threads, check follow-up feedback, and verify the required checks on the final
 revision. Report when ready to merge; wait for the user's merge decision.
 
-- [ ] **Step 5: Stop for P2 scope review.**
+This checkbox records the reviewed implementation checkpoint below, not an
+unverified claim about a later commit. Every subsequent revision, including a
+documentation-only update, still requires fresh final-head checks and
+follow-up review in PR #6 before readiness is reported.
+
+- [x] **Step 5: Keep P2 behind separate scope review.**
 
 Summarize changed files and fresh results. Ask for review of the policy
 decisions before designing the P2 protocol/runtime changes. A new P2 plan must
@@ -1259,7 +1265,9 @@ documentation PR does not itself authorize implementing the proposed policies.
 - [x] Implement and verify Tasks 1–3 after approval.
 - [x] Complete Task 4's contract matrix, local regression checks, and canonical
   documentation update.
-- [ ] Complete Task 4's PR review loop and final-revision checks.
+- [x] Complete Task 4's PR review and CI checkpoint at `2364b41`.
+- Final-head gate: verify every subsequent revision in PR #6 before reporting
+  readiness; do not infer a merge decision from this checklist.
 
 The repository owner authorized P1 on September 16, 2026 by requesting the
 merge of reviewed PR #4 and continuation with the next increment. This is
@@ -1272,8 +1280,19 @@ admission, 21 follow-up, 35 handoff, and four unchanged Growth cases; fixture
 type imports were grouped without changing the contracts or case counts.
 Full validation passed 43 files and 671 tests, Stable VSIX verification, and
 all 17 isolated host smoke tests on VS Code 1.137.0 with runner exit code 0.
-Task 4's pull request review loop remains open; its final-head checks and
-follow-up findings must be verified before reporting merge readiness.
+The PR #6 review checkpoint at `2364b41` had no unresolved threads or pending
+review requests, and all four CI jobs passed. The initial checklist-clarity
+finding was fixed, replied to with verification evidence, and resolved in its
+original thread. Copilot's follow-up recommended approval with two
+non-blocking test-title grammar notes; those titles are corrected in the tests
+and executable examples without changing assertions or case counts.
+Independent AI review of the implementation at `0f2c85f` found no blocking
+or non-blocking defects; it does not constitute human approval.
+
+This completion-record update itself still requires fresh review and checks
+on its own revision before merge readiness is reported. PR #6 is the live
+record for that final-head evidence. No merge or P2/P3 implementation is
+performed by closing this P1 checkpoint.
 
 These results establish pure P1 contracts and unchanged-preview regression
 coverage, not Pair runtime/host conformance, accepted handoff, edit authority,

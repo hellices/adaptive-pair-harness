@@ -13,7 +13,7 @@ import {
 
 describe("Pair handoff preflight", () => {
   it.each(["agreed", "executing", "verifying", "completed"] as const)(
-    "reports only readiness for baseline and human review of a %s unit",
+    "reports only readiness for baseline and human review of a unit with status %s",
     status => {
       expect(assessPairHandoff(pairHandoffContext({
         snapshot: pairRuntime(pairWorkUnit({ status })),
@@ -57,7 +57,7 @@ describe("Pair handoff preflight", () => {
     "planned", "authorized", "started",
   ];
 
-  it.each(pendingStatuses)("waits for a %s operation to settle", status => {
+  it.each(pendingStatuses)("waits for an operation with status %s to settle", status => {
     expect(assessPairHandoff(pairHandoffContext({
       snapshot: pairRuntime(undefined, [pairOperation({ status })]),
     }))).toEqual({ status: "blocked", reason: "PAIR_OPERATIONS_PENDING" });
