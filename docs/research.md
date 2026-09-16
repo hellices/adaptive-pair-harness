@@ -449,11 +449,16 @@ These are point-in-time audit results, not a guarantee against undiscovered
 vulnerabilities.
 
 The CI workflow contract gained one test that requires the complete audit step
-immediately after `npm ci`. Three temporary mutations, removing the audit,
-moving it after the workspace build, and replacing it with a production-only
-audit, each produced one failed and four passed CI contract tests. Restoring
-the full audit in its required position passed all five cases. These mutation
-runs do not add extra cases to the full-suite count.
+immediately after `npm ci`. The initial named-step-only splitter incorrectly
+passed all five cases when an unnamed `run` step intervened. The corrected
+splitter recognizes every step entry at the job's indentation, including
+unnamed `run` and `uses` steps and bare-dash forms. Seven temporary mutations,
+removing the audit, moving it after the workspace build, replacing it with a
+production-only audit, and inserting each of those four unnamed step forms,
+each produced one failed and four passed CI contract tests. The workflow was
+restored byte-for-byte after every mutation; restoring the full audit in its
+required position passed all five cases. These mutation runs do not add extra
+cases to the full-suite count.
 
 Local validation used Node.js 24.20.0. The baseline and initial dependency
 refresh passed 40 files and 596 tests. After the review-driven test and linter
