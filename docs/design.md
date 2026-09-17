@@ -448,12 +448,36 @@ session core does not depend on either path.
 - evidence and privacy classifications;
 - local evaluation records.
 
-Every command and event has an opaque ID, optional task session ID, expected
-Pair runtime revision, actor, and timestamp supplied by an injected clock. The
-runtime processes it under one workspace stream ID. Schemas reject unknown
-fields.
+Commands carry `commandId`, `expectedRevision`, `actor`, and `observedAt`;
+events carry `eventId`, their originating `commandId`, the accepted `revision`,
+`actor`, and `recordedAt`. Both include `protocolVersion: 1` and a closed `type`
+discriminant. Session/work-unit identifiers belong to the applicable payload,
+not a common optional session field. The runtime processes them under one
+workspace stream ID, using timestamps supplied by an injected clock.
+Schemas reject unknown fields.
 Protocol evolution is additive within a major version and uses explicit
 migrations across major versions.
+
+**Implemented event boundary:** the host-independent
+`parsePairEvent(unknown): PairEvent` parser covers the 21 existing event variants.
+It accepts parsed JSON data, rejects unsupported versions and malformed or
+unexpected fields, and returns a detached, deeply frozen event. Revision and
+authority-epoch counters must be nonnegative safe integers; timestamps remain
+finite numbers. Existing command parsing and public event types stay unchanged.
+
+JSON omits undefined object properties. The parser rejects explicit `undefined`
+or `null` in those fields, then restores only the existing required-but-possibly-
+undefined memory properties: `UserActionGranted.authorityEpoch` and the
+authorized operation's `summary` and `userActionGrantId`. Optional entry
+`branch` and result `observation` remain omitted when absent. Arbitrary keys are
+allowed only in the existing record payloads; their values must still be safe
+JSON data. The parser never invokes caller accessors or conversion hooks.
+
+This is structural validation, not proof of actor authority, causal event
+ordering, idempotency, policy compliance, or workspace freshness. It does not
+load a journal, replay events, restore a grant, or attach new host/runtime routes.
+Durable storage, supported-version migrations, and authority-safe recovery
+remain separately gated work.
 
 ### 5.2 Session core
 
@@ -1764,7 +1788,9 @@ host `LocalJournal` persists bounded edit-episode continuity under extension
 storage. Restart reconciliation of those episodes is not restoration of a
 session, edit authority, action grants, or operation ownership. Disable clears
 that persisted continuity and the current in-memory session. This stabilization
-does not implement P2 session/ownership persistence.
+does not implement P2 session/ownership persistence. The separate version-1
+event parser validates a wire event's data shape only; it is not wired into
+this in-memory journal and does not read or restore durable runtime state.
 
 **Planned v2 persistence:** a durable store adapter will keep the authoritative
 event journal and immutable snapshots under extension storage, not in the

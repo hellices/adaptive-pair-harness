@@ -1301,6 +1301,38 @@ Local verification is separate from PR approval. The published PR records the
 final revision's CI, review feedback, fixes, and thread resolutions; these
 local results alone do not establish merge readiness.
 
+### Version-1 event validation evidence
+
+The approved post-refactoring increment starts from PR #8's merged revision
+`ad4b570d5526138f9afa6fa3e13dde624244b345`. The baseline forced typecheck and
+37 protocol tests pass. Before implementing the event parser, 448 new cases
+fail because `parsePairEvent` is missing: 257 envelope/version/variant cases
+and 191 payload/JSON-safety cases. With the implementation in place, all 485
+protocol cases pass together, including the unchanged command regressions.
+
+The fixtures exhaustively cover the 21 current `PairEvent` discriminants.
+Checks distinguish wire omissions from explicit undefined/null, verify the
+three required-but-possibly-undefined memory fields, reject malformed nested
+payloads and unsafe counters, and retain the event-only `engaged` presence
+status. JSON-safety tests exercise accessors and conversion hooks without
+invoking them, exotic/hidden/symbol data, cycles, sparse/decorated arrays,
+shared references, safe dictionary keys, and detached recursive freezing.
+These tests establish structural behavior, not actor authority, event-sequence
+validity, persistence, recovery, or policy approval of a well-shaped event.
+
+Local checks use Node.js 24.20.0: forced workspace typecheck, full lint, **1,960
+tests in 113 files**, deterministic Stable build, seven-entry Stable VSIX and
+archive verification, plus **17 isolated host cases on each of 1.136.2 and
+1.137.0**. The separately maintained POC passes **21 unit cases in five files**,
+its one Insiders host case, and nine-entry packaging. Those POC and host cases
+are separate from the workspace unit-test total. Existing Vite and clean-profile
+host diagnostics remain visible rather than being suppressed.
+
+The implementation adds no dependency, public event-type change, host route,
+runtime journal integration, or storage/recovery code. Source and tests pass
+the existing size and package-boundary guards. Local checks are not a PR
+approval: final-head CI and review evidence belong to the published PR.
+
 ## 7. Evaluation hypotheses
 
 The first studies test separate hypotheses:

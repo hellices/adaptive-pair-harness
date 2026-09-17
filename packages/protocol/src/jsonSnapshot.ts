@@ -4,12 +4,17 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   value !== null &&
   Object.getPrototypeOf(value) === Object.prototype;
 
-const jsonError = (reason: string) =>
-  new Error(`Invalid Pair command: ${reason}`);
-
 export const assertJsonCompatible = (
   value: unknown,
-  path = new WeakSet<object>(),
+  kind: "command" | "event" = "command",
+): void => {
+  assertJsonValue(value, new WeakSet<object>(), reason => new Error(`Invalid Pair ${kind}: ${reason}`));
+};
+
+const assertJsonValue = (
+  value: unknown,
+  path: WeakSet<object>,
+  jsonError: (reason: string) => Error,
 ): void => {
   if (
     value === null ||
@@ -68,7 +73,7 @@ export const assertJsonCompatible = (
           throw jsonError(`array index ${name} must be a plain enumerable data property`);
         }
 
-        assertJsonCompatible(descriptor.value, path);
+        assertJsonValue(descriptor.value, path, jsonError);
       }
 
       for (let index = 0; index < value.length; index += 1) {
@@ -104,7 +109,7 @@ export const assertJsonCompatible = (
           throw jsonError(`property ${name} must be a plain enumerable data property`);
         }
 
-        assertJsonCompatible(descriptor.value, path);
+        assertJsonValue(descriptor.value, path, jsonError);
       }
     } finally {
       path.delete(value);
