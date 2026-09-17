@@ -148,8 +148,11 @@ files listed above. Do not add parallel status or recovery documents.
 
 - [x] Update the public plan link and protocol/persistence sections to distinguish
   the implemented validation boundary from still-unimplemented durable recovery.
-- [ ] Inventory both dependency graphs, audit both lockfiles including development
+- [x] Inventory both dependency graphs, audit both lockfiles including development
   dependencies, and record compatibility/availability reasons for retained versions.
+  Update the obtainable `@types/node` 24.13.4 patch in both graphs with matching
+  manifests and lockfiles; retain the reviewed major/host floors and unavailable
+  upstream patches for the explicit reasons recorded in `docs/research.md`.
 - [x] Run affected checks using Node.js 24, building workspace exports before
   extension tests because they consume compiled package exports:
 

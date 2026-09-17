@@ -1225,9 +1225,9 @@ not a reinstatement of the version freeze:
   TypeScript 7.0.2 is available, but typescript-eslint 8.70.0 declares the peer
   range `>=4.8.4 <6.1.0`; upgrading the compiler would leave the supported lint
   toolchain range.
-- `@types/node` 24.13.3 is the latest available Node 24 type release. The registry
-  advertises 26.5.0, but the types must describe the supported Node 24 host floor,
-  not silently allow APIs that require Node 26.
+- `@types/node` 24.13.3 was selected on the Node 24 type line rather than allowing
+  APIs that require Node 26. The subsequent event-validation audit below
+  supersedes the earlier latest-patch claim and updates both graphs to 24.13.4.
 - Upstream [Mocha 12.0.1](https://github.com/mochajs/mocha/releases/tag/v12.0.1)
   was published on September 11, 2026, but an exact registry lookup returns
   `E404`. Retain the obtainable 12.0.0 release with the patched
@@ -1300,6 +1300,50 @@ remain open rather than being claimed as completed by dependency maintenance.
 Local verification is separate from PR approval. The published PR records the
 final revision's CI, review feedback, fixes, and thread resolutions; these
 local results alone do not establish merge readiness.
+
+### Event-increment dependency inventory (September 17, 2026 UTC)
+
+The follow-up audit inventories all 16 tracked manifests, both active lockfiles,
+and all 24 direct external dependency declarations across 16 distinct packages.
+The root workspace graph and independent `poc/session-target` graph are both
+included; fixture/scripts manifests contain no additional external graph.
+Registry metadata is cross-checked with upstream release records or maintained
+package-source history, not inferred from `npm outdated` alone.
+
+| Direct package | Maintained graph | Selected version | Disposition |
+| --- | --- | --- | --- |
+| `@eslint/js` | Root | 10.0.1 | Current obtainable stable |
+| `@types/mocha` | Both | 10.0.10 | Current obtainable stable |
+| `@types/node` | Both | 24.13.4 | Update from 24.13.3; keep Node 24 API floor |
+| `@types/vscode` | Root | 1.136.0 | Keep supported VS Code 1.136 API floor, not 1.137 declarations |
+| `@vitest/coverage-v8` | Root | 5.0.0 | Keep paired with Vitest; exact 5.0.1 registry request returns E404 |
+| `@vscode/dts` | POC | 0.4.1 | Current obtainable stable |
+| `@vscode/test-electron` | Both | 3.1.0 | Current obtainable stable |
+| `@vscode/vsce` | Both | 4.0.0 | Current obtainable stable |
+| `ajv` | Root | 8.20.0 | Current obtainable stable |
+| `esbuild` | Root | 0.28.2 | Current obtainable stable |
+| `eslint` | Root | 10.10.0 | Current obtainable stable |
+| `fast-check` | Root | 4.9.0 | Upstream 4.10.1 and 4.10.0 exact registry requests return E404 |
+| `mocha` | Both | 12.0.0 | Upstream 12.0.2 and 12.0.1 exact registry requests return E404 |
+| `typescript` | Both | 6.0.3 | 7.0.2 is outside the linter's `>=4.8.4 <6.1.0` peer range |
+| `typescript-eslint` | Root | 8.70.0 | Current obtainable stable |
+| `vitest` | Both | 5.0.0 | Upstream 5.0.1 exact registry request returns E404 |
+
+The Node type patch is verified by an exact online lookup, installed in both
+graphs, and recorded consistently in both manifests and lockfiles. Only that
+package's version, artifact, and integrity entries change in the lockfiles.
+The newer registry `@types/node` 26.5.1 would describe a different runtime
+floor and is not selected. No product/protocol version or host API floor changes.
+
+Exact lookup and availability claims apply to the configured Microsoft registry
+proxy: direct public npm transport is unavailable in this environment. They
+do not claim that those upstream releases are unpublished globally. Network
+checks explicitly disable the cached Node launcher's inherited npm offline
+setting; offline cache misses are not treated as upstream availability evidence.
+Both full audits, including development dependencies, pass with zero findings
+before and after the patch, and both installed dependency trees match their
+manifests/locks. These are point-in-time results from the configured advisory
+endpoint, not a guarantee against undiscovered vulnerabilities.
 
 ### Version-1 event validation evidence
 
