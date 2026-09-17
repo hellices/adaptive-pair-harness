@@ -1132,6 +1132,57 @@ full lint, and effective size rules pass. No native invocation, upstream lookup,
 or whole-branch retest is attributed to that re-review. The summary response and
 final committed-head repository review/checks remain separate gates.
 
+#### Eighth review: common Growth failure serialization
+
+The POC correction is committed as `4409905`. Its summary response is posted and
+CI `35163305028` passes all four jobs and every actual step. Review `5229519835`
+adds one inline finding: the shared `growthFailureReason` still returns arbitrary
+`Error.message` text, despite the provider adapter's earlier accounting fix.
+
+The common-boundary reproduction yields 29 failures and 29 controls across two
+new test files. Coverage includes model/factory, snapshot/preparation/finalization,
+consent, optional validation, malformed typed codes, and throwing error accessors
+or prototypes. Real participant evaluations retain the private sentinel before
+the correction. This establishes in-memory retention, not disk persistence or
+exfiltration. The provider-specific `GROWTH_MODEL_ERROR` mapping remains intact.
+
+A private closed catalog now admits the same 15 typed model codes and 70 literal
+core/runtime/tool-policy codes, checked against their existing source definitions.
+Unknown failures become the existing `GROWTH_UNKNOWN_ERROR` without returning
+raw text. Adding a new code requires explicit admission; uppercase format and
+prefix matching are deliberately insufficient. The public model-failure type
+derives from its unchanged 15-code catalog. Core hint prerequisites and typed
+cancellation/stale/reprepare behavior remain distinct.
+
+An initial core-only catalog causes 11 unchanged stale-user-action controls to
+lose `STALE_TOOL_VIEW`. The runtime/policy catalog is completed rather than
+weakening those assertions; six direct code controls are also added. The final
+focused checkpoint passes 81 cases, including all 64 new cases and 17 existing
+user-action cases. Only two legacy expectations deliberately change: untyped
+`MODEL_UNAVAILABLE` and the test-only thrown `TRANSFER_VALIDATION_FAILED` now
+produce the stable unknown code. All other assertions remain.
+
+Fresh integration on the complete patch passes 1,512 tests across 110 files,
+forced root typecheck, full lint, Stable build/seven-entry VSIX verification,
+and 17 isolated cases on each Stable host. The unchanged POC again passes
+21 tests, nine-entry packaging, and one Insiders host case. Both installed
+dependency trees validate and all four full/production audits report zero
+findings. A final local forced typecheck, full lint, and all 1,512 tests also pass
+on the same source tree.
+
+Independent specification/quality review passes on the exact five-file overlay.
+The same 64 new cases reproduce 29 failures/35 controls on `4409905` and all pass
+after the correction. The original 53 guarded-turn controls pass on that base;
+118 affected regression cases, forced root compilation, and full lint pass on
+the fixed tree. All 70 admitted boundary literals have production producers,
+and the 15-code model union is unchanged. This is not a claim that every runtime
+message is admitted: the generic non-Error storage wrapper `STORE_COMMIT_FAILED`
+also becomes the unknown reason at the Growth boundary. Both intentional
+expectation changes are justified, and all stale-user-action assertions remain
+unchanged. No whole-branch, host, package, or audit rerun is attributed to this
+bounded review. Original-thread response/resolution and the new committed head's
+repository assessment/checks remain separate merge gates.
+
 Current authoritative session state remains in memory; the durable edit-episode
 journal is a separate continuity feature, not proof of session or ownership
 recovery.

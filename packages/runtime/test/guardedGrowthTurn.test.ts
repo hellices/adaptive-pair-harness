@@ -241,11 +241,11 @@ describe("Growth turn failure classification", () => {
   });
 
   it.each([
-    { error: new Error("MODEL_UNAVAILABLE"), reason: "MODEL_UNAVAILABLE" },
+    { error: new Error("MODEL_UNAVAILABLE"), reason: "GROWTH_UNKNOWN_ERROR" },
     { error: new Error(""), reason: "GROWTH_UNKNOWN_ERROR" },
     { error: "untyped failure", reason: "GROWTH_UNKNOWN_ERROR" },
     { error: undefined, reason: "GROWTH_UNKNOWN_ERROR" },
-  ])("preserves the existing untyped model failure mapping ($reason)", async ({ error, reason }) => {
+  ])("normalizes an untyped model failure (%#)", async ({ error, reason }) => {
     const turn = createTurn();
     turn.model.request.mockRejectedValue(error);
 
@@ -403,13 +403,13 @@ describe("Growth turn optional validation", () => {
     }
   });
 
-  it("returns a failure rather than delivering when optional validation throws", async () => {
+  it("returns a bounded failure rather than delivering when optional validation throws", async () => {
     const turn = createTurn();
 
     await expect(runGuardedGrowthTurn({
       ...turn.input,
       validate: () => { throw new Error("TRANSFER_VALIDATION_FAILED"); },
-    })).resolves.toEqual({ status: "failed", reason: "TRANSFER_VALIDATION_FAILED" });
+    })).resolves.toEqual({ status: "failed", reason: "GROWTH_UNKNOWN_ERROR" });
   });
 });
 

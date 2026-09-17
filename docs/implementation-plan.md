@@ -508,8 +508,35 @@ isolated POC controller; it is not cleared by the successful review job.
 - [x] Obtain bounded independent review: specification/quality pass on the
   exact two-file overlay, identical tests reproduce seven failures/14 controls
   before and 21 passes after, and forced typecheck/POC compile/full lint pass.
-- [ ] Reply to the summary-only finding and check the new committed head's
+- [x] Reply to the summary-only finding and check the new committed head's
   fresh repository assessment and actual CI steps before merging.
+
+The seventh correction is committed as `4409905`; the summary response is posted
+and CI `35163305028` passes all four jobs and every actual step. Review
+`5229519835` raises one common-failure privacy thread, so that head is not cleared
+for merge solely by its test coverage or successful review job.
+
+### Eighth repository reassessment
+
+- [x] Reproduce arbitrary error text retained through common Growth boundaries
+  with 29 failures and 29 controls, including actual participant evaluation
+  records. Expand to 64 focused cases with six runtime/policy code controls.
+- [x] Admit only the 15 declared model codes and 70 fixed core/runtime/policy
+  codes. Unknown/malformed/throwing errors use `GROWTH_UNKNOWN_ERROR`; preserve
+  typed lifecycle outcomes and real core hint prerequisites.
+- [x] Retain all 11 existing stale-user-action assertions unchanged. Correct
+  the initial catalog omission rather than relaxing these assertions. Change
+  only two legacy untyped-message expectations to the stable unknown code.
+- [x] Rerun full integration: 1,512 tests/110 files, forced typecheck, full lint,
+  Stable build/seven-entry VSIX, 17 cases on each Stable host, 21 POC cases,
+  nine-entry POC packaging, one Insiders POC case, both installed graphs, and
+  all four dependency audits pass.
+- [x] Independently re-review the exact five-file privacy patch and both
+  intentional expectation changes: specification/quality pass, identical
+  tests reproduce 29 failures/35 controls before and 64 passes after, and
+  118 affected regression cases plus forced typecheck/full lint pass.
+- [ ] Reply in the original thread, resolve the addressed concern, and obtain
+  another repository assessment plus the final committed head's actual checks.
 
 Merge is permitted only after those gates and the final revision's checks pass.
 Their live status belongs to the PR/check history, not a prospective approval

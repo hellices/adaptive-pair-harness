@@ -4,23 +4,12 @@ import type {
 } from "@adaptive-pair/harness";
 import type { OperatingMode } from "@adaptive-pair/protocol";
 import type { GrowthResponse } from "@adaptive-pair/restraint";
-
-export type GrowthModelFailureCode =
-  | "GROWTH_MODEL_CALL_CAP"
-  | "GROWTH_INPUT_TOKEN_CAP"
-  | "GROWTH_OUTPUT_TOKEN_CAP"
-  | "GROWTH_TIME_CAP"
-  | "GROWTH_NON_JSON_RESPONSE"
-  | "GROWTH_INVALID_ENVELOPE"
-  | "GROWTH_EMPTY_RESPONSE"
-  | "GROWTH_MODEL_ERROR"
-  | "GROWTH_TOOL_TRANSLATION_FAILED"
-  | "GROWTH_DIRECT_USER_ACTION_REQUIRED"
-  | "GROWTH_UNSUPPORTED_MODE"
-  | "GROWTH_REPREPARE_REQUIRED"
-  | "GROWTH_TOOL_RESULT_TOO_LARGE"
-  | "GROWTH_STALE_TURN"
-  | "GROWTH_CANCELLED";
+import {
+  isGrowthBoundaryFailureCode,
+  isGrowthModelFailureCode,
+  type GrowthModelFailureCode,
+} from "./growthFailureCodes.js";
+export type { GrowthModelFailureCode } from "./growthFailureCodes.js";
 
 export class GrowthModelFailure extends Error {
   public constructor(
@@ -58,11 +47,17 @@ export const isGrowthModelResult = (
 ): output is GrowthModelResult => "response" in output;
 
 export const growthFailureReason = (error: unknown): string => {
-  if (error instanceof GrowthModelFailure) {
-    return error.code;
-  }
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
+  try {
+    if (error instanceof GrowthModelFailure) {
+      const code = error.code;
+      return isGrowthModelFailureCode(code) ? code : "GROWTH_UNKNOWN_ERROR";
+    }
+    if (error instanceof Error) {
+      const message = error.message;
+      if (isGrowthBoundaryFailureCode(message)) return message;
+    }
+  } catch {
+    return "GROWTH_UNKNOWN_ERROR";
   }
   return "GROWTH_UNKNOWN_ERROR";
 };

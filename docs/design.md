@@ -716,6 +716,15 @@ Raw provider error messages are not evaluation reasons. Lifecycle checks around
 accounting preserve cancellation and deadline classification; deterministic core
 reason codes remain available through their existing boundary.
 
+Common Growth failure serialization independently admits only a closed catalog
+of 15 typed model codes and 70 existing literal core/runtime/tool-policy codes.
+Unknown messages, malformed typed codes, and failures while inspecting error
+properties become `GROWTH_UNKNOWN_ERROR`; arbitrary text is never a fallback
+reason. Uppercase spelling or a recognized prefix is not sufficient admission.
+The catalog preserves hint prerequisites and stale-authority classifications
+without introducing a new error hierarchy. New public failure codes require an
+explicit catalog update; raw diagnostics remain outside outcomes/evaluations.
+
 The Growth model adapter advertises and accepts only `growth` mode selection.
 Every invocation must also belong to the immutable advertised tool view and
 remain independently authorized by the coordinator. A confirmed state-contract
