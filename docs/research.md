@@ -1320,7 +1320,7 @@ shared references, safe dictionary keys, and detached recursive freezing.
 These tests establish structural behavior, not actor authority, event-sequence
 validity, persistence, recovery, or policy approval of a well-shaped event.
 
-Local checks use Node.js 24.20.0: forced workspace typecheck, full lint, **1,960
+Initial local checks use Node.js 24.20.0: forced workspace typecheck, full lint, **1,960
 tests in 113 files**, deterministic Stable build, seven-entry Stable VSIX and
 archive verification, plus **17 isolated host cases on each of 1.136.2 and
 1.137.0**. The separately maintained POC passes **21 unit cases in five files**,
@@ -1328,7 +1328,26 @@ its one Insiders host case, and nine-entry packaging. Those POC and host cases
 are separate from the workspace unit-test total. Existing Vite and clean-profile
 host diagnostics remain visible rather than being suppressed.
 
-The implementation adds no dependency, public event-type change, host route,
+Review reproductions found two ways for the original validate-then-copy path
+to depart from the JSON contract: Ajv could read inherited required/optional
+fields, and a Proxy could report safe descriptors before a later property read
+returned a caller-owned function. Own-property-only Ajv checks alone are not
+enough to prevent getter reads; the installed implementation reads the value
+before its own-property guard. Both parsers now capture and validate one
+detached descriptor view whose objects have no prototype, without later reads
+from caller objects. Reflection traps themselves are not sandboxed.
+
+A 4,000-level parsed JSON object also produced a raw stack overflow, and a
+small shared binary graph expanded exponentially. Event capture now bounds
+depth to 64 (root zero) and expanded values to 10,000. Tests include the exact
+inclusive depth/node boundaries, shared-data support, and an 80-level command
+control that remains accepted without imposing event budgets on commands.
+The 16 review regression cases first produced **15 failures and one passing
+control**; all 16 then passed, and the combined protocol suite reached **501
+tests across eight files**. Final revision totals and review disposition are
+recorded in the PR rather than treating the initial CI run as final evidence.
+
+The implementation adds no new dependency, public event-type change, host route,
 runtime journal integration, or storage/recovery code. Source and tests pass
 the existing size and package-boundary guards. Local checks are not a PR
 approval: final-head CI and review evidence belong to the published PR.

@@ -1,6 +1,7 @@
 import { Ajv } from "ajv";
 import type { PairCommand } from "./commands.js";
-import { assertJsonCompatible, immutableJsonSnapshot } from "./jsonSnapshot.js";
+import { immutableJsonSnapshot } from "./jsonSnapshot.js";
+import { jsonValidationSnapshot } from "./jsonValidation.js";
 import {
   entrySnapshotSchema,
   hintLevelSchema,
@@ -10,7 +11,7 @@ import {
   workUnitSchema,
 } from "./payloadSchemas.js";
 
-const ajv = new Ajv({ allErrors: true, strict: true });
+const ajv = new Ajv({ allErrors: true, strict: true, ownProperties: true });
 
 ajv.addKeyword({
   keyword: "allowUndefined",
@@ -215,14 +216,14 @@ const pairCommandSchema = {
 const validatePairCommand = ajv.compile<PairCommand>(pairCommandSchema);
 
 export const parsePairCommand = (value: unknown): PairCommand => {
-  assertJsonCompatible(value);
+  const snapshot = jsonValidationSnapshot(value, "command");
 
-  if (!validatePairCommand(value)) {
+  if (!validatePairCommand(snapshot)) {
     const detail = ajv.errorsText(validatePairCommand.errors, {
       separator: "; ",
     });
     throw new Error(`Invalid Pair command: ${detail}`);
   }
 
-  return immutableJsonSnapshot(value);
+  return immutableJsonSnapshot(snapshot);
 };

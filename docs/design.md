@@ -1,10 +1,10 @@
 # Adaptive Pair v2: Product and System Design
 
-- **Updated:** September 16, 2026 (UTC)
-- **Status:** The reviewed P1 policy increment is merged as pure contracts.
-  The owner then authorized runtime-boundary and code-size stabilization before
-  further product work. The remaining v2 roadmap is
-  proposed and requires separately reviewed implementation plans and approval.
+- **Updated:** September 17, 2026 (UTC)
+- **Status:** The reviewed P1 policy and runtime-boundary/code-size stabilization
+  increments are merged. The owner then approved the bounded event-format
+  validation increment described here; its PR review is in progress. The
+  remaining v2 roadmap requires separately reviewed implementation plans and approval.
 - **Implementation:** Stable Growth Mode preview implemented (Tasks 1–12):
   host-agnostic protocol, in-memory authoritative runtime, versioned harness kernel, Growth
   restraint, Pair Presence with join-in-progress capture, observed verification,
@@ -16,13 +16,13 @@
   commands, and the native Agent Plugin remain out of scope for this preview.
   The modes package also implements tested Pair admission, related human
   follow-up, and handoff-preflight policies without runtime or host wiring.
-- **Current plan:** `implementation-plan.md` records the authorized runtime
-  stabilization, bounded-code refactoring, and review gates. It deliberately
-  replaces the completed P1 plan retained at
-  `9eebbf1:docs/implementation-plan.md` in Git history. The Foundation plan
-  remains at `ae1f095:docs/implementation-plan.md`. P2 ownership/lifecycle scope
-  review follows stabilization; no Pair runtime, edit adapter, or new extension
-  control is authorized by this refactoring.
+- **Current plan:** `implementation-plan.md` records the approved event-format
+  validation increment and its test/review gates. It deliberately replaces the
+  completed refactoring plan retained at `ad4b570:docs/implementation-plan.md`;
+  the P1 and Foundation plans remain at `9eebbf1:docs/implementation-plan.md`
+  and `ae1f095:docs/implementation-plan.md`. Durable persistence, authority
+  restoration, P2 ownership/lifecycle, P3 editing, and new extension controls
+  remain separately gated. A successor PR requires new owner merge direction.
 
 This document is the first complete product and architecture specification for
 Adaptive Pair v2. Every v2 behavior starts here as an initial design decision;
@@ -471,7 +471,25 @@ undefined memory properties: `UserActionGranted.authorityEpoch` and the
 authorized operation's `summary` and `userActionGrantId`. Optional entry
 `branch` and result `observation` remain omitted when absent. Arbitrary keys are
 allowed only in the existing record payloads; their values must still be safe
-JSON data. The parser never invokes caller accessors or conversion hooks.
+JSON data.
+
+Both command and event parsers capture own enumerable data-property descriptors
+once into a detached validation view whose objects have no prototype. Schema
+validation and final copying use that same view, not later reads from the
+caller. Inherited properties cannot supply required fields or optional metadata;
+ordinary accessor properties and conversion functions are rejected without
+invocation. An in-process Proxy is interpreted through the descriptors it
+reports, never through its `get` results. Its reflection traps can still run or
+throw: this data boundary is not a sandbox for hostile JavaScript. External
+integrations should deserialize JSON before calling the parser.
+
+Events have a maximum value depth of **64**, with the root at depth zero, and
+a maximum of **10,000 expanded values**. Every container and primitive counts,
+including the root and each repeated occurrence of shared data. These limits
+bound descriptor traversal and alias expansion before schema validation and
+copying; exceeding either produces an `Invalid Pair event:` error rather than
+a stack overflow. Small shared graphs remain supported. These event-specific
+limits do not impose new depth or node limits on existing command inputs.
 
 This is structural validation, not proof of actor authority, causal event
 ordering, idempotency, policy compliance, or workspace freshness. It does not

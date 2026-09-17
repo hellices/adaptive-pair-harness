@@ -1,7 +1,8 @@
 import { Ajv } from "ajv";
 import type { PairEvent } from "./events.js";
 import { pairEventSchema } from "./eventSchemas.js";
-import { assertJsonCompatible, immutableJsonSnapshot } from "./jsonSnapshot.js";
+import { immutableJsonSnapshot } from "./jsonSnapshot.js";
+import { jsonValidationSnapshot } from "./jsonValidation.js";
 import type { OperationRecord } from "./types.js";
 
 type WireOperation = Omit<OperationRecord, "summary" | "userActionGrantId"> & {
@@ -18,7 +19,7 @@ type WirePairEvent =
       readonly operation: WireOperation;
     });
 
-const ajv = new Ajv({ allErrors: true, strict: true });
+const ajv = new Ajv({ allErrors: true, strict: true, ownProperties: true });
 const validatePairEvent = ajv.compile<WirePairEvent>(pairEventSchema);
 
 const toMemoryEvent = (event: WirePairEvent): PairEvent => {
@@ -39,10 +40,10 @@ const toMemoryEvent = (event: WirePairEvent): PairEvent => {
 };
 
 export const parsePairEvent = (value: unknown): PairEvent => {
-  assertJsonCompatible(value, "event");
-  if (!validatePairEvent(value)) {
+  const snapshot = jsonValidationSnapshot(value, "event", { maximumDepth: 64, maximumNodes: 10_000 });
+  if (!validatePairEvent(snapshot)) {
     const detail = ajv.errorsText(validatePairEvent.errors, { separator: "; " });
     throw new Error(`Invalid Pair event: ${detail}`);
   }
-  return immutableJsonSnapshot(toMemoryEvent(value));
+  return immutableJsonSnapshot(toMemoryEvent(snapshot));
 };

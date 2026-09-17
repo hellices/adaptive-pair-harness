@@ -40,6 +40,12 @@ existing build, packaging, and isolated-host checks. No new library is needed.
   timestamps remain finite numbers, including fractional timestamps.
 - Accept JSON-compatible plain data, not JSON text, accessors, exotic objects,
   hidden/symbol properties, sparse arrays, cycles, or non-finite numbers.
+- Capture own descriptors into a detached null-prototype validation view before
+  Ajv reads data. Validate and copy that same view; never re-read caller values.
+- Bound event values to depth 64 (root zero) and 10,000 expanded nodes, counting
+  repeated references per occurrence. Do not impose these limits on commands.
+- Proxy reflection traps are not sandboxed; only the captured descriptors are
+  data. External integrations should deserialize JSON before invoking the parser.
 - The wire representation omits undefined-valued fields. Reject explicit
   `undefined` and `null` in those positions, rather than silently stripping them.
 - Only the existing required-but-possibly-undefined memory fields are restored
@@ -66,6 +72,7 @@ existing build, packaging, and isolated-host checks. No new library is needed.
 - Add `packages/protocol/src/eventSchemas.ts` for the closed event-schema map.
 - Add `packages/protocol/src/parseEvent.ts` for validation and shape normalization.
 - Add `packages/protocol/src/payloadSchemas.ts` for existing shared payload schemas.
+- Add `packages/protocol/src/jsonValidation.ts` for descriptor capture and budgets.
 - Update `packages/protocol/src/schemas.ts`, `jsonSnapshot.ts`, and `index.ts`.
 - Add `packages/protocol/test/eventFixtures.ts`, `events.test.ts`, and
   `eventPayloadValidation.test.ts`.
@@ -97,7 +104,7 @@ export const parsePairEvent: (value: unknown) => PairEvent;
 
 - [x] Move the existing reusable payload schemas without changing their command
   semantics. Add a closed, exhaustively keyed event-schema map compiled by Ajv
-  with `allErrors: true` and `strict: true`; leave data coercion/default insertion
+  with `allErrors: true`, `strict: true`, and `ownProperties: true`; leave data coercion/default insertion
   disabled. Validate wire omissions explicitly before normalizing memory fields.
 - [x] Test optional metadata both present and omitted, reject explicit undefined
   and null, and retain every accepted value without mutating the caller.
@@ -105,12 +112,14 @@ export const parsePairEvent: (value: unknown) => PairEvent;
 
 ## Task 2: Safe immutable event boundary
 
-**Files:** `packages/protocol/src/jsonSnapshot.ts`, `parseEvent.ts`, and the new
-`packages/protocol/test/eventJsonSafety.test.ts`.
+**Files:** `packages/protocol/src/jsonValidation.ts`, `jsonSnapshot.ts`,
+`parseEvent.ts`, `schemas.ts`, and the new `packages/protocol/test/eventJsonSafety.test.ts`,
+`prototypeBoundary.test.ts`, and `eventTraversalLimits.test.ts`.
 
-**Interface:** Keep `assertJsonCompatible(value)` command behavior intact;
-allow the event parser to select the event-specific error context. Normalize
-only validated wire data, then use `immutableJsonSnapshot` to detach and freeze.
+**Interface:** `jsonValidationSnapshot(value, kind, limits?)` captures safe own
+data with the selected error context and optional event-only depth/node budgets.
+Both parsers validate the resulting detached view. Normalize only validated
+event data, then use `immutableJsonSnapshot` to produce a plain, frozen result.
 
 - [x] Write and run tests proving JSON hazards are rejected before getters or
   conversion hooks execute, including hazards inside open record payloads:
@@ -126,6 +135,11 @@ only validated wire data, then use `immutableJsonSnapshot` to detach and freeze.
   exactly the accepted data and does not preserve caller-owned identities.
 - [x] Run command-parser regressions alongside event tests to keep existing
   rejection behavior and diagnostics intact.
+- [x] Reproduce review findings for inherited properties, Proxy/accessor reads
+  after validation, deep JSON, and exponential shared-reference expansion.
+  Run `npx vitest run packages/protocol/test/prototypeBoundary.test.ts packages/protocol/test/eventTraversalLimits.test.ts`:
+  15 failing cases and one passing command-depth control become 16 passing cases
+  after descriptor capture and event-specific budgets replace the two-pass boundary.
 
 ## Task 3: Verification and reviewed delivery
 
