@@ -177,10 +177,15 @@ files listed above. Do not add parallel status or recovery documents.
   env -u VSCODE_EXECUTABLE_PATH npm --prefix poc/session-target run test:host
   ```
 
-- [ ] Obtain an independent specification/code-quality review, commit and push
+Implementation and local verification are complete. PR #9 tracks live review
+and final-head CI status; the owner's merge decision remains outstanding.
+The following delivery gates must hold for its current revision rather than
+being inferred from a checkbox or an older successful CI run:
+
+- Obtain an independent specification/code-quality review, commit and push
   the increment, create its PR against `main`, and request repository review.
-- [ ] Check each finding against the code, fix and test real issues, reply in
+- Check each finding against the code, fix and test real issues, reply in
   every original thread with evidence, and resolve only addressed concerns.
-- [ ] Recheck follow-up reviews and every final-head CI step, including actual
+- Recheck follow-up reviews and every final-head CI step, including actual
   Insiders results despite that job's allowed-failure setting. Report readiness
   without merging, enabling auto-merge, or starting another milestone.

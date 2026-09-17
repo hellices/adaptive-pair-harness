@@ -74,6 +74,19 @@ it("ignores unrelated enumerable prototype data without copying it", () => {
   expect(result).toStrictEqual(event);
 });
 
+it("does not mistake inherited descriptor metadata for an own data property", () => {
+  let getterCalls = 0;
+  const observation = {
+    get result() { getterCalls += 1; return "not JSON data"; },
+  };
+  const event = { ...toWireEvent(createEventFixtures().OperationObserved), observation };
+  const { error } = withInheritedProperty("value", { value: "inherited descriptor value" },
+    () => parsePairEvent(event));
+  expect(getterCalls).toBe(0);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toMatch(/^Invalid Pair event:/);
+});
+
 it("also keeps inherited fields outside the shared command boundary", () => {
   const command = {
     protocolVersion: 1, type: "ObserveWorkspace", commandId: "command-1",

@@ -9,6 +9,21 @@ const withObservation = (value: unknown) => ({
 const nestedValue = (depth: number): unknown =>
   JSON.parse('{"nested":'.repeat(depth) + "null" + "}".repeat(depth)) as unknown;
 
+const parseWithinOwnCheckBudget = (event: unknown) => {
+  const hasOwn = Object.hasOwn;
+  let ownChecks = 0;
+  try {
+    Object.hasOwn = (object, property) => {
+      ownChecks += 1;
+      if (ownChecks > 20_000) throw new Error("Unbounded own-property traversal");
+      return hasOwn(object, property);
+    };
+    return parsePairEvent(event);
+  } finally {
+    Object.hasOwn = hasOwn;
+  }
+};
+
 it("bounds event value depth at 64 with the root at zero", () => {
   expect(() => parsePairEvent(withObservation(nestedValue(62)))).not.toThrow();
   expect(() => parsePairEvent(withObservation(nestedValue(63))))
@@ -39,6 +54,16 @@ it("bounds shared-reference expansion while accepting a small shared graph", () 
   expect(() => parsePairEvent(withObservation(buildShared(4)))).not.toThrow();
   expect(() => parsePairEvent(withObservation(buildShared(16))))
     .toThrow("Invalid Pair event: maximum expanded JSON node count of 10000 exceeded");
+});
+
+it.each([
+  { prefixLength: 0, reason: "sparse array holes are not allowed at index 0" },
+  { prefixLength: 100, reason: "sparse array holes are not allowed at index 100" },
+  { prefixLength: 10_000, reason: "maximum expanded JSON node count of 10000 exceeded" },
+])("bounds a maximum-length sparse array with $prefixLength populated indices", ({ prefixLength, reason }) => {
+  const sparse = Array.from({ length: prefixLength }, () => null);
+  sparse.length = 2 ** 32 - 1;
+  expect(() => parseWithinOwnCheckBudget(withObservation(sparse))).toThrow(`Invalid Pair event: ${reason}`);
 });
 
 it("does not impose the event depth budget on existing command inputs", () => {

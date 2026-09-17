@@ -1388,8 +1388,17 @@ inclusive depth/node boundaries, shared-data support, and an 80-level command
 control that remains accepted without imposing event budgets on commands.
 The 16 review regression cases first produced **15 failures and one passing
 control**; all 16 then passed, and the combined protocol suite reached **501
-tests across eight files**. Final revision totals and review disposition are
-recorded in the PR rather than treating the initial CI run as final evidence.
+tests across eight files**. A later regression first failed when an inherited
+descriptor `value` disguised an accessor; descriptor metadata now also requires
+an own data property. Three further cases cover maximum-length sparse arrays
+with zero, bounded, and over-budget populated prefixes. An isolated probe of
+the empty maximum-length array rejects at index zero with 14 own-property
+checks: the hole loop throws at the first missing index, not after walking the
+declared length. No speculative length preflight is needed to correct that
+reported concern. The final local protocol suite passes **505 cases**, and
+forced typecheck, full lint, and **1,980 workspace tests in 115 files** pass.
+Review disposition and final-head CI evidence are recorded in the PR rather
+than treating an older successful run as final evidence.
 
 The implementation adds no new dependency, public event-type change, host route,
 runtime journal integration, or storage/recovery code. Source and tests pass

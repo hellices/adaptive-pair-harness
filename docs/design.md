@@ -3,7 +3,7 @@
 - **Updated:** September 17, 2026 (UTC)
 - **Status:** The reviewed P1 policy and runtime-boundary/code-size stabilization
   increments are merged. The owner then approved the bounded event-format
-  validation increment described here; its PR review is in progress. The
+  validation increment described here; PR #9 records its review and CI gates. The
   remaining v2 roadmap requires separately reviewed implementation plans and approval.
 - **Implementation:** Stable Growth Mode preview implemented (Tasks 1–12):
   host-agnostic protocol, in-memory authoritative runtime, versioned harness kernel, Growth

@@ -11,7 +11,7 @@ interface CaptureContext extends JsonLimits {
 
 const enumerableValue = (value: object, name: string, label: string, context: CaptureContext): unknown => {
   const descriptor = Object.getOwnPropertyDescriptor(value, name);
-  if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) {
+  if (descriptor === undefined || !descriptor.enumerable || !Object.hasOwn(descriptor, "value")) {
     throw context.error(`${label} ${name} must be a plain enumerable data property`);
   }
   return descriptor.value as unknown;
