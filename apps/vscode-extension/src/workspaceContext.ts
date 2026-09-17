@@ -107,11 +107,11 @@ export interface PathInspection {
 export interface WorkspaceContextAccess {
   workspaceFolder(): WorkspaceFolderIdentity | undefined;
   isCurrent(folder: WorkspaceFolderIdentity, branch: string | undefined): boolean;
-  readGitMetadata(folder: WorkspaceFolderIdentity): Promise<GitMetadata>;
+  readGitMetadata(folder: WorkspaceFolderIdentity, signal?: AbortSignal): Promise<GitMetadata>;
   openDocuments(): readonly OpenDocumentInfo[];
   diagnostics(): readonly DiagnosticInfo[];
   validationResults(): readonly string[];
-  inspectPath(relativePath: string): Promise<PathInspection>;
+  inspectPath(relativePath: string, signal?: AbortSignal): Promise<PathInspection>;
   now(): number;
 }
 
@@ -166,7 +166,8 @@ const oneLine = (value: string): string =>
 export class WorkspaceContext {
   public constructor(private readonly access: WorkspaceContextAccess) {}
 
-  public async capture(): Promise<EntrySnapshot> {
+  public async capture(signal?: AbortSignal): Promise<EntrySnapshot> {
+    signal?.throwIfAborted();
     const folder = this.access.workspaceFolder();
     const capturedAt = this.access.now();
 
@@ -181,8 +182,8 @@ export class WorkspaceContext {
       });
     }
 
-    const git = await this.access.readGitMetadata(folder);
-    this.ensureCurrent(folder, git.branch);
+    const git = await this.access.readGitMetadata(folder, signal);
+    this.ensureCurrent(folder, git.branch, signal);
 
     const openDirtyByPath = new Map<string, OpenDocumentInfo>();
     const openPaths: string[] = [];
@@ -202,17 +203,20 @@ export class WorkspaceContext {
       folder,
       git.branch,
       openDirtyByPath,
+      signal,
     );
     const untrackedPaths = await this.acceptPaths(
       git.untrackedPaths,
       folder,
       git.branch,
       openDirtyByPath,
+      signal,
     );
 
+    signal?.throwIfAborted();
     const diagnostics = this.collectDiagnostics();
 
-    this.ensureCurrent(folder, git.branch);
+    this.ensureCurrent(folder, git.branch, signal);
 
     return buildEntrySnapshot({
       workspaceId: folder.workspaceId,
@@ -230,7 +234,9 @@ export class WorkspaceContext {
     folder: WorkspaceFolderIdentity,
     branch: string | undefined,
     openDirtyByPath: ReadonlyMap<string, OpenDocumentInfo>,
+    signal?: AbortSignal,
   ): Promise<string[]> {
+    signal?.throwIfAborted();
     const accepted: string[] = [];
     const seen = new Set<string>();
 
@@ -253,8 +259,8 @@ export class WorkspaceContext {
         continue;
       }
 
-      const inspection = await this.access.inspectPath(canonical);
-      this.ensureCurrent(folder, branch);
+      const inspection = await this.access.inspectPath(canonical, signal);
+      this.ensureCurrent(folder, branch, signal);
 
       if (
         inspection.exists &&
@@ -293,7 +299,9 @@ export class WorkspaceContext {
   private ensureCurrent(
     folder: WorkspaceFolderIdentity,
     branch: string | undefined,
+    signal?: AbortSignal,
   ): void {
+    signal?.throwIfAborted();
     if (
       this.access.workspaceFolder()?.workspaceId !== folder.workspaceId ||
       !this.access.isCurrent(folder, branch)

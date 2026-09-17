@@ -26,6 +26,12 @@ const denialPayload = (error: unknown): Record<string, unknown> => {
   const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
 
   switch (message) {
+    case "TOOL_RESULT_TOO_LARGE":
+      return {
+        status: "failed",
+        reason: "result-too-large",
+        summary: "Adaptive Pair withheld the oversized tool result. A completed operation is not rolled back.",
+      };
     case "TOOL_HIDDEN":
       return {
         status: "denied",
@@ -192,8 +198,12 @@ export class PairLanguageModelTool implements vscode.LanguageModelTool<Record<st
   }
 
   private createResult(payload: unknown): vscode.LanguageModelToolResult {
+    const serialized = JSON.stringify(payload);
+    if (serialized.length > this.descriptor.maximumResultCharacters) {
+      throw new Error("TOOL_RESULT_TOO_LARGE");
+    }
     return new vscode.LanguageModelToolResult([
-      new vscode.LanguageModelTextPart(JSON.stringify(payload)),
+      new vscode.LanguageModelTextPart(serialized),
     ]);
   }
 }

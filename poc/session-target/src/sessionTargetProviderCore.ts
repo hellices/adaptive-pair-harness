@@ -1,7 +1,4 @@
-import {
-  SessionTargetStore,
-  type SessionTargetRecord,
-} from "./sessionTargetStore";
+import { SessionTargetStore, type SessionTargetRecord } from "./sessionTargetStore";
 
 export class SessionTargetProviderCore {
   public constructor(
@@ -27,24 +24,27 @@ export class SessionTargetProviderCore {
     return session;
   }
 
-  public async respond(
+  public respond(
     resource: string,
     prompt: string,
     signal: AbortSignal,
     write: (chunk: string) => void,
   ): Promise<void> {
-    if (this.store.get(resource) === undefined) {
-      throw new Error(`Unknown Adaptive Pair session: ${resource}`);
-    }
-    try {
-      signal.throwIfAborted();
-      write("Adaptive Pair Session Target is active.\n");
-      signal.throwIfAborted();
-      write(`Request: ${prompt}`);
-      this.store.setStatus(resource, "completed");
-    } catch (error: unknown) {
-      this.store.setStatus(resource, signal.aborted ? "needs-input" : "failed");
-      throw error;
-    }
+    return new Promise<void>(resolve => {
+      if (this.store.get(resource) === undefined) {
+        throw new Error(`Unknown Adaptive Pair session: ${resource}`);
+      }
+      try {
+        signal.throwIfAborted();
+        write("Adaptive Pair Session Target is active.\n");
+        signal.throwIfAborted();
+        write(`Request: ${prompt}`);
+        this.store.setStatus(resource, "completed");
+      } catch (error: unknown) {
+        this.store.setStatus(resource, signal.aborted ? "needs-input" : "failed");
+        throw error;
+      }
+      resolve();
+    });
   }
 }

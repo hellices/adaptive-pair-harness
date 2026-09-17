@@ -1,1359 +1,543 @@
-# Pair Mode P1: Policy Contracts Implementation Plan
+# Runtime Boundary Stabilization Implementation Plan
 
-> **For agentic workers:** After written-plan approval, use
-> `superpowers:executing-plans` to implement this plan task by task. Use
-> `superpowers:subagent-driven-development` only if delegation is explicitly
-> selected. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Use `superpowers:executing-plans` or
+> `superpowers:subagent-driven-development` with the bounded tasks below.
+> Keep progress in this canonical plan and Git history, not parallel plans.
 
-**Goal:** Build tested, side-effect-free Pair work-unit, human-follow-up, and
-handoff-preflight policies in `@adaptive-pair/modes`, without enabling Pair in
-the Stable extension.
+**Goal:** Remove the reproduced state races and strengthen existing application
+boundaries before designing Pair P2.
 
-**Architecture:** The existing protocol supplies immutable input types; the
-modes package assesses those inputs and returns data. The session core remains
-the only future authority owner. Runtime integration, durable transitions, and
-host edits belong to subsequent increments, not hidden wiring in this plan.
+**Architecture:** Preserve the functional core and imperative runtime. The core
+decides every authoritative presence/session transition; one runtime command
+queue coordinates mutations, and an atomic store commit enforces revision and
+idempotency contracts. Extract the guarded Growth response-release use case
+without moving VS Code UI or vendor types inward.
 
-**Tech Stack:** Node.js 24, TypeScript 6.0.3, npm workspaces, Vitest 5.0.0,
-Fast-Check 4.9.0, ESLint 10.10.0, and the existing version-1 Pair protocol.
-Dependency and version changes follow the
-[maintenance policy](design.md#dependency-and-version-maintenance), not a
-blanket freeze.
+**Tech stack:** Existing TypeScript/npm workspaces, Vitest, ESLint, esbuild,
+and VS Code host tests. No new third-party library is required.
 
-## Global Constraints
+## Authorization and baseline
 
-- Status: **P1 execution authorized; pure policies implemented and locally
-  verified; prior review checkpoint complete**. Final-revision review and check
-  status are tracked in [PR #6](https://github.com/hellices/adaptive-pair-harness/pull/6).
-- This plan is M2/P1 in the
-  [sequential delivery roadmap](design.md#sequential-delivery-roadmap).
-- The P1 policy choices are recorded in
-  [the Pair design](design.md#p1-policy-contracts-before-authority-changes).
-  The owner authorized this increment on September 16, 2026 after PR #4 review;
-  writing or merging a plan alone does not authorize its implementation.
-- P1 produces a useful open-core policy contract, not a usable Pair preview.
-- Start from the reviewed `main` baseline and use a dedicated pull request
-  branch. Keep unrelated worktrees untouched and do not push directly to `main`.
-- Carry the authorized increment through commit, push, PR review, verified
-  fixes, thread replies, and resolution of addressed feedback. Notify the user
-  when ready to merge; do not merge or enable auto-merge implicitly.
-- No package under `packages/` may import `vscode` or a model-vendor SDK.
-- Justify and validate any new runtime dependency against the package
-  boundaries. Never import a test fixture into production code.
-- Pair policies perform no I/O, timers, listeners, model calls, or network work.
-- Do not modify another extension, target, participant, tool, setting,
-  keybinding, default, or native VS Code UI behavior.
-- Inactive Adaptive Pair retains zero document listeners, timers, workspace
-  reads, model calls, or network activity.
-- Growth retains human-only editing and its existing hint/reveal semantics.
-- A policy assessment is not permission, a user-action grant, an accepted
-  handoff, a new authority epoch, or proof of a completed edit.
-- Host capability and observation inputs are trusted facts supplied by the
-  future core/adapter, never model-authored public tool parameters.
-- Keep completed product verification separate from Growth demonstrations.
-  P1 does not populate any Growth or evaluation outcome.
-- Use red-green-refactor for each policy task. Keep every task reviewable and
-  stop after its checks if a contract or scope question remains unresolved.
-- Preserve existing product behavior and compatibility. Necessary manifest,
-  dependency, version, and API updates are allowed; review any protocol or
-  storage migration explicitly and rerun the affected regression gates.
-- Do not copy this plan to another active-plan directory. The completed
-  Foundation plan is retained in Git at
-  `ae1f095:docs/implementation-plan.md`; historical v1 material stays untouched.
+- The owner requested an architecture audit, then authorized bounded
+  refactoring before further development on September 16, 2026.
+- The owner subsequently authorized merging this refactoring PR after review
+  and final checks pass, then continuing with the next reviewed development
+  increment. This is not blanket merge permission for successor PRs.
+- PR #6 is merged at `9eebbf19e201b0ff6642868728ef217738ad31f7`.
+  Its completed P1 plan remains in that Git revision; this document
+  deliberately replaces it as the single active implementation plan.
+- The audit reproduced concurrent accepted commands losing one update,
+  Disable being undone by a pending command, and an observation increment
+  being overwritten. These defects predate PR #6.
+- Baseline typecheck, lint, and 673 workspace tests passed at the identical P1
+  implementation tree before this refactoring.
+- P2 ownership/handoff persistence, P3 host editing, Delivery, new UI, and
+  Session Target integration are not authorized by this plan.
 
-## Authorized Maintenance Amendment
+## Global constraints
 
-On September 16, 2026, the owner authorized removal of the dependency and
-version freeze and necessary updates. This maintenance is independent of the
-P1 implementation review and does not authorize another product milestone.
+- Work from current `main` on `refactor/runtime-state-boundaries`. Preserve
+  unrelated worktrees; never push directly to `main`.
+- Stable remains Growth-only, additive, opt-in, and inactive-zero. Constructors
+  add no listeners, timers, workspace reads, model calls, or network access.
+- Preserve other extensions, native defaults, explicit confirmations, repeated
+  authorization checks, permission contracts, and package boundaries.
+- `session-core` depends only on protocol and deterministic local utilities.
+  No package under `packages/` imports a host or model-vendor SDK.
+- Use functions, readonly data, and small boundary interfaces, not a DI
+  container, generic repository framework, or mode inheritance hierarchy.
+- Keep manifests, project references, and lockfiles consistent. Existing
+  dependency maintenance and both dependency-graph audit gates remain intact.
+- Write documentation and review replies in English. Distinguish observed
+  behavior, author validation, independent review, and CI evidence.
+- Complete commit, push, PR, review replies/fixes/resolution, and final checks.
+  Merge this refactoring PR only after those gates pass, as explicitly directed.
 
-- [x] Replace the blanket restrictions in `AGENTS.md`, `docs/design.md`, and
-  this plan with the compatibility- and evidence-based maintenance policy.
-- [x] Inspect all 16 tracked manifests: 14 root/workspace/POC manifests and two
-  fixture/scripts manifests without external dependencies. Cross-check the 16
-  distinct external direct dependencies against metadata and upstream releases.
-  Include both active lockfiles and document the TypeScript, Node type, and
-  Mocha patch compatibility or availability retentions.
-- [x] Update `apps/vscode-extension/package.json` to Mocha 12.0.0 and VSCE
-  4.0.0 and root `package.json` to typescript-eslint 8.70.0, then regenerate
-  `package-lock.json` without forced audit fixes or transitive dependency
-  overrides. Update the isolated POC to VSCE 4.0.0 and regenerate its own lockfile.
-- [x] Update `.github/workflows/ci.yml` to the verified stable checkout 7.0.1,
-  setup-node 7.0.0, and upload-artifact 7.0.1 releases, pinned to their commit
-  SHAs. Separately install and audit the root workspace and isolated POC graphs
-  with `npm audit --audit-level=low`; use the POC directory prefix for its graph.
-  Contract-test each audit immediately after its own installation and require
-  the POC's compile/unit checks and packaging in `scripts/test/ciWorkflow.test.ts`.
-- [x] Verify a clean `npm ci`, full and production-only audits, `npm run check`,
-  `npm run package`, `node scripts/verify-vsix.mjs`, and `npm run test:host`.
-  Also verify the POC's clean install, full audit, compile/unit checks, isolated
-  Insiders host, and packaging. Record the versions and measured results in
-  `docs/research.md` and keep the spike's evidence current without closing its
-  remaining product questions.
+## Task 1: Atomic store and command boundary
 
-These boxes track implementation and local validation, not final-revision PR
-approval. Complete the review loop and verify the final revision's CI and
-review-thread status separately before reporting merge readiness. Do not merge
-implicitly.
+**Files:** `packages/runtime/src/ports.ts`, `journal.ts`, `coordinator.ts`,
+`packages/runtime/test/journal.test.ts`, `coordinator.test.ts`, `fakes.ts`, and
+the store fixtures in `apps/vscode-extension/test/growthParticipant.test.ts`
+and `pairTools.test.ts`.
 
-## Baseline and Scope Boundary
+**Interface:** Replace split append/save with the runtime-owned contract:
 
-The runtime baseline is `ae1f095`, the merged Foundation and Growth preview.
-P1 execution started from `f28de5f`, the merge of reviewed documentation PR #4;
-application source is unchanged between those baselines.
-After the owner-authorized merge of maintenance PR #7, the P1 branch integrates
-`main` at `79d75ab` without rewriting its published implementation history.
-The maintenance policy and both dependency-audit gates remain in force;
-post-maintenance validation is distinct from the initial P1 checkpoint.
-The existing `WorkUnit` already contains mode, owner, capability, scope,
-verification plan, baseline, and status. `PairRuntimeSnapshot` already contains
-revision, authority epoch, and operations. At the execution baseline, the modes
-package exported only Growth policy. Handoff remains hidden and the Stable edit
-effect remains unimplemented after P1.
-See [implementation evidence](research.md#implementation-evidence-for-the-next-pair-increment).
+```ts
+interface PairStore {
+  load(streamId: string): Promise<{
+    readonly snapshot: PairRuntimeSnapshot;
+    readonly seenCommandIds: ReadonlySet<string>;
+  }>;
+  commit(
+    streamId: string,
+    expectedRevision: number,
+    events: readonly PairEvent[],
+  ): Promise<PairRuntimeSnapshot>;
+}
+```
 
-P1 deliberately does **not** add:
-
-- Pair commands/events or new persisted snapshot fields;
-- an ownership/history ledger, completion command, or accepted handoff;
-- protocol or journal migrations unrelated to necessary compatibility
-  maintenance;
-- admission barriers, cancellation, baseline refresh, or reconciliation effects;
-- guarded edits, a Pair participant route, a mode selector, or new public tools;
-- Delivery, cross-mode switching, Growth transfer completion, or evaluation UI.
-
-P2 must bind these policies to durable state and prove their use at every
-authority-changing boundary. It must also define explicit resolution of
-unknown state-changing operations, correlation of human confirmation with
-revision/epoch, and the whole capability-ownership history. P3 proves and
-implements the host edit boundary and full Stable Pair flow. Neither follows
-automatically from P1 passing.
-
-The baseline core's `SelectMode` guard requires an agreement only for Growth;
-that is not a complete Pair entry policy. P2 must enforce the proposed
-required-agreement contract before admitting Pair work or handoff. An optional
-`PairSessionSnapshot.learningAgreement` represents incomplete state; it does
-not authorize substituting an empty agreement. This plan changes neither the
-current guard nor the snapshot representation.
-
-## Interface Map
-
-All interfaces below are **implemented P1 exports** in `@adaptive-pair/modes`.
-They have no runtime or host integration.
-
-| File | Responsibility | Public interface |
-|---|---|---|
-| `packages/modes/src/pairWorkUnit.ts` | Assess a proposed Pair unit and its declared owner | `PairEditCapability`, `PairWorkUnitPolicyContext`, `PairWorkUnitRejection`, `PairWorkUnitAssessment`, `assessPairWorkUnit(workUnit, context)` |
-| `packages/modes/src/pairFollowUp.ts` | Describe and assess a related human follow-up without storing or clearing it | `PairHumanFollowUp`, `PairSuccessorAssessment`, `PairObservedVerification`, `humanFollowUpFor(workUnit)`, `assessPairSuccessor(workUnit, requirement, relatedToWorkUnitId)`, `isPairHumanFollowUpSatisfied(workUnit, requirement, relatedToWorkUnitId, verification)` |
-| `packages/modes/src/pairHandoff.ts` | Assess readiness for baseline/human review, not acceptance | `PairHandoffProposal`, `PairHandoffContext`, `PairHandoffAssessment`, `assessPairHandoff(context)` |
-| `packages/modes/src/index.ts` | Export these contracts alongside the unchanged Growth policy | Existing Growth export plus the three new modules |
-| `packages/modes/test/pairFixtures.ts` | Typed test-only facts built from existing protocol types | `pairWorkUnit`, `pairAgreement`, `pairPolicyContext`, then `pairRuntime`, `pairOperation`, and `pairHandoffContext` in Task 3 |
-| `packages/modes/test/pairWorkUnit.test.ts` | Admission examples, reserved capabilities, and non-mutation | Task 1 selector |
-| `packages/modes/test/pairFollowUp.test.ts` | Relatedness, distinct identity, observed completion, and no mechanical bypass | Task 2 selector |
-| `packages/modes/test/pairHandoff.test.ts` | Identity, revision, quiescence, pending/unknown operations, and no authority changes | Task 3 selector |
-
-### Facts, assessments, and authority
-
-`verified` edit capability means a future adapter has passed its capability
-gate for the relevant workspace and revision. P1 does not discover, cache,
-persist, or advertise that capability. Tests may construct it as a fixture.
-It is neither consent nor permission to apply an edit.
-
-`PairHumanFollowUp` is a pure projection, not a second session state
-machine. A future core derives it from accepted AI work and persists its
-outstanding status. A helper result must never create an obligation from a
-mere model proposal or clear an existing obligation because a later mechanical
-unit returns `undefined`.
-
-Lifecycle status alone is not evidence of acceptance. A cancelled or failed
-unit is a valid `humanFollowUpFor` input only when the core has established
-that the same unit was previously accepted. Raw proposed/decoded units must
-not enter this projection solely because their status changed. P2 must test
-that entry precondition and preserve the existing outstanding requirement;
-P1 neither validates a journal nor manufactures acceptance evidence.
-
-`passed` verification is a future host/core observation correlated with the
-completed human work unit and all its agreed checks. It can represent the
-agreed executable check or an explicitly agreed, non-executable review method;
-P2 must define the trusted source and correlation in either case. A chat
-message, model assertion, or check from another unit cannot supply it.
-Satisfying Pair participation does not prove learning. The runtime binding of
-these facts is a mandatory P2 gate.
-
-`ready-for-baseline-review` is intentionally weaker than handoff acceptance.
-P2 still needs the human action, refreshed scope/baseline, transactional
-revalidation, authority-epoch change, and durable owner transition. Human
-typing and emergency pause are never blocked by this helper.
-
-## Execution Preparation
-
-**Baseline prerequisite R0 — verified:** the unchanged baseline passed all 17
-isolated host smoke tests on VS Code 1.137.0 on 2026-09-16, with runner exit
-code 0. Non-host and package checks also passed. Read the
-[evidence checkpoint](research.md#implementation-evidence-for-the-next-pair-increment)
-for the complete rerun and earlier incomplete attempts. No source fix is
-claimed. This checkpoint clears R0, but does not replace fresh baseline checks
-at execution time or authorize implementation.
-
-Confirm written approval for **P1**, not the whole remaining roadmap. Check
-`git status --short --branch` before changing anything and preserve unrelated
-work. Use the repository's existing Node.js 24 toolchain; if only another Node
-major is installed, use a process-local Node 24 environment rather than
-changing global settings.
-
-Run the baseline:
+- [x] Test concurrent commands at one expected revision, duplicate IDs,
+  invalid batches leaving both state and IDs unchanged, nested immutability,
+  and failure before effects. Run focused tests and record expected RED.
+- [x] Validate the entire event batch before atomically replacing snapshot,
+  command IDs, and event history. Multiple events may share one new command
+  ID, but previously committed IDs and stale revisions must be rejected.
+- [x] Serialize state transitions only. Never hold the queue while a model,
+  effect, process, or confirmation UI runs. Rejection cannot poison the queue.
+- [x] Replace permissive store fixtures with the shared implementation or
+  contract-preserving wrappers retaining fault injection and ordering evidence.
+- [x] Run runtime and native-tool/Growth integration regressions to GREEN.
 
 ```sh
-node --version
+npx vitest run packages/runtime/test apps/vscode-extension/test/pairTools.test.ts apps/vscode-extension/test/growthParticipant.test.ts
+```
+
+## Task 2: One authoritative presence transition path
+
+**Files:** `packages/protocol/src/commands.ts`, `events.ts`, `schemas.ts`,
+`packages/session-core/src/decide.ts`, `reduce.ts`, a focused presence policy
+module if needed, `packages/runtime/src/ports.ts`, `coordinator.ts`,
+`apps/vscode-extension/src/sessionController.ts`, `presenceController.ts`, and
+the corresponding protocol/core/runtime/controller/host tests.
+
+**Interfaces:** Implement the already-declared `EnablePresence` and
+`SetPresence` command/event paths in the core. Add only the internal
+`ObserveWorkspace` command and `WorkspaceObserved` event needed to replace
+direct observation revision mutation. This is additive within protocol major
+1; no durable session migration or new model-callable tool is introduced.
+
+```ts
+interface PairPresencePort {
+  setPresence(
+    status: "observing" | "quiet" | "paused" | "off",
+    workspaceId?: string,
+  ): Promise<PairRuntimeSnapshot>;
+  observeWorkspace(): Promise<PairRuntimeSnapshot>;
+}
+```
+
+- [x] Reproduce Disable-vs-dispatch and observation-vs-dispatch in tests of the
+  actual production controller. Cover human-only presence actions, host-only
+  observations, paused-session preservation, and monotonic revisions.
+- [x] Record RED before implementing core presence transitions. Pausing an
+  operational session retains existing authority invalidation and operation
+  cancellation. Disable clears current session/observation state without
+  resetting the runtime revision or accepting a late operation result.
+- [x] Construct host presence commands inside the same runtime queue. If
+  binding workspace and changing status needs multiple core commands, commit
+  their events as one batch with no observable intermediate snapshot.
+- [x] Remove the controller's custom store, snapshot replacement, and manual
+  freezing. Keep native workspace capture and user-action routing outside.
+  Pin asynchronous session commands to their observed snapshot.
+- [x] Await disable completion and handle observation promises without
+  unhandled rejections. Preserve listener detachment and effect cancellation.
+- [x] Run protocol, core, runtime, and presence tests to GREEN.
+
+```sh
+npx vitest run packages/protocol/test packages/session-core/test packages/runtime/test apps/vscode-extension/test/presenceController.test.ts
+```
+
+Expected: Disable remains off when prior work settles; committed observation
+increments survive; no new native contribution or model capability appears.
+
+## Task 3: Host-independent guarded Growth turn
+
+**Files:** Focused new modules/tests in `packages/runtime/src/` and
+`packages/runtime/test/`, its `index.ts`, manifest and project references,
+`apps/vscode-extension/src/growthParticipant.ts`, and `modelAdapter.ts`.
+
+**Interfaces:** Move existing `GrowthModel`, runtime-boundary result, and typed
+failure contracts inward. Extract the guarded-turn sequence into a function
+accepting plain request data, `AbortSignal`, a model port, and a narrow
+coordinator view. Return data rather than accepting a VS Code response stream.
+
+```ts
+type GrowthTurnOutcome =
+  | { readonly status: "delivered"; readonly response: GrowthResponse }
+  | { readonly status: "stale" }
+  | { readonly status: "withheld"; readonly response: GrowthResponse; readonly reason: string }
+  | { readonly status: "failed"; readonly reason: string };
+```
+
+- [x] Add tests for stale boundaries, model failure, hint/reveal authorization,
+  restraint rejection, and optional transfer validation without a VS Code
+  mock. Record RED, then extract the existing behavior.
+- [x] Keep transport/tool loops, cancellation-token conversion, consent UI,
+  and Markdown in the extension. Preserve messages, model limits, consent
+  ordering, evaluation outcomes, and existing model-result compatibility.
+- [x] Declare new direct workspace imports, including `restraint` if needed,
+  without unrelated upgrades. Do not add durable evaluation or P2 provenance.
+- [x] Run the isolated use-case and existing full Growth regression tests.
+
+```sh
+npx vitest run packages/runtime/test apps/vscode-extension/test/growthParticipant.test.ts apps/vscode-extension/test/modelAccounting.test.ts
+```
+
+## Task 4: Executable dependency boundaries
+
+**Files:** A focused checker and fixture tests under `scripts/`, the existing
+workspace-reference test if reused, `apps/vscode-extension/package.json`, and
+the affected root lockfile.
+
+- [x] Add negative fixtures for forbidden host imports, package cycles,
+  undeclared direct imports, and cross-package relative/deep imports. Cover
+  type imports, re-exports, and literal dynamic imports.
+- [x] Record the real workspace's missing direct protocol declaration as RED.
+- [x] Implement a deterministic source/manifest/project-reference check with
+  existing TypeScript tooling, included in the normal test/check pipeline.
+  Enforce dependency declarations and direction for reference-only edges too.
+  Keep the independent Session Target POC outside the Stable graph and
+  preserve its separate install/audit/package gates.
+- [x] Declare the extension's direct protocol dependency, synchronize the
+  lockfile, and verify both real-workspace and negative-fixture tests.
+
+```sh
+npx vitest run scripts/test
+```
+
+## Task 5: Bounded modules and functions
+
+The owner additionally requested that large code units not be allowed. Typed
+ESLint already exists, but the baseline has no file/function size rules.
+
+- [x] Add tested, error-level ESLint limits: 400 effective lines per production
+  or release-script file and 100 per function; 600/200 for test files and test
+  functions, including fixtures and host smoke tests. Ignore only blank and
+  comment-only lines, not source files. Disallow inline rule suppression and
+  fail the lint command on warnings.
+- [x] Include the isolated POC's authored source/tests in lint while preserving
+  its separate dependency graph and existing checks. Vendored upstream VS Code
+  declarations are not maintained source and are not lint targets.
+  Include standalone configurations and intentional host fixtures with syntactic
+  lint; preserve size limits and restrict unused-parameter allowances to fixtures.
+- [x] Split oversized modules by responsibility: command/event families,
+  runtime operations, host verification backends, workspace access, model
+  transport, response presentation, instruction layers, and archive parsing.
+  Do not add a generic framework or split into meaningless numbered fragments.
+- [x] Split oversized tests by behavior with shared in-package fixtures. Keep
+  all existing assertions and add regressions for lifecycle/publication gaps
+  discovered during review. Verify the actual size rules with negative tests.
+- [x] Rerun focused regressions after each extraction and obtain independent
+  review of the complete bounded-code refactor.
+
+## Task 6: Integration, evidence, and review
+
+- [x] Run clean root installation, forced typecheck, lint, and all tests.
+- [x] Build/verify the Stable VSIX and rerun isolated Stable host tests,
+  including inactive-zero and shared production-wiring assertions.
+- [x] Audit both active lockfile graphs. Do not claim untouched POC host tests
+  were rerun unless actually executed.
+- [x] Update `docs/design.md`, `docs/research.md`, and applicable README
+  validation/roadmap text. Keep P2/P3 separately gated.
+- [x] Commit, push, open the PR, and obtain independent technical review and
+  the normal repository PR review.
+- [ ] Verify findings, reply in original threads, resolve only addressed
+  concerns, and recheck follow-ups plus final-head CI.
+- [ ] Merge this refactoring PR after review and final-head checks pass, then
+  update from `main` and scope the next increment on its own PR branch.
+
+```sh
 npm ci
+npm exec tsc -- -b --force
 npm run check
-npm run test:host
-```
-
-Expected: Node 24 and successful typecheck, lint, the existing test suite, and
-a complete isolated-host smoke run.
-Record the observed count; do not replace evidence with a hard-coded count.
-An unrelated failure is a reported baseline issue, not permission to broaden
-this plan. The paths in the following code labels are part of the executable
-examples: `Create` writes a new file and `Append` adds to the named existing
-file without replacing its earlier contents.
-
----
-
-### Task 1: Pair Work-Unit Admission
-
-**Deliverable:** a pure admission assessment that respects the declared human
-practice boundary and refuses unsupported AI ownership. This does not grant a
-work unit or change the existing core's behavior.
-
-**Files:**
-- Create: `packages/modes/src/pairWorkUnit.ts`
-- Create: `packages/modes/test/pairFixtures.ts`
-- Create: `packages/modes/test/pairWorkUnit.test.ts`
-- Modify: `packages/modes/src/index.ts`
-
-**Interfaces:** consumes the existing `WorkUnit` and `LearningAgreement`.
-Produces the exact exported types and `assessPairWorkUnit` implementation in
-Step 3. Callers must still perform scope resolution, input-schema validation,
-consent checks, and invocation-time authorization in P2/P3.
-
-- [x] **Step 1: Write the typed fixtures and failing tests.**
-
-**Create: `packages/modes/test/pairFixtures.ts`**
-
-```typescript
-import type { LearningAgreement, WorkUnit } from "@adaptive-pair/protocol";
-import type { PairWorkUnitPolicyContext } from "../src/pairWorkUnit.js";
-
-export const pairWorkUnit = (overrides: Partial<WorkUnit> = {}): WorkUnit => ({
-  id: "unit-pair-1",
-  objective: "Implement a bounded retry transition",
-  mode: "pair",
-  learningValue: "high",
-  capability: "implementation",
-  owner: "human",
-  allowedPaths: ["src/retry.ts"],
-  acceptanceChecks: ["The retry transition test passes"],
-  verificationPlan: "npm test",
-  stoppingCondition: "One transition is verified",
-  baseline: {},
-  status: "proposed",
-  ...overrides,
-});
-
-export const pairAgreement = (
-  overrides: Partial<LearningAgreement> = {},
-): LearningAgreement => ({
-  learningGoals: ["Implement and diagnose retry behavior"],
-  familiarAreas: [],
-  humanOwnedCapabilities: ["diagnosis"],
-  delegatableWork: ["Mechanical test setup"],
-  maximumHintLevel: 4,
-  independentCheck: "Implement a distinct timeout transition",
-  ...overrides,
-});
-
-export const pairPolicyContext = (
-  overrides: Partial<PairWorkUnitPolicyContext> = {},
-): PairWorkUnitPolicyContext => ({
-  learningAgreement: pairAgreement(),
-  editCapability: "unavailable",
-  ...overrides,
-});
-```
-
-**Create: `packages/modes/test/pairWorkUnit.test.ts`**
-
-```typescript
-import type { WorkUnit } from "@adaptive-pair/protocol";
-import { describe, expect, it } from "vitest";
-import { assessPairWorkUnit } from "../src/index.js";
-import { pairPolicyContext, pairWorkUnit } from "./pairFixtures.js";
-
-describe("Pair work-unit policy", () => {
-  it("admits a human owner without an AI edit capability", () => {
-    expect(assessPairWorkUnit(pairWorkUnit(), pairPolicyContext())).toEqual({
-      admissible: true,
-      navigator: "ai",
-      requiresHumanFollowUp: false,
-    });
-  });
-
-  it("refuses AI ownership when bounded edits are unavailable", () => {
-    expect(assessPairWorkUnit(
-      pairWorkUnit({ owner: "ai" }),
-      pairPolicyContext(),
-    )).toEqual({ admissible: false, reason: "PAIR_EDIT_CAPABILITY_REQUIRED" });
-  });
-
-  it.each(["high", "mixed"] as const)("describes the human unit after %s-value AI work", learningValue => {
-    expect(assessPairWorkUnit(
-      pairWorkUnit({ owner: "ai", learningValue }),
-      pairPolicyContext({ editCapability: "verified" }),
-    )).toEqual({
-      admissible: true,
-      navigator: "human",
-      requiresHumanFollowUp: true,
-    });
-  });
-
-  it("does not classify mechanical AI work as a new learning obligation", () => {
-    expect(assessPairWorkUnit(
-      pairWorkUnit({ owner: "ai", learningValue: "low" }),
-      pairPolicyContext({ editCapability: "verified" }),
-    )).toEqual({
-      admissible: true,
-      navigator: "human",
-      requiresHumanFollowUp: false,
-    });
-  });
-
-  it("does not let capability support override human-reserved practice", () => {
-    expect(assessPairWorkUnit(
-      pairWorkUnit({ owner: "ai", capability: "diagnosis" }),
-      pairPolicyContext({ editCapability: "verified" }),
-    )).toEqual({ admissible: false, reason: "PAIR_HUMAN_CAPABILITY_RESERVED" });
-  });
-
-  const invalidUnits: readonly [Partial<WorkUnit>, string][] = [
-    [{ mode: "growth" }, "PAIR_MODE_REQUIRED"],
-    [{ mode: "delivery" }, "PAIR_MODE_REQUIRED"],
-    [{ status: "agreed" }, "PAIR_PROPOSAL_REQUIRED"],
-    [{ id: "" }, "PAIR_WORK_UNIT_ID_REQUIRED"],
-    [{ id: " " }, "PAIR_WORK_UNIT_ID_REQUIRED"],
-    [{ objective: " " }, "PAIR_OBJECTIVE_REQUIRED"],
-    [{ allowedPaths: [] }, "PAIR_SCOPE_REQUIRED"],
-    [{ allowedPaths: [" "] }, "PAIR_SCOPE_REQUIRED"],
-    [{ acceptanceChecks: [] }, "PAIR_ACCEPTANCE_REQUIRED"],
-    [{ acceptanceChecks: [" "] }, "PAIR_ACCEPTANCE_REQUIRED"],
-    [{ verificationPlan: " " }, "PAIR_VERIFICATION_REQUIRED"],
-    [{ stoppingCondition: " " }, "PAIR_STOPPING_CONDITION_REQUIRED"],
-  ];
-
-  it.each(invalidUnits)("rejects an incomplete or non-Pair proposal %j", (override, reason) => {
-    expect(assessPairWorkUnit(pairWorkUnit(override), pairPolicyContext()))
-      .toEqual({ admissible: false, reason });
-  });
-
-  it("does not change the unit, agreement, or capability facts", () => {
-    const workUnit = pairWorkUnit();
-    const context = pairPolicyContext();
-    const before = JSON.stringify({ workUnit, context });
-    Object.freeze(workUnit.allowedPaths);
-    Object.freeze(workUnit.acceptanceChecks);
-    Object.freeze(workUnit);
-    Object.freeze(context.learningAgreement.humanOwnedCapabilities);
-    Object.freeze(context.learningAgreement);
-    Object.freeze(context);
-    assessPairWorkUnit(workUnit, context);
-    expect(JSON.stringify({ workUnit, context })).toBe(before);
-  });
-});
-```
-
-- [x] **Step 2: Run the focused red test.**
-
-```sh
-npm exec -- vitest run packages/modes/test/pairWorkUnit.test.ts
-```
-
-Expected: failure because `assessPairWorkUnit` is not exported/implemented.
-Do not weaken the tests or alter Growth behavior to obtain a green result.
-
-- [x] **Step 3: Implement the complete pure assessment and export it.**
-
-**Create: `packages/modes/src/pairWorkUnit.ts`**
-
-```typescript
-import type { LearningAgreement, WorkUnit } from "@adaptive-pair/protocol";
-
-export type PairEditCapability = "unavailable" | "verified";
-
-export interface PairWorkUnitPolicyContext {
-  readonly learningAgreement: LearningAgreement;
-  readonly editCapability: PairEditCapability;
-}
-
-export type PairWorkUnitRejection =
-  | "PAIR_MODE_REQUIRED"
-  | "PAIR_PROPOSAL_REQUIRED"
-  | "PAIR_WORK_UNIT_ID_REQUIRED"
-  | "PAIR_OBJECTIVE_REQUIRED"
-  | "PAIR_SCOPE_REQUIRED"
-  | "PAIR_ACCEPTANCE_REQUIRED"
-  | "PAIR_VERIFICATION_REQUIRED"
-  | "PAIR_STOPPING_CONDITION_REQUIRED"
-  | "PAIR_HUMAN_CAPABILITY_RESERVED"
-  | "PAIR_EDIT_CAPABILITY_REQUIRED";
-
-export type PairWorkUnitAssessment =
-  | {
-      readonly admissible: true;
-      readonly navigator: "human" | "ai";
-      readonly requiresHumanFollowUp: boolean;
-    }
-  | { readonly admissible: false; readonly reason: PairWorkUnitRejection };
-
-export const assessPairWorkUnit = (
-  workUnit: WorkUnit,
-  context: PairWorkUnitPolicyContext,
-): PairWorkUnitAssessment => {
-  if (workUnit.mode !== "pair") {
-    return { admissible: false, reason: "PAIR_MODE_REQUIRED" };
-  }
-  if (workUnit.status !== "proposed") {
-    return { admissible: false, reason: "PAIR_PROPOSAL_REQUIRED" };
-  }
-  if (workUnit.id.trim() === "") {
-    return { admissible: false, reason: "PAIR_WORK_UNIT_ID_REQUIRED" };
-  }
-  if (workUnit.objective.trim() === "") {
-    return { admissible: false, reason: "PAIR_OBJECTIVE_REQUIRED" };
-  }
-  if (workUnit.allowedPaths.length === 0 ||
-      workUnit.allowedPaths.some(path => path.trim() === "")) {
-    return { admissible: false, reason: "PAIR_SCOPE_REQUIRED" };
-  }
-  if (workUnit.acceptanceChecks.length === 0 ||
-      workUnit.acceptanceChecks.some(check => check.trim() === "")) {
-    return { admissible: false, reason: "PAIR_ACCEPTANCE_REQUIRED" };
-  }
-  if (workUnit.verificationPlan.trim() === "") {
-    return { admissible: false, reason: "PAIR_VERIFICATION_REQUIRED" };
-  }
-  if (workUnit.stoppingCondition.trim() === "") {
-    return { admissible: false, reason: "PAIR_STOPPING_CONDITION_REQUIRED" };
-  }
-  if (workUnit.owner === "ai" &&
-      context.learningAgreement.humanOwnedCapabilities.includes(workUnit.capability)) {
-    return { admissible: false, reason: "PAIR_HUMAN_CAPABILITY_RESERVED" };
-  }
-  if (workUnit.owner === "ai" && context.editCapability !== "verified") {
-    return { admissible: false, reason: "PAIR_EDIT_CAPABILITY_REQUIRED" };
-  }
-  return {
-    admissible: true,
-    navigator: workUnit.owner === "human" ? "ai" : "human",
-    requiresHumanFollowUp: workUnit.owner === "ai" && workUnit.learningValue !== "low",
-  };
-};
-```
-
-**Append: `packages/modes/src/index.ts`**
-
-```typescript
-export * from "./pairWorkUnit.js";
-```
-
-This checks that a scope and verification plan are specified, not that a path
-is safe or a command is approved. Actual canonical path resolution, root
-identity, consent, content versions, and process classification remain at the
-future runtime/effect boundary. Do not add a second path-authority mechanism
-to this pure policy.
-
-- [x] **Step 4: Verify the policy and unchanged Growth behavior.**
-
-```sh
-npm exec -- vitest run packages/modes/test/pairWorkUnit.test.ts packages/modes/test/growthMode.test.ts
-npm run typecheck
-npm run lint
-```
-
-Expected: all selectors, typecheck, and lint pass. Review the diff: only the
-Task 1 files change and `growthMode.ts` remains unchanged. Commit only if the
-user explicitly requests one.
-
----
-
-### Task 2: Related Human Follow-Up
-
-**Deliverable:** deterministic descriptions of a follow-up requirement,
-successor admissibility, and satisfaction by an observed completed human unit.
-The functions never persist, clear, or authorize anything.
-
-**Files:**
-- Create: `packages/modes/src/pairFollowUp.ts`
-- Create: `packages/modes/test/pairFollowUp.test.ts`
-- Modify: `packages/modes/src/index.ts`
-
-**Interfaces:** consumes existing `WorkUnit` and `CapabilityCategory`.
-Produces `PairHumanFollowUp`, `PairSuccessorAssessment`,
-`PairObservedVerification`, and the three functions below. `undefined` is not
-an instruction to clear an existing requirement. The future core combines
-these assessments with Task 1 and records accepted decisions separately.
-
-- [x] **Step 1: Write the failing follow-up cases.**
-
-**Create: `packages/modes/test/pairFollowUp.test.ts`**
-
-```typescript
-import type { WorkUnit } from "@adaptive-pair/protocol";
-import { describe, expect, it } from "vitest";
-import {
-  assessPairSuccessor,
-  humanFollowUpFor,
-  isPairHumanFollowUpSatisfied,
-} from "../src/index.js";
-import { pairWorkUnit } from "./pairFixtures.js";
-
-const requirement = Object.freeze({
-  sourceWorkUnitId: "ai-unit-1",
-  capability: "implementation" as const,
-});
-
-describe("Pair human follow-up policy", () => {
-  it.each(["high", "mixed"] as const)("describes a requirement for agreed %s-value AI work", learningValue => {
-    expect(humanFollowUpFor(pairWorkUnit({
-      id: "ai-unit-1", owner: "ai", status: "agreed", learningValue,
-    }))).toEqual(requirement);
-  });
-
-  it("also retains the requirement after interrupted or failed accepted AI work", () => {
-    for (const status of ["paused", "needs-reconcile", "cancelled", "failed"] as const) {
-      expect(humanFollowUpFor(pairWorkUnit({
-        id: "ai-unit-1", owner: "ai", status,
-      }))).toEqual(requirement);
-    }
-  });
-
-  it("does not create a requirement from a mere proposal, human unit, or mechanical work", () => {
-    const units = [
-      pairWorkUnit({ owner: "ai", status: "proposed" }),
-      pairWorkUnit({ owner: "human", status: "completed" }),
-      pairWorkUnit({ owner: "ai", learningValue: "low", status: "completed" }),
-      pairWorkUnit({ owner: "ai", mode: "delivery", status: "completed" }),
-    ];
-    for (const workUnit of units) {
-      expect(humanFollowUpFor(workUnit)).toBeUndefined();
-    }
-  });
-
-  it("admits the first unit without fabricating a predecessor", () => {
-    expect(assessPairSuccessor(pairWorkUnit(), undefined, undefined))
-      .toEqual({ admissible: true });
-  });
-
-  it.each(["growth", "delivery"] as const)("does not admit a %s successor through Pair policy", mode => {
-    expect(assessPairSuccessor(pairWorkUnit({ mode }), undefined, undefined))
-      .toEqual({ admissible: false, reason: "PAIR_MODE_REQUIRED" });
-  });
-
-  it("does not treat an existing unit as a new successor proposal", () => {
-    expect(assessPairSuccessor(pairWorkUnit({ status: "completed" }), undefined, undefined))
-      .toEqual({ admissible: false, reason: "PAIR_PROPOSAL_REQUIRED" });
-  });
-
-  it("does not allow an AI or mechanical unit to bypass the outstanding human unit", () => {
-    for (const workUnit of [
-      pairWorkUnit({ owner: "ai" }),
-      pairWorkUnit({ owner: "human", learningValue: "low" }),
-      pairWorkUnit({ owner: "ai", learningValue: "low" }),
-    ]) {
-      expect(assessPairSuccessor(workUnit, requirement, "ai-unit-1"))
-        .toEqual({ admissible: false, reason: "PAIR_HUMAN_FOLLOW_UP_REQUIRED" });
-    }
-  });
-
-  it("requires an explicit relationship rather than guessing from the objective", () => {
-    expect(assessPairSuccessor(pairWorkUnit(), requirement, undefined))
-      .toEqual({ admissible: false, reason: "PAIR_RELATED_UNIT_REQUIRED" });
-    expect(assessPairSuccessor(pairWorkUnit(), requirement, "other-ai-unit"))
-      .toEqual({ admissible: false, reason: "PAIR_RELATED_UNIT_REQUIRED" });
-  });
-
-  it("requires a distinct human unit", () => {
-    expect(assessPairSuccessor(
-      pairWorkUnit({ id: "ai-unit-1" }), requirement, "ai-unit-1",
-    )).toEqual({ admissible: false, reason: "PAIR_RELATED_UNIT_REQUIRED" });
-  });
-
-  it("allows explicitly related work in another capability category", () => {
-    expect(assessPairSuccessor(
-      pairWorkUnit({ capability: "repair" }), requirement, "ai-unit-1",
-    )).toEqual({ admissible: true });
-  });
-
-  it("does not discharge the requirement at admission or from a failed check", () => {
-    expect(isPairHumanFollowUpSatisfied(
-      pairWorkUnit(), requirement, "ai-unit-1", "passed",
-    )).toBe(false);
-    expect(isPairHumanFollowUpSatisfied(
-      pairWorkUnit({ status: "completed" }), requirement, "ai-unit-1", "failed",
-    )).toBe(false);
-    expect(isPairHumanFollowUpSatisfied(
-      pairWorkUnit({ status: "completed" }), requirement, "ai-unit-1", "not-run",
-    )).toBe(false);
-  });
-
-  it("recognizes a completed, observed, learning-relevant human successor", () => {
-    expect(isPairHumanFollowUpSatisfied(
-      pairWorkUnit({ status: "completed", capability: "repair" }),
-      requirement,
-      "ai-unit-1",
-      "passed",
-    )).toBe(true);
-    expect(requirement.sourceWorkUnitId).toBe("ai-unit-1");
-  });
-
-  const nonSatisfying: readonly Partial<WorkUnit>[] = [
-    { owner: "ai" },
-    { learningValue: "low" },
-    { mode: "growth" },
-    { mode: "delivery" },
-    { id: "ai-unit-1" },
-  ];
-
-  it.each(nonSatisfying)("does not count an invalid human successor %j", override => {
-    expect(isPairHumanFollowUpSatisfied(
-      pairWorkUnit({ status: "completed", ...override }),
-      requirement,
-      "ai-unit-1",
-      "passed",
-    )).toBe(false);
-  });
-
-  it("requires a real outstanding requirement and matching relationship", () => {
-    expect(isPairHumanFollowUpSatisfied(
-      pairWorkUnit({ status: "completed" }), undefined, "ai-unit-1", "passed",
-    )).toBe(false);
-    expect(isPairHumanFollowUpSatisfied(
-      pairWorkUnit({ status: "completed" }), requirement, "other-unit", "passed",
-    )).toBe(false);
-  });
-
-  it("does not change the proposed unit or requirement", () => {
-    const workUnit = Object.freeze(pairWorkUnit());
-    const before = JSON.stringify({ workUnit, requirement });
-    assessPairSuccessor(workUnit, requirement, "ai-unit-1");
-    expect(JSON.stringify({ workUnit, requirement })).toBe(before);
-  });
-});
-```
-
-- [x] **Step 2: Observe the focused red result.**
-
-```sh
-npm exec -- vitest run packages/modes/test/pairFollowUp.test.ts
-```
-
-Expected: the new follow-up exports do not exist. Task 1 stays green.
-
-- [x] **Step 3: Implement the pure follow-up functions.**
-
-**Create: `packages/modes/src/pairFollowUp.ts`**
-
-```typescript
-import type { CapabilityCategory, WorkUnit } from "@adaptive-pair/protocol";
-
-export interface PairHumanFollowUp {
-  readonly sourceWorkUnitId: string;
-  readonly capability: CapabilityCategory;
-}
-
-export type PairSuccessorAssessment =
-  | { readonly admissible: true }
-  | {
-      readonly admissible: false;
-      readonly reason:
-        | "PAIR_MODE_REQUIRED"
-        | "PAIR_PROPOSAL_REQUIRED"
-        | "PAIR_HUMAN_FOLLOW_UP_REQUIRED"
-        | "PAIR_RELATED_UNIT_REQUIRED";
-    };
-
-export type PairObservedVerification = "passed" | "failed" | "not-run";
-
-export const humanFollowUpFor = (
-  workUnit: WorkUnit,
-): PairHumanFollowUp | undefined => {
-  if (workUnit.mode !== "pair" || workUnit.owner !== "ai" ||
-      workUnit.learningValue === "low" || workUnit.status === "proposed") {
-    return undefined;
-  }
-  return Object.freeze({
-    sourceWorkUnitId: workUnit.id,
-    capability: workUnit.capability,
-  });
-};
-
-export const assessPairSuccessor = (
-  workUnit: WorkUnit,
-  requirement: PairHumanFollowUp | undefined,
-  relatedToWorkUnitId: string | undefined,
-): PairSuccessorAssessment => {
-  if (workUnit.mode !== "pair") {
-    return { admissible: false, reason: "PAIR_MODE_REQUIRED" };
-  }
-  if (workUnit.status !== "proposed") {
-    return { admissible: false, reason: "PAIR_PROPOSAL_REQUIRED" };
-  }
-  if (requirement === undefined) {
-    return { admissible: true };
-  }
-  if (workUnit.owner !== "human" || workUnit.learningValue === "low") {
-    return { admissible: false, reason: "PAIR_HUMAN_FOLLOW_UP_REQUIRED" };
-  }
-  if (relatedToWorkUnitId !== requirement.sourceWorkUnitId ||
-      workUnit.id === requirement.sourceWorkUnitId) {
-    return { admissible: false, reason: "PAIR_RELATED_UNIT_REQUIRED" };
-  }
-  return { admissible: true };
-};
-
-export const isPairHumanFollowUpSatisfied = (
-  workUnit: WorkUnit,
-  requirement: PairHumanFollowUp | undefined,
-  relatedToWorkUnitId: string | undefined,
-  verification: PairObservedVerification,
-): boolean =>
-  requirement !== undefined &&
-  workUnit.mode === "pair" &&
-  workUnit.owner === "human" &&
-  workUnit.learningValue !== "low" &&
-  workUnit.status === "completed" &&
-  workUnit.id !== requirement.sourceWorkUnitId &&
-  relatedToWorkUnitId === requirement.sourceWorkUnitId &&
-  verification === "passed";
-```
-
-**Append: `packages/modes/src/index.ts`**
-
-```typescript
-export * from "./pairFollowUp.js";
-```
-
-P2 must derive `humanFollowUpFor` inputs from accepted work-unit history. An
-unaccepted proposal later marked cancelled must not be mistaken for an
-accepted AI unit. For accepted units, interruption/failure does not silently
-erase the requirement. A `true` satisfaction assessment still requires the
-core to record the correlated observation and any requirement-clearing event;
-this helper changes no state and reports no Growth outcome.
-
-- [x] **Step 4: Run both policy suites and review the boundary.**
-
-```sh
-npm exec -- vitest run packages/modes/test/pairWorkUnit.test.ts packages/modes/test/pairFollowUp.test.ts packages/modes/test/growthMode.test.ts
-npm run typecheck
-npm run lint
-```
-
-Expected: all checks pass, including the unchanged Growth tests. No runtime,
-evaluation, or protocol file changes. Do not invent a persistence format in
-order to make this policy task look like a full collaboration loop.
-
----
-
-### Task 3: Handoff Preflight Without Authority Transfer
-
-**Deliverable:** a deterministic assessment of whether a proposal may proceed
-to baseline and human review. It cannot stop admission, cancel an operation,
-accept a proposal, increment an epoch, or change an owner.
-
-**Files:**
-- Create: `packages/modes/src/pairHandoff.ts`
-- Create: `packages/modes/test/pairHandoff.test.ts`
-- Modify: `packages/modes/test/pairFixtures.ts`
-- Modify: `packages/modes/src/index.ts`
-
-**Interfaces:** consumes existing `PairRuntimeSnapshot`, `OperationRecord`,
-and `WorkUnit`, plus Task 1's admission types. Produces the exact proposal,
-context, and assessment types below. Only settled operations are ready; an
-unknown read is not an unknown mutation, while an unknown `edit` or `check`
-requires reconciliation. P2 must classify partial state changes conservatively
-and bind the stopped-admission fact to an actual serialized admission barrier.
-
-- [x] **Step 1: Add typed runtime fixtures and failing preflight cases.**
-
-The additional type imports below are appended with the new fixture functions;
-they may be grouped with the earlier imports during refactoring.
-
-**Append: `packages/modes/test/pairFixtures.ts`**
-
-```typescript
-import type { OperationRecord, PairRuntimeSnapshot } from "@adaptive-pair/protocol";
-import type { PairHandoffContext } from "../src/pairHandoff.js";
-
-export const pairRuntime = (
-  workUnit: WorkUnit = pairWorkUnit({ status: "agreed" }),
-  operations: readonly OperationRecord[] = [],
-): PairRuntimeSnapshot => ({
-  protocolVersion: 1,
-  revision: 12,
-  presence: {
-    workspaceId: "workspace-1",
-    observationRevision: 1,
-    status: "engaged",
-    activeSessionId: "session-1",
-  },
-  session: {
-    sessionId: "session-1",
-    authorityEpoch: 3,
-    status: "ready",
-    mode: "pair",
-    goal: "Implement retry behavior together",
-    criteria: ["The retry check passes"],
-    learningAgreement: pairAgreement(),
-    entrySnapshot: {
-      workspaceId: "workspace-1",
-      dirtyPaths: [],
-      openPaths: ["src/retry.ts"],
-      diagnostics: [],
-      protectedPaths: [],
-      capturedAt: 0,
-    },
-    workUnit,
-    assistance: undefined,
-    operations,
-    userActionGrants: [],
-  },
-});
-
-export const pairOperation = (
-  overrides: Partial<OperationRecord> = {},
-): OperationRecord => ({
-  id: "operation-1",
-  workUnitId: "unit-pair-1",
-  toolName: "pair_apply_edit",
-  kind: "edit",
-  input: {},
-  runtimeRevision: 12,
-  authorityEpoch: 3,
-  status: "authorized",
-  summary: undefined,
-  userActionGrantId: undefined,
-  ...overrides,
-});
-
-export const pairHandoffContext = (
-  overrides: Partial<PairHandoffContext> = {},
-): PairHandoffContext => ({
-  snapshot: pairRuntime(),
-  proposal: {
-    sessionId: "session-1",
-    workUnitId: "unit-pair-1",
-    fromOwner: "human",
-    toOwner: "ai",
-    runtimeRevision: 12,
-    authorityEpoch: 3,
-  },
-  operationAdmission: "stopped",
-  editCapability: "verified",
-  ...overrides,
-});
-```
-
-**Create: `packages/modes/test/pairHandoff.test.ts`**
-
-```typescript
-import type { OperationRecord } from "@adaptive-pair/protocol";
-import { describe, expect, it } from "vitest";
-import {
-  assessPairHandoff,
-  type PairHandoffProposal,
-} from "../src/index.js";
-import {
-  pairHandoffContext,
-  pairOperation,
-  pairRuntime,
-  pairWorkUnit,
-} from "./pairFixtures.js";
-
-describe("Pair handoff preflight", () => {
-  it.each(["agreed", "executing", "verifying", "completed"] as const)(
-    "reports only readiness for baseline and human review of a unit with status %s",
-    status => {
-      expect(assessPairHandoff(pairHandoffContext({
-        snapshot: pairRuntime(pairWorkUnit({ status })),
-      }))).toEqual({ status: "ready-for-baseline-review" });
-    },
-  );
-
-  it("allows human takeover preflight without claiming AI edit support", () => {
-    const context = pairHandoffContext();
-    expect(assessPairHandoff({
-      ...context,
-      snapshot: pairRuntime(pairWorkUnit({ owner: "ai", status: "agreed" })),
-      proposal: { ...context.proposal, fromOwner: "ai", toOwner: "human" },
-      editCapability: "unavailable",
-    })).toEqual({ status: "ready-for-baseline-review" });
-  });
-
-  const mismatches: readonly [Partial<PairHandoffProposal>, string][] = [
-    [{ sessionId: "other-session" }, "PAIR_HANDOFF_IDENTITY_MISMATCH"],
-    [{ workUnitId: "other-unit" }, "PAIR_HANDOFF_IDENTITY_MISMATCH"],
-    [{ fromOwner: "ai", toOwner: "human" }, "PAIR_HANDOFF_OWNER_MISMATCH"],
-    [{ toOwner: "human" }, "PAIR_HANDOFF_OWNER_MISMATCH"],
-    [{ runtimeRevision: 11 }, "PAIR_STALE_HANDOFF"],
-    [{ authorityEpoch: 2 }, "PAIR_STALE_HANDOFF"],
-  ];
-
-  it.each(mismatches)("rejects a mismatched proposal %j", (override, reason) => {
-    const context = pairHandoffContext();
-    expect(assessPairHandoff({
-      ...context,
-      proposal: { ...context.proposal, ...override },
-    })).toEqual({ status: "blocked", reason });
-  });
-
-  it("cannot substitute a policy result for stopped operation admission", () => {
-    expect(assessPairHandoff(pairHandoffContext({ operationAdmission: "open" })))
-      .toEqual({ status: "blocked", reason: "PAIR_ADMISSION_OPEN" });
-  });
-
-  const pendingStatuses: readonly OperationRecord["status"][] = [
-    "planned", "authorized", "started",
-  ];
-
-  it.each(pendingStatuses)("waits for an operation with status %s to settle", status => {
-    expect(assessPairHandoff(pairHandoffContext({
-      snapshot: pairRuntime(undefined, [pairOperation({ status })]),
-    }))).toEqual({ status: "blocked", reason: "PAIR_OPERATIONS_PENDING" });
-  });
-
-  it.each(["edit", "check"] as const)("requires reconciliation of an unknown %s", kind => {
-    expect(assessPairHandoff(pairHandoffContext({
-      snapshot: pairRuntime(undefined, [pairOperation({
-        kind,
-        toolName: kind === "edit" ? "pair_apply_edit" : "pair_run_verification",
-        status: "unknown",
-      })]),
-    }))).toEqual({ status: "blocked", reason: "PAIR_RECONCILIATION_REQUIRED" });
-  });
-
-  it("does not discard an unresolved mutation from an earlier unit or epoch", () => {
-    expect(assessPairHandoff(pairHandoffContext({
-      snapshot: pairRuntime(undefined, [pairOperation({
-        workUnitId: "earlier-unit", authorityEpoch: 2, status: "unknown",
-      })]),
-    }))).toEqual({ status: "blocked", reason: "PAIR_RECONCILIATION_REQUIRED" });
-  });
-
-  it("does not treat an unknown read as a completed or unknown mutation", () => {
-    expect(assessPairHandoff(pairHandoffContext({
-      snapshot: pairRuntime(undefined, [pairOperation({
-        kind: "read", toolName: "pair_read_scope", status: "unknown",
-      })]),
-    }))).toEqual({ status: "ready-for-baseline-review" });
-  });
-
-  it.each(["confirmed", "failed", "declined", "cancelled"] as const)(
-    "allows review after a terminal %s result",
-    status => {
-      expect(assessPairHandoff(pairHandoffContext({
-        snapshot: pairRuntime(undefined, [pairOperation({ status })]),
-      }))).toEqual({ status: "ready-for-baseline-review" });
-    },
-  );
-
-  it("does not become ready while paused or awaiting reconciliation", () => {
-    for (const status of ["paused", "reconciling", "closed"] as const) {
-      const snapshot = pairRuntime();
-      if (snapshot.session === undefined) {
-        throw new Error("Missing test session");
-      }
-      expect(assessPairHandoff(pairHandoffContext({
-        snapshot: { ...snapshot, session: { ...snapshot.session, status } },
-      }))).toEqual({ status: "blocked", reason: "PAIR_NOT_OPERATIONAL" });
-    }
-  });
-
-  it("rejects inactive or observing Presence and a different Presence session", () => {
-    const snapshot = pairRuntime();
-    for (const presence of [
-      { ...snapshot.presence, status: "off" as const },
-      { ...snapshot.presence, status: "paused" as const },
-      { ...snapshot.presence, status: "observing" as const },
-      { ...snapshot.presence, activeSessionId: "other-session" },
-    ]) {
-      expect(assessPairHandoff(pairHandoffContext({
-        snapshot: { ...snapshot, presence },
-      }))).toEqual({ status: "blocked", reason: "PAIR_NOT_OPERATIONAL" });
-    }
-  });
-
-  it.each(["proposed", "paused", "needs-reconcile", "cancelled", "failed"] as const)(
-    "does not hand off a non-operational %s unit",
-    status => {
-      expect(assessPairHandoff(pairHandoffContext({
-        snapshot: pairRuntime(pairWorkUnit({ status })),
-      }))).toEqual({ status: "blocked", reason: "PAIR_NOT_OPERATIONAL" });
-    },
-  );
-
-  it("does not mistake missing or non-Pair session state for readiness", () => {
-    const snapshot = pairRuntime();
-    const session = snapshot.session;
-    if (session === undefined) {
-      throw new Error("Missing test session");
-    }
-    for (const candidate of [
-      undefined,
-      { ...session, workUnit: undefined },
-      { ...session, mode: "growth" as const },
-    ]) {
-      expect(assessPairHandoff(pairHandoffContext({
-        snapshot: { ...snapshot, session: candidate },
-      }))).toEqual({ status: "blocked", reason: "PAIR_MODE_REQUIRED" });
-    }
-  });
-
-  it("preserves a quiet developer's operational Pair session", () => {
-    const snapshot = pairRuntime();
-    expect(assessPairHandoff(pairHandoffContext({
-      snapshot: { ...snapshot, presence: { ...snapshot.presence, status: "quiet" } },
-    }))).toEqual({ status: "ready-for-baseline-review" });
-  });
-
-  it("does not grant AI ownership without the reviewed agreement and capability", () => {
-    expect(assessPairHandoff(pairHandoffContext({ editCapability: "unavailable" })))
-      .toEqual({ status: "blocked", reason: "PAIR_EDIT_CAPABILITY_REQUIRED" });
-    expect(assessPairHandoff(pairHandoffContext({
-      snapshot: pairRuntime(pairWorkUnit({ capability: "diagnosis", status: "agreed" })),
-    }))).toEqual({ status: "blocked", reason: "PAIR_HUMAN_CAPABILITY_RESERVED" });
-    const snapshot = pairRuntime();
-    if (snapshot.session === undefined) {
-      throw new Error("Missing test session");
-    }
-    expect(assessPairHandoff(pairHandoffContext({
-      snapshot: {
-        ...snapshot,
-        session: { ...snapshot.session, learningAgreement: undefined },
-      },
-    }))).toEqual({ status: "blocked", reason: "PAIR_LEARNING_AGREEMENT_REQUIRED" });
-  });
-
-  it("refuses Growth and Delivery handoff assessments", () => {
-    for (const mode of ["growth", "delivery"] as const) {
-      expect(assessPairHandoff(pairHandoffContext({
-        snapshot: pairRuntime(pairWorkUnit({ mode, status: "agreed" })),
-      }))).toEqual({ status: "blocked", reason: "PAIR_MODE_REQUIRED" });
-    }
-  });
-
-  it("does not change ownership, epoch, operations, or the proposal", () => {
-    const context = pairHandoffContext();
-    const before = JSON.stringify(context);
-    Object.freeze(context.proposal);
-    Object.freeze(context.snapshot.session?.workUnit);
-    Object.freeze(context.snapshot.session?.operations);
-    Object.freeze(context.snapshot.session);
-    Object.freeze(context.snapshot);
-    Object.freeze(context);
-    expect(assessPairHandoff(context))
-      .toEqual({ status: "ready-for-baseline-review" });
-    expect(JSON.stringify(context)).toBe(before);
-  });
-});
-```
-
-- [x] **Step 2: Run the focused red test.**
-
-```sh
-npm exec -- vitest run packages/modes/test/pairHandoff.test.ts
-```
-
-Expected: `assessPairHandoff` is not exported/implemented. Do not expose
-`pair_accept_handoff` or change a coordinator method to make this test pass.
-
-- [x] **Step 3: Implement the complete preflight assessment.**
-
-**Create: `packages/modes/src/pairHandoff.ts`**
-
-```typescript
-import type {
-  OperationRecord,
-  PairRuntimeSnapshot,
-  WorkUnit,
-} from "@adaptive-pair/protocol";
-import {
-  assessPairWorkUnit,
-  type PairEditCapability,
-  type PairWorkUnitRejection,
-} from "./pairWorkUnit.js";
-
-export interface PairHandoffProposal {
-  readonly sessionId: string;
-  readonly workUnitId: string;
-  readonly fromOwner: WorkUnit["owner"];
-  readonly toOwner: WorkUnit["owner"];
-  readonly runtimeRevision: number;
-  readonly authorityEpoch: number;
-}
-
-export interface PairHandoffContext {
-  readonly snapshot: PairRuntimeSnapshot;
-  readonly proposal: PairHandoffProposal;
-  readonly operationAdmission: "open" | "stopped";
-  readonly editCapability: PairEditCapability;
-}
-
-export type PairHandoffAssessment =
-  | { readonly status: "ready-for-baseline-review" }
-  | {
-      readonly status: "blocked";
-      readonly reason:
-        | PairWorkUnitRejection
-        | "PAIR_NOT_OPERATIONAL"
-        | "PAIR_HANDOFF_IDENTITY_MISMATCH"
-        | "PAIR_HANDOFF_OWNER_MISMATCH"
-        | "PAIR_STALE_HANDOFF"
-        | "PAIR_ADMISSION_OPEN"
-        | "PAIR_OPERATIONS_PENDING"
-        | "PAIR_RECONCILIATION_REQUIRED"
-        | "PAIR_LEARNING_AGREEMENT_REQUIRED";
-    };
-
-const isSettledOperation = (operation: OperationRecord): boolean =>
-  operation.status === "confirmed" ||
-  operation.status === "failed" ||
-  operation.status === "declined" ||
-  operation.status === "cancelled" ||
-  operation.status === "unknown";
-
-export const assessPairHandoff = (
-  context: PairHandoffContext,
-): PairHandoffAssessment => {
-  const { snapshot, proposal } = context;
-  const session = snapshot.session;
-  const workUnit = session?.workUnit;
-  if (session?.mode !== "pair" || workUnit?.mode !== "pair") {
-    return { status: "blocked", reason: "PAIR_MODE_REQUIRED" };
-  }
-  if ((session.status !== "ready" && session.status !== "active") ||
-      (snapshot.presence.status !== "engaged" && snapshot.presence.status !== "quiet") ||
-      snapshot.presence.activeSessionId !== session.sessionId ||
-      (workUnit.status !== "agreed" && workUnit.status !== "executing" &&
-       workUnit.status !== "verifying" && workUnit.status !== "completed")) {
-    return { status: "blocked", reason: "PAIR_NOT_OPERATIONAL" };
-  }
-  if (proposal.sessionId !== session.sessionId || proposal.workUnitId !== workUnit.id) {
-    return { status: "blocked", reason: "PAIR_HANDOFF_IDENTITY_MISMATCH" };
-  }
-  if (proposal.fromOwner !== workUnit.owner || proposal.fromOwner === proposal.toOwner) {
-    return { status: "blocked", reason: "PAIR_HANDOFF_OWNER_MISMATCH" };
-  }
-  if (proposal.runtimeRevision !== snapshot.revision ||
-      proposal.authorityEpoch !== session.authorityEpoch) {
-    return { status: "blocked", reason: "PAIR_STALE_HANDOFF" };
-  }
-  if (context.operationAdmission !== "stopped") {
-    return { status: "blocked", reason: "PAIR_ADMISSION_OPEN" };
-  }
-  if (session.operations.some(operation =>
-    operation.kind !== "read" && operation.status === "unknown")) {
-    return { status: "blocked", reason: "PAIR_RECONCILIATION_REQUIRED" };
-  }
-  if (session.operations.some(operation => !isSettledOperation(operation))) {
-    return { status: "blocked", reason: "PAIR_OPERATIONS_PENDING" };
-  }
-  if (session.learningAgreement === undefined) {
-    return { status: "blocked", reason: "PAIR_LEARNING_AGREEMENT_REQUIRED" };
-  }
-  const proposedOwner = assessPairWorkUnit(
-    { ...workUnit, owner: proposal.toOwner, status: "proposed" },
-    { learningAgreement: session.learningAgreement, editCapability: context.editCapability },
-  );
-  if (!proposedOwner.admissible) {
-    return { status: "blocked", reason: proposedOwner.reason };
-  }
-  return { status: "ready-for-baseline-review" };
-};
-```
-
-**Append: `packages/modes/src/index.ts`**
-
-```typescript
-export * from "./pairHandoff.js";
-```
-
-The assessment deliberately blocks unresolved state-changing operations even
-if their epoch or unit differs. P2 must add explicit reconciliation semantics;
-deleting an operation, relabeling `unknown` as `failed`, or ignoring an old
-epoch to obtain readiness would bypass the contract. Terminal failed/declined/
-cancelled results are safe inputs only when the future adapter has positively
-classified their completion; ambiguous partial changes remain `unknown`.
-
-A completed unit can be ready for successor review, but must not be reopened
-by changing its owner in place. P2 owns successor creation, relationship
-binding, the follow-up requirement, and durable history. Preflight readiness
-alone does not satisfy any of those transitions.
-
-- [x] **Step 4: Run all policy tests and verify the fixed protocol boundary.**
-
-```sh
-npm exec -- vitest run packages/modes/test
-npm run typecheck
-npm run lint
-git diff --stat
-```
-
-Expected: all checks pass. There are no changes under `packages/protocol`,
-`packages/session-core`, `packages/runtime`, `packages/harness`, or
-`apps/vscode-extension`. No policy result is added to a journal or an export.
-
----
-
-### Task 4: Contract Review and Unchanged Preview Gate
-
-**Deliverable:** a reviewed P1 diff and fresh regression evidence, with no new
-claim that Pair is available in the extension. This task verifies the completed
-library; it does not add a new feature or a second implementation plan.
-
-**Files:** no production files beyond Tasks 1–3. After implementation checks,
-update the P1 status in `docs/design.md` and this plan, the observed evidence in
-`docs/research.md`, and the project-status wording in `README.md`. Preserve
-draft/approval/implementation distinctions for P2 and P3.
-
-- [x] **Step 1: Review every contract against this acceptance matrix.**
-
-| Contract | Required case | Owner |
-|---|---|---|
-| Human editing remains available without AI capability | Human proposal is admissible; human-target preflight does not require AI edit support | Tasks 1, 3 |
-| AI support is not consent or authority | AI proposal needs a capability fact, but no result changes owner, revision, or grants | Tasks 1, 3 |
-| Accepted human-owned capabilities are respected | A verified edit capability cannot override a human-reserved category | Tasks 1, 3 |
-| An agreement and explicit scope are required | Incomplete work units and handoff without an agreement are rejected | Tasks 1, 3 |
-| AI work is followed by related human work | New AI/mechanical work cannot bypass an outstanding requirement | Task 2 |
-| Relatedness is explicit and does not demand the same category | Missing/wrong/self identity is rejected; explicitly related repair after implementation is admissible | Task 2 |
-| Acceptance is not meaningful completion | Only a completed related human unit with observed passing verification satisfies the requirement | Task 2 |
-| Interrupted work does not erase participation obligations | Previously accepted AI units retain the requirement after failure/interruption; a mere proposal creates none | Task 2; provenance binding in P2 |
-| Handoff is not automatic | Identity, owner, revision, epoch, and stopped admission are checked; a review-ready result has no authority payload | Task 3 |
-| Started work settles before acceptance | Pending operations block; unknown edits/checks require reconciliation | Task 3; real cancellation/reconciliation in P2 |
-| Pause outranks handoff | Paused/reconciling sessions and Presence outside `engaged`/`quiet` cannot become ready | Task 3; emergency control stays outside this policy |
-| Growth and other surfaces are unchanged | Existing Growth, manifest, runtime, package, and isolated-host checks pass | This task |
-
-No complete Pair Mode, runtime concurrency, filesystem-safety, model-behavior,
-or learning-efficacy claim can be inferred from this matrix. Review P1 as a
-pure contract milestone and leave P2/P3 gates open.
-
-- [x] **Step 2: Run the full existing quality and distribution checks.**
-
-```sh
-npm run check
-npm audit --audit-level=low
-npm exec -- vitest run packages/modes --reporter=json
+npm run build
 npm run package
-node scripts/verify-vsix.mjs
 npm run test:host
-git diff --check
+npm audit --audit-level=low
+npm --prefix poc/session-target audit --audit-level=low
 ```
 
-Expected: successful typecheck, lint, all tests, a verified Stable VSIX, and
-successful isolated Extension Host checks on the observed host version.
-Record actual versions and results. If a host check cannot run, report it as
-unverified, not passed. Do not replace an isolated test profile with the user's
-profile. Apply necessary dependency and version updates under the maintenance
-policy and repeat the affected checks; keep unrelated product work separate.
+## Completion record
 
-Use the JSON reporter's `testResults[].assertionResults` to report per-file
-case counts. Parameterized `it.each` rows are separate cases; multiple
-assertions or ordinary loop iterations inside one `it` are not. Keep those
-counts separate from additional assertion coverage and temporary review tests.
+Tasks 1–5 were implemented and independently re-reviewed before PR #8. Original reviewers
+report no remaining findings in their atomic state/lifecycle, Growth publication,
+verification extraction, or dependency/size-guard scopes. Pre-PR local validation
+passed: 834 workspace tests, 17 Stable host scenarios on each supported matrix
+version, Stable packaging, and the separate POC's 8 unit cases, package, and
+1 Insiders host case. Both graphs pass full and production-only audits.
 
-- [x] **Step 3: Update canonical status only from observed results.**
+The detailed pre-PR evidence is in `docs/research.md`. Commit `41d9af7` opened
+PR #8; all four CI jobs passed on that revision. The first normal repository
+review nevertheless requested changes. Its inline finding and five summary-only
+findings are all in scope, together with independently verified issues at
+additional locations exposed in the completed review's logs. A second repository
+review added two dirty-buffer findings, which are also required follow-up gates.
 
-Record P1 as implemented only after its code exists and all required checks
-pass. Record human approval separately; tests do not approve a design. Keep
-README and the preview guide explicit that the extension remains Growth-only.
-Do not publish a duplicate handoff report or copy local test logs, personal
-paths, or credentials into documentation.
+### PR #8 follow-up gates
 
-- [x] **Step 4: Complete the pull request review loop at the recorded checkpoint.**
+- [x] Reproduce and fix open-document filesystem-identity escapes, retaining
+  safe unsaved buffers and avoiding reads of rejected buffers; independent
+  review remains a separate gate.
+- [x] Reproduce and fix successful stream/token-accounting completion after
+  cancellation or the model deadline, including a latched timer cancellation
+  after clock rollback and a liveness gate before model dispatch.
+- [x] Reproduce and fix cancelled Growth publication and human-action grants
+  detached from the caller's observed revision/authority; obtain independent
+  re-review of the transfer continuation as well as initial publication.
+- [x] Validate malformed verification script manifests and Windows process-tree
+  confirmation lifetime, including PID reuse, with independent re-review.
+- [x] Probe and address operation admission, immutable request payload, and
+  queued grant-cancellation boundaries in the authoritative runtime, including
+  concurrent recovery rather than only reconciliation after invocation settles.
+- [x] Check the archive end-record scan's short-buffer and maximum-comment
+  boundaries. These probes pass without changing the parser; request a concrete
+  counterexample if a different archive concern remains.
+- [x] Reject NUL-containing dirty scope buffers consistently with disk reads,
+  and retain deleted dirty verification buffers addressed through safe aliases.
+- [x] Complete independent follow-up reviews, full local/host/package gates,
+  original-thread replies/resolution, and a fresh normal repository review.
 
-Commit and push the scoped changes on the dedicated branch, open a pull request
-against `main`, and request review. Verify each finding against the policy
-contracts before editing. Make necessary fixes with regression coverage and
-rerun the affected checks. Reply in each original review thread with the fix
-and evidence, or explain why no change is appropriate. Resolve only addressed
-threads, check follow-up feedback, and verify the required checks on the final
-revision. Report when ready to merge; wait for the user's merge decision.
+The `8fd60be` local checkpoint passes forced typecheck, enforced lint, 972
+workspace tests, both Stable hosts' 17 scenarios, Stable packaging, the separate
+POC's 8 unit tests/package/1 Insiders host case, and all four dependency audits.
+This is not a substitute for the remaining independent and repository review.
 
-This checkbox records the reviewed implementation checkpoint below, not an
-unverified claim about a later commit. Every subsequent revision, including a
-documentation-only update, still requires fresh final-head checks and
-follow-up review in PR #6 before readiness is reported.
+### Second repository reassessment
 
-- [x] **Step 5: Keep P2 behind separate scope review.**
+All four CI jobs pass at `8fd60be`, and the original three inline concerns have
+evidence replies and are resolved. The fresh repository assessment still reports
+five concerns: three published summary-only compositions and two runtime source
+locations without their full finding text. Previous scoped passes do not clear
+these newly identified compositions.
 
-Summarize changed files and fresh results. Ask for review of the policy
-decisions before designing the P2 protocol/runtime changes. A new P2 plan must
-replace this one deliberately after scope review, with its own persistence,
-grant, authority, replay, concurrency, and reconciliation tests. Do not merge,
-start P2, or expose Pair controls without the required user direction. A
-documentation PR does not itself authorize implementing the proposed policies.
+- [x] Reproduce cancellation after queued local-command admission, preserve
+  grants/state when cancellation precedes commit, and retain actions already
+  committed before cancellation. Independent re-review passes on the frozen
+  cancellation patch, separately from the state-disclosure correction.
+- [x] Bind transfer identity and request data across asynchronous consent,
+  preparation, and publication without a new publication await.
+- [x] Preserve agreed in-root alias scope for read/search and valid unsaved
+  buffers while retaining canonical containment, secret/binary filtering, and
+  byte limits.
+- [x] Reproduce native/Growth state-query disclosure and replace full snapshots
+  with bounded allowlisted metadata. Keep grants and raw records behind the
+  trusted snapshot port; do not claim an unproven model privilege escalation.
+  Request clarification of unpublished finding text rather than inventing it.
+- [x] Close the independent transfer review's identical-session recreation
+  case using the committed start revision, without changing epoch semantics
+  or version-1 command/event payloads. Recheck the original review separately.
+- [x] Preserve valid reads/searches when an unrelated stale dirty document has
+  a regular-file ancestor; reject an invalid requested path without lexical
+  fallback or swallowing unavailable-identity/cancellation errors.
+- [x] Recheck independent reviews, full affected validation, final-head CI,
+  and a fresh repository assessment after this round's fixes.
 
-## Completion and Approval Record
+The initial second-round source/test checkpoint passes forced typecheck, enforced lint,
+1,083 workspace tests across 87 files, Stable build/7-entry packaging, and the
+separate POC's 8 unit tests/9-entry package. All 17 isolated host scenarios pass
+on each Stable matrix version, the POC's Insiders host case passes, both installed
+dependency trees are valid, and all four full/production audits report zero
+findings. Transfer, scope, and state-projection independent reviews remain
+distinct pending gates; these local results do not describe a future remote
+head's CI. Independent review subsequently exposed the recreation and unrelated
+dirty-buffer cases above. The lifecycle correction passes its 52 focused cases,
+forced typecheck, and full lint. After both corrections, a fresh integrated run
+passes 1,105 tests across 89 files, forced typecheck, full lint, Stable build and
+7-entry VSIX verification, and all 17 host scenarios on each Stable matrix
+version. State-projection, cancellation, scope, and the final Growth lifecycle
+independent reviews subsequently pass on their frozen artifacts. All four CI
+jobs pass at `d84c4fe`, including the actual Insiders test step. The next repository
+assessment still requests changes; successful CI does not clear those findings.
 
-- [x] Inspect the committed interfaces and document the P1 boundary.
-- [x] Assign known preview gaps and remaining release gates in the design roadmap.
-- [x] Complete plan-example validation and internal consistency review.
-- [x] Complete baseline host revalidation (17 smoke tests; runner exit code 0).
-- [x] Obtain user review of the written P1 design and implementation plan.
-- [x] Implement and verify Tasks 1–3 after approval.
-- [x] Complete Task 4's contract matrix, local regression checks, and canonical
-  documentation update.
-- [x] Complete Task 4's PR review and CI checkpoint at `2364b41`.
-- [x] Integrate maintained `main` at `79d75ab` and revalidate P1, both dependency
-  graphs, isolated hosts, and packaging without expanding the product scope.
-- Final-head gate: verify every subsequent revision in PR #6 before reporting
-  readiness; do not infer a merge decision from this checklist.
+### Third repository reassessment
 
-The repository owner authorized P1 on September 16, 2026 by requesting the
-merge of reviewed PR #4 and continuation with the next increment. This is
-separate from the plan's earlier publication and does not approve P2 or P3.
+Review `5227383478` reports two inline threads and nine summary-only locations.
+Repeated transfer-cache locations describe one underlying lifetime defect;
+each distinct concern must still be verified rather than inferred from the
+review job's successful completion.
 
-Tasks 1–3 are now implemented in repository source. Each new suite failed
-before its policy exports existed, then staged runs passed 23, 44, and 79
-tests with forced typecheck and lint. The final modes suite comprises 19
-admission, 21 follow-up, 35 handoff, and four unchanged Growth cases; fixture
-type imports were grouped without changing the contracts or case counts.
-Initial implementation validation passed 43 files and 671 tests, Stable VSIX
-verification, and all 17 isolated host smoke tests on VS Code 1.137.0 with
-runner exit code 0.
-The PR #6 review checkpoint at `2364b41` had no unresolved threads or pending
-review requests, and all four CI jobs passed. The initial checklist-clarity
-finding was fixed, replied to with verification evidence, and resolved in its
-original thread. Copilot's follow-up recommended approval with two
-non-blocking test-title grammar notes; those titles are corrected in the tests
-and executable examples without changing assertions or case counts.
-Independent AI review of the implementation at `0f2c85f` found no blocking
-or non-blocking defects; it does not constitute human approval.
+- [x] Reproduce reused consent and transfer/check summaries after Disable with
+  identical session/work-unit IDs; bind caches to workspace and committed
+  session start identity. Keep pending consent on its original intent.
+- [x] Reject non-Growth guidance before consent, reveal, escalation, or model
+  dispatch. Bind all guidance routes through preparation and publication.
+- [x] Restrict host-facing mode selection to Growth and end confirmed state
+  contract turns before another call uses outdated instructions/tools. Preserve
+  the accepted state change and request a fresh turn without a Growth claim.
+- [x] Preserve canonical and alias-relative search patterns, choosing the
+  longest applicable prefix when they overlap. Reject oversized exact queries
+  before discovery and bound complete effect/runtime/native/Growth results,
+  including metadata and the model-readable trust prefix.
+- [x] Remove Windows termination claims based only on `taskkill` success.
+  Preserve escalation, keep unknown tree exit unconfirmed, and distinguish
+  mocked Windows evidence from native POSIX checks.
+- [x] Reproduce and suppress check publication after a committed result's
+  runtime is recreated, paused, or observed before the host continuation.
+- [x] Reproduce stale `/session` cache publication and reveal admission with
+  ordinary coordinator scheduling. Fence the live publication/modal boundaries
+  and suppress declined-modal output after Chat cancellation, retaining neutral
+  non-cancelled declines and the existing transfer-intent assertions.
+- [x] Rerun integrated validation after the complete-result and overlapping
+  prefix corrections, including both Stable hosts and the separate POC.
+- [x] Complete independent re-review of the final source patches.
+- [x] Reply in both original new inline threads, resolve addressed concerns,
+  and obtain a fresh repository assessment plus final-head checks.
 
-After maintenance PR #7 was merged on September 16, 2026, the P1 branch
-integrated `main` at `79d75ab` with the policy source and tests unchanged.
-Fresh validation passed typecheck, lint, 43 files and 673 tests, both full
-dependency audits with zero findings, and Stable VSIX verification. The main
-isolated host passed 17 cases; the separate POC passed six unit cases, one
-isolated host case, and packaging. The POC host's first download failed before
-tests began; the unchanged command passed on retry. See the
-[post-maintenance evidence](research.md#p1-post-maintenance-integration)
-for the distinct baseline, host, and audit results.
+The initial third-round integrated checkpoint passes **1,194 tests across 94
+files**, forced typecheck, full lint, Stable build and 7-entry VSIX inspection,
+and all 17 isolated host scenarios on each Stable matrix version. The unchanged
+POC also passes its 8 tests, 9-entry package, and one Insiders host case. Both
+installed dependency trees validate and all four audits report zero findings.
+Windows independent review passes; the Growth and scope reassessments are still
+pending at this checkpoint. These local results do not pre-approve a future
+committed head or repository review.
 
-This completion-record update itself still requires fresh review and checks
-on its own revision before merge readiness is reported. PR #6 is the live
-record for that final-head evidence. No merge or P2/P3 implementation is
-performed by closing this P1 checkpoint.
+After the overlapping-prefix and complete-result follow-ups, fresh integrated
+validation passes **1,216 tests across 97 files**, forced typecheck, full lint,
+Stable build and 7-entry VSIX verification, and 17 isolated scenarios on each
+Stable host version. The separate POC again passes its 8 unit tests, 9-entry
+package, and one Insiders host case. Both installed trees validate and all four
+dependency audits again report zero findings. Independent re-review and the
+eventual committed head's repository review/checks remain separate gates.
 
-These results establish pure P1 contracts and unchanged-preview regression
-coverage, not Pair runtime/host conformance, accepted handoff, edit authority,
-or learning efficacy. The earlier temporary-example evidence remains in
-`docs/research.md`; no duplicate active plan is created.
+The subsequent route-publication/modal follow-up passes **1,274 tests across
+99 files**, forced typecheck, full lint, Stable build/7-entry VSIX verification,
+and all 17 isolated cases on each Stable host. The separate POC and both
+dependency graphs are unchanged from the immediately preceding successful
+checks; their earlier evidence is not relabeled as a new execution.
+
+Independent Windows, model-transition, complete-result/prefix, and
+consent/route-boundary reviews now report specification and quality passes in
+their respective frozen scopes. The route reviewer replays all 58 original
+probes unchanged, all 101 promoted/transfer-intent cases, and 226 additional
+focused/prior regressions. The two original threads have evidence replies and
+are resolved at `6236a06`; all four CI jobs and their actual steps pass. The next
+repository assessment nevertheless requests five additional corrections.
+
+### Fourth repository reassessment
+
+Review `5228345791` reports four inline findings and one summary-only finding.
+The two workspace findings describe one missing authoritative lifecycle boundary;
+the remaining findings cover multi-root pattern qualification and useful bounded
+read/verification results.
+
+- [x] Make workspace rebinding an atomic disable/enable boundary, reject replay
+  without a reset, and fence late result admission with its authorization revision.
+- [x] Classify qualified patterns across all lexical/canonical agreed scopes;
+  skip unmatched roots without changing genuinely relative pattern behavior.
+- [x] Reserve complete effect/runtime/Growth overhead before shortening read
+  text or verification output. Preserve byte/sensitivity checks, exact identities,
+  execution metadata, Unicode boundaries, and explicit truncation flags.
+- [x] Rerun full local validation: 1,343 tests across 102 files, forced typecheck,
+  full lint, Stable build/7-entry VSIX verification, and both hosts' 17 cases pass.
+- [x] Reproduce stale invocation/recovery cleanup deleting a replacement's
+  pending entry when operation IDs are reused. Preserve registry ownership,
+  later cancellation, and no-duplicate recovery with 48 maintained cases.
+- [x] Address independent pattern review's dot-relative regression and missing
+  file-scope qualification gap without weakening canonical permission checks.
+- [x] Rerun integrated checks after these additional corrections: 1,413 tests
+  across 104 files, forced typecheck, lint, Stable build/7-entry VSIX verification,
+  and both Stable hosts' 17 cases pass. Fresh POC/graph checks also pass.
+- [x] Complete independent reviews, including lifecycle/operation cleanup
+  compositions and both result consumers, before publishing the correction.
+- [x] Reply to all four inline findings and the summary-only finding, resolve
+  addressed concerns, and obtain fresh repository review and final-head checks.
+
+The fourth-round correction is committed as `db98654`. All four original threads
+have evidence replies and are resolved; the summary-only finding has a grouped
+response. CI `35156743700` passes all four jobs and their actual steps, including
+Insiders. The fifth repository review still requests three corrections.
+
+### Fifth repository reassessment
+
+Review `5228948895` requests prompt aborted-child-close settlement and propagation
+of the validated `previewOnly` value in both decision and replay paths. The broad
+frozen-head integration review additionally reproduces stale `/brief` publication
+and raw token-accounting errors retained in evaluation reasons. These last two
+patterns predate the final delta but remain current contract gaps in this PR.
+
+- [x] Reproduce unknown-tree close delay with 15 failing cases and 27 controls.
+  Distinguish unknown liveness from observed live/stopped, settle unknown close
+  promptly without fake confirmation, and retain known-live/no-close escalation.
+- [x] Capture `previewOnly` once before validation and carry that value into
+  events/state. Preserve the true-only contract with ten characterization cases.
+- [x] Fence `/brief` at synchronous live publication, retaining the neutral
+  disabled response and the existing `/session` scheduling controls.
+- [x] Normalize input/text/tool-call token-accounting failures without raw
+  evaluation reasons or loss of cancellation/deadline/core classifications.
+- [x] Rerun full integration: 1,448 tests across 108 files, forced typecheck,
+  lint, Stable build/7-entry VSIX verification, and both Stable hosts' 17 cases
+  pass. The separate POC, installed dependency trees, and all four audits pass.
+- [x] Independently re-review process/preview corrections: specification and
+  quality pass, 218 additional probes pass, and a native POSIX descendant probe
+  confirms retained escalation and cleanup. Windows evidence remains mocked.
+- [x] Independently re-review publication/privacy corrections: specification
+  and quality pass with the original six probes unchanged, 279 cases across
+  17 files, forced root typecheck, and full lint.
+- [x] Reply to the three original threads, resolve addressed concerns, and
+  obtain another repository assessment and final-head checks.
+
+The fifth-round correction is committed as `e83d872`. CI `35160931543` passes
+all four jobs and every actual step, including all 17 Insiders host cases.
+Review `5229268443` adds no inline findings but records one summary-only cleanup
+and recommends closer final review because of the overall change size. Its job
+completion is not treated as approval.
+
+### Sixth repository reassessment
+
+- [x] Simplify the redundant process-signal error conditional to an explicit
+  `false` return. Preserve the separate tri-state liveness probe and all
+  Windows/no-PID paths. The same 56 process cases pass before and after;
+  this is characterization of a cleanup, not RED bug evidence.
+- [x] Rerun integration: 1,448 tests across 108 files, forced typecheck, lint,
+  Stable build/seven-entry VSIX, 17 cases on each Stable host, separate POC
+  check/package/host, installed dependency trees, and all four audits pass.
+- [x] Obtain bounded independent review: specification/quality pass, the same
+  56 process cases pass before/after, and extension/reference compilation plus
+  changed-file lint pass on the exact one-file overlay.
+- [x] Respond to the summary-only finding and obtain a fresh repository
+  assessment plus the final committed head's actual check results.
+
+The sixth-round cleanup is committed as `6a591ff`. The summary-only response is
+posted and CI `35161728080` passes all four jobs and every actual step. Review
+`5229347240` nevertheless identifies an initialization-order hazard in the
+isolated POC controller; it is not cleared by the successful review job.
+
+### Seventh repository reassessment
+
+- [x] Reproduce eager controller refresh with seven failures and 14 controls
+  across the POC suite. A host double invokes the refresh callback during
+  construction; native eager-callback behavior is not claimed.
+- [x] Defer only refresh work until construction completes, then recheck
+  cancellation and read current records. Preserve immediate new-session
+  creation and provider streaming; all 21 POC cases pass.
+- [x] Rerun full integration: 1,448 root tests, forced typecheck, lint, Stable
+  build/seven-entry VSIX, both Stable hosts' 17 cases, 21 POC tests/five files,
+  nine-entry POC packaging, one Insiders POC case, both installed trees, and
+  all four dependency audits pass.
+- [x] Obtain bounded independent review: specification/quality pass on the
+  exact two-file overlay, identical tests reproduce seven failures/14 controls
+  before and 21 passes after, and forced typecheck/POC compile/full lint pass.
+- [x] Reply to the summary-only finding and check the new committed head's
+  fresh repository assessment and actual CI steps before merging.
+
+The seventh correction is committed as `4409905`; the summary response is posted
+and CI `35163305028` passes all four jobs and every actual step. Review
+`5229519835` raises one common-failure privacy thread, so that head is not cleared
+for merge solely by its test coverage or successful review job.
+
+### Eighth repository reassessment
+
+- [x] Reproduce arbitrary error text retained through common Growth boundaries
+  with 29 failures and 29 controls, including actual participant evaluation
+  records. Expand to 64 focused cases with six runtime/policy code controls.
+- [x] Admit only the 15 declared model codes and 70 fixed core/runtime/policy
+  codes. Unknown/malformed/throwing errors use `GROWTH_UNKNOWN_ERROR`; preserve
+  typed lifecycle outcomes and real core hint prerequisites.
+- [x] Retain all 11 existing stale-user-action assertions unchanged. Correct
+  the initial catalog omission rather than relaxing these assertions. Change
+  only two legacy untyped-message expectations to the stable unknown code.
+- [x] Rerun full integration: 1,512 tests/110 files, forced typecheck, full lint,
+  Stable build/seven-entry VSIX, 17 cases on each Stable host, 21 POC cases,
+  nine-entry POC packaging, one Insiders POC case, both installed graphs, and
+  all four dependency audits pass.
+- [x] Independently re-review the exact five-file privacy patch and both
+  intentional expectation changes: specification/quality pass, identical
+  tests reproduce 29 failures/35 controls before and 64 passes after, and
+  118 affected regression cases plus forced typecheck/full lint pass.
+- [ ] Reply in the original thread, resolve the addressed concern, and obtain
+  another repository assessment plus the final committed head's actual checks.
+
+Merge is permitted only after those gates and the final revision's checks pass.
+Their live status belongs to the PR/check history, not a prospective approval
+in this document.

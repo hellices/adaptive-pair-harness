@@ -28,6 +28,9 @@ export type PairEvent =
       readonly status: PresenceStatus;
     })
   | (EventBase & {
+      readonly type: "WorkspaceObserved";
+    })
+  | (EventBase & {
       readonly type: "SessionStarted";
       readonly sessionId: string;
     })

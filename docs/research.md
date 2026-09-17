@@ -491,11 +491,701 @@ metadata reported version `1.139.0-insider` and commit
 not interchangeable build identifiers or a claim to have tested all Insiders
 versions.
 
-Local validation does not approve the integrated revision. PR #6 remains the
-live record for fresh final-head CI, requested reviews, original-thread
-responses, and resolutions. This integration does not merge PR #6, authorize
-P2/P3, change the Stable host floor or protocol, or expose Pair runtime or
-editing controls.
+At that integration checkpoint, local validation did not approve or merge the
+revision; PR #6 remained the record for final-head CI, reviews, original-thread
+responses, and resolutions. The owner subsequently directed its merge, recorded
+at `9eebbf19e201b0ff6642868728ef217738ad31f7`. That merge does not authorize
+P2/P3, change the Stable host floor, or expose Pair runtime or editing controls.
+
+#### Runtime boundary stabilization
+
+After P1 merged, the owner authorized pragmatic architecture refactoring before
+the next product increment and explicitly required bounded code units. The
+canonical implementation plan replaces the completed P1 plan; this is not P2
+implementation or new evidence of learning effectiveness.
+
+The audit reproduced defects despite a green 673-test baseline: the production
+store could acknowledge two commands at the same revision while retaining only
+one result; direct snapshot replacement let a pending command undo Disable or
+overwrite an observation. The implementation replaces split append/save and
+out-of-band replacement with one queued, atomic core transition path. Tests use
+the same store contract rather than a more permissive substitute.
+
+The Growth response-release workflow and model contracts move inward to the
+runtime. Independent AI review caught a new extraction regression: an await
+between final validation and Markdown/evaluation publication allowed Pause to
+commit before stale output was displayed. A second review reproduced an earlier
+gap: awaiting a final snapshot can return state captured before a queued Pause
+commits. Both plain and runtime-bearing model results then appeared delivered
+while the authoritative store was paused. Those two full-participant regressions
+failed before replacing the async final read with a required synchronous live
+view of the same store. Asynchronous request work now ends before that read;
+finalization, evaluation, and Markdown publication stay in one continuation.
+The two incoming-snapshot regressions and all eight existing publication
+interleavings pass, retaining their live-state and delivered-output assertions.
+
+Review also reproduced obsolete host intent, stale listener/status projections,
+and workspace capture continuing after Disable. Twelve focused lifecycle cases
+now cover trust waits, deferred Enable/Disable completion, stale callbacks,
+disposal, and capture interrupted by Disable/Pause/dispose. Independent AI
+re-review reported 360 passing Disable interleavings, delayed projection and
+stale-callback probes, and cancellation checks across metadata and native
+filesystem waits. This is engineering verification, not human approval or a
+replacement for final-branch CI and host checks.
+
+Typed ESLint existed before this work, but file/function size rules did not.
+Ten code-size policy cases failed before the rules were enabled, then passed.
+Production/release files and functions are limited to 400/100 effective lines;
+tests, fixtures, and host cases use 600/200. A further negative probe exposed
+ESLint's default exemption for immediately invoked functions; explicit `IIFEs`
+enforcement closes it in both rule configurations. Inline suppression is disabled
+and warnings fail lint. Large modules and suites are split by responsibility while
+preserving their assertions. The isolated POC is also linted; its Promise-based
+completion and immediate streaming behavior are characterized separately.
+
+The same ESLint blank/comment accounting measures these reductions against the
+merged P1 baseline; extracted responsibilities remain subject to the same limits:
+
+| Module | Before | After (effective lines) |
+|---|---:|---:|
+| Growth participant | 947 | 106 |
+| Model adapter | 598 | 255 |
+| Verification adapter | 866 | 207 |
+| Core decision dispatcher | 578 | 61 |
+| Core event reducer dispatcher | 522 | 69 |
+| Runtime coordinator | 644 | 266 |
+
+The dependency checker has negative fixtures for forbidden/undeclared imports,
+project-reference mismatches, deep/relative package escapes, and graph cycles.
+It reproduced the extension's missing direct protocol declaration before that
+manifest and the lockfile were corrected. Independent integration review found
+two further gaps: reference-only edges lacked declaration/direction checks, and
+authored host fixtures plus root/POC configurations escaped lint. Thirteen added
+cases failed before these fixes. The final guard suites contain 22 architecture
+and 22 code-size tests; all pass, including actual oversized fixture/configuration
+and IIFE probes. Standalone configurations and intentionally incomplete host
+fixtures use syntactic lint, not type-aware checks; the size/suppression rules
+remain enforced. Fixture-only unused function parameters preserve the deliberate
+bug exercised by the unchanged host scenarios. The original reviewer rechecked
+both fixes and reported specification and quality passes.
+
+Separate independent reviews preserved all 17 host scenario names/order and 100
+assertions, all 28 verification exports and their original test cases, and the
+POC's immediate Promise-executor behavior. Verification extraction review matched
+512 baseline/candidate traces; core/runtime extraction review matched 8,426
+decision and 3,411 reducer comparisons. These are bounded differential probes,
+not an exhaustive proof or a substitute for the repository PR review.
+
+The only lockfile changes add the extension's protocol edge and runtime's
+restraint edge; external versions are unchanged.
+
+Pre-PR local refactoring validation, run with Node.js 24.20.0 after the guard
+follow-ups, completed successfully:
+
+- Clean installation of both dependency graphs, forced workspace typecheck,
+  expanded lint, and **834 tests across 70 files**.
+- Stable bundle and VSIX creation/inspection, with **7 archive entries**.
+- **17 isolated host scenarios on each of VS Code 1.136.2 and 1.137.0**, both
+  exiting 0. The tests retain inactive-zero, production-wiring, and coexistence
+  assertions; they never use the developer's profile.
+- Separate POC compilation, **8 unit tests across 4 files**, a **9-entry VSIX**,
+  and **1 Insiders host test** exiting 0. The cached application reports
+  `1.139.0-insider`; the downloader's build identifier is not its application
+  commit or an additional tested host.
+- Both installed dependency trees validate, and all four full/production-only
+  audits return zero vulnerabilities.
+
+The existing native Vite configuration-loader warning and host diagnostics were
+not suppressed. These are local execution and independent AI-review results,
+not claims about a future PR revision. The PR's review/check history remains
+the record of repository review, follow-up handling, and final-head CI. The
+owner explicitly authorized merging this refactoring after those gates pass,
+then proceeding to the next reviewed increment.
+
+PR #8's initial four CI jobs passed at `41d9af7`, but its first repository review
+requested changes. Follow-up probes reproduced the open-buffer filesystem
+identity bypass, cancelled publication, stale human-action grants, late model
+completion, malformed package scripts, and process-ID reuse. A second repository
+review identified inconsistent binary rejection for dirty scope buffers and a
+missing-file alias gap in verification's dirty-buffer check. Passing baseline
+tests did not disprove those findings, and out-of-date review locations were not
+treated as resolved concerns.
+
+Open-document context now resolves filesystem identities before reading buffer
+content. Missing/new files resolve through existing ancestors; dangling links,
+escaping identities, and secret aliases remain excluded. Twelve authored cases
+include ten pre-fix failures and two positive controls. Scope reads additionally
+apply the disk path's NUL-content rejection to dirty buffers, including safe
+symlink aliases; six cases failed before that correction, with five controls
+preserving text, byte-limit precedence, and binary disk rejection.
+
+Growth publication and explicit-action tests first reproduced twenty failures
+with five controls. Independent re-review then found a separate transfer
+continuation after the initial publication; four more timing cases failed before
+the continuation gained its own cancellation guard. The independent reviewer
+reported all 98 final timing/intent probes passing, including pre-abort
+publication, late-cancellation controls, and all 28 grant-binding probes. Native
+Chat tokens and models were simulated; this is not a host-test claim.
+
+Model transport probes distinguish stream completion, final token accounting,
+and model dispatch. Four initial late-success failures led to completion gates;
+independent review exposed that the timer cancelled a derived signal while those
+gates still consulted the caller's signal. Four additional cases reproduced
+clock-rollback success and dispatch after input-accounting cancellation. The
+derived timer reason is now latched and checked throughout the turn. Four more
+cases verify that rejected input/output token accounting retains time-cap or
+user-cancellation classification instead of leaking a provider error.
+Independent re-review reported all 46 model tests, 35 additional transport probes,
+and 120 actually token-cancelled real-clock trials passing; ordinary provider
+errors and timer/listener cleanup were also checked.
+
+Verification manifest validation rejects every non-string script value before
+confirmation or execution. The first Windows correction replaced a permanent
+PID set with weak child-object keys. It addressed retention and PID reuse, not
+proof of tree exit; the third reassessment below supersedes that confirmation
+mechanism. Eleven pre-fix failures
+and 21 controls pass after the fixes. Independent verification reported 57
+additional manifest/lifecycle probes passing and collection of 10,000 released
+child objects, compared with retention under a strong-set mutation. Windows
+system calls were mocked; native Windows execution was not tested.
+
+Deleted/new dirty verification buffers now resolve through the nearest existing
+canonical ancestor, retaining safe alias membership without inventing a usable
+identity for dangling links or unavailable roots. Fourteen cases failed before
+this correction and four controls already passed. The 18 authored cases use
+temporary real filesystem trees; access-denial faults use the existing identity
+seam. Construction remains lazy and performs no identity lookup.
+
+Runtime follow-ups dispatch a clone of the persisted operation input, check
+cancellation across grant snapshot/queue/load boundaries, and remove parent abort
+listeners when an invocation settles. Eight pre-fix failures led to those
+corrections. Independent review found no ordinary-invocation admission race in
+198 schedules per revision, but reproduced a concurrent-reconciliation escape:
+an aborted read could be redispatched through an unlinked recovery controller.
+Ten additional failing cases and two controls led to queued fresh recovery
+admission, in-flight exclusion, and registered cancellation, with effects still
+outside the mutation queue. The recovery tests also preserve safe orphaned-read
+retry, failure cleanup, and no automatic replay of unknown mutations.
+
+Archive end-record boundary probes did not reproduce a defect. Independent
+review rejected 193 short-buffer variants with the typed archive error and
+accepted 12 valid boundary archives, including maximum-length ZIP comments. The
+parser is unchanged; the permanent short-buffer/comment tests characterize its
+existing behavior rather than claiming a speculative parser fix.
+
+After these follow-ups, local validation on the frozen source/test tree with
+Node.js 24.20.0 completed successfully:
+
+- Forced workspace typecheck, full enforced lint, and **972 tests across 81
+  files**.
+- Stable bundle, **7-entry VSIX**, and explicit archive verification.
+- **17 isolated host scenarios on each of VS Code 1.136.2 and 1.137.0**, both
+  exiting 0 with inactive-zero and coexistence assertions intact.
+- Separate POC compilation, **8 unit tests across 4 files**, **9-entry VSIX**,
+  and **1 Insiders host test** exiting 0. Application metadata again identifies
+  the tested Insiders cache as `1.139.0-insider` at
+  `c74ba73b780a4a33173c006e52560d61432f53d6`.
+- Both installed dependency trees valid and all four full/production-only
+  audits at zero findings; external versions and both lockfiles are unchanged
+  by these review follow-ups.
+
+That checkpoint was committed as `8fd60be`; all four CI jobs passed, and the
+three original inline concerns received evidence replies and were resolved.
+The subsequent repository assessment still identified five concerns. Existing
+Vite and native host diagnostics remain visible rather than suppressed.
+
+##### Second PR reassessment
+
+Review `5226378228` publishes three summary-only composition findings: transfer
+intent changing during consent, agreed aliases rejected by the canonical result
+check, and missing dirty buffers rejected before they can be read. Its logs name
+two additional runtime locations without publishing their complete bodies. The
+review response requests those bodies; independently verified defects are not
+presented as reconstructed reviewer text.
+
+Cancellation of local commands during snapshot, queue, or validation waits
+first produced 14 failures with four controls. Passing an abort signal through
+the existing transition queue now preserves uncommitted grants/state and retains
+already committed actions. Independent review passed 68 relevant tests and 24
+additional in-memory probes on its frozen patch, including queue recovery and
+effect cancellation. The public coordinator dispatch API is unchanged.
+
+Transfer captures intent before consent and carries it through runtime
+preparation/finalization and the accepted result's later state/note continuation.
+The 35 real-coordinator cases initially had 18 failures and 17 controls;
+same-intent revision advances remain supported. Scope access and its effect
+runner now share a canonical per-operation permission snapshot. Real-filesystem
+composition tests initially produced 19 failures with 17 controls, then exposed
+one additional regular-file-ancestor defect. The corrected suite retains
+unagreed child-link rejection, missing-buffer safety, cancellation, and UTF-8
+limits instead of accepting arbitrary lexical result paths.
+
+The state-query investigation independently reproduced diagnostics, source
+paths, operation input, and available grant identifiers reaching both the native
+tool response and a later Growth model request. An accumulated response exceeded
+the catalog's 8,000-character limit while reporting non-sensitive, non-partial
+data. No model-side grant bypass was established: native confirmation, Growth
+direct-action restrictions, and the harness's object-bound grant checks remained
+effective. Data disclosure, not an invented privilege escalation, is the defect.
+
+The replacement is a small runtime-owned, frozen allowlist projection. Raw text,
+paths, operation records, and grants stay internal; safe bounded identifiers and
+status/hint/verification metadata remain available. Unsafe identifiers are
+omitted and flagged partial, not truncated into new identities. Verification
+counts only the actual verification tool for the current work unit and authority.
+Twenty-one authored runtime/native/Growth cases failed before the correction and
+pass after it, including long input histories, unsafe identifiers, unknown
+future fields, grant preservation, and one-shot reuse rejection.
+
+Independent state-projection review passes on its frozen patch: the real
+coordinator/native-tool/Growth-loop reproduction removes seven private canaries
+from model-visible results while preserving them internally. A 10,000-operation
+fixture produces a 683-character state result. The reviewer also checks 144
+identifier cases, three mixed-ID controls, 196 hint-policy combinations, pending
+verification settlement, recursive freezing, and native confirmation/one-shot
+controls. Its 166 scoped tests, no-emit typecheck, and typed lint pass. Output
+size is bounded, but verification aggregation still scans history; operation
+settlement is not a claim that product assertions passed. Native host/model
+interfaces are doubled in these independent probes.
+
+The initial integrated second-round source/test checkpoint passes forced typecheck,
+enforced lint, and **1,083 workspace tests across 87 files** under Node.js
+24.20.0. Stable build/7-entry packaging and the separate POC's 8 unit tests and
+9-entry package pass. All 17 isolated host scenarios pass on each Stable matrix
+version (1.136.2 and 1.137.0), and the POC's Insiders host case passes. Both
+Stable application commits are unchanged from the earlier checkpoint; the
+freshly downloaded POC host's application metadata is `1.139.0-insider` at
+`4dbe1643e6189ba7b1bbe542cc0e56a94d9ff132`, rather than the download log's older
+archive label. Both installed dependency trees are valid and all four
+full/production-only audits
+report zero findings. Independent transfer/scope/projection reviews, repository
+reassessment, and final-head CI remain gates; this checkpoint is not a
+prospective merge approval.
+
+Independent review then found an identical-session recreation case: Disable and
+a new `SessionStarted` can reuse all IDs and agreement values while resetting the
+epoch to zero. Six transfer probes failed despite the initial 35 tests passing.
+The correction derives `startedAtRevision` from committed event metadata and
+adds it to the transfer intent. It preserves harmless observation advances and
+existing epoch/command/event semantics instead of relying on user-supplied IDs,
+wall time, or an adapter-local counter. The new lifecycle cases and core snapshot
+assertion produced nine failures with 43 controls; all 52 pass after correction,
+along with forced typecheck and full lint. Replay checks respect the existing
+journal's deliberate pruning of history before Disable.
+
+Scope review also reproduced four valid-operation regressions caused by an
+unrelated stale dirty document whose ancestor became a regular file. The
+structural not-a-directory outcome now retains `ENOTDIR`: dirty-buffer matching
+skips the impossible candidate, but requested-path normalization propagates the
+error. Four new regressions failed before this correction; eight additional
+controls preserve EACCES and cancellation handling. The 49 composition cases
+and all 164 related scope tests pass without lexical fallback or weakened
+requested-path rejection.
+
+Independent scope re-review passes all 164 supplied cases, the prior 59
+adversarial probes, and 18 additional invalid-target, real EACCES/ELOOP, and
+cancellation-precedence controls. The four original stale-buffer regressions
+fail on the previous patch and pass on the correction. Its pinned no-emit
+typecheck, typed lint, and size checks pass; VS Code is mocked and native Windows
+execution is not part of that verdict.
+
+After the lifecycle and stale-buffer corrections, a fresh integrated run passes
+**1,105 tests across 89 files**, forced workspace typecheck, full enforced lint,
+Stable build and explicit **7-entry VSIX** verification, and **17 isolated host
+scenarios each on VS Code 1.136.2 and 1.137.0**. The isolated POC and dependency
+graphs are unchanged from their recorded second-round checks. The final Growth
+lifecycle reassessment subsequently passes, alongside cancellation, disclosure,
+and scope review. All four CI jobs pass at `d84c4fe`, including the Insiders
+test step. Repository review `5227383478` then requests additional changes;
+neither the scoped approvals nor successful CI clear those new findings.
+
+#### Third review: consent lifetime, tool boundaries, and termination evidence
+
+Real coordinator Disable/recreation tests reuse the same session and work-unit
+IDs. Twelve initial failures with one control expose a model-only consent cache
+and lifetime-unaware transfer/check records, including deferred consent. The
+fix binds destination grants and transient state to workspace, session ID, and
+committed `startedAtRevision`; it preserves repeated consented requests within
+one lifetime. Three additional failures expose a confirmed check being rendered
+after recreation, pause, or an observation commits; synchronous final publication
+now rejects those stale results without assigning them to the new state.
+
+Independent route review later finds three publication/admission gaps: a
+`/session` continuation can display expired cached outcomes, reveal confirmation
+can open after admission changes, and a declined modal can write after Chat
+cancellation. The 58 focused reproduction/control cases are promoted into the
+repository: 25 fail before correction and all 58 pass afterward. Ordinary
+coordinator scheduling reproduces 14 of the failures without a snapshot mock.
+Session display now uses the live synchronous snapshot; reveal is fenced before
+confirmation; neither declined modal writes after cancellation. Two existing
+transfer controls also require a non-cancelled decline to remain neutral across
+lifecycle changes. They initially expose an overly broad stale-intent check;
+the corrected cancellation gate preserves those assertions rather than changing
+them. The combined route/transfer-intent checkpoint passes all 101 cases,
+forced typecheck, and full lint. Native dialogs and models are still simulated.
+
+Fourteen mode/intent failures with four controls show non-Growth routes opening
+dialogs or dispatching, a reveal modal adopting replacement state, and a model
+returning a different workspace's runtime boundary. The context-consent adapter
+captures the original Growth intent before any dialog, and the pure runtime
+checks the workspace as well as session/work-unit lifetime during finalization.
+
+Ten model-tool/use-case failures establish unsupported mode selection,
+same-response and follow-up reuse of an outdated tool view, unadvertised calls,
+and incorrect outcome classification. The correction limits host mode selection
+to Growth and ends a confirmed state-contract turn before further model work.
+It keeps the committed action but asks for freshly prepared context and tools;
+that transition records neither a hint outcome nor a restraint failure.
+The combined Growth, accounting, and guarded-use-case checkpoint passes
+**260 tests across 18 files**, forced typecheck, and enforced scoped lint.
+Native model APIs are simulated in these focused tests.
+
+Scope regressions first produce seven canonical/alias discovery failures and
+four oversized 12,025-character observations. The same 86 focused cases pass
+after prefix normalization and shared exact-query/observation budgeting.
+The worker's 201 related scope cases pass with typed lint and size limits;
+independent whole-boundary review then identifies two remaining defects.
+
+An agreed file alias and its canonical file can have overlapping parent
+prefixes. Choosing the first rather than longest prefix duplicates the nested
+directory. Four reproductions fail before correction; the expanded 30-case
+pattern suite covers both orders without widening canonical permissions.
+
+Observation-only budgeting also misses result metadata and the Growth trust
+prefix. An exact 11,975-character query produces a 12,000-character observation
+but a 12,211-character native result and 12,238-character Growth text. A short
+query with many matches can overflow the complete representation too. Thirteen
+additional failures with 16 controls exercise complete effect, runtime, native,
+and Growth result limits. These layers now reject oversized representations
+without truncating queries or identifiers; an already committed operation is
+not rolled back. The combined result-envelope and prefix checkpoint passes
+59 tests across five files, forced typecheck, and full enforced lint. Independent
+reassessment subsequently reports specification and quality passes: 54
+policy-adjusted original probes, 62 additional boundary probes, 223 supplied
+cases, and 89 surrounding runtime/adapter controls pass. Its unchanged original
+replay is explicitly retained as 50 passes and four failures: two formerly
+accepted oversized queries now decline before discovery, and crowded-match
+cases stop at 34 unchanged matches with `partial: true`. A separate policy copy
+asserts those bounded outcomes rather than silently dropping the four cases.
+Exact-boundary probes preserve committed operations and accept a 12,000-character
+Growth text representation while refusing one additional character. Filesystem
+evidence is native macOS; VS Code/model APIs are simulated.
+
+The Windows regression suite first has 14 failures and eight controls. Successful
+`taskkill` delivery had been cached as termination, so parent close or escalation
+could falsely confirm a still-unknown tree exit. The correction removes that
+inference: known-PID Windows cancellation remains unconfirmed without liveness
+proof, including after `/F` succeeds. All 22 platform tests and 118 verification
+tests pass. Independent review passes the same 118 cases, 18 additional probes,
+two RED/GREEN false-confirmation reproductions, and a native macOS descendant
+exercise. Windows syscalls remain mocked. A one-second helper timeout is requested,
+but `spawnSync` waiting for helper exit is not a proven hard wall-clock bound.
+
+The initial third-round integrated checkpoint passes **1,194 tests across 94
+files**, forced typecheck, full lint, Stable build and **7-entry VSIX** inspection,
+and **17 isolated host scenarios on each of VS Code 1.136.2 and 1.137.0**. The
+unchanged isolated POC passes its eight unit tests, nine-entry package, and one
+Insiders host case. Both installed dependency trees validate; all four full and
+production-only audits report zero findings.
+
+After the overlapping-prefix and complete-result corrections, fresh integrated
+validation passes **1,216 tests across 97 files**, forced typecheck, and full
+enforced lint. Stable build/package/explicit verification again produces seven
+VSIX entries, and each Stable host version passes all 17 isolated scenarios.
+The separate POC again passes its eight unit cases, nine-entry package, and one
+Insiders host case. Both installed dependency trees validate and all four full
+and production-only audits again report zero findings. The existing Vite native
+configuration warning remains visible; it is not suppressed or a passing lint
+exception.
+
+After the route-publication/modal corrections and neutral-decline controls,
+fresh forced typecheck, full lint, and **1,274 tests across 99 files** pass.
+Stable build, seven-entry VSIX verification, and both Stable hosts' 17 scenarios
+also pass again. The isolated POC and both installed dependency graphs remain
+unchanged from the successful checks above; those commands are not claimed as
+rerun by this route-only checkpoint.
+
+Independent consent/route reassessment now reports specification and quality
+passes on the corrected frozen artifact. All 58 original probes pass without
+assertion changes, as do 101 promoted/transfer-intent cases and 226 focused/prior
+regressions. The model-transition review separately passes 120 independent
+probes and its 288-case related suite. Together with the Windows and
+complete-result/prefix reviews, each third-round correction has a scoped
+independent pass. These are AI technical reviews, not a native-host guarantee
+or whole-product certification.
+
+The third-round correction is committed as `6236a06`. Both original inline
+threads have evidence replies and are resolved, and all four CI jobs pass,
+including the actual Insiders test step. Review `5228345791` then requests five
+more corrections; the green checks do not clear those findings.
+
+#### Fourth review: workspace authority and useful bounded results
+
+Two inline findings expose the same workspace-rebinding defect: changing the
+Presence workspace preserves an existing session and authority epoch. Sixteen
+new failures with seven controls establish the lifecycle cases, followed by two
+reused-ID result-admission failures. The correction emits an atomic disable/enable
+batch, rejects a replayed rebind without a reset, and correlates late results with
+their original authorization revision. All 25 focused cases and 424 core/runtime
+cases pass. Independent review of cancellation and cleanup compositions remains
+a separate gate; cancellation cannot undo an external action already performed.
+
+Multi-root pattern tests produce 20 failures with 38 controls. A pattern qualified
+by one agreed root was incorrectly searched relative to other roots. The fix
+classifies qualification across all canonical/lexical scopes before discovery;
+58 pattern cases and 238 related scope/context cases pass, including physical and
+aliased workspace roots and the existing permission/binary/cancellation controls.
+
+Eight failing native/runtime/Growth cases with six controls show that capping
+only read text or verification output still overflows complete representations.
+Shared runtime result assembly and Growth text serialization now drive prefix
+selection with metadata overhead reserved, including escaped identities and
+large numeric revisions. Truncation preserves code-point boundaries and keeps
+ordinary large reads/checks useful instead of replacing them with size failures.
+Two legacy body-only exact-length assertions are deliberately replaced with
+complete-result bounds, nonempty prefix checks, and truncation flags, retaining
+their byte-limit and sensitivity assertions. Additional immutable-identity cases
+retain the bounded-failure backstop without falsifying IDs or undoing committed
+operations. The 176-case combined result/scope checkpoint, forced typecheck, and
+full lint pass. These tests simulate host/model APIs.
+
+The initial integrated fourth-round source tree passes **1,343 tests across 102
+files**, forced typecheck, full lint, Stable build/seven-entry VSIX verification,
+and 17 isolated cases on each Stable host. Independent re-review and the eventual
+committed head's repository review/checks remain required; this checkpoint does
+not pre-approve merge or a later source revision.
+
+The independent cancellation review then reproduces a pending-registry ownership
+defect. An abort-resistant old invocation or recovered read can settle after a
+replacement reuses its operation ID. Its unconditional cleanup deletes the new
+entry, so later Pause/Disable misses the replacement controller and explicit
+reconciliation can dispatch a duplicate read. Promoting the review's regressions
+and controls produces 20 failures with 28 passes before the correction. Both
+cleanup paths now compare controller identity before deleting an entry, while
+still unlinking and aborting their own controller. All 48 maintained cases and
+68 surrounding workspace/lifecycle/recovery cases pass with forced typecheck
+and scoped lint. Independent specification and quality re-review passes 235
+cases across 18 files: 64 unchanged original probes, 25 workspace cases, the
+48 promoted cases, 82 surrounding controls, and 16 additional parent-signal
+probes. The promoted cases overlap the original probes, rather than representing
+48 new independent scenarios. All 20 previously failing cases pass unchanged;
+old cleanup preserves the replacement's listener for shared or distinct parent
+signals. This evidence uses the real coordinator/journal with deferred effects,
+not a native-host execution claim.
+
+Independent result-envelope review passes 47 additional serialization probes,
+14 actual Growth-loop probes, 187 supplied tests, and 158 surrounding controls
+on its frozen scope. It also identifies two pattern-selection defects: a root
+file's implicit dot parent incorrectly qualifies relative patterns globally,
+and a missing permitted file loses its parent-prefix qualification. Four new
+regressions and six residual cases fail; the observed wrong selections remain
+within the allowed-path union, not demonstrated escapes beyond that union.
+The main-tree reproduction confirms ten failures with 70 passing controls after
+promoting these cases and relative-pattern union controls. The correction excludes
+the implicit dot parent from global qualification and retains missing-target
+prefixes only after safe identity and containment checks. Missing files constrain
+selection but are not newly enumerated. Independent specification and quality
+re-review freshly reproduces the ten failures on the previous artifact, then
+passes all 36 original probes unchanged on the final source. Another 28 probes
+cover missing ancestors, exact-file aliases, ENOTDIR, dangling links, real
+filesystem EACCES, fallback-await cancellation/failure, and outside-root
+retargeting. Together with 47 envelope probes, 14 Growth probes, 209 supplied
+tests, and 158 surrounding controls, 492 final-artifact test executions pass.
+Pinned no-emit typecheck and scoped lint pass. These tests use the real macOS
+filesystem and mocked host/process APIs, not native Windows evidence or an
+exhaustive proof of filesystem interleavings.
+
+Fresh integrated validation after the ownership and qualifier corrections passes
+**1,413 tests across 104 files**, forced typecheck, full enforced lint, Stable
+build/seven-entry VSIX verification, and 17 isolated cases on each Stable host
+version. The unchanged POC is freshly checked too: eight tests across four files,
+a nine-entry package, and one Insiders host case pass. Both installed dependency
+trees validate and their four full/production audits report zero findings. These
+local results and scoped independent passes do not replace original-thread
+responses, repository review, or final-head CI.
+
+The fourth-round corrections are committed as `db98654`. Original-thread replies
+and resolutions, the summary-only response, and CI `35156743700` are recorded in
+PR #8. All four CI jobs and their actual steps pass, including Insiders. A fifth
+repository assessment still requests further corrections.
+
+#### Fifth review: close settlement, validated values, and non-raw publication
+
+Review `5228948895` identifies delayed cancellation settlement after child close
+when Windows tree exit is unobservable. Fifteen failures with 27 controls reproduce
+the delay, including grace/confirmation boundaries and synchronous close inside
+signal delivery. The corrected port represents unknown separately from observed
+alive and proven stopped. Unknown aborted close settles promptly and unconfirmed,
+without leaving a later PID-targeted signal or reinstalled timer. Known-live
+POSIX groups and children that never close retain bounded escalation. The 56-case
+process checkpoint and scoped lint pass. Seventeen legacy expectations deliberately
+change from unknown-as-alive or post-close Windows escalation to the new explicit
+semantics; no-close and known-live controls remain active. These Windows syscalls
+are mocked, not native execution evidence.
+
+Two value-propagation comments are addressed by capturing `previewOnly` once,
+validating it, and carrying the captured value into the event and reduced state.
+The current protocol still requires literal true. Ten characterization cases pass
+before and after the behavior-preserving cleanup, including invalid values and
+read-once accessors; they are not presented as previously failing bug tests.
+
+The final broad integration review of `db98654` independently passes 293 maintained
+tests, full lint/typecheck, and Stable build/seven-entry package verification, but
+finds two residual gaps. Real coordinator scheduling lets `/brief` print a cleared
+agreement after Disable; input/output tokenizer errors can retain their supplied
+private text in in-memory evaluation reasons. No persistence or exfiltration is
+established. Promoted probes reproduce three failures with three controls; expanded
+sync/async input, response-text, and tool-call accounting cases produce seven
+failures with three controls. `/brief` now uses the final synchronous live snapshot,
+and accounting errors become a stable code after lifecycle checks. All ten cases
+and 18 local/publication controls pass with forced typecheck and full lint. The
+independent process/preview and broad-correction reassessments remain required.
+
+The independent process/preview re-review subsequently reports specification and
+quality passes on the exact seven-file overlay. It repeats the 15-failure/27-control
+RED, all 56 process cases, 99 combined cases, ten before/after characterizations,
+forced typecheck, and full lint. All 218 additional adversarial probes pass. The
+review explicitly justifies the 17 changed legacy expectations and verifies all
+out-of-scope tracked files unchanged. In a native Darwin probe, the descendant
+remains alive after parent close, receives escalation at approximately 5.003
+seconds, and settles confirmed at 5.256 seconds with zero residual groups. This
+native evidence covers POSIX, not Windows.
+
+The independent publication/privacy re-review also reports specification and
+quality passes on the exact final source overlay. It replays the original six
+probes unchanged and passes 279 cases across 17 files, forced root typecheck,
+and full lint. Additional real-participant compositions cover initial and
+follow-up accounting, response text, serialized calls, and completed-tool input,
+with no retained provider message or cause. Cancellation/deadline priority,
+dispatch stopping, and deterministic core reason codes remain intact. This is a
+bounded re-review, not a second whole-branch inventory or an independent rerun of
+host/package/audit gates. Accounting probes settle or reject; they do not prove
+a hard completion bound for an indefinitely unresponsive provider.
+
+The integrated fifth-round source checkpoint passes **1,448 tests across 108
+files**, forced root typecheck, full enforced lint, Stable build and seven-entry
+VSIX verification, and 17 isolated host cases on each of 1.136.2 and 1.137.0.
+The separate POC passes eight unit tests across four files, its nine-entry package,
+and one Insiders host case. Both installed dependency trees validate, and all four
+full/production-only audits report zero findings. The existing Vite native-config
+warning remains visible. These results describe this local source checkpoint,
+not an unreviewed future commit or a substitute for final-head CI.
+
+#### Sixth review: explicit signal-failure handling
+
+The fifth-round source and evidence are committed as `e83d872`. All three original
+threads have evidence replies and are resolved. CI `35160931543` passes all four
+jobs and every actual step, including 17 Insiders host cases. Review `5229268443`
+adds no inline findings, but its body identifies a redundant conditional in the
+process-group signal catch and recommends closer review of the overall change
+size. A completed review job is not approval.
+
+The catch now explicitly returns false for signal failure without inspecting an
+error code that could not change its result. This does not alter the separate
+tri-state liveness observation, Windows taskkill, or no-PID fallback paths. The
+same 56 process cases pass before and after the cleanup, including ESRCH, EPERM,
+EACCES, and EIO signal/probe distinctions. These are characterization passes,
+not previously failing regressions.
+
+Fresh integrated validation on the cleanup source again passes 1,448 tests across
+108 files, forced root typecheck, full lint, Stable build/seven-entry package
+verification, and 17 isolated cases on each Stable host. The separate POC again
+passes eight tests, nine-entry packaging, and one Insiders host case. Both
+installed dependency trees validate and all four full/production audits report
+zero findings. Bounded independent review subsequently passes specification and
+quality on the exact one-file overlay, independently repeats the same 56 cases
+before/after, and passes extension/reference compilation and changed-file lint.
+It does not claim a new native or whole-branch run. The summary-only response and
+new committed head's repository review/checks remain separate merge gates.
+
+#### Seventh review: POC controller construction ordering
+
+The sixth correction is committed as `6a591ff`; its summary response is posted
+and CI `35161728080` passes all four jobs and every actual step. Review
+`5229347240` identifies a POC `ReferenceError` if the item-controller factory
+invokes its refresh callback before returning the controller. Thirteen focused
+tests plus the eight existing POC cases reproduce seven failures with 14 controls.
+The failures originate from the real binding's uninitialized `controller`, not
+from a compile or mock-resolution error. Native synchronous callback invocation
+is not established; the reproduction supplies an eager host double.
+
+The correction defers only the refresh body with a resolved-Promise continuation.
+It checks cancellation after construction and reads the current records before
+replacing items. Reverting to the old unassigned `let` variable alone would not
+solve construction ordering. Ordinary refresh, status/resource/title/timing
+mapping, cancelled refresh, refresh errors, repeated initial calls, immediate
+new-session creation, and its cancellation contract are tested. All 21 POC cases
+and full repository lint pass without changes to existing assertions or vendored
+declarations; other POC provider behavior and the Stable dependency graph are
+unchanged.
+
+Fresh integration passes 1,448 root tests across 108 files, forced root typecheck,
+full lint, Stable build/seven-entry VSIX verification, and 17 cases on each Stable
+host. The separate POC passes 21 tests across five files, nine-entry packaging,
+and one native Insiders host case. Both installed dependency trees validate and
+all four full/production audits report zero findings. The native host pass does
+not turn the eager-callback double into a reproduced native failure. Bounded
+independent re-review subsequently passes specification and quality on the exact
+two-file overlay. Identical tests independently reproduce seven failures with
+14 controls before and all 21 passes after; forced root typecheck, POC compilation,
+full lint, and effective size rules pass. No native invocation, upstream lookup,
+or whole-branch retest is attributed to that re-review. The summary response and
+final committed-head repository review/checks remain separate gates.
+
+#### Eighth review: common Growth failure serialization
+
+The POC correction is committed as `4409905`. Its summary response is posted and
+CI `35163305028` passes all four jobs and every actual step. Review `5229519835`
+adds one inline finding: the shared `growthFailureReason` still returns arbitrary
+`Error.message` text, despite the provider adapter's earlier accounting fix.
+
+The common-boundary reproduction yields 29 failures and 29 controls across two
+new test files. Coverage includes model/factory, snapshot/preparation/finalization,
+consent, optional validation, malformed typed codes, and throwing error accessors
+or prototypes. Real participant evaluations retain the private sentinel before
+the correction. This establishes in-memory retention, not disk persistence or
+exfiltration. The provider-specific `GROWTH_MODEL_ERROR` mapping remains intact.
+
+A private closed catalog now admits the same 15 typed model codes and 70 literal
+core/runtime/tool-policy codes, checked against their existing source definitions.
+Unknown failures become the existing `GROWTH_UNKNOWN_ERROR` without returning
+raw text. Adding a new code requires explicit admission; uppercase format and
+prefix matching are deliberately insufficient. The public model-failure type
+derives from its unchanged 15-code catalog. Core hint prerequisites and typed
+cancellation/stale/reprepare behavior remain distinct.
+
+An initial core-only catalog causes 11 unchanged stale-user-action controls to
+lose `STALE_TOOL_VIEW`. The runtime/policy catalog is completed rather than
+weakening those assertions; six direct code controls are also added. The final
+focused checkpoint passes 81 cases, including all 64 new cases and 17 existing
+user-action cases. Only two legacy expectations deliberately change: untyped
+`MODEL_UNAVAILABLE` and the test-only thrown `TRANSFER_VALIDATION_FAILED` now
+produce the stable unknown code. All other assertions remain.
+
+Fresh integration on the complete patch passes 1,512 tests across 110 files,
+forced root typecheck, full lint, Stable build/seven-entry VSIX verification,
+and 17 isolated cases on each Stable host. The unchanged POC again passes
+21 tests, nine-entry packaging, and one Insiders host case. Both installed
+dependency trees validate and all four full/production audits report zero
+findings. A final local forced typecheck, full lint, and all 1,512 tests also pass
+on the same source tree.
+
+Independent specification/quality review passes on the exact five-file overlay.
+The same 64 new cases reproduce 29 failures/35 controls on `4409905` and all pass
+after the correction. The original 53 guarded-turn controls pass on that base;
+118 affected regression cases, forced root compilation, and full lint pass on
+the fixed tree. All 70 admitted boundary literals have production producers,
+and the 15-code model union is unchanged. This is not a claim that every runtime
+message is admitted: the generic non-Error storage wrapper `STORE_COMMIT_FAILED`
+also becomes the unknown reason at the Growth boundary. Both intentional
+expectation changes are justified, and all stale-user-action assertions remain
+unchanged. No whole-branch, host, package, or audit rerun is attributed to this
+bounded review. Original-thread response/resolution and the new committed head's
+repository assessment/checks remain separate merge gates.
+
+Current authoritative session state remains in memory; the durable edit-episode
+journal is a separate continuity feature, not proof of session or ownership
+recovery.
 
 ### Dependency and tooling maintenance evidence (September 16, 2026)
 

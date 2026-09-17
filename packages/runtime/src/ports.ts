@@ -10,8 +10,11 @@ export interface PairStore {
     readonly snapshot: PairRuntimeSnapshot;
     readonly seenCommandIds: ReadonlySet<string>;
   }>;
-  append(streamId: string, events: readonly PairEvent[]): Promise<void>;
-  saveSnapshot(streamId: string, snapshot: PairRuntimeSnapshot): Promise<void>;
+  commit(
+    streamId: string,
+    expectedRevision: number,
+    events: readonly PairEvent[],
+  ): Promise<PairRuntimeSnapshot>;
 }
 
 export interface EffectRequest {
@@ -104,4 +107,12 @@ export interface PairCoordinatorPort {
     options?: InvokeToolOptions,
   ): Promise<PairToolResult>;
   reconcile(): Promise<PairRuntimeSnapshot>;
+}
+
+export interface PairPresencePort {
+  setPresence(
+    status: "observing" | "quiet" | "paused" | "off",
+    workspaceId?: string,
+  ): Promise<PairRuntimeSnapshot>;
+  observeWorkspace(): Promise<PairRuntimeSnapshot>;
 }

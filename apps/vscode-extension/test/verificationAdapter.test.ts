@@ -520,12 +520,17 @@ describe("VerificationAdapter — output bounds and sensitivity", () => {
     expect(String(result.observation?.output).length).toBeLessThanOrEqual(DISPLAY_LIMIT);
   });
 
-  it("truncates clean output to the display bound without flagging sensitivity", async () => {
+  it("reserves result metadata when truncating clean output without flagging sensitivity", async () => {
     const output = "y".repeat(DISPLAY_LIMIT + 2_000);
     const { ports } = makePorts(okOutcome({ output }));
     const result = await new VerificationAdapter(ports).run(scriptPlan("test"), signal);
     expect(result.sensitiveData).toBe(false);
-    expect(String(result.observation?.output).length).toBe(DISPLAY_LIMIT);
+    const displayed = String(result.observation?.output);
+    expect(displayed.length).toBeGreaterThan(0);
+    expect(displayed.length).toBeLessThan(DISPLAY_LIMIT);
+    expect(output.startsWith(displayed)).toBe(true);
+    expect(result.observation?.outputTruncatedForDisplay).toBe(true);
+    expect(JSON.stringify(result).length).toBeLessThanOrEqual(DISPLAY_LIMIT);
   });
 
   it("bounds multibyte output at 128 KiB without a trailing replacement character", async () => {

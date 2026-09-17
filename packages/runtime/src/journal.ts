@@ -3,9 +3,9 @@ import { createRuntime, reduce } from "@adaptive-pair/session-core";
 import type { PairStore } from "./ports.js";
 
 type StreamState = {
-  readonly events: PairEvent[];
-  readonly commandIds: Set<string>;
-  snapshot: PairRuntimeSnapshot | undefined;
+  readonly events: readonly PairEvent[];
+  readonly commandIds: ReadonlySet<string>;
+  readonly snapshot: PairRuntimeSnapshot;
 };
 
 const cloneFrozen = <Value>(value: Value): Value => {
@@ -29,7 +29,20 @@ const cloneFrozen = <Value>(value: Value): Value => {
 export class InMemoryJournal implements PairStore {
   private readonly streams = new Map<string, StreamState>();
 
-  public constructor(private readonly defaultStreamId: string) {}
+  public constructor(
+    private readonly defaultStreamId: string,
+    initialSnapshot = createRuntime(defaultStreamId),
+  ) {
+    this.streams.set(defaultStreamId, {
+      events: [],
+      commandIds: new Set<string>(),
+      snapshot: cloneFrozen(initialSnapshot),
+    });
+  }
+
+  public snapshotNow(streamId = this.defaultStreamId): PairRuntimeSnapshot {
+    return this.ensureStream(streamId).snapshot;
+  }
 
   public load(streamId: string): Promise<{
     readonly snapshot: PairRuntimeSnapshot;
@@ -38,44 +51,53 @@ export class InMemoryJournal implements PairStore {
     const stream = this.ensureStream(streamId);
 
     return Promise.resolve({
-      snapshot: cloneFrozen(this.replay(streamId, stream.events)),
+      snapshot: stream.snapshot,
       seenCommandIds: new Set(stream.commandIds),
     });
   }
 
-  public append(streamId: string, events: readonly PairEvent[]): Promise<void> {
-    const stream = this.ensureStream(streamId);
-    let nextRevision = stream.events.at(-1)?.revision ?? 0;
-    const existingCommandIds = stream.commandIds;
-
-    for (const event of events) {
-      nextRevision += 1;
-
-      if (event.revision !== nextRevision) {
-        return Promise.reject(new Error("NON_CONTIGUOUS_REVISION"));
-      }
-
-      if (existingCommandIds.has(event.commandId)) {
-        return Promise.reject(new Error("DUPLICATE_COMMAND_ID"));
-      }
-    }
-
-    for (const event of events) {
-      stream.events.push(cloneFrozen(event));
-      stream.commandIds.add(event.commandId);
-    }
-
-    stream.snapshot = undefined;
-    return Promise.resolve();
-  }
-
-  public saveSnapshot(
+  public commit(
     streamId: string,
-    snapshot: PairRuntimeSnapshot,
-  ): Promise<void> {
-    const stream = this.ensureStream(streamId);
-    stream.snapshot = cloneFrozen(snapshot);
-    return Promise.resolve();
+    expectedRevision: number,
+    events: readonly PairEvent[],
+  ): Promise<PairRuntimeSnapshot> {
+    try {
+      const stream = this.ensureStream(streamId);
+      if (expectedRevision !== stream.snapshot.revision) {
+        throw new Error("STALE_REVISION");
+      }
+
+      let nextRevision = expectedRevision;
+      const committedEvents = cloneFrozen(events);
+      for (const event of committedEvents) {
+        nextRevision += 1;
+        if (event.revision !== nextRevision) {
+          throw new Error("NON_CONTIGUOUS_REVISION");
+        }
+        if (stream.commandIds.has(event.commandId)) {
+          throw new Error("DUPLICATE_COMMAND_ID");
+        }
+      }
+
+      const snapshot = reduce(stream.snapshot, committedEvents);
+      const commandIds = new Set(stream.commandIds);
+      for (const event of committedEvents) {
+        commandIds.add(event.commandId);
+      }
+      const disabledAt = committedEvents.findLastIndex(
+        event => event.type === "PresenceChanged" && event.status === "off",
+      );
+      this.streams.set(streamId, {
+        events: disabledAt < 0
+          ? [...stream.events, ...committedEvents]
+          : committedEvents.slice(disabledAt),
+        commandIds,
+        snapshot,
+      });
+      return Promise.resolve(snapshot);
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error("STORE_COMMIT_FAILED", { cause: error }));
+    }
   }
 
   public events(streamId = this.defaultStreamId): readonly PairEvent[] {
@@ -94,23 +116,10 @@ export class InMemoryJournal implements PairStore {
     const created: StreamState = {
       events: [],
       commandIds: new Set<string>(),
-      snapshot: undefined,
+      snapshot: createRuntime(streamId),
     };
 
     this.streams.set(streamId, created);
     return created;
-  }
-
-  private replay(
-    streamId: string,
-    events: readonly PairEvent[],
-  ): PairRuntimeSnapshot {
-    let snapshot = createRuntime(streamId);
-
-    for (const event of events) {
-      snapshot = reduce(snapshot, [event]);
-    }
-
-    return snapshot;
   }
 }

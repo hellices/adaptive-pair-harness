@@ -1,11 +1,12 @@
 # Adaptive Pair v2: Product and System Design
 
 - **Updated:** September 16, 2026 (UTC)
-- **Status:** The reviewed P1 policy increment was authorized on September 16,
-  2026 and is implemented as pure contracts. The remaining v2 roadmap is
+- **Status:** The reviewed P1 policy increment is merged as pure contracts.
+  The owner then authorized runtime-boundary and code-size stabilization before
+  further product work. The remaining v2 roadmap is
   proposed and requires separately reviewed implementation plans and approval.
 - **Implementation:** Stable Growth Mode preview implemented (Tasks 1–12):
-  host-agnostic protocol, durable runtime, versioned harness kernel, Growth
+  host-agnostic protocol, in-memory authoritative runtime, versioned harness kernel, Growth
   restraint, Pair Presence with join-in-progress capture, observed verification,
   deterministic `/brief`, `/session`, `/check`, and `/transfer` participant
   routes, and a clean-profile Extension Host smoke with deterministic packaging,
@@ -15,11 +16,13 @@
   commands, and the native Agent Plugin remain out of scope for this preview.
   The modes package also implements tested Pair admission, related human
   follow-up, and handoff-preflight policies without runtime or host wiring.
-- **Current plan:** `implementation-plan.md` records the authorized P1
-  implementation and review gates. It deliberately replaces the completed
-  Foundation plan, retained at `ae1f095:docs/implementation-plan.md` in Git
-  history. P2 ownership/lifecycle scope review is next; no Pair runtime,
-  edit adapter, or new extension control is authorized by P1 completion.
+- **Current plan:** `implementation-plan.md` records the authorized runtime
+  stabilization, bounded-code refactoring, and review gates. It deliberately
+  replaces the completed P1 plan retained at
+  `9eebbf1:docs/implementation-plan.md` in Git history. The Foundation plan
+  remains at `ae1f095:docs/implementation-plan.md`. P2 ownership/lifecycle scope
+  review follows stabilization; no Pair runtime, edit adapter, or new extension
+  control is authorized by this refactoring.
 
 This document is the first complete product and architecture specification for
 Adaptive Pair v2. Every v2 behavior starts here as an initial design decision;
@@ -222,7 +225,7 @@ estimates are intentionally not assigned.
 
 | Milestone | Deliverable | Current state | Exit gate |
 |---|---|---|---|
-| M1 — Foundation and Growth preview | Shared protocol, durable runtime, Presence, Growth guidance, observed verification, Stable packaging | Implemented at `ae1f095`; preview scope only; baseline revalidation complete | Preserve the existing unit, property, contract, package, and isolated-host baseline |
+| M1 — Foundation and Growth preview | Shared protocol, in-memory runtime, durable edit-episode continuity, Presence, Growth guidance, observed verification, Stable packaging | Implemented at `ae1f095`; preview scope only; baseline revalidation complete | Preserve the existing unit, property, contract, package, and isolated-host baseline |
 | M2 — Pair Mode | Meaningful human/AI work units, explicit handoff, guarded AI edits, complete Stable `@pair` flow | P1 pure contracts implemented; P2/P3 runtime and host work remain unimplemented | Both initial owners complete a Pair session with observed checks, interruption/recovery, ownership reporting, and unchanged Growth/coexistence behavior |
 | M3 — Delivery and mode switching | Explicit delegation, classified commands, safe mode changes, separate outcome reporting | Future plan | Complete Delivery sessions; switches revoke old authority and require new agreement; no delegated work is reported as Growth or balanced pairing |
 | M4 — Completion, native adapters, and v2.0 | Finish preview gaps, validate optional native entry points, harden both channels, publish release evidence | Future plans and an existing Session Target proof of concept | Every gate in section 17 is satisfied; unavailable optional native capabilities are reported honestly and never required by Stable |
@@ -233,7 +236,7 @@ with code 0. Unit, type, lint, and VSIX checks also passed on unchanged
 application source. Earlier interrupted attempts are not counted as passes;
 no source fix or confirmed termination cause is claimed. Details are in
 [the evidence checkpoint](research.md#implementation-evidence-for-the-next-pair-increment).
-Repeat the baseline checks when executing P1 and preserve the regression gates
+Repeat the baseline checks for each increment and preserve the regression gates
 throughout the roadmap. Correctness and coexistence regressions block release
 in every increment; they are not postponed to M4.
 
@@ -243,20 +246,26 @@ M2 has three ordered increments, not three competing active plans:
    follow-up rules, and handoff preflight assessment in `packages/modes`.
    Existing protocol types are inputs. No authority changes, persistence
    migration, host effects, public tool additions, or Pair UI activation occur.
-   Implemented and locally verified with 75 new Pair cases. This is an
+   Implemented, reviewed, and merged with 75 new Pair cases. This is an
    open-core contract deliverable, not a usable Pair preview.
 2. **P2 — Runtime ownership and lifecycle:** consume reviewed P1 contracts in
    the authoritative core. Add versioned handoff, work-unit completion and
    history, human confirmation, operation quiescence, explicit reconciliation,
    and replay/migration contracts. Track capability-category ownership without
-   converting it into a learning or typing-share score. Publish a separate
-   implementation plan only after P1 is reviewed and its contracts pass.
+   converting it into a learning or typing-share score. Review this scope after
+   stabilization, then deliberately replace the canonical implementation plan.
+   Publishing that plan does not itself authorize its implementation.
 3. **P3 — Stable Pair experience:** prove the host's guarded-edit boundary and
    then wire native diff/confirmation, the Pair chat route, operational tool
    declarations, and end-to-end verification. Reject stale document versions,
    root/scope changes, dirty-entry ownership conflicts, and late results. If
    enforcing the edit contract needs a prototype, use a bounded technical
    spike and record its decision here; do not quietly relax the contract.
+
+The current authorized increment between P1 and P2 is runtime-boundary and
+code-size stabilization: atomic state transitions, lifecycle cancellation,
+host-independent guarded Growth turns, and executable dependency/size checks.
+It adds no Pair ownership, handoff, persistence, or editing feature.
 
 The full Pair Mode gate still requires P1, P2, and P3. A pure policy returning
 an admissible result is not edit permission, a completed handoff, or evidence
@@ -460,17 +469,54 @@ or session authority.
 
 ### 5.3 Runtime coordinator
 
-The coordinator:
+The implemented coordinator:
 
-1. validates a command against the current revision;
+1. serializes authoritative mutations and checks committed command IDs;
 2. asks the core for a decision;
-3. appends accepted events to the local journal;
-4. dispatches authorized effects through ports;
-5. records the observed result as a new command;
-6. reconciles the actual workspace before claiming completion.
+3. atomically commits the complete event batch, resulting snapshot, and command
+   IDs against the expected revision;
+4. invalidates obsolete operations after a committed authority change;
+5. dispatches authorized effects through ports outside the transition queue;
+6. records each observed result through the same queued command boundary.
 
 Effects never mutate the snapshot directly. An adapter result becomes true
 pairing state only after the core accepts the corresponding observation.
+The internal `ToolExecutor` owns invocation, effect cancellation, and bounded
+read reconciliation; the coordinator retains commit ordering. Native tool
+input-to-command mapping is separate from both responsibilities.
+
+Recovery re-admits each candidate read on that same transition queue using a
+fresh authoritative snapshot. It excludes in-flight invocations/recoveries and
+registers cancellation before executing outside the queue. Pause or Disable can
+therefore invalidate a recovered effect without waiting for it to settle. Only
+eligible authorized reads are retried; unknown state-changing effects are never
+automatically replayed.
+
+`PairStore.load` returns immutable state and committed command IDs.
+`PairStore.commit(streamId, expectedRevision, events)` must validate the entire
+batch before publishing any state, history, or IDs. A rejected batch leaves all
+three unchanged. The shared `InMemoryJournal` implements this contract in
+production and contract-preserving test wrappers; a future durable adapter must
+meet the same atomicity and idempotency tests. A rejected transition does not
+poison the queue. Confirmation UI, model work, filesystem capture, and process
+execution never hold it.
+
+Presence enable/quiet/pause/disable and host workspace observations are core
+commands, not host-side snapshot replacement. Disable keeps the runtime
+revision monotonic while clearing the current session and observation state.
+Binding a different workspace first commits a disable/enable event batch. Old
+session authority, grants, work units, operations, and observations are removed
+atomically; replay rejects a changed workspace without that reset. Initial clean
+binding and same-workspace enablement preserve their existing behavior. Late
+operation results must match the original authorization revision as well as
+their ID and authority epoch, so reused IDs cannot revive an expired operation.
+Invocation and read-recovery cleanup remove a pending entry only while its
+controller still owns that entry. A late completion cannot erase a replacement
+operation's cancellation tracking or cause reconciliation to dispatch it again.
+Host lifecycle generations cancel obsolete intent before a deferred trusted
+action can enable Presence again, and UI/listener projections use current
+authoritative state after cleanup. Entry capture carries a lifecycle-bound
+abort signal and checks it across native asynchronous boundaries.
 
 ### 5.4 Mode policies
 
@@ -604,6 +650,184 @@ The visible tool list is a projection for model guidance, not the security
 boundary. Every invocation repeats the same checks against the latest core
 snapshot.
 
+### 5.10 Maintainable boundaries
+
+This stabilization adopts a functional core with explicit application/adapter
+boundaries, not a full framework-driven Clean Architecture rewrite.
+
+| Principle | Concrete adoption | Deliberate limit |
+|---|---|---|
+| Single responsibility | Command decisions and event reducers are grouped by presence, session, agreements, Growth, and authorization; model transport, response publication, workspace access, verification, and archive inspection have separate modules | Moving code into arbitrary numbered files or adding pass-through classes is not a refactor |
+| Open/closed | New host, model, store, and effect implementations use existing ports | New commands and modes still require deliberate protocol/policy review; no unrestricted plugin registry |
+| Liskov substitution | The production store and fault-injection fixtures share atomic commit, revision, idempotency, and immutability behavior | Type compatibility alone is insufficient, and no generic repository hierarchy is needed |
+| Interface segregation | Growth turns need only snapshot/prepare capabilities; Presence has its own port; the tool executor receives command/query and result-observation capabilities | No interface for every internal helper or concrete class |
+| Dependency inversion | Runtime owns model/effect/store/clock contracts; the VS Code shell implements and composes them; pure packages contain no host/vendor SDK types | No DI container, mode inheritance hierarchy, or speculative alternate-host implementation |
+
+The guarded Growth workflow is owned by `runtime`, not by a VS Code-shaped
+participant. `requestGuardedGrowthTurn` handles the asynchronous request;
+`finishGuardedGrowthTurn` performs synchronous final boundary/restraint checks.
+The host reads its authoritative in-memory store through a required synchronous
+`snapshotNow` capability, then finalizes, records evaluation, and publishes
+Markdown in the same continuation. Awaiting even the final snapshot can return
+state captured before a queued Pause commits; neither a cached coordinator view
+nor an extra await before publication is safe. The same `SessionController`
+wires this live view and the command coordinator in production and host tests.
+The convenience
+`runGuardedGrowthTurn` returns data, not an atomic publication guarantee for a
+caller that later displays it. Consent dialogs, cancellation-token conversion,
+model-vendor transport, and native presentation stay in the extension.
+
+The shell checks Chat cancellation before finalization and again before a
+transfer command's later synchronous state/publication continuation. The model
+transport uses the same derived cancellation signal at dispatch and completion;
+timer expiry retains its time-cap reason even if the wall clock moves backward.
+Token-accounting completion cannot start another model dispatch after
+cancellation. Explicit Growth actions bind grants to the revision and authority
+epoch the caller observed, and a multi-action reveal chains the next grant from
+the preceding action's committed result rather than silently adopting new intent.
+
+All Growth guidance routes capture a data-only intent before workspace consent:
+workspace, session and its committed start revision, authority epoch, mode, work
+unit, objective, capability, and independent check. Solution reveal captures it
+before its separate confirmation dialog. Non-Growth or non-operational work
+units are rejected before either dialog or any model/action dispatch.
+Runtime preparation and finalization reject a different intent, and the host
+carries the accepted runtime boundary into the later transfer state/note
+continuation. A dialog completing does not approve replacement work. These
+checks retain synchronous finalization/publication rather than adding an await.
+Reveal checks the live intent immediately before opening confirmation. Neither
+modal's declined response is published after Chat cancellation; a non-cancelled
+decline remains neutral even if the session changed while the dialog was open.
+
+Model consent is keyed by the workspace/session/start-revision tuple and the
+model's vendor, family, ID, and version. The registry retains one session's
+destination grants; it cannot authorize a recreated session even when all
+display IDs are reused. Transfer and product-check caches carry the same
+workspace/session lifetime plus work-unit ID. Current-state reporting and the
+transfer accessor reject mismatches, and a check result must still match the
+live runtime revision and epoch at synchronous publication.
+The `/brief` and `/session` routes take a synchronous live snapshot after their
+asynchronous read, so agreed details and cached summaries belong to the state
+current at publication rather than an expired snapshot.
+
+Provider token-accounting failures for input, response text, and tool-call
+payloads are normalized to a stable model error code before evaluation logging.
+Raw provider error messages are not evaluation reasons. Lifecycle checks around
+accounting preserve cancellation and deadline classification; deterministic core
+reason codes remain available through their existing boundary.
+
+Common Growth failure serialization independently admits only a closed catalog
+of 15 typed model codes and 70 existing literal core/runtime/tool-policy codes.
+Unknown messages, malformed typed codes, and failures while inspecting error
+properties become `GROWTH_UNKNOWN_ERROR`; arbitrary text is never a fallback
+reason. Uppercase spelling or a recognized prefix is not sufficient admission.
+The catalog preserves hint prerequisites and stale-authority classifications
+without introducing a new error hierarchy. New public failure codes require an
+explicit catalog update; raw diagnostics remain outside outcomes/evaluations.
+
+The Growth model adapter advertises and accepts only `growth` mode selection.
+Every invocation must also belong to the immutable advertised tool view and
+remain independently authorized by the coordinator. A confirmed state-contract
+action ends the model loop, including any remaining calls in the same response.
+The committed action is retained, but no hint or Growth outcome is inferred;
+the next explicit request compiles instructions and tools from a fresh snapshot.
+This does not add Pair/Delivery host behavior or change their pure core contracts.
+
+The model-facing `pair_get_state` result is an allowlisted metadata projection,
+not the authoritative `PairRuntimeSnapshot`. Its `observation.snapshot` contains
+protocol/revision, Presence status, session/work-unit status and ownership, hint
+ceiling and evidence flags, and current verification status/pending count. Only
+1–128 character ASCII alphanumeric, underscore, or hyphen session/work-unit
+identifiers are included; other identifiers are omitted without replacement and
+mark the result partial. Workspace paths, diagnostics, free-text agreements,
+operation inputs/summaries, grants, and unknown future fields remain behind the
+trusted snapshot port. The fixed field set stays below the catalog's 8,000
+character result limit independently of operation history. Verification metadata
+counts only the current work unit and authority epoch's actual verification
+tool, not unrelated checks or commands. `latestStatus` describes operation
+settlement, not an assertion that product checks passed. Native and controlled Growth adapters
+share this projection; serialization does not grant authority or consume grants.
+
+Scope effects normalize requested and agreed paths into the same canonical
+permission snapshot before accessing buffers or disk, and validate canonical
+outputs against it. A permitted alias is not permission to follow a child link
+into another unagreed directory. Unsaved paths resolve through the nearest
+existing canonical directory, without bypassing workspace containment,
+secret/binary filtering, cancellation, or byte limits.
+
+Search accepts both agreed-alias-relative and canonical workspace-relative
+patterns without searching a duplicated directory prefix. When lexical and
+canonical prefixes overlap, discovery uses the longest applicable prefix;
+canonical permission checks still determine which files can be returned.
+Qualification is determined across all agreed scopes before discovery. A
+workspace-qualified pattern searches only matching scopes; genuinely relative
+patterns may search each agreed root, without reinterpreting a qualified pattern
+under an unrelated root. A root-level file's implicit dot parent does not qualify
+relative patterns globally. Missing agreed targets contribute restrictive
+lexical/canonical parent qualifiers only after safe path-identity and root
+validation; they are not newly enumerated by search.
+The exact query must fit the complete effect result, including its metadata,
+before any workspace discovery. Match accumulation and empty-result returns
+use the same 12,000-character budget, not an observation-only allowance.
+
+The runtime separately checks every complete serialized tool result against its
+catalog descriptor's limit. Native serialization checks the actual returned
+payload, and Growth checks the complete model-readable text including its trust
+prefix. Any layer can refuse an oversized representation rather than truncate
+queries, paths, identities, or JSON. A native refusal is a small explicit
+`result-too-large` failure; Growth stops before another model dispatch. Such a
+refusal does not roll back an operation or state change that already committed,
+and must not be presented as evidence that the action did not occur.
+
+Scope reads and verification displays shorten only their text/output prefixes,
+reserving complete effect and runtime metadata plus the actual Growth text
+representation. Shared runtime assembly and Growth serialization keep that
+budget aligned with consumers. The adapter reserves the widest numeric revision
+and epoch representation and does not split a Unicode surrogate pair. Existing
+byte limits, full bounded-output secret scanning, execution status, and
+truncation flags are retained. If immutable metadata alone cannot fit, the final
+guards still return a bounded refusal rather than inventing an identity or
+rolling back a completed operation.
+
+On Windows, successful `taskkill /T` or `/T /F` delivery is not process-tree exit
+evidence. The process-tree port distinguishes observed alive, proven stopped,
+and unknown liveness. An aborted child close with unknown tree liveness settles
+immediately as termination-unconfirmed and clears later escalation timers rather
+than targeting a potentially reused parent PID. A known-live POSIX group still
+receives bounded escalation; a child that never closes still reaches the grace
+and confirmation deadlines. Synchronous close during a signal cannot reinstall
+a timer after settlement. Unknown liveness is never treated as proof of exit.
+Each helper request specifies a one-second timeout; the synchronous Node API
+still waits for the helper to exit, so this is not a proven hard wall-clock
+bound. Windows syscall regressions use test doubles; native Windows execution
+is not established.
+
+Executable dependency tests inspect source and test imports, including type
+imports, re-exports, and literal dynamic imports. They compare the Stable
+workspace's manifests and TypeScript references, reject undeclared direct or
+forbidden inward dependencies, cross-package relative/deep imports,
+production-to-test imports, and package-graph cycles. Reference-only edges must
+also declare a direct dependency and obey the reviewed inward direction;
+test-only declarations cannot hide outward references. Unknown reference targets
+are rejected. A new product package requires an explicit dependency policy. The
+isolated Session Target POC stays outside this Stable package graph.
+
+ESLint additionally enforces 400 effective lines per production, configuration,
+or release-script file and 100 per function. Test files, shared fixtures, and host
+smoke cases have bounded 600/200 limits so setup and assertions can remain
+together. Only blank/comment-only lines are discounted, and immediately invoked
+functions are included; there are no individual file exemptions or inline
+suppression. Warnings fail the command. Both the
+Stable graph and the POC's authored source/tests/configurations are linted.
+Production and regular tests retain type-aware rules. Standalone configurations
+and intentionally incomplete host fixtures, which are outside compiled TypeScript
+programs, use syntactic lint with the same size limits and suppression policy.
+Only fixture function parameters may be unused, retaining the deliberate bug the
+host tests repair. Generated output and vendored upstream declarations are not
+authored code. Negative tests check the actual effective configuration and
+oversized-code rejection. These limits support reviewability but never replace
+responsibility-based design, behavior tests, host checks, or review.
+
 ## 6. Domain model
 
 The immutable `PairRuntimeSnapshot` is the state supplied to the harness. It
@@ -611,6 +835,16 @@ contains the protocol version, one monotonic runtime revision, workspace-level
 Pair Presence, and an optional task-scoped Pair Session. Commands and tool
 views use the runtime revision; only the active session carries an authority
 epoch.
+
+`PairSessionSnapshot.startedAtRevision` is derived from the existing
+`SessionStarted` event's revision. It distinguishes separate session lifetimes
+even when a session ID, work-unit ID, all agreement text, and the initial epoch
+are reused after Disable. Observations and ordinary transitions retain the
+marker. This internal snapshot addition does not change version-1 command/event
+payloads or epoch semantics; replay derives the same marker from existing event
+metadata. Inactive/synthetic snapshots may use the initial zero marker, while an
+authoritative session start always uses its committed revision. It neither
+implements durable recovery nor permits resuming old authority.
 
 ### 6.1 Pair Presence
 
@@ -630,7 +864,7 @@ continuity and context to a task-scoped Pair Session.
 
 A `PairSession` snapshot contains:
 
-- session ID and authority epoch;
+- session ID, committed start revision, and authority epoch;
 - status and pause reason;
 - confirmed goal and observable completion criteria;
 - active operating mode and mode configuration;
@@ -1082,6 +1316,13 @@ The first executable POC has confirmed:
 - content-provider loading;
 - request completion through the default dynamic participant.
 
+The extracted POC controller defers refresh work until controller construction
+has completed, then checks cancellation and reads the current in-memory records.
+This prevents an eager host callback from using an uninitialized controller.
+Unit tests reproduce construction-time callbacks through a host double; they do
+not establish that the current native host calls refresh synchronously. Ordinary
+refresh, immediate new-session creation, and provider streaming remain covered.
+
 The POC has not yet confirmed persisted history, Pair tool routing, native
 interruption, complete target-list coexistence, or visual quality.
 
@@ -1517,14 +1758,23 @@ failure. Rollback is a separate, explicit user action.
 
 ## 13. Persistence
 
-The runtime keeps a local append-only event journal and periodic immutable
-snapshots under the host's extension storage, not in the repository.
+**Implemented preview:** authoritative runtime snapshots and domain events live
+in the atomic `InMemoryJournal` for the current extension lifetime. The separate
+host `LocalJournal` persists bounded edit-episode continuity under extension
+storage. Restart reconciliation of those episodes is not restoration of a
+session, edit authority, action grants, or operation ownership. Disable clears
+that persisted continuity and the current in-memory session. This stabilization
+does not implement P2 session/ownership persistence.
+
+**Planned v2 persistence:** a durable store adapter will keep the authoritative
+event journal and immutable snapshots under extension storage, not in the
+repository, while preserving the same atomic commit contract.
 
 Pair Presence keeps its high-frequency observation window in memory. Only
 bounded semantic summaries needed for resume or an accepted session event may
 enter the journal.
 
-The journal stores:
+The planned authoritative journal stores:
 
 - domain events;
 - operation metadata and outcomes;
@@ -1535,7 +1785,7 @@ The journal stores:
 It does not store raw source buffers, secrets, full diagnostics, terminal
 transcripts, or complete model conversations.
 
-Writes use sequence numbers and atomic snapshot replacement. Startup verifies
+The planned writes use sequence numbers and atomic snapshot replacement. Startup verifies
 the last durable sequence, migrates supported schema versions, and reconciles
 the workspace before restoring mutation authority.
 

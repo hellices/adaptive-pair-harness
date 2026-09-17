@@ -25,6 +25,9 @@ export type PairCommand =
       readonly status: "observing" | "quiet" | "paused" | "off";
     })
   | (CommandBase & {
+      readonly type: "ObserveWorkspace";
+    })
+  | (CommandBase & {
       readonly type: "StartSession";
       readonly sessionId: string;
     })

@@ -8,5 +8,5 @@
     "types": ["node"],
     "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo"
   },
-  "include": ["index.js", "*.mjs", "test/**/*.ts"]
+  "include": ["index.js", "*.mjs", "*.ts", "test/**/*.ts"]
 }

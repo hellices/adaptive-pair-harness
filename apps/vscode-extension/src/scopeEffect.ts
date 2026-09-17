@@ -1,5 +1,6 @@
 import type { EffectRequest, EffectResult } from "@adaptive-pair/runtime";
 import { canonicalRelative } from "./workspaceContext.js";
+import { boundEffectResultText } from "./effectResultBudget.js";
 
 const MAX_READ_LINES = 200;
 const MAX_RESULT_CHARACTERS = 12_000;
@@ -24,6 +25,7 @@ export type ScopeReadResult =
     };
 
 export interface ScopeAccess {
+  canonicalPaths?(paths: readonly string[], signal: AbortSignal): Promise<readonly string[]>;
   readText(path: string, signal: AbortSignal): Promise<ScopeReadResult>;
   listPaths(
     pattern: string | undefined,
@@ -62,6 +64,46 @@ const result = (
   sensitiveData: false,
   partial,
 });
+
+interface ScopeSearchMatch {
+  readonly path: string;
+  readonly line: number;
+  readonly text: string;
+}
+
+const SEARCH_SUMMARY = "Searched bounded text inside the agreed work-unit scope.";
+
+const fitsSearchResult = (
+  request: EffectRequest,
+  query: string,
+  matches: readonly ScopeSearchMatch[],
+  partial = false,
+): boolean =>
+  query.length <= MAX_RESULT_CHARACTERS &&
+  JSON.stringify(result(request, "confirmed", SEARCH_SUMMARY, { query, matches }, partial)).length <= MAX_RESULT_CHARACTERS;
+
+const searchResult = (
+  request: EffectRequest,
+  query: string,
+  matches: readonly ScopeSearchMatch[],
+  partial = false,
+): EffectResult => {
+  if (!fitsSearchResult(request, query, matches, partial)) {
+    return result(
+      request,
+      "declined",
+      "The exact search query and matches exceed the bounded result limit.",
+      { reason: "search-result-too-large" },
+    );
+  }
+  return result(
+    request,
+    "confirmed",
+    SEARCH_SUMMARY,
+    { query, matches },
+    partial,
+  );
+};
 
 const positiveLine = (value: unknown): number | undefined =>
   typeof value === "number" &&
@@ -113,13 +155,8 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
     request: EffectRequest,
     signal: AbortSignal,
   ): Promise<EffectResult> {
-    const rawPath = request.payload["path"];
-    const path =
-      typeof rawPath === "string" ? canonicalRelative(rawPath) : undefined;
-    if (
-      path === undefined ||
-      !withinAllowedScope(path, request.allowedPaths)
-    ) {
+    const scope = await this.resolveReadScope(request, signal);
+    if (scope === undefined) {
       return result(
         request,
         "declined",
@@ -127,6 +164,7 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
         { reason: "path-outside-scope" },
       );
     }
+    const { path, allowedPaths } = scope;
 
     const startLine = positiveLine(request.payload["startLine"]) ?? 1;
     const requestedEnd =
@@ -155,7 +193,7 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
     const resolvedPath = canonicalRelative(read.path ?? path);
     if (
       resolvedPath === undefined ||
-      !withinAllowedScope(resolvedPath, request.allowedPaths)
+      !withinAllowedScope(resolvedPath, allowedPaths)
     ) {
       return result(
         request,
@@ -182,13 +220,11 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
       lines.length,
     );
     const selected = lines.slice(startLine - 1, boundedEnd).join("\n");
-    const text = selected.slice(0, MAX_RESULT_CHARACTERS);
     const partial =
       read.partial === true ||
-      (explicitEnd ? requestedEnd > maximumEnd : lines.length > maximumEnd) ||
-      text.length < selected.length;
+      (explicitEnd ? requestedEnd > maximumEnd : lines.length > maximumEnd);
 
-    return result(
+    return boundEffectResultText(selected, MAX_RESULT_CHARACTERS, text => result(
       request,
       "confirmed",
       "Read bounded text from the agreed work-unit scope.",
@@ -198,8 +234,35 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
         endLine: boundedEnd,
         text,
       },
-      partial,
-    );
+      partial || text.length < selected.length,
+    ));
+  }
+
+  private async canonicalPaths(paths: readonly string[], signal: AbortSignal): Promise<readonly string[]> {
+    const resolved = this.access.canonicalPaths === undefined
+      ? paths
+      : await this.access.canonicalPaths(paths, signal);
+    signal.throwIfAborted();
+    return resolved.map(canonicalRelative).filter((path): path is string => path !== undefined);
+  }
+
+  private async resolveReadScope(
+    request: EffectRequest,
+    signal: AbortSignal,
+  ): Promise<{ readonly path: string; readonly allowedPaths: readonly string[] } | undefined> {
+    const rawPath = request.payload["path"];
+    const path = typeof rawPath === "string" ? canonicalRelative(rawPath) : undefined;
+    if (path === undefined || request.allowedPaths.length === 0) {
+      return undefined;
+    }
+    const allowedPaths = await this.canonicalPaths(request.allowedPaths, signal);
+    if (allowedPaths.length === 0) {
+      return undefined;
+    }
+    const [resolvedPath] = await this.canonicalPaths([path], signal);
+    return resolvedPath !== undefined && withinAllowedScope(resolvedPath, allowedPaths)
+      ? { path, allowedPaths }
+      : undefined;
   }
 
   private async search(
@@ -215,23 +278,28 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
         { reason: "invalid-search-query" },
       );
     }
+    if (!fitsSearchResult(request, query, [])) {
+      return searchResult(request, query, []);
+    }
     const pattern =
       typeof request.payload["pattern"] === "string"
         ? request.payload["pattern"]
         : undefined;
+    const allowedPaths = await this.canonicalPaths(request.allowedPaths, signal);
     const discovery = await this.access.listPaths(
       pattern,
       request.allowedPaths,
       signal,
     );
+    signal.throwIfAborted();
     const scopedPaths = discovery.paths
       .map(canonicalRelative)
       .filter(
         (path): path is string =>
           path !== undefined &&
-          withinAllowedScope(path, request.allowedPaths),
+          withinAllowedScope(path, allowedPaths),
       );
-    const matches: { path: string; line: number; text: string }[] = [];
+    const matches: ScopeSearchMatch[] = [];
     let partial =
       discovery.truncated || scopedPaths.length > MAX_SEARCH_FILES;
     const needle = query.toLocaleLowerCase();
@@ -239,6 +307,7 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
     for (const path of scopedPaths.slice(0, MAX_SEARCH_FILES)) {
       signal.throwIfAborted();
       const read = await this.access.readText(path, signal);
+      signal.throwIfAborted();
       if (read.status !== "ok") {
         partial = true;
         continue;
@@ -246,7 +315,7 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
       const resolvedPath = canonicalRelative(read.path ?? path);
       if (
         resolvedPath === undefined ||
-        !withinAllowedScope(resolvedPath, request.allowedPaths)
+        !withinAllowedScope(resolvedPath, allowedPaths)
       ) {
         continue;
       }
@@ -264,34 +333,20 @@ export class BoundedScopeEffectRunner implements ScopeEffectRunner {
           text: line.slice(0, MAX_MATCH_CHARACTERS),
         };
         matches.push(match);
+        const withinBudget = fitsSearchResult(request, query, matches);
         if (
           matches.length >= MAX_SEARCH_MATCHES ||
-          JSON.stringify({ query, matches }).length > MAX_RESULT_CHARACTERS
+          !withinBudget
         ) {
-          if (
-            JSON.stringify({ query, matches }).length >
-            MAX_RESULT_CHARACTERS
-          ) {
+          if (!withinBudget) {
             matches.pop();
           }
           partial = true;
-          return result(
-            request,
-            "confirmed",
-            "Searched bounded text inside the agreed work-unit scope.",
-            { query, matches },
-            partial,
-          );
+          return searchResult(request, query, matches, partial);
         }
       }
     }
 
-    return result(
-      request,
-      "confirmed",
-      "Searched bounded text inside the agreed work-unit scope.",
-      { query, matches },
-      partial,
-    );
+    return searchResult(request, query, matches, partial);
   }
 }

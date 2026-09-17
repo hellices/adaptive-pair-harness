@@ -268,10 +268,47 @@ compatibility, and version updates follow the
 must pass the affected regression checks.
 The [sequential roadmap](docs/design.md#sequential-delivery-roadmap) covers the
 remaining work through v2.0. The current
-[Pair policy contract implementation plan](docs/implementation-plan.md) is a
-record of the authorized P1 increment: implemented pure policies, their tests,
-and the pull request review gate. It does not authorize P2/P3 runtime work or
-claim that Pair Mode is available in the extension.
+[runtime boundary stabilization plan](docs/implementation-plan.md) covers the
+authorized state-race fixes, host-independent Growth workflow, dependency
+guards, and bounded-code refactoring before P2. It does not authorize P2/P3
+runtime work or claim that Pair Mode is available in the extension.
+
+## Development checks
+
+Use Node.js 24 or later. Install both maintained dependency graphs before
+running the complete checks; the Session Target POC is deliberately not an npm
+workspace:
+
+```sh
+npm ci
+npm --prefix poc/session-target ci
+npm run check
+npm --prefix poc/session-target run check
+```
+
+`npm run check` runs workspace typechecking, ESLint, and the workspace test
+suite. `npm run lint` also covers the isolated POC's authored source/tests,
+host fixtures, and root/POC lint and test configurations. Production and regular
+tests use typed linting; standalone configurations and intentionally incomplete
+host fixtures use syntactic rules with the same size limits. Only fixture
+function parameters may be unused, preserving the bug the host scenarios repair.
+Dependency-boundary tests compare actual imports, manifests, and TypeScript
+project references, including declaration and direction checks for reference-only
+edges.
+
+| Maintained code | Maximum effective lines/file | Maximum effective lines/function |
+|---|---:|---:|
+| Production code, release scripts, and configurations | 400 | 100 |
+| Tests, shared fixtures, and host smoke cases | 600 | 200 |
+
+Only blank and comment-only lines are discounted; immediately invoked functions
+are checked too. Oversized code must be split
+by responsibility, not exempted or compressed into dense statements. Inline
+ESLint suppression is disabled and warnings fail the lint command. Generated
+artifacts and vendored upstream declarations are not authored-code targets.
+These limits are a backstop, not proof of good architecture; the
+[practical architecture contract](docs/design.md#510-maintainable-boundaries)
+also requires cohesive modules and preserved behavior.
 
 ## Research
 
@@ -289,7 +326,7 @@ AI universally improves speed, quality, learning, or satisfaction.
 
 This branch contains the initial v2 design and the installable **Stable Growth
 Mode preview** (Foundation Tasks 1–12): the Pair
-Presence shell, the versioned harness kernel, the durable runtime, Growth
+Presence shell, the versioned harness kernel, the in-memory authoritative runtime, Growth
 restraint, join-in-progress capture, observed verification, and a clean-profile
 Extension Host smoke plus packaging and CI. Pair Mode AI edits, Delivery Mode
 commands, and the native Agent Plugin remain out of scope for this preview.
@@ -304,17 +341,35 @@ authorized by P1 completion. Growth transfer completion and evaluation export
 remain release work, not completed preview features. Work proceeds one
 milestone at a time; there is no committed calendar release date.
 
-P1 validation on the maintained `main` baseline passes typecheck, lint, 673
+The merged P1 baseline passed typecheck, lint, 673
 tests across 43 files, Stable VSIX verification, and all 17 isolated Extension
 Host smoke tests on VS Code 1.137.0. The modes suite contains 75 new Pair cases
 and four unchanged Growth cases. Both active dependency graphs pass full audits;
 the isolated POC's six unit cases and one host case are counted separately.
-See the [validation evidence](docs/research.md#p1-post-maintenance-integration).
+See the [P1 validation evidence](docs/research.md#p1-post-maintenance-integration)
+and the separate [stabilization evidence](docs/research.md#runtime-boundary-stabilization).
 These results verify the pure policies and preserve the existing Growth
 preview; they do not establish Pair runtime integration or host edit safety.
 
+The stabilization branch replaces split store writes and direct snapshot
+replacement with atomic commits through one transition queue. Growth response
+release belongs to the host-independent runtime; native adapters retain UI,
+consent, and effect wiring. Model state queries expose bounded metadata rather
+than internal snapshots, diagnostics, operation payloads, or grants.
+Growth consent and cached transfer/check results are bound to the committed
+workspace/session lifetime, not reusable IDs. The participant rejects unsupported
+modes before consent, and a committed model-tool contract ends the turn so the
+next request compiles fresh instructions and tools. Switching workspace bindings
+clears the old session authority and requires a fresh session agreement.
+Windows cancellation never
+treats successful `taskkill` delivery as proof that the process tree exited;
+without that evidence it reports termination as unconfirmed.
+Only edit-episode continuity is persisted today;
+durable authoritative session/ownership recovery remains future work.
+
 The completed Foundation and Growth implementation plan remains available in
-Git history at `ae1f095:docs/implementation-plan.md`. Only one implementation
+Git history at `ae1f095:docs/implementation-plan.md`, and the completed P1 plan
+at `9eebbf1:docs/implementation-plan.md`. Only one implementation
 plan is current; replacing it does not approve the successor.
 
 The earlier runnable experiment remains on

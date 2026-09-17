@@ -57,6 +57,7 @@ export const pairRuntime = (
   },
   session: {
     sessionId: "session-1",
+    startedAtRevision: 0,
     authorityEpoch: 3,
     status: "ready",
     mode: "pair",

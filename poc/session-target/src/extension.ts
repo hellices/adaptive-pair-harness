@@ -1,6 +1,11 @@
 import * as vscode from "vscode";
-import { SessionTargetProviderCore } from "./sessionTargetProviderCore";
+import {
+  createModelProvider,
+  createRequestHandler,
+  createSessionItemController,
+} from "./sessionTargetBindings";
 import { SESSION_CAPABILITIES } from "./sessionTargetConfig";
+import { SessionTargetProviderCore } from "./sessionTargetProviderCore";
 import { SessionTargetStore } from "./sessionTargetStore";
 
 const SESSION_TYPE = "adaptive-pair";
@@ -15,25 +20,6 @@ interface SessionTargetPocApi {
   };
 }
 
-const toAbortSignal = (
-  token: vscode.CancellationToken,
-): { readonly signal: AbortSignal; dispose(): void } => {
-  const controller = new AbortController();
-  const cancellation = token.onCancellationRequested(() => {
-    controller.abort(new Error("Adaptive Pair request was cancelled."));
-  });
-  if (token.isCancellationRequested) {
-    controller.abort(new Error("Adaptive Pair request was cancelled."));
-  }
-  return {
-    signal: controller.signal,
-    dispose: () => {
-      cancellation.dispose();
-      controller.abort();
-    },
-  };
-};
-
 export const activate = (
   context: vscode.ExtensionContext,
 ): SessionTargetPocApi => {
@@ -41,120 +27,16 @@ export const activate = (
   const core = new SessionTargetProviderCore(store, () => Date.now());
   let contentProviderCalls = 0;
 
-  const modelProvider: vscode.LanguageModelChatProvider = {
-    provideLanguageModelChatInformation: () => [{
-      id: "echo",
-      name: "POC Echo",
-      family: "adaptive-pair-poc",
-      version: "1",
-      maxInputTokens: 4_096,
-      maxOutputTokens: 1_024,
-      capabilities: {
-        toolCalling: false,
-      },
-      targetChatSessionType: SESSION_TYPE,
-      isDefault: true,
-      isUserSelectable: true,
-    }],
-    provideLanguageModelChatResponse: async (
-      _model,
-      _messages,
-      _options,
-      progress,
-      token,
-    ) => {
-      if (token.isCancellationRequested) {
-        throw new Error("Adaptive Pair POC model request was cancelled.");
-      }
-      progress.report(new vscode.LanguageModelTextPart(
-        "Adaptive Pair POC model is available.",
-      ));
-    },
-    provideTokenCount: async (_model, value) =>
-      Math.max(1, Math.ceil(
-        (typeof value === "string" ? value : JSON.stringify(value)).length / 4,
-      )),
-  };
+  const modelProvider = createModelProvider(SESSION_TYPE);
 
-  const requestHandler: vscode.ChatRequestHandler = async (
-    request,
-    chatContext,
-    response,
-    token,
-  ) => {
-    const existingResource =
-      chatContext.chatSessionContext?.chatSessionItem.resource.toString();
-    const session = core.resolveForRequest(existingResource, request.prompt);
-    const cancellation = toAbortSignal(token);
-    try {
-      await core.respond(
-        session.resource,
-        request.prompt,
-        cancellation.signal,
-        chunk => {
-          response.markdown(new vscode.MarkdownString().appendText(chunk));
-        },
-      );
-      return {
-        metadata: {
-          adaptivePairSessionId: session.id,
-        },
-      };
-    } finally {
-      cancellation.dispose();
-    }
-  };
+  const requestHandler = createRequestHandler(core);
 
   const participant = vscode.chat.createChatParticipant(
     PARTICIPANT_ID,
     requestHandler,
   );
 
-  let controller: vscode.ChatSessionItemController;
-  controller = vscode.chat.createChatSessionItemController(
-    SESSION_TYPE,
-    async token => {
-      if (token.isCancellationRequested) {
-        return;
-      }
-      controller.items.replace(
-        store.list().map(record => {
-          const item = controller.createChatSessionItem(
-            vscode.Uri.parse(record.resource),
-            record.title,
-          );
-          item.status = record.status === "completed"
-            ? vscode.ChatSessionStatus.Completed
-            : record.status === "failed"
-              ? vscode.ChatSessionStatus.Failed
-              : record.status === "needs-input"
-                ? vscode.ChatSessionStatus.NeedsInput
-                : vscode.ChatSessionStatus.InProgress;
-          item.timing = {
-            created: record.createdAt,
-          };
-          return item;
-        }),
-      );
-    },
-  );
-
-  controller.newChatSessionItemHandler = async ({ request }, token) => {
-    if (token.isCancellationRequested) {
-      throw new Error("Adaptive Pair session creation was cancelled.");
-    }
-    const record = core.create(request.prompt);
-    const item = controller.createChatSessionItem(
-      vscode.Uri.parse(record.resource),
-      record.title,
-    );
-    item.status = vscode.ChatSessionStatus.InProgress;
-    item.timing = {
-      created: record.createdAt,
-    };
-    controller.items.add(item);
-    return item;
-  };
+  const controller = createSessionItemController(core, store, SESSION_TYPE);
 
   const provider: vscode.ChatSessionContentProvider = {
     provideChatSessionContent: resource => {

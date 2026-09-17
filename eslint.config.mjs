@@ -2,14 +2,12 @@ import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  // Only generated output and build artifacts are ignored. Release-critical
-  // host tests and scripts are linted with full type information.
+  // Only generated output and build artifacts are ignored.
   {
     ignores: [
       "**/dist/**",
       "coverage/**",
       "apps/vscode-extension/.host-test/**",
-      "apps/vscode-extension/test/host/fixture/**",
     ],
   },
   eslint.configs.recommended,
@@ -27,6 +25,10 @@ export default tseslint.config(
     },
   },
   {
+    linterOptions: {
+      noInlineConfig: true,
+      reportUnusedDisableDirectives: "error",
+    },
     languageOptions: {
       parserOptions: {
         projectService: true,
@@ -36,6 +38,30 @@ export default tseslint.config(
     rules: {
       "@typescript-eslint/no-explicit-any": "error",
       "@typescript-eslint/no-floating-promises": "error",
+      "max-lines": ["error", { max: 400, skipBlankLines: true, skipComments: true }],
+      "max-lines-per-function": ["error", { max: 100, skipBlankLines: true, skipComments: true, IIFEs: true }],
+    },
+  },
+  {
+    ...tseslint.configs.disableTypeChecked,
+    files: [
+      "eslint.config.mjs",
+      "vitest.config.ts",
+      "poc/session-target/vitest.config.mts",
+      "apps/vscode-extension/test/host/fixture/**",
+    ],
+  },
+  {
+    files: ["**/test/**"],
+    rules: {
+      "max-lines": ["error", { max: 600, skipBlankLines: true, skipComments: true }],
+      "max-lines-per-function": ["error", { max: 200, skipBlankLines: true, skipComments: true, IIFEs: true }],
+    },
+  },
+  {
+    files: ["apps/vscode-extension/test/host/fixture/**"],
+    rules: {
+      "@typescript-eslint/no-unused-vars": ["error", { args: "none" }],
     },
   },
 );

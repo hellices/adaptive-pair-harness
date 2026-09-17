@@ -1,15 +1,9 @@
-import { realpathSync } from "node:fs";
-import { lstat, readFile, realpath, stat } from "node:fs/promises";
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-} from "node:path";
+import { lstatSync, realpathSync } from "node:fs";
+import { lstat, realpath, stat } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import * as vscode from "vscode";
+import type { ActivityLedger } from "./activityLedger.js";
+import { isSecretPath } from "./workspaceContext.js";
 import type {
   DiagnosticInfo,
   GitMetadata,
@@ -18,14 +12,8 @@ import type {
   WorkspaceContextAccess,
   WorkspaceFolderIdentity,
 } from "./workspaceContext.js";
-import {
-  canonicalRelative,
-  isBinaryPath,
-  isSecretPath,
-  MAX_CONTEXT_FILE_BYTES,
-} from "./workspaceContext.js";
-import type { ActivityLedger } from "./activityLedger.js";
-import type { ScopeAccess, ScopeReadResult } from "./scopeEffect.js";
+import { withinRoot } from "./workspacePaths.js";
+export { VscodeScopeAccess } from "./scopeAccess.js";
 
 interface GitRepositoryState {
   readonly HEAD?: { readonly name?: string };
@@ -54,259 +42,8 @@ const documentByteLength = (document: vscode.TextDocument): number => {
   }
 };
 
-const withinRoot = (root: string, target: string): boolean => {
-  const relativePath = relative(root, target);
-  return (
-    relativePath === "" ||
-    (!relativePath.startsWith(`..${sep}`) &&
-      relativePath !== ".." &&
-      !isAbsolute(relativePath))
-  );
-};
-
-const errorCode = (error: unknown): string | undefined => {
-  if (typeof error !== "object" || error === null) {
-    return undefined;
-  }
-  const code = (error as { readonly code?: unknown }).code;
-  return typeof code === "string" ? code : undefined;
-};
-
-const sameFilesystemIdentity = (left: string, right: string): boolean =>
-  process.platform === "win32"
-    ? left.toLowerCase() === right.toLowerCase()
-    : left === right;
-
-export class VscodeScopeAccess implements ScopeAccess {
-  public constructor(
-    private readonly rootPath: string,
-    private readonly ledger?: ActivityLedger,
-  ) {}
-
-  public async readText(
-    rawPath: string,
-    signal: AbortSignal,
-  ): Promise<ScopeReadResult> {
-    signal.throwIfAborted();
-    this.ledger?.recordWorkspaceRead();
-    const path = canonicalRelative(rawPath);
-    if (
-      path === undefined ||
-      isSecretPath(path) ||
-      isBinaryPath(path)
-    ) {
-      return { status: "unsafe-path" };
-    }
-
-    const absolute = resolve(this.rootPath, path);
-    let canonicalRoot: string;
-    let canonicalTarget: string;
-    try {
-      [canonicalRoot, canonicalTarget] = await Promise.all([
-        realpath(this.rootPath),
-        realpath(absolute),
-      ]);
-    } catch (error) {
-      return errorCode(error) === "ENOENT"
-        ? { status: "not-found" }
-        : { status: "read-failed" };
-    }
-    if (!withinRoot(canonicalRoot, canonicalTarget)) {
-      return { status: "unsafe-path" };
-    }
-    const resolvedPath = canonicalRelative(
-      relative(canonicalRoot, canonicalTarget).replace(/\\/gu, "/"),
-    );
-    if (
-      resolvedPath === undefined ||
-      isSecretPath(resolvedPath) ||
-      isBinaryPath(resolvedPath)
-    ) {
-      return { status: "unsafe-path" };
-    }
-
-    let document: vscode.TextDocument | undefined;
-    for (const candidate of vscode.workspace.textDocuments) {
-      if (candidate.isDirty !== true) {
-        continue;
-      }
-      if (
-        candidate.uri.scheme !== undefined &&
-        candidate.uri.scheme !== "file"
-      ) {
-        continue;
-      }
-
-      const candidatePath = resolve(candidate.uri.fsPath);
-      let candidateIdentity: string;
-      try {
-        candidateIdentity = await realpath(candidatePath);
-      } catch (error) {
-        if (
-          errorCode(error) === "ENOENT" ||
-          errorCode(error) === "ENOTDIR"
-        ) {
-          continue;
-        }
-        if (withinRoot(resolve(this.rootPath), candidatePath)) {
-          return { status: "read-failed" };
-        }
-        throw error;
-      }
-      if (sameFilesystemIdentity(candidateIdentity, canonicalTarget)) {
-        document = candidate;
-        break;
-      }
-    }
-    if (document !== undefined) {
-      const text = document.getText();
-      if (Buffer.byteLength(text, "utf8") > MAX_CONTEXT_FILE_BYTES) {
-        return { status: "too-large" };
-      }
-      return { status: "ok", path: resolvedPath, text };
-    }
-
-    try {
-      const target = await stat(canonicalTarget);
-      if (!target.isFile()) {
-        return { status: "not-found" };
-      }
-      if (target.size > MAX_CONTEXT_FILE_BYTES) {
-        return { status: "too-large" };
-      }
-      const content = await readFile(canonicalTarget);
-      signal.throwIfAborted();
-      if (content.includes(0)) {
-        return { status: "binary" };
-      }
-      return {
-        status: "ok",
-        path: resolvedPath,
-        text: content.toString("utf8"),
-      };
-    } catch (error) {
-      return errorCode(error) === "ENOENT"
-        ? { status: "not-found" }
-        : { status: "read-failed" };
-    }
-  }
-
-  public async listPaths(
-    pattern: string | undefined,
-    allowedPaths: readonly string[],
-    signal: AbortSignal,
-  ): Promise<{
-    readonly paths: readonly string[];
-    readonly truncated: boolean;
-  }> {
-    signal.throwIfAborted();
-    this.ledger?.recordWorkspaceRead();
-    const requestedPattern = pattern?.trim() || "**/*";
-    if (
-      requestedPattern.startsWith("/") ||
-      /^[A-Za-z]:/u.test(requestedPattern) ||
-      requestedPattern.split(/[\\/]/u).includes("..")
-    ) {
-      return { paths: [], truncated: false };
-    }
-
-    const canonicalRoot = await realpath(this.rootPath);
-    const paths = new Set<string>();
-    let truncated = false;
-    const scopes = [
-      ...new Set(
-        allowedPaths
-          .map(canonicalRelative)
-          .filter(
-            (path): path is string =>
-              path !== undefined &&
-              !isSecretPath(path) &&
-              !isBinaryPath(path),
-          ),
-      ),
-    ];
-
-    for (const scope of scopes) {
-      signal.throwIfAborted();
-      let target: string;
-      let targetStat: Awaited<ReturnType<typeof stat>>;
-      try {
-        target = await realpath(resolve(this.rootPath, scope));
-        targetStat = await stat(target);
-      } catch (error) {
-        if (errorCode(error) === "ENOENT") {
-          continue;
-        }
-        throw error;
-      }
-      if (!withinRoot(canonicalRoot, target)) {
-        continue;
-      }
-
-      const base = targetStat.isFile() ? dirname(target) : target;
-      const scopePrefix = `${scope}/`;
-      const relativePattern =
-        requestedPattern === scope
-          ? targetStat.isFile()
-            ? basename(target)
-            : "**/*"
-          : requestedPattern.startsWith(scopePrefix)
-            ? requestedPattern.slice(scopePrefix.length)
-            : requestedPattern;
-      const scopedPattern =
-        pattern === undefined || pattern.trim().length === 0
-          ? targetStat.isFile()
-            ? basename(target)
-            : "**/*"
-          : relativePattern;
-      const remaining = 5_000 - paths.size;
-      if (remaining <= 0) {
-        truncated = true;
-        break;
-      }
-      const uris = await vscode.workspace.findFiles(
-        new vscode.RelativePattern(vscode.Uri.file(base), scopedPattern),
-        "**/{.git,node_modules,.ssh,.aws,.gnupg,.gpg,.docker,.kube,secrets,.secrets}/**",
-        remaining + 1,
-      );
-      signal.throwIfAborted();
-      if (uris.length > remaining) {
-        truncated = true;
-      }
-
-      for (const uri of uris.slice(0, remaining)) {
-        let discoveredTarget: string;
-        try {
-          discoveredTarget = await realpath(uri.fsPath);
-        } catch {
-          continue;
-        }
-        if (
-          !withinRoot(canonicalRoot, discoveredTarget) ||
-          (targetStat.isFile()
-            ? !sameFilesystemIdentity(target, discoveredTarget)
-            : !withinRoot(target, discoveredTarget))
-        ) {
-          continue;
-        }
-        const path = canonicalRelative(
-          relative(canonicalRoot, discoveredTarget).replace(/\\/gu, "/"),
-        );
-        if (
-          path !== undefined &&
-          !isSecretPath(path) &&
-          !isBinaryPath(path)
-        ) {
-          paths.add(path);
-        }
-      }
-    }
-    return {
-      paths: [...paths].sort(),
-      truncated,
-    };
-  }
-}
+const isMissingPathError = (error: unknown): boolean =>
+  typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 
 export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
   public constructor(
@@ -344,7 +81,8 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
     return (repository?.state.HEAD?.name ?? undefined) === branch;
   }
 
-  public readGitMetadata(folder: WorkspaceFolderIdentity): Promise<GitMetadata> {
+  public readGitMetadata(folder: WorkspaceFolderIdentity, signal?: AbortSignal): Promise<GitMetadata> {
+    signal?.throwIfAborted();
     this.ledger?.recordWorkspaceRead();
     const repository = this.gitRepositoryForRoot(folder.rootPath);
     if (repository === undefined) {
@@ -383,7 +121,7 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
     }
 
     return vscode.workspace.textDocuments.flatMap(document => {
-      const relativePath = this.relativePathWithinRoot(rootPath, document.uri);
+      const relativePath = this.openDocumentPath(rootPath, document.uri);
       return relativePath === undefined
         ? []
         : [{
@@ -439,7 +177,8 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
     return [];
   }
 
-  public async inspectPath(relativePath: string): Promise<PathInspection> {
+  public async inspectPath(relativePath: string, signal?: AbortSignal): Promise<PathInspection> {
+    signal?.throwIfAborted();
     this.ledger?.recordWorkspaceRead();
     const folder = this.workspaceFolder();
     if (folder === undefined) {
@@ -457,9 +196,12 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
 
     try {
       const link = await lstat(absolute);
+      signal?.throwIfAborted();
       const isSymbolicLink = link.isSymbolicLink();
-      const withinRoot = await this.targetWithinRoot(absolute, root);
+      const withinRoot = await this.targetWithinRoot(absolute, root, signal);
+      signal?.throwIfAborted();
       const target = await stat(absolute);
+      signal?.throwIfAborted();
 
       return {
         exists: true,
@@ -469,6 +211,7 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
         byteLength: target.size,
       };
     } catch {
+      signal?.throwIfAborted();
       return {
         exists: false,
         isFile: false,
@@ -486,14 +229,17 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
   private async targetWithinRoot(
     absolute: string,
     root: string,
+    signal?: AbortSignal,
   ): Promise<boolean> {
     try {
       const [canonicalRoot, canonicalTarget] = await Promise.all([
         realpath(root),
         realpath(absolute),
       ]);
+      signal?.throwIfAborted();
       return withinRoot(canonicalRoot, canonicalTarget);
     } catch {
+      signal?.throwIfAborted();
       return false;
     }
   }
@@ -505,12 +251,54 @@ export class VscodeWorkspaceContextAccess implements WorkspaceContextAccess {
       if (document.isDirty !== true) {
         return [];
       }
-      const relativePath = this.relativePathWithinRoot(
+      const relativePath = this.openDocumentPath(
         folder.rootPath,
         document.uri,
       );
       return relativePath === undefined ? [] : [relativePath];
     });
+  }
+
+  private openDocumentPath(rootPath: string, uri: vscode.Uri): string | undefined {
+    const relativePath = this.relativePathWithinRoot(rootPath, uri);
+    if (relativePath === undefined || isSecretPath(relativePath)) {
+      return undefined;
+    }
+    try {
+      const rootIdentity = this.filesystemIdentity(rootPath);
+      const targetIdentity = this.openDocumentIdentity(resolve(uri.fsPath));
+      if (!withinRoot(rootIdentity, targetIdentity) ||
+          isSecretPath(relative(rootIdentity, targetIdentity).replace(/\\/gu, "/"))) {
+        return undefined;
+      }
+      return relativePath;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private openDocumentIdentity(absolute: string): string {
+    try {
+      return this.filesystemIdentity(absolute);
+    } catch (error) {
+      if (!isMissingPathError(error)) {
+        throw error;
+      }
+      let missing = false;
+      try {
+        lstatSync(absolute);
+      } catch (inspectionError) {
+        if (!isMissingPathError(inspectionError)) {
+          throw inspectionError;
+        }
+        missing = true;
+      }
+      const parent = dirname(absolute);
+      if (!missing || parent === absolute) {
+        throw error;
+      }
+      return join(this.openDocumentIdentity(parent), basename(absolute));
+    }
   }
 
   private relativePathWithinRoot(

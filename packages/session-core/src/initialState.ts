@@ -15,9 +15,10 @@ export const createPresence = (workspaceId: string): PairPresence =>
     activeSessionId: undefined,
   });
 
-export const createSession = (sessionId: string): PairSessionSnapshot =>
+export const createSession = (sessionId: string, startedAtRevision = 0): PairSessionSnapshot =>
   Object.freeze({
     sessionId,
+    startedAtRevision,
     authorityEpoch: 0,
     status: "inactive",
     mode: undefined,
