@@ -268,10 +268,12 @@ compatibility, and version updates follow the
 must pass the affected regression checks.
 The [sequential roadmap](docs/design.md#sequential-delivery-roadmap) covers the
 remaining work through v2.0. The current
-[event validation plan](docs/implementation-plan.md) covers the approved
-version-1 event parsing boundary and its tests after the merged runtime-boundary
-refactoring. It does not authorize durable persistence, authority restoration,
-P2/P3 runtime work, or claim that Pair Mode is available in the extension.
+[P2a journal and recovery contract plan](docs/implementation-plan.md) is a
+**design-only proposal** after the merged version-1 event-validation increment
+(PR #9). It proposes bounded journal inspection and a non-authorizing restart
+assessment, not a durable store or a working resume feature. The owner authorized
+this design/plan review, not its implementation. Disk storage, live restoration,
+Pair ownership/handoff, and P3 editing/UI still need separate approval.
 
 ## Development checks
 
@@ -335,10 +337,12 @@ P1 adds tested, side-effect-free Pair work-unit admission, related human
 follow-up, and handoff-preflight contracts to `@adaptive-pair/modes`. These
 assessments change no authority or persisted state and are not wired to the
 runtime or extension. The Stable preview remains Growth-only. P2 runtime
-ownership and lifecycle is the next scope-review milestone; guarded edits and
-the complete Stable Pair experience follow in P3. Neither increment is
-authorized by P1 completion. Growth transfer completion and evaluation export
-remain release work, not completed preview features. Work proceeds one
+ownership and lifecycle is split first at the proposed P2a journal/recovery
+contract boundary; its [design](docs/design.md#131-proposed-p2a-journal-inspection)
+and plan are under review, not implemented. The rest of P2 and the guarded edits
+and complete Stable Pair experience in P3 remain separately gated. Neither
+increment is authorized by an earlier milestone's completion. Growth transfer
+completion and evaluation export remain release work, not completed preview features. Work proceeds one
 milestone at a time; there is no committed calendar release date.
 
 The merged P1 baseline passed typecheck, lint, 673
@@ -368,8 +372,9 @@ Only edit-episode continuity is persisted today;
 durable authoritative session/ownership recovery remains future work.
 
 The completed Foundation and Growth implementation plan remains available in
-Git history at `ae1f095:docs/implementation-plan.md`, and the completed P1 plan
-at `9eebbf1:docs/implementation-plan.md`. Only one implementation
+Git history at `ae1f095:docs/implementation-plan.md`, the completed P1 plan
+at `9eebbf1:docs/implementation-plan.md`, and the merged event-validation plan
+at `469cb93:docs/implementation-plan.md`. Only one implementation
 plan is current; replacing it does not approve the successor.
 
 The earlier runnable experiment remains on

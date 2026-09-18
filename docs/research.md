@@ -1405,6 +1405,81 @@ runtime journal integration, or storage/recovery code. Source and tests pass
 the existing size and package-boundary guards. Local checks are not a PR
 approval: final-head CI and review evidence belong to the published PR.
 
+### Journal and recovery planning checkpoint
+
+On September 18, 2026, after PR #9 merged at `469cb93`, the owner selected a
+smaller journal/recovery foundation **design and plan PR**, rather than planning
+all of P2 at once. This is authorization to review documentation, not to execute
+P2a. The proposed complete-journal parser and non-authorizing inspection APIs
+are not installed in the repository. The canonical implementation plan replaces
+the completed event plan retained at the merge revision.
+
+The following are source-inspection findings from that baseline, not results
+from an implemented recovery system:
+
+| Verified source fact | Evidence | Consequence for the proposed boundary |
+| --- | --- | --- |
+| Events are structurally parsed and frozen, not authenticated or restored | [`parsePairEvent`](../packages/protocol/src/parseEvent.ts) | Reuse the event parser, but distinguish well-shaped data from legal command admission and fresh consent |
+| A store commit may contain multiple commands and one command may emit multiple events | [`setPresence`](../packages/runtime/src/coordinator.ts) and [journal tests](../packages/runtime/test/journal.test.ts) | Preserve atomic commit boundaries; reject command reuse across commits, not repetition within one commit |
+| A stream key may differ from its workspace identity | [workspace-boundary tests](../packages/runtime/test/workspacePresenceBoundary.test.ts) | Carry the initial workspace separately; compare expected stream and final workspace independently |
+| Disable truncates the in-memory event prefix without resetting the revision or command-ID history | [`InMemoryJournal.commit`](../packages/runtime/src/journal.ts) | Do not call `events()` a complete durable export or accept its compacted tail as a revision-zero journal |
+| `BriefConfirmed` is in the event union but has no reducer route | [event types](../packages/protocol/src/events.ts) and [reducer dispatch](../packages/session-core/src/reduce.ts) | Shape acceptance does not promise replay support; reject explicitly instead of adding an unrelated core transition |
+| Close and Presence reset are not proof that an external operation terminated | [session](../packages/session-core/src/reducers/session.ts) and [Presence reducers](../packages/session-core/src/reducers/presence.ts) | Keep unfinished-operation warnings across lifecycle boundaries in the supplied complete history, keyed by start revision and operation ID |
+| Event payloads include diagnostics, operation inputs, and free-form summaries | [protocol types](../packages/protocol/src/types.ts) | Bounded input is not automatically safe to persist; actual disk serialization/data minimization needs a later design |
+
+The proposed 1,048,576-text-code-unit, 1,024-commit, and 1,024-event limits are
+policy choices for a bounded inspection API. They are not measured latency,
+capacity, filesystem byte bounds, or a promise that all existing in-memory
+sessions fit. Rejecting unsupported data is preferable to returning a misleading
+partial recovery. An empty or otherwise valid report never authorizes resume,
+restores an action grant, or automatically dispatches a recorded effect.
+
+Unchanged application source was checked with Node.js 24.20.0 after clean
+installation of both maintained graphs. Forced workspace typecheck and full
+ESLint pass; the root suite passes **1,980 tests in 115 files**. The separately
+installed POC compiles and passes **21 unit cases in five files**. Both installed
+dependency trees match their manifests/locks. These are baseline checks, not
+new P2a tests. The existing Vite native-config warning remains visible. Final
+documentation-head CI, packaging, host results, and review disposition belong
+to this PR, not to an older successful run.
+
+The plan's **11 TypeScript reference blocks** were checked as virtual source
+files with the installed compiler, existing package imports, and each package's
+original library/type options: four protocol and seven runtime virtual files
+produce zero diagnostics. Nothing was emitted or installed into product source.
+This checks reference type consistency, not the proposed acceptance matrix or
+runtime behavior. All **34 local documentation links/anchors** also resolve.
+
+#### Planning dependency recheck
+
+The documentation checkpoint inventories **16 manifests, two lockfiles, and
+24 direct external declarations across 16 packages**, including the isolated
+Session Target POC. Both online full-lockfile audits, including development
+dependencies, return **zero findings** from the configured advisory endpoint.
+No manifest, lockfile, runtime floor, or VS Code API floor changes in this
+documentation-only PR; this is not a version freeze or a security guarantee.
+
+All direct packages were checked against current registry metadata and their
+available upstream release/source records. The earlier
+[event-increment inventory](#event-increment-dependency-inventory-september-17-2026-utc)
+remains a dated record, not a substitute for the following new observations:
+
+| Recheck | Observation and disposition |
+| --- | --- |
+| fast-check | Upstream latest is [4.10.1](https://github.com/dubzzz/fast-check/releases/tag/v4.10.1). Exact 4.10.1 metadata still returns E404 from the configured registry, but **4.10.0 now resolves**. Retaining 4.9.0 here preserves the expressly documentation-only scope; no incompatibility is claimed. Reassess/update at the separately authorized implementation baseline, rather than repeat the obsolete 4.10.0 availability reason. |
+| Vitest and coverage | Upstream [5.0.1](https://github.com/vitest-dev/vitest/releases/tag/v5.0.1) exists; exact requests for both 5.0.1 packages still return E404. Registry metadata and the installed pair remain 5.0.0. |
+| Mocha | Upstream [12.0.2](https://github.com/mochajs/mocha/releases/tag/v12.0.2) exists; exact 12.0.2 and 12.0.1 requests still return E404. Both graphs retain 12.0.0. |
+| TypeScript and linter | Registry TypeScript latest is 7.0.2, outside typescript-eslint 8.70.0's declared `>=4.8.4 <6.1.0` range. Retain 6.0.3. Upstream [typescript-eslint 8.70.0](https://github.com/typescript-eslint/typescript-eslint/releases/tag/v8.70.0) matches the installed linter. |
+| API declarations | Latest obtainable Node 24 declarations remain 24.13.4; the 26.5.1 latest tag is a different runtime line. Retain VS Code 1.136.0 declarations for the supported host floor rather than latest-tag 1.137.0. DefinitelyTyped's rolling source versions (`24.13.9999`, `1.138.9999`, and Mocha `10.0.9999`) are not published patch-version evidence. |
+| Other direct packages | Registry metadata still matches `@eslint/js` 10.0.1, `@types/mocha` 10.0.10, `@vscode/dts` 0.4.1, `@vscode/test-electron` 3.1.0, `@vscode/vsce` 4.0.0, Ajv 8.20.0, esbuild 0.28.2, and ESLint 10.10.0. Accessible Ajv, esbuild, and ESLint release records agree with their selected releases. |
+| Upstream access limit | Authenticated GitHub release lookups for the Microsoft VS Code tooling and TypeScript repositories return HTTP 403 with an organization SAML requirement. No fresh upstream-release confirmation is claimed for those entries, and no alternate credential or route was used to bypass that restriction. Registry metadata remains independently available. |
+
+These availability observations concern the configured registry, not worldwide
+publication or verified tarball installation. Online lookups explicitly disable
+the cached Node launcher's inherited offline setting. Future execution must
+repeat the inventory and compatibility checks; a documentation review cannot
+settle later dependency availability or waive an audit finding.
+
 ## 7. Evaluation hypotheses
 
 The first studies test separate hypotheses:
