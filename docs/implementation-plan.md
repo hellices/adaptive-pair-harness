@@ -1,8 +1,8 @@
 # P2a Journal and Recovery Contract Implementation Plan
 
-> **Status: proposed; documentation review only.** The owner selected this
-> smaller design/plan PR, not implementation. Do not execute the code tasks
-> until the owner explicitly approves the reviewed scope.
+> **Status: approved; implementation in progress.** On September 18, 2026, the
+> owner explicitly approved merging documentation PR #10 and implementing its
+> reviewed P2a scope. The implementation PR still needs a separate merge decision.
 >
 > **For contributors and agents:** after implementation approval, execute one
 > checklist task at a time. First observe its failing test, implement only that
@@ -35,7 +35,12 @@ build/host/packaging gates. No new library, package edge, or host API is needed.
   `469cb93:docs/implementation-plan.md`. This document deliberately replaces it.
 - The owner chose the journal/recovery foundation's design/plan PR instead of
   planning all of P2 together. Only the four canonical documentation files
-  change in this PR. Reference code below is proposed text, not installed code.
+  changed in PR #10. Its reference code was proposed text, not installed code.
+- PR #10 merged at `83dc8e8` after separate owner authorization. Implementation
+  starts from that refreshed `main` baseline on `agents/p2a-journal-inspection`.
+  Both dependency graphs install cleanly with Node.js 24.20.0; forced workspace
+  typecheck, lint, 1,980 root tests in 115 files, and the separate POC compile
+  and 21 tests in five files pass before implementation.
 - The scope and trade-offs are in [design section 13.1](design.md#131-proposed-p2a-journal-inspection).
   Evidence and the unchanged baseline checks are in
   [the planning checkpoint](research.md#journal-and-recovery-planning-checkpoint).
@@ -108,7 +113,7 @@ text only. The parser validates framing and event shapes, not causal admission.
   unavailable: its exact registry metadata now resolves. Assess current
   compatibility and update obtainable versions when warranted by the approved
   implementation, preserving manifests/locks and all validation gates.
-- [ ] Add the following first failing case to `packages/protocol/test/journal.test.ts`:
+- [x] Add the following first failing case to `packages/protocol/test/journal.test.ts`:
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -137,9 +142,9 @@ describe("parsePairJournal", () => {
 });
 ```
 
-- [ ] Run `npx vitest run packages/protocol/test/journal.test.ts`; confirm RED
+- [x] Run `npx vitest run packages/protocol/test/journal.test.ts`; confirm RED
   comes from the missing parser/export, not a fixture or toolchain failure.
-- [ ] Implement the following proposed files and export them. Object property
+- [x] Implement the following proposed files and export them. Object property
   reads occur only after checking all expected **own** keys. Do not replace
   that check with inherited-property validation or expose JSON parser errors.
 
@@ -260,15 +265,20 @@ export type { PairJournal, PairJournalCommit } from "./journalTypes.js";
 export { parsePairJournal } from "./parseJournal.js";
 ```
 
-- [ ] Extend the RED/GREEN cycle with each format case in the acceptance matrix
+- [x] Extend the RED/GREEN cycle with each format case in the acceptance matrix
   below. Spy on `JSON.parse` to prove over-limit text is rejected before decoding;
   use whitespace padding for the exact inclusive text boundary. Use complete
   repeated observation events for event/commit limits, not an oversized fixture
   that accidentally hits a different bound first. Verify nested event freezing,
   wire omissions, and the existing command/event suites.
-- [ ] Run `npx vitest run packages/protocol/test` and
+- [x] Run `npx vitest run packages/protocol/test` and
   `npm run typecheck -- --force`; require GREEN before committing
   `feat: define bounded version-1 journal framing`.
+
+Task 1 verification: both seed tests fail for the missing export, then all 106
+format cases fail before implementation and pass afterward. The protocol suite
+passes 611 tests in nine files; forced workspace typecheck and lint pass.
+The unchanged Vite native-config advisory remains visible, not suppressed.
 
 ## Task 2: Private replay and operation-lifetime inspection
 
