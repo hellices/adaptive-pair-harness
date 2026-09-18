@@ -279,6 +279,8 @@ Task 1 verification: both seed tests fail for the missing export, then all 106
 format cases fail before implementation and pass afterward. The protocol suite
 passes 611 tests in nine files; forced workspace typecheck and lint pass.
 The unchanged Vite native-config advisory remains visible, not suppressed.
+Independent read-only review of `83dc8e8..bbbf2bd` found no actionable
+specification or code-quality issues.
 
 ## Task 2: Private replay and operation-lifetime inspection
 
@@ -288,7 +290,7 @@ The unchanged Vite native-config advisory remains visible, not suppressed.
 snapshot and frozen warning metadata. Do not export this helper from the
 runtime package entry point or turn it into a store constructor.
 
-- [ ] Add a complete-history fixture builder and failing tests in
+- [x] Add a complete-history fixture builder and failing tests in
   `journalRecoveryFixtures.ts` and `journalReplay.test.ts`. This base fixture
   contains two different commands in one commit; implementations must preserve it:
 
@@ -331,9 +333,9 @@ it("preserves a multi-command atomic commit", () => {
 });
 ```
 
-- [ ] Run `npx vitest run packages/runtime/test/journalReplay.test.ts` and
+- [x] Run `npx vitest run packages/runtime/test/journalReplay.test.ts` and
   establish a missing-helper RED after rebuilding Task 1's protocol exports.
-- [ ] Implement the types and private replay helper below. Reduce each event
+- [x] Implement the types and private replay helper below. Reduce each event
   locally to observe lifetime boundaries; publish nothing until the entire
   journal passes. A later bad event must never leak the earlier valid prefix.
 
@@ -444,16 +446,24 @@ export const replayPairJournal = (journal: PairJournal): {
 };
 ```
 
-- [ ] Add the ordering/lifetime cases from the matrix. Compare accepted
+- [x] Add the ordering/lifetime cases from the matrix. Compare accepted
   generated observation histories against existing `reduce` results with
   fast-check. Separately mutate their revision, event ID, prior command ID,
   commit boundary, and declared head and assert the corresponding rejection.
   Keep fixtures that are intentionally reducible but not command-authorized:
   replay is not a substitute for the decider or consent.
-- [ ] Run `npx vitest run packages/runtime/test/journalReplay.test.ts` plus
+- [x] Run `npx vitest run packages/runtime/test/journalReplay.test.ts` plus
   existing journal, workspace-boundary, session-identity, and core suites;
   typecheck and lint. Commit GREEN as
   `feat: inspect journal ordering and unsettled operation lifetimes`.
+
+Task 2 verification: the seed and expanded suite first fail because the private
+helper is absent. All 72 replay cases then pass, including six 100-run generated
+history properties and all 20 supported reducer event routes. The existing
+journal, workspace-boundary, session-identity, and core suites pass 98 tests in
+13 files; forced workspace typecheck and lint pass. One new fixture initially
+used the unsupported actor label `model`; the existing schema and types require
+`ai`, so only that fixture was corrected. No existing reducer changed.
 
 ## Task 3: Public non-authorizing restart assessment
 
