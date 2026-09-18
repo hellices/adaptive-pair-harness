@@ -464,6 +464,8 @@ journal, workspace-boundary, session-identity, and core suites pass 98 tests in
 13 files; forced workspace typecheck and lint pass. One new fixture initially
 used the unsupported actor label `model`; the existing schema and types require
 `ai`, so only that fixture was corrected. No existing reducer changed.
+Independent read-only review of `bbbf2bd..4f545ce` found no actionable
+specification or code-quality issues.
 
 ## Task 3: Public non-authorizing restart assessment
 
@@ -471,7 +473,7 @@ used the unsupported actor label `model`; the existing schema and types require
 `inspectPairJournal(value: unknown, expectation: JournalExpectation): JournalRecoveryReport`.
 The expectation is supplied by trusted adapter code, not a public model input.
 
-- [ ] Write the first failing contract in `journalRecovery.test.ts`:
+- [x] Write the first failing contract in `journalRecovery.test.ts`:
 
 ```ts
 import { expect, it } from "vitest";
@@ -493,7 +495,7 @@ it("reports history without granting any restoration or replay authority", () =>
 });
 ```
 
-- [ ] Run `npx vitest run packages/runtime/test/journalRecovery.test.ts` and
+- [x] Run `npx vitest run packages/runtime/test/journalRecovery.test.ts` and
   confirm a missing-public-API RED, then add the following implementation.
 
 ### `packages/runtime/src/journalRecovery.ts`
@@ -545,14 +547,21 @@ export type {
 } from "./journalRecoveryTypes.js";
 ```
 
-- [ ] Add every authority/privacy/isolation case from the matrix. Place a unique
+- [x] Add every authority/privacy/isolation case from the matrix. Place a unique
   sentinel in operation inputs, summaries, diagnostics, and grant IDs; neither
   the report nor failure message/cause may contain it. Enumerate the report's
   exact keys so future fields cannot accidentally publish a snapshot. Verify
   all nested metadata is frozen and calls after a rejected journal stay clean.
-- [ ] Run `npx vitest run packages/runtime/test/journalRecovery.test.ts` and
+- [x] Run `npx vitest run packages/runtime/test/journalRecovery.test.ts` and
   the runtime/protocol/core/architecture suites; require GREEN typecheck and
   lint. Commit `feat: expose non-authorizing journal recovery assessment`.
+
+Task 3 verification: the public API seed and all 35 report cases fail for the
+missing export before implementation, then pass. The combined runtime,
+protocol, core, and architecture selection passes 1,085 tests in 39 files;
+forced workspace typecheck and lint pass. The deliberately extra-field event
+fixture is constructed before the typed history builder, preserving its invalid
+wire payload without weakening protocol types.
 
 ## Acceptance matrix
 
