@@ -47,7 +47,11 @@ const parseCommit = (commit: WireCommit): PairJournalCommit => {
   try {
     return Object.freeze({
       expectedRevision: commit.expectedRevision,
-      events: Object.freeze(commit.events.map(parsePairEvent)),
+      events: Object.freeze(commit.events.map(value => {
+        const event = parsePairEvent(value);
+        if (!isIdentifier(event.eventId) || !isIdentifier(event.commandId)) return fail("INVALID_EVENT");
+        return event;
+      })),
     });
   } catch {
     return fail("INVALID_EVENT");

@@ -225,7 +225,11 @@ const parseCommit = (commit: WireCommit): PairJournalCommit => {
   try {
     return Object.freeze({
       expectedRevision: commit.expectedRevision,
-      events: Object.freeze(commit.events.map(parsePairEvent)),
+      events: Object.freeze(commit.events.map(value => {
+        const event = parsePairEvent(value);
+        if (!isIdentifier(event.eventId) || !isIdentifier(event.commandId)) return fail("INVALID_EVENT");
+        return event;
+      })),
     });
   } catch {
     return fail("INVALID_EVENT");
@@ -275,7 +279,7 @@ export { parsePairJournal } from "./parseJournal.js";
   `npm run typecheck -- --force`; require GREEN before committing
   `feat: define bounded version-1 journal framing`.
 
-Task 1 verification: both seed tests fail for the missing export, then all 106
+Initial Task 1 verification: both seed tests fail for the missing export, then all 106
 format cases fail before implementation and pass afterward. The protocol suite
 passes 611 tests in nine files; forced workspace typecheck and lint pass.
 The unchanged Vite native-config advisory remains visible, not suppressed.
@@ -556,7 +560,7 @@ export type {
   the runtime/protocol/core/architecture suites; require GREEN typecheck and
   lint. Commit `feat: expose non-authorizing journal recovery assessment`.
 
-Task 3 verification: the public API seed and all 35 report cases fail for the
+Initial Task 3 verification: the public API seed and all 35 report cases fail for the
 missing export before implementation, then pass. The combined runtime,
 protocol, core, and architecture selection passes 1,085 tests in 39 files;
 forced workspace typecheck and lint pass. The deliberately extra-field event
@@ -575,7 +579,7 @@ Expected failures use the fixed prefix and code, never arbitrary input text.
 | Text boundary | Reject object, boxed string, null, number, malformed/deep-invalid JSON without conversion hooks or raw parser diagnostics; accept exact text limit and reject limit + 1 before parsing |
 | Closed framing | Reject missing/extra root or commit keys, including prototype-key payloads; inherited required keys cannot supply an omission; reject non-1 format versions, empty identifiers, negative/fractional/unsafe counters, empty commits, and nonzero empty head |
 | Aggregate budgets | Accept exactly 1,024 commits/events under the text cap; reject 1,025; total events span all commits; invalid envelope/event totals fail before event parsing |
-| Event boundary | Exercise all 21 shape-valid variants in parser fixtures, optional wire omissions, explicit null, wrong event version, nested unknown fields, depth/node limits, nested freezing; retain all existing command/event regressions |
+| Event boundary | Exercise all 21 shape-valid variants in parser fixtures, optional wire omissions, explicit null, wrong event version, nested unknown fields, depth/node limits, nested freezing; reject empty envelope event/command IDs at both journal parsing and public inspection without changing standalone event parsing; retain all existing command/event regressions |
 | Atomic framing | Accept two command IDs in one commit and repeated command ID within that commit; reject reuse in a later commit; reject duplicate event IDs within/across commits |
 | Replay chain | Require initial expected revision zero, contiguous commit/event revisions, and matching declared head; reject removed/reordered/duplicated batches and `InMemoryJournal.events()` tails after disable; never synthesize a seed |
 | Core compatibility | Accept supported transitions unchanged; compare generated histories with the current reducer; reject `BriefConfirmed` explicitly and invalid state/epoch transitions with fixed errors; a reducible actor label is not authenticated consent |

@@ -248,6 +248,12 @@ it.each([
   expect(() => parsePairJournal(eventsText(event))).toThrow(new Error("Invalid Pair journal: INVALID_EVENT"));
 });
 
+it.each(["eventId", "commandId"] as const)("rejects empty %s only at the journal boundary", field => {
+  const event = { ...fixtures.WorkspaceObserved, [field]: "" };
+  expect(eventParser.parsePairEvent(event)[field]).toBe("");
+  expect(() => parsePairJournal(eventsText(event))).toThrow(new Error("Invalid Pair journal: INVALID_EVENT"));
+});
+
 it("preserves the existing root-zero depth limit of 64", () => {
   expect(() => parsePairJournal(eventsText(observationEvent(nestedValue(62))))).not.toThrow();
   expect(() => parsePairJournal(eventsText(observationEvent(nestedValue(63)))))

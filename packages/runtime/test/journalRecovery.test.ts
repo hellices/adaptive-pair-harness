@@ -64,6 +64,12 @@ it("counts atomic commits separately from their events and commands", () => {
   expect(report).toMatchObject({ headRevision: 6, commitCount: 3, eventCount: 6 });
 });
 
+it.each(["eventId", "commandId"] as const)("rejects empty %s without publishing a recovery report", field => {
+  const event = journalEvent(1, { type: "PresenceEnabled", workspaceId: "workspace-1" }, { [field]: "" });
+  expect(() => inspectPairJournal(historyText([event]), expectation))
+    .toThrow(new Error("Invalid Pair journal: INVALID_EVENT"));
+});
+
 it("rejects the wrong stream before trying to reduce the history", () => {
   const invalidSequence = historyText([journalEvent(1, { type: "WorkspaceObserved" }, { actor: "host" })]);
   expect(() => inspectPairJournal(invalidSequence, { ...expectation, streamId: "other-stream" }))

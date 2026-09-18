@@ -1495,20 +1495,21 @@ edge. It reuses the existing event parser and reducer unchanged:
 
 | Implemented boundary | New tests and observed evidence |
 | --- | --- |
-| [Bounded journal parser](../packages/protocol/src/parseJournal.ts) | [106 cases](../packages/protocol/test/journal.test.ts): primitive text only, exact inclusive budgets, own closed fields, all 21 event shapes, wire omissions, per-event traversal limits, nested freezing, sanitized errors, and no partial output |
+| [Bounded journal parser](../packages/protocol/src/parseJournal.ts) | [108 cases](../packages/protocol/test/journal.test.ts): primitive text only, exact inclusive budgets, own closed fields, nonempty envelope event/command IDs, all 21 event shapes, wire omissions, per-event traversal limits, nested freezing, sanitized errors, and no partial output |
 | [Private replay](../packages/runtime/src/journalReplay.ts) | [72 cases](../packages/runtime/test/journalReplay.test.ts): revision-zero and atomic commit semantics, global event/command identity, all 20 supported reducer routes, explicit unsupported-event rejection, and lifetime-aware warnings through close/disable/rebind |
-| [Public inspection report](../packages/runtime/src/journalRecovery.ts) | [35 cases](../packages/runtime/test/journalRecovery.test.ts): expected identities, exact metadata keys, frozen nested data, always-false authority/replay flags, private-data sentinel exclusion, call isolation, and an unchanged live journal/grants |
+| [Public inspection report](../packages/runtime/src/journalRecovery.ts) | [37 cases](../packages/runtime/test/journalRecovery.test.ts): expected identities, empty envelope event/command ID rejection, exact metadata keys, frozen nested data, always-false authority/replay flags, private-data sentinel exclusion, call isolation, and an unchanged live journal/grants |
 
-These are **213 new root test cases**, not 213 additional host scenarios. Six
+These are **217 new root test cases**, not 217 additional host scenarios. Six
 replay properties each run 100 generated histories, comparing accepted histories
 with the current reducer and separately corrupting revisions, IDs, commit
 boundaries, and the declared head. Their generated trials are not added to the
 test-case total. Before implementation, the parser and public report seed tests
 failed for missing exports and the replay suite failed for its missing private
 module. The complete parser/report matrices were also observed failing before
-their implementation. All three suites now pass; the combined protocol,
-runtime, core, and architecture selection passes **1,085 tests in 39 files**,
-followed by forced workspace typecheck and lint.
+their implementation. The initial combined protocol, runtime, core, and
+architecture selection passed **1,085 tests in 39 files**, followed by forced
+workspace typecheck and lint. The four later empty-identifier regressions are
+included in the current suite counts and full validation below.
 
 This verifies bounded read-only inspection, not authentic consent, privacy-safe
 disk serialization, a durable store, working resume, authority restoration, or
@@ -1564,11 +1565,12 @@ This is a dated audit result, not a vulnerability-free guarantee.
 
 #### P2a post-maintenance validation
 
-After the dependency update and clean installation, forced workspace typecheck,
-full ESLint, **2,193 root tests in 118 files**, and the separate POC compile plus
+After the dependency update, clean installation, and empty-identifier review
+fix, forced workspace typecheck, full ESLint, **2,197 root tests in 118 files**,
+and the separate POC compile plus
 **21 tests in five files** pass. The coverage run independently passes the same
-2,193 root cases: statements **91.03%**, branches **84.87%**, functions **92.79%**,
-and lines **91.03%**. Generated property trials and POC tests are not added to
+2,197 root cases: statements **91.04%**, branches **84.89%**, functions **92.80%**,
+and lines **91.04%**. Generated property trials and POC tests are not added to
 the root total. Stable build/package and the seven-entry archive verifier pass;
 the isolated POC also compiles and packages successfully.
 
@@ -1593,8 +1595,21 @@ host registration/action test also passes (**one case**). All four host runners
 exit zero and use disposable profiles rather than the developer's profile.
 The local documentation
 check resolves all **46 relative links and anchors** across the four canonical
-documents. Independent task-scoped specification/code-quality reviews found
-no actionable issues in the parser, private replay, or public report changes.
+documents. Initial independent task-scoped specification/code-quality reviews
+found no actionable issues in the parser, private replay, or public report changes.
+
+Repository review subsequently identified a stale authorization paragraph and
+accepted empty event/command IDs. The paragraph now distinguishes the approved
+P2a scope from unapproved remaining P2/P3 work and the separate merge decision.
+For the identifier defect, two parser cases and two public inspection cases
+first failed because no error was thrown. Journal parsing now rejects either
+empty envelope ID with the fixed `INVALID_EVENT` error before publishing a
+journal or report. All **217 journal cases** pass after rebuilding workspace
+exports. The regression also verifies that standalone event parsing still
+accepts those strings: neither event schemas nor reducer/command semantics
+changed, and no new rule was imposed on unrelated payload identifiers.
+Follow-up review and final-head CI remain delivery gates in the implementation
+plan, not consequences inferred from local test success.
 
 ## 7. Evaluation hypotheses
 

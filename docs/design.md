@@ -1860,9 +1860,11 @@ Only version 1 is supported; reject other versions rather than infer a migration
 `streamId` identifies a store stream, not necessarily a workspace. The seed is
 `createRuntime(initialWorkspaceId)` at revision zero; no nonzero checkpoint or
 truncated/compacted prefix is accepted. The root and commit objects permit only
-the listed own fields. Identifiers are nonempty strings and all counters are
-nonnegative safe integers. JSON decoding follows `JSON.parse` semantics; this
-is neither canonical serialization nor cryptographic integrity verification.
+the listed own fields. `streamId`, `initialWorkspaceId`, and each event's envelope
+`eventId` and `commandId` must be nonempty strings; other payload fields retain
+their existing event-schema rules. All counters are nonnegative safe integers.
+JSON decoding follows `JSON.parse` semantics; this is neither canonical
+serialization nor cryptographic integrity verification.
 
 Inclusive limits are **1,048,576 UTF-16 code units of input text**,
 **1,024 commits**, and **1,024 events in total**. Reject oversized text before
