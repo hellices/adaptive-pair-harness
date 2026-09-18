@@ -1,8 +1,9 @@
 # P2a Journal and Recovery Contract Implementation Plan
 
-> **Status: proposed; documentation review only.** The owner selected this
-> smaller design/plan PR, not implementation. Do not execute the code tasks
-> until the owner explicitly approves the reviewed scope.
+> **Status: implemented; review findings addressed; owner merge decision pending.**
+> On September 18, 2026, the owner explicitly approved merging documentation
+> PR #10 and implementing its reviewed P2a scope. Implementation PR #11 remains
+> open for final human review and a separate merge decision.
 >
 > **For contributors and agents:** after implementation approval, execute one
 > checklist task at a time. First observe its failing test, implement only that
@@ -35,8 +36,13 @@ build/host/packaging gates. No new library, package edge, or host API is needed.
   `469cb93:docs/implementation-plan.md`. This document deliberately replaces it.
 - The owner chose the journal/recovery foundation's design/plan PR instead of
   planning all of P2 together. Only the four canonical documentation files
-  change in this PR. Reference code below is proposed text, not installed code.
-- The scope and trade-offs are in [design section 13.1](design.md#131-proposed-p2a-journal-inspection).
+  changed in PR #10. Its reference code was proposed text, not installed code.
+- PR #10 merged at `83dc8e8` after separate owner authorization. Implementation
+  starts from that refreshed `main` baseline on `agents/p2a-journal-inspection`.
+  Both dependency graphs install cleanly with Node.js 24.20.0; forced workspace
+  typecheck, lint, 1,980 root tests in 115 files, and the separate POC compile
+  and 21 tests in five files pass before implementation.
+- The scope and trade-offs are in [design section 13.1](design.md#131-p2a-journal-inspection).
   Evidence and the unchanged baseline checks are in
   [the planning checkpoint](research.md#journal-and-recovery-planning-checkpoint).
 - Execute only after separate owner approval, from a refreshed `main` on a
@@ -102,13 +108,13 @@ maintenance is a separately evidenced change, not permission to add integration.
 type permits rejection of non-string values; accepted input is primitive JSON
 text only. The parser validates framing and event shapes, not causal admission.
 
-- [ ] Refresh `main`, install both graphs with Node.js 24+, and run the unchanged
+- [x] Refresh `main`, install both graphs with Node.js 24+, and run the unchanged
   baseline. Recheck the [dependency checkpoint](research.md#planning-dependency-recheck).
   In particular, do not repeat the earlier claim that fast-check 4.10.0 is
   unavailable: its exact registry metadata now resolves. Assess current
   compatibility and update obtainable versions when warranted by the approved
   implementation, preserving manifests/locks and all validation gates.
-- [ ] Add the following first failing case to `packages/protocol/test/journal.test.ts`:
+- [x] Add the following first failing case to `packages/protocol/test/journal.test.ts`:
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -137,9 +143,9 @@ describe("parsePairJournal", () => {
 });
 ```
 
-- [ ] Run `npx vitest run packages/protocol/test/journal.test.ts`; confirm RED
+- [x] Run `npx vitest run packages/protocol/test/journal.test.ts`; confirm RED
   comes from the missing parser/export, not a fixture or toolchain failure.
-- [ ] Implement the following proposed files and export them. Object property
+- [x] Implement the following proposed files and export them. Object property
   reads occur only after checking all expected **own** keys. Do not replace
   that check with inherited-property validation or expose JSON parser errors.
 
@@ -220,7 +226,11 @@ const parseCommit = (commit: WireCommit): PairJournalCommit => {
   try {
     return Object.freeze({
       expectedRevision: commit.expectedRevision,
-      events: Object.freeze(commit.events.map(parsePairEvent)),
+      events: Object.freeze(commit.events.map(value => {
+        const event = parsePairEvent(value);
+        if (!isIdentifier(event.eventId) || !isIdentifier(event.commandId)) return fail("INVALID_EVENT");
+        return event;
+      })),
     });
   } catch {
     return fail("INVALID_EVENT");
@@ -260,15 +270,22 @@ export type { PairJournal, PairJournalCommit } from "./journalTypes.js";
 export { parsePairJournal } from "./parseJournal.js";
 ```
 
-- [ ] Extend the RED/GREEN cycle with each format case in the acceptance matrix
+- [x] Extend the RED/GREEN cycle with each format case in the acceptance matrix
   below. Spy on `JSON.parse` to prove over-limit text is rejected before decoding;
   use whitespace padding for the exact inclusive text boundary. Use complete
   repeated observation events for event/commit limits, not an oversized fixture
   that accidentally hits a different bound first. Verify nested event freezing,
   wire omissions, and the existing command/event suites.
-- [ ] Run `npx vitest run packages/protocol/test` and
+- [x] Run `npx vitest run packages/protocol/test` and
   `npm run typecheck -- --force`; require GREEN before committing
   `feat: define bounded version-1 journal framing`.
+
+Initial Task 1 verification: both seed tests fail for the missing export, then all 106
+format cases fail before implementation and pass afterward. The protocol suite
+passes 611 tests in nine files; forced workspace typecheck and lint pass.
+The unchanged Vite native-config advisory remains visible, not suppressed.
+Independent read-only review of `83dc8e8..bbbf2bd` found no actionable
+specification or code-quality issues.
 
 ## Task 2: Private replay and operation-lifetime inspection
 
@@ -278,7 +295,7 @@ export { parsePairJournal } from "./parseJournal.js";
 snapshot and frozen warning metadata. Do not export this helper from the
 runtime package entry point or turn it into a store constructor.
 
-- [ ] Add a complete-history fixture builder and failing tests in
+- [x] Add a complete-history fixture builder and failing tests in
   `journalRecoveryFixtures.ts` and `journalReplay.test.ts`. This base fixture
   contains two different commands in one commit; implementations must preserve it:
 
@@ -321,9 +338,9 @@ it("preserves a multi-command atomic commit", () => {
 });
 ```
 
-- [ ] Run `npx vitest run packages/runtime/test/journalReplay.test.ts` and
+- [x] Run `npx vitest run packages/runtime/test/journalReplay.test.ts` and
   establish a missing-helper RED after rebuilding Task 1's protocol exports.
-- [ ] Implement the types and private replay helper below. Reduce each event
+- [x] Implement the types and private replay helper below. Reduce each event
   locally to observe lifetime boundaries; publish nothing until the entire
   journal passes. A later bad event must never leak the earlier valid prefix.
 
@@ -434,16 +451,26 @@ export const replayPairJournal = (journal: PairJournal): {
 };
 ```
 
-- [ ] Add the ordering/lifetime cases from the matrix. Compare accepted
+- [x] Add the ordering/lifetime cases from the matrix. Compare accepted
   generated observation histories against existing `reduce` results with
   fast-check. Separately mutate their revision, event ID, prior command ID,
   commit boundary, and declared head and assert the corresponding rejection.
   Keep fixtures that are intentionally reducible but not command-authorized:
   replay is not a substitute for the decider or consent.
-- [ ] Run `npx vitest run packages/runtime/test/journalReplay.test.ts` plus
+- [x] Run `npx vitest run packages/runtime/test/journalReplay.test.ts` plus
   existing journal, workspace-boundary, session-identity, and core suites;
   typecheck and lint. Commit GREEN as
   `feat: inspect journal ordering and unsettled operation lifetimes`.
+
+Task 2 verification: the seed and expanded suite first fail because the private
+helper is absent. All 72 replay cases then pass, including six 100-run generated
+history properties and all 20 supported reducer event routes. The existing
+journal, workspace-boundary, session-identity, and core suites pass 98 tests in
+13 files; forced workspace typecheck and lint pass. One new fixture initially
+used the unsupported actor label `model`; the existing schema and types require
+`ai`, so only that fixture was corrected. No existing reducer changed.
+Independent read-only review of `bbbf2bd..4f545ce` found no actionable
+specification or code-quality issues.
 
 ## Task 3: Public non-authorizing restart assessment
 
@@ -451,7 +478,7 @@ export const replayPairJournal = (journal: PairJournal): {
 `inspectPairJournal(value: unknown, expectation: JournalExpectation): JournalRecoveryReport`.
 The expectation is supplied by trusted adapter code, not a public model input.
 
-- [ ] Write the first failing contract in `journalRecovery.test.ts`:
+- [x] Write the first failing contract in `journalRecovery.test.ts`:
 
 ```ts
 import { expect, it } from "vitest";
@@ -473,7 +500,7 @@ it("reports history without granting any restoration or replay authority", () =>
 });
 ```
 
-- [ ] Run `npx vitest run packages/runtime/test/journalRecovery.test.ts` and
+- [x] Run `npx vitest run packages/runtime/test/journalRecovery.test.ts` and
   confirm a missing-public-API RED, then add the following implementation.
 
 ### `packages/runtime/src/journalRecovery.ts`
@@ -525,14 +552,23 @@ export type {
 } from "./journalRecoveryTypes.js";
 ```
 
-- [ ] Add every authority/privacy/isolation case from the matrix. Place a unique
+- [x] Add every authority/privacy/isolation case from the matrix. Place a unique
   sentinel in operation inputs, summaries, diagnostics, and grant IDs; neither
   the report nor failure message/cause may contain it. Enumerate the report's
   exact keys so future fields cannot accidentally publish a snapshot. Verify
   all nested metadata is frozen and calls after a rejected journal stay clean.
-- [ ] Run `npx vitest run packages/runtime/test/journalRecovery.test.ts` and
+- [x] Run `npx vitest run packages/runtime/test/journalRecovery.test.ts` and
   the runtime/protocol/core/architecture suites; require GREEN typecheck and
   lint. Commit `feat: expose non-authorizing journal recovery assessment`.
+
+Initial Task 3 verification: the public API seed and all 35 report cases fail for the
+missing export before implementation, then pass. The combined runtime,
+protocol, core, and architecture selection passes 1,085 tests in 39 files;
+forced workspace typecheck and lint pass. The deliberately extra-field event
+fixture is constructed before the typed history builder, preserving its invalid
+wire payload without weakening protocol types.
+Independent read-only review of `4f545ce..4885577` found no actionable
+specification or code-quality issues.
 
 ## Acceptance matrix
 
@@ -544,7 +580,7 @@ Expected failures use the fixed prefix and code, never arbitrary input text.
 | Text boundary | Reject object, boxed string, null, number, malformed/deep-invalid JSON without conversion hooks or raw parser diagnostics; accept exact text limit and reject limit + 1 before parsing |
 | Closed framing | Reject missing/extra root or commit keys, including prototype-key payloads; inherited required keys cannot supply an omission; reject non-1 format versions, empty identifiers, negative/fractional/unsafe counters, empty commits, and nonzero empty head |
 | Aggregate budgets | Accept exactly 1,024 commits/events under the text cap; reject 1,025; total events span all commits; invalid envelope/event totals fail before event parsing |
-| Event boundary | Exercise all 21 shape-valid variants in parser fixtures, optional wire omissions, explicit null, wrong event version, nested unknown fields, depth/node limits, nested freezing; retain all existing command/event regressions |
+| Event boundary | Exercise all 21 shape-valid variants in parser fixtures, optional wire omissions, explicit null, wrong event version, nested unknown fields, depth/node limits, nested freezing; reject empty envelope event/command IDs at both journal parsing and public inspection without changing standalone event parsing; retain all existing command/event regressions |
 | Atomic framing | Accept two command IDs in one commit and repeated command ID within that commit; reject reuse in a later commit; reject duplicate event IDs within/across commits |
 | Replay chain | Require initial expected revision zero, contiguous commit/event revisions, and matching declared head; reject removed/reordered/duplicated batches and `InMemoryJournal.events()` tails after disable; never synthesize a seed |
 | Core compatibility | Accept supported transitions unchanged; compare generated histories with the current reducer; reject `BriefConfirmed` explicitly and invalid state/epoch transitions with fixed errors; a reducible actor label is not authenticated consent |
@@ -556,15 +592,15 @@ Expected failures use the fixed prefix and code, never arbitrary input text.
 
 ## Task 4: Verified, reviewed delivery after implementation approval
 
-- [ ] Update `README.md`, `docs/design.md`, and `docs/research.md` only with
+- [x] Update `README.md`, `docs/design.md`, and `docs/research.md` only with
   measured implementation evidence. Separate new test counts from the baseline,
   root tests from the isolated POC, and read-only inspection from actual storage
   or working session recovery. Mark completed tasks here, not in a handoff file.
-- [ ] Inventory/audit both installed graphs and locks; compare direct dependencies
+- [x] Inventory/audit both installed graphs and locks; compare direct dependencies
   with obtainable registry versions and upstream stable releases. Record access
   restrictions honestly and distinguish registry metadata from installed/tested
   availability. Keep every material update and its compatibility evidence traceable.
-- [ ] Build workspace exports before extension tests and run:
+- [x] Build workspace exports before extension tests and run:
 
 ```sh
 npm ci
@@ -584,19 +620,37 @@ env -u VSCODE_EXECUTABLE_PATH ADAPTIVE_PAIR_HOST_VERSION=1.137.0 npm run test:ho
 env -u VSCODE_EXECUTABLE_PATH npm --prefix poc/session-target run test:host
 ```
 
-- [ ] Obtain independent specification/code-quality review, commit and push,
+Local delivery gates pass after clean installation with Node.js 24.20.0 and
+fast-check 4.10.0: full checks, coverage, both packages and audits, 17 host cases
+on each pinned Stable version and Insiders, and the separate POC's one Insiders
+host case. Detailed counts, compatibility/access limits, bundle-size evidence,
+and the unchanged warning are in [research](research.md#p2a-post-maintenance-validation).
+
+- [x] Obtain independent specification/code-quality review, commit and push,
   open the implementation PR against `main`, and request repository review.
   Check each finding against the actual code, add a failing regression for a
   real defect, fix it, and reply in its original thread with verification or
   a reasoned explanation. Resolve only addressed concerns.
-- [ ] Recheck follow-up reviews and all final-head CI steps, including actual
+- [x] Recheck follow-up reviews and all final-head CI steps, including actual
   Insiders results despite allowed failure. Report readiness without merging,
   auto-merging, wiring a host route, or starting another milestone.
 
-## This documentation PR's gate
+PR #11's implementation checkpoint `1a5d6a5` passes all four CI jobs and all
+47 actual steps, including Insiders. Independent full-branch and focused
+follow-up reviews found no actionable issues. Both repository findings were
+verified, fixed, and answered with linked replies to their original reviews;
+neither produced an inline thread. The repository re-review reports zero new
+comments but remains `COMMENTED` and explicitly requests final human review,
+not approval. Final documentation-only revisions are rechecked on the PR
+before readiness is reported; this recorded checkpoint does not authorize
+merging, auto-merge, or the next milestone.
 
-Self-review the spec/plan against current code, validate local links and proposed
-reference types, rerun unchanged baseline checks and both audits, and obtain
-independent plus repository review. None of that executes Tasks 1–4 or proves
-their proposed new tests pass. The owner's review, explicit merge decision, and
-later implementation authorization remain distinct decisions.
+## Completed documentation gate (PR #10)
+
+The documentation PR checked the spec against existing code, local links,
+reference types, unchanged baseline tests and both audits, and independent plus
+repository review. That gate did not execute Tasks 1–4 or authorize product
+implementation. The owner later explicitly approved its merge and this reviewed
+implementation scope. Current execution evidence is recorded in the tasks above
+and in [research](research.md#p2a-implementation-evidence); merging this
+implementation PR still requires separate owner direction.
