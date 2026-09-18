@@ -4,10 +4,18 @@
 > smaller design/plan PR, not implementation. Do not execute the code tasks
 > until the owner explicitly approves the reviewed scope.
 >
-> **For agentic workers:** REQUIRED SUB-SKILL: use
-> `superpowers:executing-plans` for this coupled boundary and
-> `superpowers:requesting-code-review` before delivery. Keep progress here and
-> in Git history; do not create competing active plans.
+> **For contributors and agents:** after implementation approval, execute one
+> checklist task at a time. First observe its failing test, implement only that
+> task, rerun its named checks, and commit the verified result. Stop for a scope
+> decision if the design cannot be met. Before delivery, have an independent
+> reviewer compare the changes with the design and acceptance matrix. Keep
+> progress here and in Git history; do not create competing active plans.
+>
+> **Optional agent tooling:** [Superpowers](https://github.com/obra/superpowers)
+> provides `superpowers:executing-plans` (task execution with review checkpoints)
+> and `superpowers:requesting-code-review` (independent review). Agents that
+> already have these helpers may use them; they are not repository dependencies
+> or a prerequisite for following the tool-independent workflow above.
 
 **Goal:** Inspect a bounded, complete version-1 journal and report recorded
 unfinished operations without saving data, restoring authority, or replaying
