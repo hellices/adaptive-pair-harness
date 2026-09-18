@@ -1225,9 +1225,9 @@ not a reinstatement of the version freeze:
   TypeScript 7.0.2 is available, but typescript-eslint 8.70.0 declares the peer
   range `>=4.8.4 <6.1.0`; upgrading the compiler would leave the supported lint
   toolchain range.
-- `@types/node` 24.13.3 is the latest available Node 24 type release. The registry
-  advertises 26.5.0, but the types must describe the supported Node 24 host floor,
-  not silently allow APIs that require Node 26.
+- `@types/node` 24.13.3 was selected on the Node 24 type line rather than allowing
+  APIs that require Node 26. The subsequent event-validation audit below
+  supersedes the earlier latest-patch claim and updates both graphs to 24.13.4.
 - Upstream [Mocha 12.0.1](https://github.com/mochajs/mocha/releases/tag/v12.0.1)
   was published on September 11, 2026, but an exact registry lookup returns
   `E404`. Retain the obtainable 12.0.0 release with the patched
@@ -1300,6 +1300,110 @@ remain open rather than being claimed as completed by dependency maintenance.
 Local verification is separate from PR approval. The published PR records the
 final revision's CI, review feedback, fixes, and thread resolutions; these
 local results alone do not establish merge readiness.
+
+### Event-increment dependency inventory (September 17, 2026 UTC)
+
+The follow-up audit inventories all 16 tracked manifests, both active lockfiles,
+and all 24 direct external dependency declarations across 16 distinct packages.
+The root workspace graph and independent `poc/session-target` graph are both
+included; fixture/scripts manifests contain no additional external graph.
+Registry metadata is cross-checked with upstream release records or maintained
+package-source history, not inferred from `npm outdated` alone.
+
+| Direct package | Maintained graph | Selected version | Disposition |
+| --- | --- | --- | --- |
+| `@eslint/js` | Root | 10.0.1 | Current obtainable stable |
+| `@types/mocha` | Both | 10.0.10 | Current obtainable stable |
+| `@types/node` | Both | 24.13.4 | Update from 24.13.3; keep Node 24 API floor |
+| `@types/vscode` | Root | 1.136.0 | Keep supported VS Code 1.136 API floor, not 1.137 declarations |
+| `@vitest/coverage-v8` | Root | 5.0.0 | Keep paired with Vitest; exact 5.0.1 registry request returns E404 |
+| `@vscode/dts` | POC | 0.4.1 | Current obtainable stable |
+| `@vscode/test-electron` | Both | 3.1.0 | Current obtainable stable |
+| `@vscode/vsce` | Both | 4.0.0 | Current obtainable stable |
+| `ajv` | Root | 8.20.0 | Current obtainable stable |
+| `esbuild` | Root | 0.28.2 | Current obtainable stable |
+| `eslint` | Root | 10.10.0 | Current obtainable stable |
+| `fast-check` | Root | 4.9.0 | Upstream 4.10.1 and 4.10.0 exact registry requests return E404 |
+| `mocha` | Both | 12.0.0 | Upstream 12.0.2 and 12.0.1 exact registry requests return E404 |
+| `typescript` | Both | 6.0.3 | 7.0.2 is outside the linter's `>=4.8.4 <6.1.0` peer range |
+| `typescript-eslint` | Root | 8.70.0 | Current obtainable stable |
+| `vitest` | Both | 5.0.0 | Upstream 5.0.1 exact registry request returns E404 |
+
+The Node type patch is verified by an exact online lookup, installed in both
+graphs, and recorded consistently in both manifests and lockfiles. Only that
+package's version, artifact, and integrity entries change in the lockfiles.
+The newer registry `@types/node` 26.5.1 would describe a different runtime
+floor and is not selected. No product/protocol version or host API floor changes.
+
+Exact lookup and availability claims apply to the configured Microsoft registry
+proxy: direct public npm transport is unavailable in this environment. They
+do not claim that those upstream releases are unpublished globally. Network
+checks explicitly disable the cached Node launcher's inherited npm offline
+setting; offline cache misses are not treated as upstream availability evidence.
+Both full audits, including development dependencies, pass with zero findings
+before and after the patch, and both installed dependency trees match their
+manifests/locks. These are point-in-time results from the configured advisory
+endpoint, not a guarantee against undiscovered vulnerabilities.
+
+### Version-1 event validation evidence
+
+The approved post-refactoring increment starts from PR #8's merged revision
+`ad4b570d5526138f9afa6fa3e13dde624244b345`. The baseline forced typecheck and
+37 protocol tests pass. Before implementing the event parser, 448 new cases
+fail because `parsePairEvent` is missing: 257 envelope/version/variant cases
+and 191 payload/JSON-safety cases. With the implementation in place, all 485
+protocol cases pass together, including the unchanged command regressions.
+
+The fixtures exhaustively cover the 21 current `PairEvent` discriminants.
+Checks distinguish wire omissions from explicit undefined/null, verify the
+three required-but-possibly-undefined memory fields, reject malformed nested
+payloads and unsafe counters, and retain the event-only `engaged` presence
+status. JSON-safety tests exercise accessors and conversion hooks without
+invoking them, exotic/hidden/symbol data, cycles, sparse/decorated arrays,
+shared references, safe dictionary keys, and detached recursive freezing.
+These tests establish structural behavior, not actor authority, event-sequence
+validity, persistence, recovery, or policy approval of a well-shaped event.
+
+Initial local checks use Node.js 24.20.0: forced workspace typecheck, full lint, **1,960
+tests in 113 files**, deterministic Stable build, seven-entry Stable VSIX and
+archive verification, plus **17 isolated host cases on each of 1.136.2 and
+1.137.0**. The separately maintained POC passes **21 unit cases in five files**,
+its one Insiders host case, and nine-entry packaging. Those POC and host cases
+are separate from the workspace unit-test total. Existing Vite and clean-profile
+host diagnostics remain visible rather than being suppressed.
+
+Review reproductions found two ways for the original validate-then-copy path
+to depart from the JSON contract: Ajv could read inherited required/optional
+fields, and a Proxy could report safe descriptors before a later property read
+returned a caller-owned function. Own-property-only Ajv checks alone are not
+enough to prevent getter reads; the installed implementation reads the value
+before its own-property guard. Both parsers now capture and validate one
+detached descriptor view whose objects have no prototype, without later reads
+from caller objects. Reflection traps themselves are not sandboxed.
+
+A 4,000-level parsed JSON object also produced a raw stack overflow, and a
+small shared binary graph expanded exponentially. Event capture now bounds
+depth to 64 (root zero) and expanded values to 10,000. Tests include the exact
+inclusive depth/node boundaries, shared-data support, and an 80-level command
+control that remains accepted without imposing event budgets on commands.
+The 16 review regression cases first produced **15 failures and one passing
+control**; all 16 then passed, and the combined protocol suite reached **501
+tests across eight files**. A later regression first failed when an inherited
+descriptor `value` disguised an accessor; descriptor metadata now also requires
+an own data property. Three further cases cover maximum-length sparse arrays
+with zero, bounded, and over-budget populated prefixes. An isolated probe of
+the empty maximum-length array rejects at index zero with 14 own-property
+checks: the hole loop throws at the first missing index, not after walking the
+declared length. No speculative length preflight is needed to correct that
+reported concern. The final local protocol suite passes **505 cases**, and
+forced typecheck, full lint, and **1,980 workspace tests in 115 files** pass.
+Review disposition and final-head CI evidence are recorded in the PR rather
+than treating an older successful run as final evidence.
+
+The implementation adds no new dependency, public event-type change, host route,
+runtime journal integration, or storage/recovery code. Source and tests pass
+the existing size and package-boundary guards. Local checks are not a PR
+approval: final-head CI and review evidence belong to the published PR.
 
 ## 7. Evaluation hypotheses
 

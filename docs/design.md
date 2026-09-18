@@ -1,10 +1,10 @@
 # Adaptive Pair v2: Product and System Design
 
-- **Updated:** September 16, 2026 (UTC)
-- **Status:** The reviewed P1 policy increment is merged as pure contracts.
-  The owner then authorized runtime-boundary and code-size stabilization before
-  further product work. The remaining v2 roadmap is
-  proposed and requires separately reviewed implementation plans and approval.
+- **Updated:** September 17, 2026 (UTC)
+- **Status:** The reviewed P1 policy and runtime-boundary/code-size stabilization
+  increments are merged. The owner then approved the bounded event-format
+  validation increment described here; PR #9 records its review and CI gates. The
+  remaining v2 roadmap requires separately reviewed implementation plans and approval.
 - **Implementation:** Stable Growth Mode preview implemented (Tasks 1–12):
   host-agnostic protocol, in-memory authoritative runtime, versioned harness kernel, Growth
   restraint, Pair Presence with join-in-progress capture, observed verification,
@@ -16,13 +16,13 @@
   commands, and the native Agent Plugin remain out of scope for this preview.
   The modes package also implements tested Pair admission, related human
   follow-up, and handoff-preflight policies without runtime or host wiring.
-- **Current plan:** `implementation-plan.md` records the authorized runtime
-  stabilization, bounded-code refactoring, and review gates. It deliberately
-  replaces the completed P1 plan retained at
-  `9eebbf1:docs/implementation-plan.md` in Git history. The Foundation plan
-  remains at `ae1f095:docs/implementation-plan.md`. P2 ownership/lifecycle scope
-  review follows stabilization; no Pair runtime, edit adapter, or new extension
-  control is authorized by this refactoring.
+- **Current plan:** `implementation-plan.md` records the approved event-format
+  validation increment and its test/review gates. It deliberately replaces the
+  completed refactoring plan retained at `ad4b570:docs/implementation-plan.md`;
+  the P1 and Foundation plans remain at `9eebbf1:docs/implementation-plan.md`
+  and `ae1f095:docs/implementation-plan.md`. Durable persistence, authority
+  restoration, P2 ownership/lifecycle, P3 editing, and new extension controls
+  remain separately gated. A successor PR requires new owner merge direction.
 
 This document is the first complete product and architecture specification for
 Adaptive Pair v2. Every v2 behavior starts here as an initial design decision;
@@ -448,12 +448,54 @@ session core does not depend on either path.
 - evidence and privacy classifications;
 - local evaluation records.
 
-Every command and event has an opaque ID, optional task session ID, expected
-Pair runtime revision, actor, and timestamp supplied by an injected clock. The
-runtime processes it under one workspace stream ID. Schemas reject unknown
-fields.
+Commands carry `commandId`, `expectedRevision`, `actor`, and `observedAt`;
+events carry `eventId`, their originating `commandId`, the accepted `revision`,
+`actor`, and `recordedAt`. Both include `protocolVersion: 1` and a closed `type`
+discriminant. Session/work-unit identifiers belong to the applicable payload,
+not a common optional session field. The runtime processes them under one
+workspace stream ID, using timestamps supplied by an injected clock.
+Schemas reject unknown fields.
 Protocol evolution is additive within a major version and uses explicit
 migrations across major versions.
+
+**Implemented event boundary:** the host-independent
+`parsePairEvent(unknown): PairEvent` parser covers the 21 existing event variants.
+It accepts parsed JSON data, rejects unsupported versions and malformed or
+unexpected fields, and returns a detached, deeply frozen event. Revision and
+authority-epoch counters must be nonnegative safe integers; timestamps remain
+finite numbers. Existing command parsing and public event types stay unchanged.
+
+JSON omits undefined object properties. The parser rejects explicit `undefined`
+or `null` in those fields, then restores only the existing required-but-possibly-
+undefined memory properties: `UserActionGranted.authorityEpoch` and the
+authorized operation's `summary` and `userActionGrantId`. Optional entry
+`branch` and result `observation` remain omitted when absent. Arbitrary keys are
+allowed only in the existing record payloads; their values must still be safe
+JSON data.
+
+Both command and event parsers capture own enumerable data-property descriptors
+once into a detached validation view whose objects have no prototype. Schema
+validation and final copying use that same view, not later reads from the
+caller. Inherited properties cannot supply required fields or optional metadata;
+ordinary accessor properties and conversion functions are rejected without
+invocation. An in-process Proxy is interpreted through the descriptors it
+reports, never through its `get` results. Its reflection traps can still run or
+throw: this data boundary is not a sandbox for hostile JavaScript. External
+integrations should deserialize JSON before calling the parser.
+
+Events have a maximum value depth of **64**, with the root at depth zero, and
+a maximum of **10,000 expanded values**. Every container and primitive counts,
+including the root and each repeated occurrence of shared data. These limits
+bound descriptor traversal and alias expansion before schema validation and
+copying; exceeding either produces an `Invalid Pair event:` error rather than
+a stack overflow. Small shared graphs remain supported. These event-specific
+limits do not impose new depth or node limits on existing command inputs.
+
+This is structural validation, not proof of actor authority, causal event
+ordering, idempotency, policy compliance, or workspace freshness. It does not
+load a journal, replay events, restore a grant, or attach new host/runtime routes.
+Durable storage, supported-version migrations, and authority-safe recovery
+remain separately gated work.
 
 ### 5.2 Session core
 
@@ -1764,7 +1806,9 @@ host `LocalJournal` persists bounded edit-episode continuity under extension
 storage. Restart reconciliation of those episodes is not restoration of a
 session, edit authority, action grants, or operation ownership. Disable clears
 that persisted continuity and the current in-memory session. This stabilization
-does not implement P2 session/ownership persistence.
+does not implement P2 session/ownership persistence. The separate version-1
+event parser validates a wire event's data shape only; it is not wired into
+this in-memory journal and does not read or restore durable runtime state.
 
 **Planned v2 persistence:** a durable store adapter will keep the authoritative
 event journal and immutable snapshots under extension storage, not in the

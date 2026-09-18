@@ -268,10 +268,10 @@ compatibility, and version updates follow the
 must pass the affected regression checks.
 The [sequential roadmap](docs/design.md#sequential-delivery-roadmap) covers the
 remaining work through v2.0. The current
-[runtime boundary stabilization plan](docs/implementation-plan.md) covers the
-authorized state-race fixes, host-independent Growth workflow, dependency
-guards, and bounded-code refactoring before P2. It does not authorize P2/P3
-runtime work or claim that Pair Mode is available in the extension.
+[event validation plan](docs/implementation-plan.md) covers the approved
+version-1 event parsing boundary and its tests after the merged runtime-boundary
+refactoring. It does not authorize durable persistence, authority restoration,
+P2/P3 runtime work, or claim that Pair Mode is available in the extension.
 
 ## Development checks
 
