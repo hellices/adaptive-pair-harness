@@ -1,10 +1,11 @@
 # Adaptive Pair v2: Product and System Design
 
-- **Updated:** September 17, 2026 (UTC)
-- **Status:** The reviewed P1 policy and runtime-boundary/code-size stabilization
-  increments are merged. The owner then approved the bounded event-format
-  validation increment described here; PR #9 records its review and CI gates. The
-  remaining v2 roadmap requires separately reviewed implementation plans and approval.
+- **Updated:** September 18, 2026
+- **Status:** P1 policy contracts, runtime-boundary/code-size stabilization, and
+  version-1 event validation (PR #9) are merged. The owner selected a smaller
+  journal/recovery foundation for the next design/plan PR. Proposed P2a contracts
+  below are not implemented or authorized for implementation. The remaining v2
+  roadmap requires separately reviewed implementation plans and approval.
 - **Implementation:** Stable Growth Mode preview implemented (Tasks 1–12):
   host-agnostic protocol, in-memory authoritative runtime, versioned harness kernel, Growth
   restraint, Pair Presence with join-in-progress capture, observed verification,
@@ -16,13 +17,14 @@
   commands, and the native Agent Plugin remain out of scope for this preview.
   The modes package also implements tested Pair admission, related human
   follow-up, and handoff-preflight policies without runtime or host wiring.
-- **Current plan:** `implementation-plan.md` records the approved event-format
-  validation increment and its test/review gates. It deliberately replaces the
-  completed refactoring plan retained at `ad4b570:docs/implementation-plan.md`;
-  the P1 and Foundation plans remain at `9eebbf1:docs/implementation-plan.md`
-  and `ae1f095:docs/implementation-plan.md`. Durable persistence, authority
-  restoration, P2 ownership/lifecycle, P3 editing, and new extension controls
-  remain separately gated. A successor PR requires new owner merge direction.
+- **Current plan:** `implementation-plan.md` is the proposed P2a journal and
+  recovery contract sequence, deliberately replacing the completed event plan
+  retained at `469cb93:docs/implementation-plan.md`. The refactoring, P1, and
+  Foundation plans remain at `ad4b570:docs/implementation-plan.md`,
+  `9eebbf1:docs/implementation-plan.md`, and `ae1f095:docs/implementation-plan.md`.
+  This documentation PR changes no product behavior. Its review or merge does
+  not authorize execution, durable storage, live authority restoration, the
+  remaining P2 lifecycle, or P3 editing/UI. Each PR needs its own merge direction.
 
 This document is the first complete product and architecture specification for
 Adaptive Pair v2. Every v2 behavior starts here as an initial design decision;
@@ -217,7 +219,9 @@ revision's required checks. Stop for the user's merge decision; do not merge
 or enable auto-merge implicitly. Review of documentation does not itself
 authorize implementation or the next milestone. P1 received separate execution
 authorization when the repository owner requested merging PR #4 and proceeding
-with the next increment on September 16, 2026; P2 and P3 remain unapproved.
+with the next increment on September 16, 2026. On September 18, the owner chose
+the journal/recovery foundation's design/plan PR before the rest of P2; P2/P3
+implementation remains unapproved.
 
 **Proposed sequence:** retain the four program milestones from the Foundation
 plan, but split Pair into smaller reviewable increments. Dates and duration
@@ -226,7 +230,7 @@ estimates are intentionally not assigned.
 | Milestone | Deliverable | Current state | Exit gate |
 |---|---|---|---|
 | M1 — Foundation and Growth preview | Shared protocol, in-memory runtime, durable edit-episode continuity, Presence, Growth guidance, observed verification, Stable packaging | Implemented at `ae1f095`; preview scope only; baseline revalidation complete | Preserve the existing unit, property, contract, package, and isolated-host baseline |
-| M2 — Pair Mode | Meaningful human/AI work units, explicit handoff, guarded AI edits, complete Stable `@pair` flow | P1 pure contracts implemented; P2/P3 runtime and host work remain unimplemented | Both initial owners complete a Pair session with observed checks, interruption/recovery, ownership reporting, and unchanged Growth/coexistence behavior |
+| M2 — Pair Mode | Meaningful human/AI work units, explicit handoff, guarded AI edits, complete Stable `@pair` flow | P1 pure contracts implemented; P2a journal/recovery plan proposed; P2/P3 behavior unimplemented | Both initial owners complete a Pair session with observed checks, interruption/recovery, ownership reporting, and unchanged Growth/coexistence behavior |
 | M3 — Delivery and mode switching | Explicit delegation, classified commands, safe mode changes, separate outcome reporting | Future plan | Complete Delivery sessions; switches revoke old authority and require new agreement; no delegated work is reported as Growth or balanced pairing |
 | M4 — Completion, native adapters, and v2.0 | Finish preview gaps, validate optional native entry points, harden both channels, publish release evidence | Future plans and an existing Session Target proof of concept | Every gate in section 17 is satisfied; unavailable optional native capabilities are reported honestly and never required by Stable |
 
@@ -252,9 +256,13 @@ M2 has three ordered increments, not three competing active plans:
    the authoritative core. Add versioned handoff, work-unit completion and
    history, human confirmation, operation quiescence, explicit reconciliation,
    and replay/migration contracts. Track capability-category ownership without
-   converting it into a learning or typing-share score. Review this scope after
-   stabilization, then deliberately replace the canonical implementation plan.
-   Publishing that plan does not itself authorize its implementation.
+   converting it into a learning or typing-share score. Begin with the proposed
+   **P2a journal and recovery contracts** in section 13.1: a bounded, complete
+   journal format, deterministic inspection, and a restart assessment that
+   restores no authority. A durable adapter, privacy-safe persisted payloads,
+   restart admission, and ownership/lifecycle transitions follow in separately
+   reviewed increments. The canonical plan now covers only P2a, and publishing
+   it does not authorize implementation or imply working persistence.
 3. **P3 — Stable Pair experience:** prove the host's guarded-edit boundary and
    then wire native diff/confirmation, the Pair chat route, operational tool
    declarations, and end-to-end verification. Reject stale document versions,
@@ -262,10 +270,10 @@ M2 has three ordered increments, not three competing active plans:
    enforcing the edit contract needs a prototype, use a bounded technical
    spike and record its decision here; do not quietly relax the contract.
 
-The current authorized increment between P1 and P2 is runtime-boundary and
-code-size stabilization: atomic state transitions, lifecycle cancellation,
-host-independent guarded Growth turns, and executable dependency/size checks.
-It adds no Pair ownership, handoff, persistence, or editing feature.
+The runtime-boundary/code-size stabilization and subsequent event-validation
+increment between P1 and P2 are merged. The current authorized work is only the
+P2a design/plan review. It adds no journal parser, recovery behavior, durable
+storage, Pair ownership, handoff, or editing feature to the product.
 
 The full Pair Mode gate still requires P1, P2, and P3. A pure policy returning
 an admissible result is not edit permission, a completed handoff, or evidence
@@ -280,6 +288,8 @@ claims that a later milestone is already planned in implementation detail.
 | Remaining requirement | Owning increment | Required evidence |
 |---|---|---|
 | Pair work-unit checks and related human follow-up policy | M2/P1 | Deterministic policy examples and negative cases; no state or host mutation |
+| Complete journal framing and non-authorizing restart assessment | M2/P2a, proposed | Bounded parsing, commit/revision/ID checks, reducer compatibility, historical unsettled-operation warnings, no storage or live authority |
+| Durable adapter, persisted-data minimization, deletion, and restart admission | M2/P2 after P2a | Atomic crash tests, privacy-safe records, deletion/checkpoint semantics, fresh host reconciliation and human confirmation; not satisfied by inspection |
 | Handoff acceptance, takeover, completion, successors, and replay | M2/P2 | Core and coordinator fault tests, durable human decisions, stale-grant rejection, no automatic replay of unknown mutations |
 | Pair capability-category ownership and reflection | M2/P2, surfaced in P3 | Observed work-unit history and correctable reflection; no score inferred from typing or model prose |
 | Bounded AI edits and complete Pair chat/tool routes | M2/P3 | Real fixture edits and observed checks, conflict/cancellation tests, native diff/confirmation, public-tool parity |
@@ -494,8 +504,9 @@ limits do not impose new depth or node limits on existing command inputs.
 This is structural validation, not proof of actor authority, causal event
 ordering, idempotency, policy compliance, or workspace freshness. It does not
 load a journal, replay events, restore a grant, or attach new host/runtime routes.
-Durable storage, supported-version migrations, and authority-safe recovery
-remain separately gated work.
+The proposed P2a boundary in section 13.1 builds on this parser without changing
+its contract. Durable storage, supported-version migrations, and live
+authority-safe recovery remain separately gated work.
 
 ### 5.2 Session core
 
@@ -1809,6 +1820,133 @@ that persisted continuity and the current in-memory session. This stabilization
 does not implement P2 session/ownership persistence. The separate version-1
 event parser validates a wire event's data shape only; it is not wired into
 this in-memory journal and does not read or restore durable runtime state.
+
+### 13.1 Proposed P2a: journal inspection
+
+**Authorization:** design and implementation-plan review only. Every API,
+limit, and test in this subsection is proposed, not implemented. The deliverable
+would be a host-independent, read-only contract for examining a complete journal
+and identifying recorded unfinished work. It would not save a journal, restore
+a session, or make Pair Mode available.
+
+**Why this boundary first:** a filesystem store now would combine unreviewed
+serialization/privacy, crash ordering, compaction, and live authority changes.
+Implementing all of P2 together would also add ownership and handoff transitions.
+The smaller inspection contract can exercise framing and recovery hazards using
+the merged event parser and reducer before either integration is approved.
+This deliberately defers real persistence; it is not a durability proof.
+
+#### Format and bounds
+
+`parsePairJournal(unknown): PairJournal` accepts only primitive JSON text, not
+caller objects or an arbitrary starting snapshot. The closed format is:
+
+```text
+{ formatVersion: 1, streamId, initialWorkspaceId, headRevision, commits }
+commits[] = { expectedRevision, events: [version-1 wire events] }
+```
+
+The journal format version is separate from each event's `protocolVersion`.
+Only version 1 is supported; reject other versions rather than infer a migration.
+`streamId` identifies a store stream, not necessarily a workspace. The seed is
+`createRuntime(initialWorkspaceId)` at revision zero; no nonzero checkpoint or
+truncated/compacted prefix is accepted. The root and commit objects permit only
+the listed own fields. Identifiers are nonempty strings and all counters are
+nonnegative safe integers. JSON decoding follows `JSON.parse` semantics; this
+is neither canonical serialization nor cryptographic integrity verification.
+
+Proposed inclusive limits are **1,048,576 UTF-16 code units of input text**,
+**1,024 commits**, and **1,024 events in total**. Reject oversized text before
+parsing and oversized event totals before event validation. These are conservative
+policy ceilings, not measured performance or filesystem byte-limit claims.
+Every commit is nonempty. An empty journal has no commits and head revision zero.
+Each event still passes the existing depth-64/10,000-expanded-value parser;
+these limits do not change command parsing. Return detached, deeply frozen data.
+
+#### Replay consistency, not permission
+
+`inspectPairJournal(text, { streamId, workspaceId }): JournalRecoveryReport`
+compares the expected stream, replays privately from revision zero, then checks
+the final workspace against the caller's current workspace. A legal workspace
+reset/rebind in the history is distinct from a stream-ID mismatch. The caller's
+expectation is an adapter-supplied identity, never a public model argument.
+
+For every commit, require its expected revision to equal the preceding head and
+every event revision to advance by exactly one. Require globally unique event
+IDs. A command may produce multiple events, and one atomic commit may contain
+multiple commands, as current `PairCoordinator.setPresence` does. Repeated
+command IDs within that commit are allowed; an ID already seen in a previous
+commit is rejected. Do not split a commit into assumed one-command transactions.
+The final replay revision must equal `headRevision`. Removing a suffix without
+updating the declared head is therefore detectable; coherent rewriting of both
+history and metadata is not authenticated by these checks.
+
+Use the existing pure reducer without changing its accepted transitions. A
+shape-valid event need not be replayable: `BriefConfirmed` currently has no
+reducer route and must fail explicitly. Any unsupported event, gap, duplicate,
+invalid transition, head mismatch, or workspace mismatch rejects the whole
+inspection. Do not return a valid prefix, silently drop events, fabricate a
+checkpoint, invoke the command decider, or retry an effect.
+
+Successful reduction is not proof of original consent, actor authenticity,
+legal command admission, fresh workspace contents, or genuine tool execution.
+In particular, a recorded `actor: "human"` is data, not a new human decision.
+
+#### Non-authorizing assessment
+
+The only public runtime output is a frozen `JournalRecoveryReport`: stream and
+final workspace identity, head revision, commit/event counts, the final session's
+ID/start revision/status if present, and bounded unsettled-operation metadata.
+Every successful report has `authorityRestored: false` and
+`automaticReplayAllowed: false`, including empty, paused, and closed histories.
+It exposes no runtime snapshot, events, action grants, authority token, operation
+inputs, diagnostic text, source, model prose, or callable recovery operation.
+Identifiers can still be private; this API is not a model/tool/UI publication
+or logging surface.
+
+Track operation status after successful event reduction. Recorded `planned`,
+`authorized`, `started`, and `unknown` operations remain warnings; `confirmed`,
+`failed`, `declined`, and `cancelled` are recorded terminal outcomes, not a new
+claim of verified product correctness. Identify warnings by session-start
+revision and operation ID, retaining workspace identity and kind (`read`,
+`edit`, or `check`). Session IDs and operation IDs may be reused after disable,
+so IDs alone cannot identify an operation lifetime. Preserve unsettled warnings
+across close, disable, and workspace rebind in the supplied complete history;
+none of those proves an external process terminated. Inspection does not mutate
+the historical status to `cancelled` or redispatch even a read.
+
+A later restart integration must independently reconcile the workspace and
+outstanding effects, obtain fresh enablement/consent and goal/ownership
+confirmation, and commit its authority transition before admitting new work.
+P2a provides neither that transition nor a snapshot that can be loaded into
+`PairStore`. A previously available grant can never become reusable because an
+inspection succeeded.
+
+#### Failure, privacy, and compatibility
+
+Failures use `Invalid Pair journal:` plus a fixed code; never include raw JSON,
+payload values, parser exception text, or a raw exception cause. Tests distinguish
+text/envelope/event failures from ordering and reducer failures. All work is
+local to one invocation; a failure leaves no partial report, cache, or store
+change. The implementation adds no Node/VS Code imports, listeners, timers,
+workspace reads, storage/network/model calls, commands, or tool declarations.
+
+`InMemoryJournal.events()` is not a complete durable export: disabling Presence
+discards its earlier event prefix while retaining the current revision and
+command-ID history. P2a must reject such a tail instead of guessing the missing
+state. Checkpoints, persisted command deduplication, compaction, retention,
+erasure/tombstones, a writer, and legacy migration remain outside this contract.
+There is no existing durable authoritative v2 journal to migrate, and v1 history
+is not an input format.
+
+Existing events may contain entry diagnostics, operation inputs, and free-form
+summaries. A size bound does not make those fields safe to persist. A later
+durable format/adapter must resolve data minimization and replay requirements
+together; it must not serialize the current in-memory journal wholesale merely
+because P2a can inspect synthetic JSON. The host's edit-episode `LocalJournal`
+is separate and is neither converted nor changed here.
+
+### 13.2 Planned durable persistence
 
 **Planned v2 persistence:** a durable store adapter will keep the authoritative
 event journal and immutable snapshots under extension storage, not in the
