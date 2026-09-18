@@ -1409,10 +1409,11 @@ approval: final-head CI and review evidence belong to the published PR.
 
 On September 18, 2026, after PR #9 merged at `469cb93`, the owner selected a
 smaller journal/recovery foundation **design and plan PR**, rather than planning
-all of P2 at once. This is authorization to review documentation, not to execute
-P2a. The proposed complete-journal parser and non-authorizing inspection APIs
-are not installed in the repository. The canonical implementation plan replaces
-the completed event plan retained at the merge revision.
+all of P2 at once. At that checkpoint, authorization covered documentation
+review, not P2a execution, and the proposed complete-journal parser and inspection
+APIs were not installed. The canonical implementation plan replaced the
+completed event plan retained at the merge revision. This planning evidence
+remains historical; separately authorized implementation is recorded below.
 
 The following are source-inspection findings from that baseline, not results
 from an implemented recovery system:
@@ -1440,8 +1441,8 @@ ESLint pass; the root suite passes **1,980 tests in 115 files**. The separately
 installed POC compiles and passes **21 unit cases in five files**. Both installed
 dependency trees match their manifests/locks. These are baseline checks, not
 new P2a tests. The existing Vite native-config warning remains visible. Final
-documentation-head CI, packaging, host results, and review disposition belong
-to this PR, not to an older successful run.
+documentation-head CI, packaging, host results, and review disposition were
+recorded in PR #10; they are not implementation validation.
 
 The plan's **11 TypeScript reference blocks** were checked as virtual source
 files with the installed compiler, existing package imports, and each package's
@@ -1456,8 +1457,8 @@ The documentation checkpoint inventories **16 manifests, two lockfiles, and
 24 direct external declarations across 16 packages**, including the isolated
 Session Target POC. Both online full-lockfile audits, including development
 dependencies, return **zero findings** from the configured advisory endpoint.
-No manifest, lockfile, runtime floor, or VS Code API floor changes in this
-documentation-only PR; this is not a version freeze or a security guarantee.
+No manifest, lockfile, runtime floor, or VS Code API floor changed in
+documentation-only PR #10; this was not a version freeze or a security guarantee.
 
 All direct packages were checked against current registry metadata and their
 available upstream release/source records. The earlier
@@ -1479,6 +1480,118 @@ publication or verified tarball installation. Online lookups explicitly disable
 the cached Node launcher's inherited offline setting. Future execution must
 repeat the inventory and compatibility checks; a documentation review cannot
 settle later dependency availability or waive an audit finding.
+
+### P2a implementation evidence
+
+On September 18, 2026, the owner explicitly authorized merging documentation
+PR #10 and executing its reviewed P2a plan. The documentation PR merged at
+`83dc8e8`; implementation starts from that refreshed `main` baseline on a
+dedicated PR branch. The unchanged baseline again passed clean installs of both
+dependency graphs, forced typecheck, lint, **1,980 root tests in 115 files**, and
+the separate POC compile plus **21 tests in five files** with Node.js 24.20.0.
+
+The implementation adds no store/host integration or new package dependency
+edge. It reuses the existing event parser and reducer unchanged:
+
+| Implemented boundary | New tests and observed evidence |
+| --- | --- |
+| [Bounded journal parser](../packages/protocol/src/parseJournal.ts) | [106 cases](../packages/protocol/test/journal.test.ts): primitive text only, exact inclusive budgets, own closed fields, all 21 event shapes, wire omissions, per-event traversal limits, nested freezing, sanitized errors, and no partial output |
+| [Private replay](../packages/runtime/src/journalReplay.ts) | [72 cases](../packages/runtime/test/journalReplay.test.ts): revision-zero and atomic commit semantics, global event/command identity, all 20 supported reducer routes, explicit unsupported-event rejection, and lifetime-aware warnings through close/disable/rebind |
+| [Public inspection report](../packages/runtime/src/journalRecovery.ts) | [35 cases](../packages/runtime/test/journalRecovery.test.ts): expected identities, exact metadata keys, frozen nested data, always-false authority/replay flags, private-data sentinel exclusion, call isolation, and an unchanged live journal/grants |
+
+These are **213 new root test cases**, not 213 additional host scenarios. Six
+replay properties each run 100 generated histories, comparing accepted histories
+with the current reducer and separately corrupting revisions, IDs, commit
+boundaries, and the declared head. Their generated trials are not added to the
+test-case total. Before implementation, the parser and public report seed tests
+failed for missing exports and the replay suite failed for its missing private
+module. The complete parser/report matrices were also observed failing before
+their implementation. All three suites now pass; the combined protocol,
+runtime, core, and architecture selection passes **1,085 tests in 39 files**,
+followed by forced workspace typecheck and lint.
+
+This verifies bounded read-only inspection, not authentic consent, privacy-safe
+disk serialization, a durable store, working resume, authority restoration, or
+effect replay. A recorded unknown operation remains a warning; close and disable
+do not rewrite it as cancelled. Root, isolated POC, and host results are kept
+separate. Final delivery gates and review disposition are tracked in the
+[canonical implementation plan](implementation-plan.md).
+
+#### P2a dependency maintenance
+
+The implementation re-inventoried **16 manifests and both active lockfiles**,
+including the isolated POC outside the workspace globs and the dependency-free
+host fixture/scripts manifests. There are **49 declarations: 25 internal and
+24 external**, covering 16 distinct external packages. All internal version
+pins and package edges remain unchanged. An outdated report alone was not used
+as an inventory: exact declarations, stable registry tags, compatible ranges,
+and primary upstream release/source records were compared on September 18, 2026.
+
+| External package | Selected version | Registry/upstream comparison and disposition |
+| --- | --- | --- |
+| `@eslint/js` | 10.0.1 | Matches the registry stable tag and the [ESLint 10.10.0 tagged manifest](https://github.com/eslint/eslint/blob/v10.10.0/packages/js/package.json); its ESLint peer accepts the selected linter. |
+| `@types/mocha` | 10.0.10 | Latest published registry version; the extension's caret range and POC pin resolve identically. DefinitelyTyped's `10.0.9999` source line is not a released patch or the Mocha runtime version. |
+| `@types/node` | 24.13.4 | Latest obtainable Node 24-line declarations. Registry latest 26.5.1 targets a different runtime line; retain the Node 24 verification baseline rather than broaden its type-visible APIs. |
+| `@types/vscode` | 1.136.0 | Retains the extension's declared API floor instead of registry latest 1.137.0. A rolling `1.138.9999` source snapshot is not a published version or permission to raise that floor. |
+| `@vitest/coverage-v8` | 5.0.0 | Matches obtainable Vitest and its exact peer. Upstream [5.0.1](https://github.com/vitest-dev/vitest/releases/tag/v5.0.1) exists, but its exact registry metadata request still returns E404. |
+| `@vscode/dts` | 0.4.1 | Registry stable tag agrees. Microsoft release API access remains SAML-blocked; no independently confirmed upstream release or proposal refresh is claimed. |
+| `@vscode/test-electron` | 3.1.0 | Registry stable tag agrees across root, extension, and POC; its Node requirement accepts Node 24. Microsoft release API access remains SAML-blocked. |
+| `@vscode/vsce` | 4.0.0 | Registry stable tag agrees; `4.0.1-0` is a prerelease, not a stable upgrade. The canonical Microsoft release endpoint remains SAML-blocked; Node 24 is supported. |
+| `ajv` | 8.20.0 | Matches the registry and [upstream release](https://github.com/ajv-validator/ajv/releases/tag/v8.20.0). Its direct protocol installation is nested; validation did not assume every direct dependency was hoisted. |
+| `esbuild` | 0.28.2 | Matches the registry and [upstream release](https://github.com/evanw/esbuild/releases/tag/v0.28.2); no bundler/API migration. |
+| `eslint` | 10.10.0 | Matches the registry and [upstream release](https://github.com/eslint/eslint/releases/tag/v10.10.0), with compatible Node and linter peer ranges. |
+| `fast-check` | **4.10.0, from 4.9.0** | The exact release is now obtainable, matches the registry stable tag and [upstream 4.10.0](https://github.com/dubzzz/fast-check/releases/tag/v4.10.0), and its tarball integrity matches the regenerated lock entry. Upstream 4.10.1 still returns E404 from the configured registry. |
+| `mocha` | 12.0.0 | Preserves the extension range and POC pin. Upstream [12.0.2](https://github.com/mochajs/mocha/releases/tag/v12.0.2) exists, but exact 12.0.1/12.0.2 registry requests remain E404. |
+| `typescript` | 6.0.3 | Highest obtainable compatible 6.0.x. Registry latest 7.0.2 is outside typescript-eslint's declared `>=4.8.4 <6.1.0` range; root lint also covers POC code, so their compiler pins remain aligned. Microsoft upstream release API access is SAML-blocked. |
+| `typescript-eslint` | 8.70.0 | Matches the registry and [tagged upstream manifest](https://github.com/typescript-eslint/typescript-eslint/blob/v8.70.0/packages/typescript-eslint/package.json), including the TypeScript and ESLint peer constraints. |
+| `vitest` | 5.0.0 | Matches the coverage package and registry stable tag in both graphs. Exact upstream 5.0.1 metadata remains unavailable at the configured registry. |
+
+Only the root manifest's fast-check pin and its lockfile metadata change. No
+transitive dependency version, dependency edge, runtime floor, host API, or POC
+manifest/lock changes. Existing and new property tests use the ordinary
+`assert`/`property`/array/arbitrary APIs; the new optional plugin support requires
+no migration for these consumers. No registry replacement, peer override, or
+credential/access workaround was used. Registry availability is not a claim
+about worldwide publication, and a rolling source manifest is not release proof.
+
+Fresh Node 24 installs subsequently reconciled the lock-only metadata with both
+installed graphs. Installed fast-check and the root hidden lock agree on
+**4.10.0**; both full installed-tree checks pass. Full-lockfile audits include
+development, optional, and peer dependencies: the root graph has **401** audit
+dependencies and the POC **257**, with **zero findings at every severity** from
+the configured advisory endpoint. Audit categories overlap and are not summed.
+This is a dated audit result, not a vulnerability-free guarantee.
+
+#### P2a post-maintenance validation
+
+After the dependency update and clean installation, forced workspace typecheck,
+full ESLint, **2,193 root tests in 118 files**, and the separate POC compile plus
+**21 tests in five files** pass. The coverage run independently passes the same
+2,193 root cases: statements **91.03%**, branches **84.87%**, functions **92.79%**,
+and lines **91.03%**. Generated property trials and POC tests are not added to
+the root total. Stable build/package and the seven-entry archive verifier pass;
+the isolated POC also compiles and packages successfully.
+
+The new runtime entry-point export makes the existing Ajv-backed event parser
+reachable during module initialization. An in-memory esbuild comparison under
+the same installed graph, substituting only the previous runtime entry point,
+measures **260,822 bytes** before versus **536,711 bytes** after for the production
+bundle. The added graph is the existing protocol validator and its dependencies,
+not a host inspection route or an effect dispatcher. The packaging tool reports
+the larger bundle; this cost is recorded rather than hidden by changing package
+side-effect metadata or rewriting the reviewed, unchanged event parser. This
+does not claim zero allocation or zero CPU at import time: inactive-zero concerns
+document listeners, timers, workspace reads, models, and network activity before
+explicit enablement. The existing Vite native-config advisory also remains
+visible and unsuppressed.
+
+Isolated Stable-extension host smoke passes **17 cases each** on VS Code
+**1.136.2**, **1.137.0**, and **Insiders**, including inactive-zero and unchanged
+native/coexistence baselines. These counts are not added to root unit coverage
+or the independently installed Session Target POC. The local documentation
+check resolves all **45 relative links and anchors** across the four canonical
+documents. Independent task-scoped specification/code-quality reviews found
+no actionable issues in the parser, private replay, or public report changes.
 
 ## 7. Evaluation hypotheses
 

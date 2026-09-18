@@ -268,12 +268,13 @@ compatibility, and version updates follow the
 must pass the affected regression checks.
 The [sequential roadmap](docs/design.md#sequential-delivery-roadmap) covers the
 remaining work through v2.0. The current
-[P2a journal and recovery contract plan](docs/implementation-plan.md) is a
-**design-only proposal** after the merged version-1 event-validation increment
-(PR #9). It proposes bounded journal inspection and a non-authorizing restart
-assessment, not a durable store or a working resume feature. The owner authorized
-this design/plan review, not its implementation. Disk storage, live restoration,
-Pair ownership/handoff, and P3 editing/UI still need separate approval.
+[P2a journal and recovery contract plan](docs/implementation-plan.md) records the
+reviewed, separately authorized implementation after the version-1 event parser
+(PR #9) and documentation PR #10. P2a adds bounded journal parsing and read-only
+inspection with frozen, non-authorizing metadata, not a durable store or a
+working resume feature. The APIs are not wired into a live store or host route.
+Disk storage, live restoration, Pair ownership/handoff, and P3 editing/UI still
+need separate approval.
 
 ## Development checks
 
@@ -336,11 +337,13 @@ commands, and the native Agent Plugin remain out of scope for this preview.
 P1 adds tested, side-effect-free Pair work-unit admission, related human
 follow-up, and handoff-preflight contracts to `@adaptive-pair/modes`. These
 assessments change no authority or persisted state and are not wired to the
-runtime or extension. The Stable preview remains Growth-only. P2 runtime
-ownership and lifecycle are split first at the proposed P2a journal/recovery
-contract boundary; its [design](docs/design.md#131-proposed-p2a-journal-inspection)
-and plan are under review, not implemented. The rest of P2 and the guarded edits
-and complete Stable Pair experience in P3 remain separately gated. Neither
+runtime or extension. The Stable preview remains Growth-only. P2a now implements
+the [journal inspection boundary](docs/design.md#131-p2a-journal-inspection):
+complete revision-zero histories, commit/revision/identity checks, and recorded
+unfinished-operation warnings. A successful report restores no session, grants,
+or authority and replays no effect. See the [implementation evidence](docs/research.md#p2a-implementation-evidence).
+The rest of P2 and the guarded edits and complete Stable Pair experience in P3
+remain separately gated. Neither
 increment is authorized by an earlier milestone's completion. Growth transfer
 completion and evaluation export remain release work, not completed preview
 features. Work proceeds one milestone at a time; there is no committed calendar

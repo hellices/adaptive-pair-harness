@@ -41,7 +41,7 @@ build/host/packaging gates. No new library, package edge, or host API is needed.
   Both dependency graphs install cleanly with Node.js 24.20.0; forced workspace
   typecheck, lint, 1,980 root tests in 115 files, and the separate POC compile
   and 21 tests in five files pass before implementation.
-- The scope and trade-offs are in [design section 13.1](design.md#131-proposed-p2a-journal-inspection).
+- The scope and trade-offs are in [design section 13.1](design.md#131-p2a-journal-inspection).
   Evidence and the unchanged baseline checks are in
   [the planning checkpoint](research.md#journal-and-recovery-planning-checkpoint).
 - Execute only after separate owner approval, from a refreshed `main` on a
@@ -107,7 +107,7 @@ maintenance is a separately evidenced change, not permission to add integration.
 type permits rejection of non-string values; accepted input is primitive JSON
 text only. The parser validates framing and event shapes, not causal admission.
 
-- [ ] Refresh `main`, install both graphs with Node.js 24+, and run the unchanged
+- [x] Refresh `main`, install both graphs with Node.js 24+, and run the unchanged
   baseline. Recheck the [dependency checkpoint](research.md#planning-dependency-recheck).
   In particular, do not repeat the earlier claim that fast-check 4.10.0 is
   unavailable: its exact registry metadata now resolves. Assess current
@@ -562,6 +562,8 @@ protocol, core, and architecture selection passes 1,085 tests in 39 files;
 forced workspace typecheck and lint pass. The deliberately extra-field event
 fixture is constructed before the typed history builder, preserving its invalid
 wire payload without weakening protocol types.
+Independent read-only review of `4f545ce..4885577` found no actionable
+specification or code-quality issues.
 
 ## Acceptance matrix
 
@@ -585,11 +587,11 @@ Expected failures use the fixed prefix and code, never arbitrary input text.
 
 ## Task 4: Verified, reviewed delivery after implementation approval
 
-- [ ] Update `README.md`, `docs/design.md`, and `docs/research.md` only with
+- [x] Update `README.md`, `docs/design.md`, and `docs/research.md` only with
   measured implementation evidence. Separate new test counts from the baseline,
   root tests from the isolated POC, and read-only inspection from actual storage
   or working session recovery. Mark completed tasks here, not in a handoff file.
-- [ ] Inventory/audit both installed graphs and locks; compare direct dependencies
+- [x] Inventory/audit both installed graphs and locks; compare direct dependencies
   with obtainable registry versions and upstream stable releases. Record access
   restrictions honestly and distinguish registry metadata from installed/tested
   availability. Keep every material update and its compatibility evidence traceable.
@@ -622,10 +624,12 @@ env -u VSCODE_EXECUTABLE_PATH npm --prefix poc/session-target run test:host
   Insiders results despite allowed failure. Report readiness without merging,
   auto-merging, wiring a host route, or starting another milestone.
 
-## This documentation PR's gate
+## Completed documentation gate (PR #10)
 
-Self-review the spec/plan against current code, validate local links and proposed
-reference types, rerun unchanged baseline checks and both audits, and obtain
-independent plus repository review. None of that executes Tasks 1–4 or proves
-their proposed new tests pass. The owner's review, explicit merge decision, and
-later implementation authorization remain distinct decisions.
+The documentation PR checked the spec against existing code, local links,
+reference types, unchanged baseline tests and both audits, and independent plus
+repository review. That gate did not execute Tasks 1–4 or authorize product
+implementation. The owner later explicitly approved its merge and this reviewed
+implementation scope. Current execution evidence is recorded in the tasks above
+and in [research](research.md#p2a-implementation-evidence); merging this
+implementation PR still requires separate owner direction.
