@@ -1588,8 +1588,11 @@ visible and unsuppressed.
 Isolated Stable-extension host smoke passes **17 cases each** on VS Code
 **1.136.2**, **1.137.0**, and **Insiders**, including inactive-zero and unchanged
 native/coexistence baselines. These counts are not added to root unit coverage
-or the independently installed Session Target POC. The local documentation
-check resolves all **45 relative links and anchors** across the four canonical
+or the independently installed Session Target POC, whose separate Insiders
+host registration/action test also passes (**one case**). All four host runners
+exit zero and use disposable profiles rather than the developer's profile.
+The local documentation
+check resolves all **46 relative links and anchors** across the four canonical
 documents. Independent task-scoped specification/code-quality reviews found
 no actionable issues in the parser, private replay, or public report changes.
 

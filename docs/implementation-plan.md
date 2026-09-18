@@ -595,7 +595,7 @@ Expected failures use the fixed prefix and code, never arbitrary input text.
   with obtainable registry versions and upstream stable releases. Record access
   restrictions honestly and distinguish registry metadata from installed/tested
   availability. Keep every material update and its compatibility evidence traceable.
-- [ ] Build workspace exports before extension tests and run:
+- [x] Build workspace exports before extension tests and run:
 
 ```sh
 npm ci
@@ -614,6 +614,12 @@ env -u VSCODE_EXECUTABLE_PATH ADAPTIVE_PAIR_HOST_VERSION=1.136.2 npm run test:ho
 env -u VSCODE_EXECUTABLE_PATH ADAPTIVE_PAIR_HOST_VERSION=1.137.0 npm run test:host
 env -u VSCODE_EXECUTABLE_PATH npm --prefix poc/session-target run test:host
 ```
+
+Local delivery gates pass after clean installation with Node.js 24.20.0 and
+fast-check 4.10.0: full checks, coverage, both packages and audits, 17 host cases
+on each pinned Stable version and Insiders, and the separate POC's one Insiders
+host case. Detailed counts, compatibility/access limits, bundle-size evidence,
+and the unchanged warning are in [research](research.md#p2a-post-maintenance-validation).
 
 - [ ] Obtain independent specification/code-quality review, commit and push,
   open the implementation PR against `main`, and request repository review.
