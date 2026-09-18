@@ -337,13 +337,14 @@ P1 adds tested, side-effect-free Pair work-unit admission, related human
 follow-up, and handoff-preflight contracts to `@adaptive-pair/modes`. These
 assessments change no authority or persisted state and are not wired to the
 runtime or extension. The Stable preview remains Growth-only. P2 runtime
-ownership and lifecycle is split first at the proposed P2a journal/recovery
+ownership and lifecycle are split first at the proposed P2a journal/recovery
 contract boundary; its [design](docs/design.md#131-proposed-p2a-journal-inspection)
 and plan are under review, not implemented. The rest of P2 and the guarded edits
 and complete Stable Pair experience in P3 remain separately gated. Neither
 increment is authorized by an earlier milestone's completion. Growth transfer
-completion and evaluation export remain release work, not completed preview features. Work proceeds one
-milestone at a time; there is no committed calendar release date.
+completion and evaluation export remain release work, not completed preview
+features. Work proceeds one milestone at a time; there is no committed calendar
+release date.
 
 The merged P1 baseline passed typecheck, lint, 673
 tests across 43 files, Stable VSIX verification, and all 17 isolated Extension
