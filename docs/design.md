@@ -220,9 +220,11 @@ revision's required checks. Stop for the user's merge decision; do not merge
 or enable auto-merge implicitly. Review of documentation does not itself
 authorize implementation or the next milestone. P1 received separate execution
 authorization when the repository owner requested merging PR #4 and proceeding
-with the next increment on September 16, 2026. On September 18, the owner chose
-the journal/recovery foundation's design/plan PR before the rest of P2; P2/P3
-implementation remains unapproved.
+with the next increment on September 16, 2026. On September 18, the owner first
+chose the journal/recovery foundation's design/plan PR, then separately approved
+merging PR #10 and implementing its reviewed, read-only P2a inspection scope.
+The remaining P2 persistence/ownership/lifecycle work and P3 editing/UI remain
+unapproved; this implementation PR also needs a separate merge decision.
 
 **Proposed sequence:** retain the four program milestones from the Foundation
 plan, but split Pair into smaller reviewable increments. Dates and duration
