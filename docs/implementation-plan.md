@@ -1,8 +1,9 @@
 # P2a Journal and Recovery Contract Implementation Plan
 
-> **Status: approved; implementation in progress.** On September 18, 2026, the
-> owner explicitly approved merging documentation PR #10 and implementing its
-> reviewed P2a scope. The implementation PR still needs a separate merge decision.
+> **Status: implemented; review findings addressed; owner merge decision pending.**
+> On September 18, 2026, the owner explicitly approved merging documentation
+> PR #10 and implementing its reviewed P2a scope. Implementation PR #11 remains
+> open for final human review and a separate merge decision.
 >
 > **For contributors and agents:** after implementation approval, execute one
 > checklist task at a time. First observe its failing test, implement only that
@@ -625,14 +626,24 @@ on each pinned Stable version and Insiders, and the separate POC's one Insiders
 host case. Detailed counts, compatibility/access limits, bundle-size evidence,
 and the unchanged warning are in [research](research.md#p2a-post-maintenance-validation).
 
-- [ ] Obtain independent specification/code-quality review, commit and push,
+- [x] Obtain independent specification/code-quality review, commit and push,
   open the implementation PR against `main`, and request repository review.
   Check each finding against the actual code, add a failing regression for a
   real defect, fix it, and reply in its original thread with verification or
   a reasoned explanation. Resolve only addressed concerns.
-- [ ] Recheck follow-up reviews and all final-head CI steps, including actual
+- [x] Recheck follow-up reviews and all final-head CI steps, including actual
   Insiders results despite allowed failure. Report readiness without merging,
   auto-merging, wiring a host route, or starting another milestone.
+
+PR #11's implementation checkpoint `1a5d6a5` passes all four CI jobs and all
+47 actual steps, including Insiders. Independent full-branch and focused
+follow-up reviews found no actionable issues. Both repository findings were
+verified, fixed, and answered with linked replies to their original reviews;
+neither produced an inline thread. The repository re-review reports zero new
+comments but remains `COMMENTED` and explicitly requests final human review,
+not approval. Final documentation-only revisions are rechecked on the PR
+before readiness is reported; this recorded checkpoint does not authorize
+merging, auto-merge, or the next milestone.
 
 ## Completed documentation gate (PR #10)
 
