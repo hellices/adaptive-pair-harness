@@ -33,7 +33,7 @@ it.each([
 ] as const)("refuses %s rather than falling back to a valid cache or staged copy", async (_label, damage) => {
   const { medium, store } = await readyModel();
   await store.append(generationKey, presenceCommit());
-  await new DurableStoreModel(namespaceKey, medium, { fault: "before-publication" })
+  await new DurableStoreModel(namespaceKey, medium, { fault: "before-head-publication" })
     .append(generationKey, presenceCommit(1));
   damage(medium);
   const rebuilt = reconstruct(medium);

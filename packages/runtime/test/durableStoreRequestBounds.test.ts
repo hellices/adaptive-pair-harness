@@ -57,10 +57,14 @@ it.each(["facts", "commandKeys", "humanOwnedCapabilities"] as const)(
   "rejects oversized %s cardinality before enumerating or reading elements", async field => {
     const limit = field === "facts" ? durableJournalLimits.facts
       : field === "commandKeys" ? durableJournalLimits.commandKeys : 7;
-    const work = { elements: 0, enumerations: 0 };
+    const work = { elements: 0, enumerations: 0, indexedReads: 0 };
     const values = new Proxy(Array.from({ length: limit + 1 }, () => field === "facts"
       ? { type: "PresenceRecorded", status: "engaged" } : durableKey(500)), {
       ownKeys(target) { work.enumerations += 1; return Reflect.ownKeys(target); },
+      get(target, key, receiver): unknown {
+        if (typeof key === "string" && /^(0|[1-9][0-9]*)$/u.test(key)) work.indexedReads += 1;
+        return Reflect.get(target, key, receiver);
+      },
       getOwnPropertyDescriptor(target, key) {
         if (key !== "length") work.elements += 1;
         return Reflect.getOwnPropertyDescriptor(target, key);
@@ -70,8 +74,13 @@ it.each(["facts", "commandKeys", "humanOwnedCapabilities"] as const)(
       ...presenceCommit(), facts: [{ type: "LearningBoundaryRecorded", sessionKey, maximumHintLevel: 3, [field]: values }],
     } : { ...presenceCommit(), [field]: values };
     const serializations = await measuredRejection(request, field === "humanOwnedCapabilities" ? "INVALID_REQUEST" : "LIMIT_EXCEEDED");
-    expect.soft(work).toEqual({ elements: 0, enumerations: 0 });
+    expect.soft(work).toEqual({ elements: 0, enumerations: 0, indexedReads: 0 });
     expect(serializations).toBe(0);
+    expect(values.length).toBe(limit + 1);
+    expect(values[Symbol.iterator]).toBe(Array.prototype[Symbol.iterator]);
+    expect(work).toEqual({ elements: 0, enumerations: 0, indexedReads: 0 });
+    expect(values[0]).toBeDefined();
+    expect(work).toEqual({ elements: 0, enumerations: 0, indexedReads: 1 });
   },
 );
 

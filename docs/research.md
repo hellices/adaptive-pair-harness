@@ -1773,11 +1773,36 @@ admit a reused generation. Behavioral RED/GREEN tests cover shared/deep graphs,
 repeated publication failures, cold reconstruction, and the exact 1,024-token
 retirement boundary. These are finite model policies, not provider measurements.
 
+Whole-branch review found a source-event scan before its cardinality check and
+an erasure acknowledgement that could leave private payload in malformed outer
+model metadata. Behavioral RED/GREEN regressions now require zero oversized
+event reads/key issuance and unchanged failure for malformed outer metadata,
+including after cold reconstruction and at the final publication boundary.
+Valid, content-free metadata still permits erasing corrupt or oversized owned
+copies at allocator and retirement capacity. The model's head-publication fault
+is explicitly limited to create/append; a separate throwing erase hook verifies
+pre-fence interruption without pretending to measure a filesystem crash.
+An inline review also exposed a request-bound test instrumentation gap. Its
+numeric-index trap now independently counts direct reads as well as descriptor
+access and enumeration. Positive controls first failed with unobserved reads,
+then passed after the trap was added; oversized rejection still performs no
+element reads or serialization.
+
+Two proposed review changes were not applied because command-admitted
+counterexamples contradict them. An omitted preparation can be abandoned before
+publication, so it cannot advance the committed live frame to its computed next
+revision. A matching-epoch first result for an already-authorized operation can
+arrive after closure; projection/replay record that outcome while retaining
+the closed session. Characterization tests cover confirmed and unknown late
+results, no private canary leakage, rejection of new authorization after closure,
+and refusal to overwrite the first outcome. These preserve existing admission
+and preparation contracts rather than adding a stronger historical policy.
+
 Integrated local verification on Node.js **24.21.0** passes forced workspace
-typecheck, full ESLint, and **2,725 root tests in 131 files**. The 528 added
-cases comprise 210 protocol, 75 replay/cache, 47 projection, 146 storage-model,
+typecheck, full ESLint, and **2,745 root tests in 132 files**. The 548 added
+cases comprise 210 protocol, 75 replay/cache, 51 projection, 162 storage-model,
 and 50 recovery/public-contract tests. Property-test trials are not counted as
-additional test cases. Root coverage is **91.55% statements, 85.84% branches,
+additional test cases. Root coverage is **91.57% statements, 85.86% branches,
 93.45% functions, and 91.74% lines**. The isolated POC separately passes
 **21 unit cases in five files**, compile, and packaging.
 

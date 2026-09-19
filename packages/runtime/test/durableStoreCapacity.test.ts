@@ -32,17 +32,17 @@ const assertRetainedBounds = (medium: ModelMedium): void => {
 
 const stagedMedium = async (): Promise<ModelMedium> => {
   const { medium } = await readyModel();
-  expect(await new DurableStoreModel(namespaceKey, medium, { fault: "before-publication" }).append(generationKey, presenceCommit()))
+  expect(await new DurableStoreModel(namespaceKey, medium, { fault: "before-head-publication" }).append(generationKey, presenceCommit()))
     .toEqual({ status: "indeterminate" });
   return medium;
 };
 
-it("retains only one abandoned candidate through repeated pre-publication faults and reconstruction", async () => {
+it("retains only one abandoned candidate through repeated pre-head-publication faults and reconstruction", async () => {
   let medium = await stagedMedium();
   const authority = medium.copies.filter(copy => copy.kind !== "staged");
   for (let attempt = 0; attempt < 32; attempt += 1) {
     const request = { ...presenceCommit(), commitKey: durableKey(30_000 + attempt) };
-    expect(await new DurableStoreModel(namespaceKey, medium, { fault: "before-publication" }).append(generationKey, request))
+    expect(await new DurableStoreModel(namespaceKey, medium, { fault: "before-head-publication" }).append(generationKey, request))
       .toEqual({ status: "indeterminate" });
     medium = reconstruct(medium);
   }
@@ -90,7 +90,7 @@ it("does not reclaim a winner's cache or staged candidate after losing the final
   await barrier.entered;
   const winner = { ...presenceCommit(), commitKey: durableKey(701), commandKeys: [durableKey(702)] };
   expect((await new DurableStoreModel(namespaceKey, medium).append(generationKey, winner)).status).toBe("committed");
-  expect(await new DurableStoreModel(namespaceKey, medium, { fault: "before-publication" }).append(generationKey, presenceCommit(1)))
+  expect(await new DurableStoreModel(namespaceKey, medium, { fault: "before-head-publication" }).append(generationKey, presenceCommit(1)))
     .toEqual({ status: "indeterminate" });
   const before = JSON.stringify(medium);
   barrier.release();

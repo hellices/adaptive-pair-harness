@@ -113,11 +113,15 @@ export const readModelControl = (medium: ModelMedium, namespaceKey: string): Mod
 export const hasOwnedCopies = (medium: ModelMedium, namespaceKey: string): boolean =>
   medium.copies.some(copy => copy.namespaceKey === namespaceKey);
 
-const validateCopies = (medium: ModelMedium, namespaceKey: string): void => {
+export const validateModelMetadata = (medium: ModelMedium): void => {
   if (!fieldsMatch(medium, ["control", "copies", "nextCopyKey"]) || !Array.isArray(medium.copies) ||
       !counter(medium.nextCopyKey) || medium.nextCopyKey === 0) {
     return failModel("HEAD_CONFLICT");
   }
+};
+
+const validateCopies = (medium: ModelMedium, namespaceKey: string): void => {
+  validateModelMetadata(medium);
   if (medium.copies.length > modelStorageLimits.copies) return failModel("LIMIT_EXCEEDED");
   if (!denseArray(medium.copies)) return failModel("HEAD_CONFLICT");
   const seen = new Set<number>();

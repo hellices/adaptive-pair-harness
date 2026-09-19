@@ -72,14 +72,14 @@ it("returns the original canonical retry receipt after a later append and recons
   expect(receipt).toMatchObject({ receipt: { headSequence: 1 } });
 });
 
-it.each(["before-publication", "after-publication"] as const)(
+it.each(["before-head-publication", "after-publication"] as const)(
   "reconstructs append after %s without duplicate application", async fault => {
     const { medium } = await readyModel();
     const commit = presenceCommit();
     expect(await new DurableStoreModel(namespaceKey, medium, { fault }).append(generationKey, commit))
       .toEqual({ status: "indeterminate" });
     const rebuilt = new DurableStoreModel(namespaceKey, reconstruct(medium));
-    expect((await readJournal(rebuilt)).headSequence).toBe(fault === "before-publication" ? 0 : 1);
+    expect((await readJournal(rebuilt)).headSequence).toBe(fault === "before-head-publication" ? 0 : 1);
     const receipt = await rebuilt.append(generationKey, commit);
     expect(receipt).toMatchObject({ status: "committed", receipt: { headSequence: 1 } });
     expect(await rebuilt.append(generationKey, commit)).toEqual(receipt);
@@ -87,9 +87,9 @@ it.each(["before-publication", "after-publication"] as const)(
   },
 );
 
-it("leaves pre-publication create copies blocked rather than promoting an orphan", async () => {
+it("leaves pre-head-publication create copies blocked rather than promoting an orphan", async () => {
   const medium = modelMedium();
-  expect(await new DurableStoreModel(namespaceKey, medium, { fault: "before-publication" })
+  expect(await new DurableStoreModel(namespaceKey, medium, { fault: "before-head-publication" })
     .create(emptyDurableText(), null)).toEqual({ status: "indeterminate" });
   const rebuilt = reconstruct(medium);
   expect(rebuilt.copies.some(copy => copy.kind === "staged")).toBe(true);

@@ -70,10 +70,10 @@ class CandidateProjector implements DurableProjector {
     if (!Number.isSafeInteger(expectedSequence) || expectedSequence < 0 || Object.is(expectedSequence, -0)) {
       return failProjection("INVALID_SEQUENCE");
     }
+    if (events.length > durableJournalLimits.facts) return failProjection("LIMIT_EXCEEDED");
     const offIndex = events.findIndex(event => event.type === "PresenceChanged" && event.status === "off");
     if (this.#retired && offIndex < 0) return failProjection("PROJECTOR_RETIRED");
     if (events.length === 0) return omitted;
-    if (events.length > durableJournalLimits.facts) return failProjection("LIMIT_EXCEEDED");
     requireFrozenSource(previous);
     requireFrozenSource(events);
     requireCandidateCommandGroups(events);

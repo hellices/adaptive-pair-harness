@@ -40,7 +40,7 @@ it.each<ModelFault>(["after-publication", "during-cleanup", "after-cleanup"])(
 it("removes payload, cache and abandoned staged copies before publishing erased", async () => {
   const { medium, store } = await readyModel();
   await store.append(generationKey, presenceCommit());
-  await new DurableStoreModel(namespaceKey, medium, { fault: "before-publication" })
+  await new DurableStoreModel(namespaceKey, medium, { fault: "before-head-publication" })
     .append(generationKey, presenceCommit(1));
   expect(new Set(medium.copies.map(copy => copy.kind))).toEqual(new Set(["payload", "cache", "staged"]));
   expect(await new DurableStoreModel(namespaceKey, medium, { fault: "during-cleanup" }).erase(generationKey))
@@ -136,7 +136,7 @@ it("can write an erasure fence when the generation fact and command budgets are 
 it("reconstructs failed replacement staging as pending rather than bypassing the completed fence", async () => {
   const { medium, store } = await readyModel();
   await store.erase(generationKey);
-  expect(await new DurableStoreModel(namespaceKey, medium, { fault: "before-publication" })
+  expect(await new DurableStoreModel(namespaceKey, medium, { fault: "before-head-publication" })
     .create(freshText(), generationKey)).toEqual({ status: "indeterminate" });
   const rebuilt = reconstruct(medium);
   const retry = new DurableStoreModel(namespaceKey, rebuilt);
@@ -163,4 +163,39 @@ it("writes only a content-free fence while the authoritative text fills its byte
   const retry = new DurableStoreModel(namespaceKey, reconstruct(medium));
   expect(await retry.load()).toEqual({ status: "blocked" });
   expect(await retry.erase(generationKey)).toEqual({ status: "erased" });
+});
+
+it("reserves before-head-publication for create and append without consuming it during erase", async () => {
+  const { medium } = await readyModel();
+  const store = new DurableStoreModel(namespaceKey, medium, { fault: "before-head-publication" });
+  expect(await store.erase(generationKey)).toEqual({ status: "erased" });
+  expect(medium.copies).toEqual([]);
+  expect(await store.load()).toEqual({ status: "erased", generationKey });
+  expect(await store.create(freshText(), generationKey)).toEqual({ status: "indeterminate" });
+  expect(medium.control).toMatchObject({ state: "erased", generationKey });
+  expect(medium.copies.map(copy => copy.kind)).toEqual(["staged"]);
+  expect(await new DurableStoreModel(namespaceKey, reconstruct(medium)).load()).toEqual({ status: "blocked" });
+  expect(await store.erase(generationKey)).toEqual({ status: "erased" });
+  expect((await store.create(freshText(), generationKey)).status).toBe("committed");
+});
+
+it("does not publish an erasing fence or report erased when the before-publish erase hook throws", async () => {
+  const { medium, store } = await readyModel();
+  await store.append(generationKey, presenceCommit());
+  const before = JSON.stringify(medium);
+  const head = await store.load();
+  const boundaries: string[] = [];
+  const interrupted = new DurableStoreModel(namespaceKey, medium, {
+    hook: (boundary, operation) => {
+      boundaries.push(`${operation}:${boundary}`);
+      return operation === "erase" && boundary === "before-publish"
+        ? Promise.reject(new Error("Deterministic pre-fence interruption")) : Promise.resolve();
+    },
+  });
+  expect(await interrupted.erase(generationKey)).toEqual({ status: "not-erased", code: "INVALID_REQUEST" });
+  expect(boundaries).toEqual(["erase:before-compare", "erase:before-publish"]);
+  expect(JSON.stringify(medium)).toBe(before);
+  const rebuilt = new DurableStoreModel(namespaceKey, reconstruct(medium));
+  expect(await rebuilt.load()).toEqual(head);
+  expect(await rebuilt.erase(generationKey)).toEqual({ status: "erased" });
 });

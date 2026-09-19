@@ -1,3 +1,4 @@
+import { durableJournalLimits } from "@adaptive-pair/protocol";
 import { createRuntime } from "@adaptive-pair/session-core";
 import { expect, it, vi } from "vitest";
 import { createDurableProjector } from "../src/durableProjection.js";
@@ -17,6 +18,31 @@ const prepareEnable = () => {
   if (projection.kind !== "append") throw new Error("expected append");
   return { projector, candidate, projection };
 };
+
+it("rejects an oversized candidate before inspecting any event", () => {
+  const next = vi.fn(() => durableKey(100));
+  const projector = createDurableProjector({ next });
+  const candidate = admittedCandidate(createRuntime(sourceWorkspace),
+    { type: "EnablePresence", workspaceId: sourceWorkspace });
+  const events = Array.from({ length: durableJournalLimits.facts + 1 }, () => candidate.events[0]!);
+  const readEvent = vi.fn(() => { throw new Error(privateCanary); });
+  Object.defineProperty(events, "0", { get: readEvent, enumerable: true });
+  Object.freeze(events);
+  expect(() => projector.project(candidate.previous, events, 0)).toThrow(fail("LIMIT_EXCEEDED"));
+  expect(readEvent).not.toHaveBeenCalled();
+  expect(next).not.toHaveBeenCalled();
+});
+
+it("does not treat an omitted preparation as a committed live revision", () => {
+  const { projector, candidate, projection } = prepareEnable();
+  projector.resolve(projection.commit.commitKey, "committed");
+  const observation = admittedCandidate(candidate.next, { type: "ObserveWorkspace" }, "unpublished-observation", "host");
+  expect(observation.next.revision).toBeGreaterThan(observation.previous.revision);
+  expect(projector.project(observation.previous, observation.events, projection.commit.facts.length))
+    .toEqual({ kind: "omitted" });
+  const alternative = admittedCandidate(candidate.next, { type: "StartSession", sessionId: sourceSession });
+  expect(projector.project(alternative.previous, alternative.events, projection.commit.facts.length).kind).toBe("append");
+});
 
 it("rejects different admitted commands reusing one ID inside their first atomic batch", () => {
   const issuer = keyIssuer();

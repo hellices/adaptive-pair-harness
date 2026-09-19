@@ -6,14 +6,14 @@ import {
   copyModelCommit, prepareModelAppend, prepareModelCreate, requireGeneration, type PreparedHead,
 } from "./durableStorePreparation.js";
 import {
-  failModel, hasOwnedCopies, inspectModel, modelFailureCode, modelKey, modelTextBytes, readModelControl,
+  failModel, hasOwnedCopies, inspectModel, modelFailureCode, modelKey, modelTextBytes, readModelControl, validateModelMetadata,
   type ModelControl, type ModelMedium,
 } from "./durableStoreState.js";
 
 export { modelMedium, type ModelCopy, type ModelMedium } from "./durableStoreState.js";
 
 export type ModelFault =
-  | "before-publication" | "after-publication" | "during-cleanup" | "after-cleanup" | "after-erased-publication";
+  | "before-head-publication" | "after-publication" | "during-cleanup" | "after-cleanup" | "after-erased-publication";
 export type ModelBoundary = "before-compare" | "before-publish";
 export type ModelOperation = "create" | "append" | "erase";
 
@@ -100,6 +100,7 @@ export class DurableStoreModel implements DurableStore {
 
   private erasureControl(generationKey: string): ModelControl {
     if (!modelKey(generationKey)) return failModel("INVALID_REQUEST");
+    validateModelMetadata(this.medium);
     const control = readModelControl(this.medium, this.namespaceKey);
     if (control === null || control.generationKey !== generationKey) return failModel("GENERATION_CONFLICT");
     if (this.medium.copies.some(copy => copy.namespaceKey !== this.namespaceKey)) return failModel("BINDING_MISMATCH");
@@ -115,7 +116,7 @@ export class DurableStoreModel implements DurableStore {
       copyKey, namespaceKey: this.namespaceKey, generationKey: head.journal.generationKey, kind: "staged" as const, text: head.text,
     };
     this.medium.copies = [...this.medium.copies.filter(copy => copy.kind !== "staged"), staged];
-    if (this.takeFault("before-publication")) return Object.freeze({ status: "indeterminate" });
+    if (this.takeFault("before-head-publication")) return Object.freeze({ status: "indeterminate" });
     const cache = { ...staged, copyKey: this.medium.nextCopyKey++, kind: "cache" as const, text: head.cacheText };
     const payload = { ...staged, kind: "payload" as const };
     const control: ModelControl = Object.freeze({

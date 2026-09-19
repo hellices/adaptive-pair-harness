@@ -569,6 +569,15 @@ privacy, correctness, coexistence, or explicit-merge gates.
   test-only policies, not filesystem or power-loss evidence.
 - [ ] Task 5: restart assessment, full regression gates, and reviewed PR.
   The independently reviewed assessment core and public storage-type exports
-  pass 50 recovery tests and forced typecheck. Local integration passes 2,725
+  pass 50 recovery tests and forced typecheck. Local integration passes 2,745
   root tests, lint, coverage, both audits, both packages, Stable VSIX inspection,
-  and the isolated host matrix. Full-branch/PR review and final-head CI remain.
+  and the isolated host matrix. PR #12 is open; implementation revision
+  `191e8c3` passes CI run `35418491432` (four jobs, all 47 actual steps).
+  Whole-branch review is complete; source-bound ordering and malformed
+  erasure-metadata corrections pass local regression gates. Request-bound
+  instrumentation now measures direct indexed reads with positive controls.
+  Proposed omitted-frame advancement
+  and blanket post-close rejection conflict with verified preparation/late-result
+  behavior; characterization tests preserve those existing contracts. Final
+  correction review, repository replies, and revised-head CI remain. No merge
+  or auto-merge is authorized.

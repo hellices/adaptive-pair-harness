@@ -2066,7 +2066,10 @@ prepared candidates rather than only unique string values. Retained source
 candidate events, commits, command identities, and facts each
 have a 1,024 ceiling, including prepared candidates that did not commit.
 Exhaustion fails closed without evicting retry evidence. Wholly omitted batches
-claim no durable deduplication; off retires and clears the projector before any
+claim no durable deduplication or live-publication acknowledgement. Projecting
+an omitted candidate does not advance the committed frame to its privately
+computed next revision; the caller still owns fresh live admission/publication.
+Off retires and clears the projector before any
 historical-retry lookup. Failed preparation publishes no private binding or
 reservation changes. An allowlisted-view comparison never proves equality of
 omitted executable inputs or grants. The 21 current source variants map as follows:
@@ -2126,6 +2129,11 @@ unsettled warning even though a second outcome cannot overwrite it; it is not
 success or proof that an effect stopped. A future explicit reconciliation
 transition is outside this initial fact set. Closing a session
 does not discard unsettled operations from earlier sessions in the generation.
+A matching-epoch first late result admitted by the existing live runtime remains
+projectable after closure: it records only the outcome and leaves the session
+closed. New work still requires live operational admission. A blanket guard
+against every post-close fact would wrongly reject that observation; stronger
+historical chronology beyond the specified replay invariants is not inferred.
 
 Facts record historical state, not proof of legal command admission, current
 workspace contents, genuine tool execution, or product correctness. Replay
@@ -2244,6 +2252,16 @@ generation/head comparison under the same exclusion; a rejected request leaves
 the medium unchanged. Fenced deletion can still remove corrupt payloads or
 operate at capacity. These are finite reference-model policies, not a promised
 filesystem layout, storage-provider implementation, or physical-erasure result.
+Successful erasure additionally requires closed, content-free outer medium and
+allocator metadata; removing the copy array alone cannot justify success when
+private payload survives in malformed metadata. This check must not require
+parsing corrupt owned payloads or satisfying their exhausted capacity budgets.
+
+The model's `before-head-publication` fault is scoped to create/append heads.
+A throwing pre-publication erase hook separately covers interruption before the
+erasing fence, leaving the medium unchanged with a non-erased result. Persisted
+erasing-fence, cleanup, and completed-erased acknowledgement boundaries have
+their own fault cases; none is a real filesystem crash experiment.
 
 There is no inactive timer, automatic storage scan, or startup workspace read.
 Thus seven days is a logical expiry, not a promise to remove bytes while Pair is

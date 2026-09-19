@@ -18,6 +18,34 @@ it("does not allocate durable identity for an empty candidate", () => {
   expect(next).not.toHaveBeenCalled();
 });
 
+it.each(["confirmed", "unknown"] as const)("records a first late %s outcome without reopening the session", status => {
+  const harness = projectionHarness();
+  enterProjectionReady(harness);
+  harness.apply({ type: "AuthorizeOperation", operationId: sourceOperation, toolName: "pair_read_file", kind: "read", input: {} });
+  const authorityEpoch = harness.live.session!.authorityEpoch;
+  harness.apply({ type: "CloseSession" });
+  expect(() => admittedCandidate(harness.live, {
+    type: "AuthorizeOperation", operationId: "new-operation", toolName: "pair_read_file", kind: "read", input: {},
+  })).toThrow("SESSION_NOT_OPERATIONAL");
+  const observed = harness.apply({
+    type: "ObserveOperationResult", operationId: sourceOperation, authorityEpoch, status,
+    summary: privateCanary, observation: { diagnostic: privateCanary },
+  }, "host");
+  if (observed.projection.kind !== "append") throw new Error("expected a recorded observation");
+  const session = harness.state().sessions[0]!;
+  expect(observed.projection.commit.facts).toEqual([{
+    type: "OperationOutcomeRecorded", sessionKey: session.sessionKey,
+    operationKey: session.operations[0]!.operationKey, status,
+  }]);
+  expect(session.status).toBe("closed");
+  expect(session.operations[0]?.status).toBe(status);
+  expect(JSON.stringify(harness.commits)).not.toContain(privateCanary);
+  expect(harness.apply({
+    type: "ObserveOperationResult", operationId: sourceOperation, authorityEpoch, status: "failed", summary: privateCanary,
+  }, "host").projection).toEqual({ kind: "omitted" });
+  expect(harness.state().sessions[0]?.operations[0]?.status).toBe(status);
+});
+
 it("projects every admitted source route and all retained side effects without private content", () => {
   const issuer = keyIssuer();
   const next = vi.fn(() => issuer.next());
