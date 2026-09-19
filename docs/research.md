@@ -1696,6 +1696,39 @@ measurements. Physical cleanup while inactive is explicitly not promised.
 An adapter prototype, if needed, requires its own authorized time-boxed spike;
 planning text is not evidence that a platform satisfies the contract.
 
+#### P2b baseline and dependency maintenance
+
+Before new contract code, both graphs installed cleanly on Node.js 24.20.0.
+Forced workspace typecheck, lint, all **2,197 root tests in 118 files**, coverage
+(91.04% statements/lines, 84.89% branches, 92.80% functions), the separate POC's
+compile and **21 tests in five files**, build, and seven-entry Stable VSIX
+verification passed. An initial validation command mistakenly requested a POC
+`test` script; the actual `test:unit` script was then run successfully. This was
+a command-selection error, not a product fix or an unrun test counted as passing.
+
+On September 19, the inventory again covered **16 manifests, 49 declarations
+(25 internal / 24 external), 16 external packages, and both active lockfiles**.
+Selected and registry-stable metadata, engines/peers, and accessible primary
+upstream records were compared, including the isolated POC outside workspace
+globs. Before maintenance, both explicit audits reported zero findings (401
+root graph entries and 257 POC entries). An outdated report was not the inventory.
+
+| Package/tool | Current decision and evidence |
+| --- | --- |
+| Mocha | Update both maintained graphs from 12.0.0 to obtainable **12.0.1**, preserving the extension's caret range and the POC's exact pin. Registry metadata agrees with the [upstream 12.0.1 release](https://github.com/mochajs/mocha/releases/tag/v12.0.1), including dependency/configuration fixes; its Node range accepts the host baselines. Upstream 12.0.2 exists but the exact registry lookup still returns E404. Both manifests and lockfiles are updated together. |
+| Node.js verification runtime | Move local subsequent verification to obtainable **24.21.0**, checked against the [official 24.21.0 release](https://nodejs.org/en/blog/release/v24.21.0). The repository's Node >=24 engine contract and package boundaries do not change. |
+| Vitest and coverage-v8 | Retain the matching 5.0.0 pair; exact 5.0.1 registry lookups remain E404 despite the upstream release. |
+| fast-check | Retain 4.10.0; upstream 4.10.1 remains unobtainable from the configured registry (exact E404). |
+| TypeScript / typescript-eslint | Retain 6.0.3 / 8.70.0; registry-latest TypeScript 7.0.2 is outside the linter's `>=4.8.4 <6.1.0` peer range. Root lint also covers the POC. |
+| Declaration floors | Retain @types/node 24.13.4 for Node 24 and @types/vscode 1.136.0 for the declared host API floor, rather than the unrelated latest tags 26.5.1 and 1.137.0. @types/mocha remains 10.0.10. |
+| Other direct packages | Stable registry metadata still agrees with @eslint/js 10.0.1, @vscode/dts 0.4.1, @vscode/test-electron 3.1.0, @vscode/vsce 4.0.0, Ajv 8.20.0, esbuild 0.28.2, and ESLint 10.10.0. Accessible tagged source/release records agree; no package edge or protocol/API migration is introduced. |
+| Upstream access limits | Microsoft TypeScript and VS Code-tooling release API requests still return an organization SAML restriction. No alternate credential/path was used to bypass it, and no independent release confirmation is claimed for those endpoints. Registry metadata is separately available. |
+
+After the Mocha update, both installations report zero audit findings,
+workspace typecheck and the POC compile/unit suite pass on Node.js 24.21.0.
+This maintenance checkpoint is not a substitute for final changed-code,
+isolated-host, packaging, and exact-PR-head CI verification.
+
 ## 7. Evaluation hypotheses
 
 The first studies test separate hypotheses:
