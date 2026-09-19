@@ -2048,6 +2048,30 @@ to live state or dispatch of an effect. This is not a general redaction service
 for arbitrary v1 JSON. It maps the 21 current event variants as follows; one
 source commit may produce several durable facts:
 
+The pure projector uses an explicit `resolve(commitKey, outcome)` handshake
+alongside `project(previousSnapshot, events, expectedSequence)`. Only trusted
+confirmation of the exact pending key promotes its staged lifetime bindings;
+matching head/revision counters do not prove that candidate committed.
+`indeterminate` keeps it exact-retry-only, `not-committed` permits replacement,
+and a committed historical retry never rolls the current bindings back.
+This handshake performs no storage I/O and establishes no external-effect result.
+
+An exact projection retry reuses the deeply frozen previous snapshot and
+ordered event objects produced by the live runtime. Weak object identities
+avoid serializing or strongly retaining raw snapshots/events/inputs; reparsed
+copies are not an import or a retry. Lifetime bindings use source session-start,
+work-unit proposal, and operation authorization revisions rather than object
+identity. Retained source-identity strings have a one-MiB UTF-16 ceiling;
+the budget conservatively counts repeated identifier occurrences in distinct
+prepared candidates rather than only unique string values. Retained source
+candidate events, commits, command identities, and facts each
+have a 1,024 ceiling, including prepared candidates that did not commit.
+Exhaustion fails closed without evicting retry evidence. Wholly omitted batches
+claim no durable deduplication; off retires and clears the projector before any
+historical-retry lookup. Failed preparation publishes no private binding or
+reservation changes. An allowlisted-view comparison never proves equality of
+omitted executable inputs or grants.
+
 | Validated source candidates | Durable representation |
 | --- | --- |
 | `PresenceEnabled`, non-off `PresenceChanged` | Recorded resulting presence status |

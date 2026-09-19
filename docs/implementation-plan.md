@@ -90,6 +90,8 @@ storage dependency is required.
 | `packages/protocol/src/index.ts` | Additive exports; existing exports unchanged |
 | `packages/runtime/src/durableTypes.ts` | Minimized replay state, key-issuer/projection/assessment contracts |
 | `packages/runtime/src/durableProjection.ts` | Explicit v1-candidate allowlist and lifetime-key mapping |
+| `packages/runtime/src/durableProjectionView.ts` | Current allowlisted view, lifetime bindings, and complete retained-field differences |
+| `packages/runtime/src/durableProjectionIdentity.ts` | Frozen candidate identities, bounded volatile source IDs, and fixed errors |
 | `packages/runtime/src/durableReplay.ts` | Private ordered reduction, identities, pending-operation retention |
 | `packages/runtime/src/durableSnapshot.ts` | Private full-replay snapshot derivation and canonical cache comparison |
 | `packages/runtime/src/durableRecovery.ts` | Public expected-binding/time checks, derived cache, non-authorizing report |
@@ -304,13 +306,14 @@ in-process candidate identity without serializing or strongly retaining raw
 snapshots/events/inputs. Reparsed copies are not an import or an exact retry.
 Lifetime bindings instead use session-start, proposal, and authorization
 revisions. Omitted batches acquire no durable command receipt. Bound retained
-source-identity text by the existing input-code-unit ceiling, and retained
+source-identity text by the existing input-code-unit ceiling, conservatively
+counting repeated identifiers in distinct prepared candidates, and retained
 candidate events, commands, commits, and facts by their generation ceilings;
 fail closed rather than evicting retry evidence. A failed preparation publishes
 no binding/receipt/reservation changes. Off retires the projector before retry
 lookup and clears its volatile tables.
 
-- [ ] Add a RED test for the omitted route without requesting any keys:
+- [x] Add a RED test for the omitted route without requesting any keys:
 
   ```ts
   import { expect, it } from "vitest";
@@ -326,9 +329,9 @@ lookup and clears its volatile tables.
   });
   ```
 
-- [ ] Run `npx vitest run packages/runtime/test/durableProjection.test.ts`;
+- [x] Run `npx vitest run packages/runtime/test/durableProjection.test.ts`;
   observe the missing-module failure before implementing the factory.
-- [ ] Implement the complete 21-event mapping in design section 13.2, building
+- [x] Implement the complete 21-event mapping in design section 13.2, building
   each payload from its allowed fields. For assistance/status fields use the
   privately reduced state at that event, not the final unrelated work unit.
   `WorkUnitAgreed` emits work-unit/session status and reset assistance.
@@ -336,21 +339,21 @@ lookup and clears its volatile tables.
   needs-reconcile for a nonterminal work unit; entry capture emits a change to
   engaged presence even though its content is omitted. Compare the complete
   allowlisted before/after state at every event, not only its named payload.
-- [ ] A candidate containing off is an erasure barrier, not an append with a
+- [x] A candidate containing off is an erasure barrier, not an append with a
   retained prefix. Reject a mixed erase-and-reenable candidate rather than
   silently dropping post-disable activity. Unsupported `BriefConfirmed`,
   invalid reduction, missing lifetime mapping, issuer failure/collision, and
   malformed keys fail with fixed codes and no original cause.
-- [ ] Keep source identity/record comparisons in volatile state only. Treat
+- [x] Keep source identity/record comparisons in volatile state only. Treat
   exact retry and a new command distinctly; never hash user content into a
   persisted key. An omitted batch claims no durable command deduplication.
-- [ ] Verify every source variant, multicommand batches, all omitted strings
+- [x] Verify every source variant, multicommand batches, all omitted strings
   seeded with source/path/credential canaries, grants omitted, no `undefined`
   wire fields, retry identity, mutated retry refusal, session/operation ID reuse
   under new lifetime keys, and no cross-projector/global state. Compare replay
   after each admitted candidate with the allowlisted live reduction, including
   entry capture from quiet, ready-to-active assistance, and pause/resume.
-- [ ] Run projection, replay, existing runtime/core, and architecture tests;
+- [x] Run projection, replay, existing runtime/core, and architecture tests;
   force typecheck and lint. Commit: `feat: project privacy-minimized durable facts`.
 
 ## Task 4: Storage port and test-only fault model
@@ -536,6 +539,10 @@ privacy, correctness, coexistence, or explicit-merge gates.
 - [x] Task 2: minimized replay and cache. Independent spec/quality review passes
   with no findings. All 75 new replay cases pass within 1,007 focused tests,
   with forced workspace typecheck and full lint on Node.js 24.21.0.
-- [ ] Task 3: trusted candidate projection.
+- [x] Task 3: trusted candidate projection. Independent spec/quality review
+  passes after explicit-resolution, retry-ordering, and repeated-source-ID
+  budget corrections. The 47 projection cases and 75 replay cases pass within
+  388 focused runtime/core/script tests; forced workspace typecheck and full
+  lint pass on Node.js 24.21.0.
 - [ ] Task 4: storage port and fault model.
 - [ ] Task 5: restart assessment, full regression gates, and reviewed PR.

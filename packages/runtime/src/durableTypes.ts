@@ -1,6 +1,6 @@
 import type {
-  CapabilityCategory, DurableAssistance, DurableOutcomeStatus, DurablePendingStatus,
-  HintLevel, OperatingMode, PresenceStatus, SessionStatus, WorkUnitStatus,
+  CapabilityCategory, DurableAssistance, DurableCommit, DurableOutcomeStatus, DurablePendingStatus,
+  HintLevel, OperatingMode, PairEvent, PairRuntimeSnapshot, PresenceStatus, SessionStatus, WorkUnitStatus,
 } from "@adaptive-pair/protocol";
 
 export interface DurableLearningBoundary {
@@ -54,3 +54,19 @@ export interface DurableSnapshot {
 }
 
 export type DurableCacheDisposition = "absent" | "matched" | "discarded";
+
+export interface DurableKeyIssuer {
+  next(): string;
+}
+
+export type DurableProjection =
+  | { readonly kind: "append"; readonly commit: DurableCommit }
+  | { readonly kind: "erase" }
+  | { readonly kind: "omitted" };
+
+export type DurableProjectionResolution = "committed" | "not-committed" | "indeterminate";
+
+export interface DurableProjector {
+  project(previous: PairRuntimeSnapshot, events: readonly PairEvent[], expectedSequence: number): DurableProjection;
+  resolve(commitKey: string, outcome: DurableProjectionResolution): void;
+}
