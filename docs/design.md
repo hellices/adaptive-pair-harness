@@ -266,10 +266,11 @@ M2 has three ordered increments, not three competing active plans:
    restores no authority. P2a merged in PR #11 at `133c7a8`.
    **P2b persistence and restart contracts**, proposed in section 13.2, next
    separate privacy-minimized durable state from live execution state. The owner
-   authorized its design/plan PR, not implementation. A filesystem adapter,
+   first authorized its design/plan PR and then explicitly requested actual
+   implementation and continued product development. A filesystem adapter,
    live restart integration, and ownership/lifecycle transitions still require
    separately reviewed increments. Neither journal inspection nor a published
-   persistence contract implies working persistence or authorizes the next step.
+   persistence contract implies working persistence or waives later review gates.
 3. **P3 — Stable Pair experience:** prove the host's guarded-edit boundary and
    then wire native diff/confirmation, the Pair chat route, operational tool
    declarations, and end-to-end verification. Reject stale document versions,
@@ -281,7 +282,8 @@ The runtime-boundary/code-size stabilization, event validation, and P2a
 implementation are merged. Implemented behavior includes the reviewed P2a
 parser, private replay checks, and metadata-only inspection report, but no
 durable runtime storage, live session recovery, Pair ownership, handoff, or
-editing feature. The next authorized deliverable is P2b documentation only.
+editing feature. P2b implementation is now authorized; its plan and contract
+review precede code.
 
 The full Pair Mode gate still requires P1, P2, and P3. A pure policy returning
 an admissible result is not edit permission, a completed handoff, or evidence
@@ -1963,11 +1965,15 @@ is separate and is neither converted nor changed here.
 
 ### 13.2 P2b: persistence and restart contracts
 
-**Status: proposed; documentation only.** On September 19, 2026, the owner chose
+**Status: implementation authorized; contract review precedes execution.**
+On September 19, 2026, the owner chose
 a dedicated, privacy-minimized durable event/snapshot contract rather than a
-warning-only recovery memo. This approves the design direction and preparation
-of a reviewed plan, not product implementation, a disk adapter, or this PR's
-merge. P2a and the Stable Growth preview remain unchanged.
+warning-only recovery memo, reviewed its written design boundary, and then
+explicitly requested implementation and continued product development. The
+[current plan](implementation-plan.md) executes pure P2b contracts first. A
+disk adapter, live restart, and editing still require their concrete reviewed
+plans and verification gates; this PR's merge remains a separate owner decision.
+P2a and the Stable Growth preview remain unchanged.
 
 #### Decision and authority boundary
 
@@ -2222,7 +2228,7 @@ operation. Rollback of an applied effect remains a separate explicit action.
 
 #### Proposed delivery boundary
 
-The first proposed implementation after separate approval is pure: closed
+The first authorized implementation is pure: closed
 types/codec, explicit minimized projection and replay, a storage-port contract
 with an in-memory fault model, and non-authorizing restart assessment. Tests
 cover privacy canaries in every excluded v1 field, identity provenance, atomic

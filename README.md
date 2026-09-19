@@ -268,13 +268,14 @@ compatibility, and version updates follow the
 must pass the affected regression checks.
 The [sequential roadmap](docs/design.md#sequential-delivery-roadmap) covers the
 remaining work through v2.0. The current
-[P2a journal and recovery contract plan](docs/implementation-plan.md) records the
-reviewed, separately authorized implementation after the version-1 event parser
-(PR #9) and documentation PR #10. P2a adds bounded journal parsing and read-only
-inspection with frozen, non-authorizing metadata, not a durable store or a
-working resume feature. The APIs are not wired into a live store or host route.
-Disk storage, live restoration, Pair ownership/handoff, and P3 editing/UI still
-need separate approval.
+[P2b persistence and restart contract plan](docs/implementation-plan.md) follows
+the merged P2a implementation (PR #11). P2a supplies bounded journal parsing and
+read-only inspection, not a durable store or working resume feature. The owner
+has authorized implementing the new minimized durable-state contracts next;
+their design and current execution status are in the plan. No existing journal
+is serialized wholesale, and no recovered record grants live authority. Disk
+storage, live restoration, Pair ownership/handoff, and P3 editing/UI retain
+their separate design, review, verification, and merge gates.
 
 ## Development checks
 

@@ -1636,8 +1636,12 @@ the owner selected a storage/recovery design-and-plan PR, then selected a
 dedicated privacy-minimized durable event/snapshot contract over a warning-only
 memo. Work starts from merged `main` at `133c7a8` on a dedicated documentation
 branch. The earlier P2a implementation plan is preserved in that commit, not
-copied into another active plan. The selection authorizes documentation, not
-implementation, host integration, or the new PR's merge.
+copied into another active plan. That initial selection authorized documentation
+only. After reviewing the written boundaries, the owner explicitly expanded the
+request to actual implementation and continued progress toward a usable product.
+The executable increment is the reviewed pure P2b contract; host integration
+and later product phases still need concrete plans and verification, and the
+new PR's merge still requires explicit direction.
 
 #### Repository findings
 
