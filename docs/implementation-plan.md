@@ -1,6 +1,6 @@
 # P2b Minimized Persistence and Restart Contract Implementation Plan
 
-> **Status: pure implementation locally verified; final PR delivery pending.**
+> **Status: pure P2b implementation and correction review complete.**
 > On September 19, 2026, the owner selected the minimized durable-state design,
 > reviewed its written boundaries, and then explicitly requested implementation
 > and continued progress toward a usable product. This is no longer a
@@ -507,12 +507,14 @@ operation metadata. It is always review-required, including an empty log.
 - [x] Update the four canonical documents with measured counts, dependency
   decisions, real limitations, and implemented-versus-deferred boundaries.
   Commit: `feat: expose non-authorizing minimized restart assessment`.
-- [ ] Obtain independent full-branch and repository review. Verify each finding,
+- [x] Obtain independent full-branch and repository review. Verify each finding,
   fix real issues with regression tests, reply in its original thread, and
-  resolve only addressed threads. Recheck the exact final head's required
-  checks and follow-up reviews, including every actual Insiders step rather
-  than only its allowed-failure job status, then notify the owner that the PR is ready.
-  Do not merge or enable auto-merge without explicit direction.
+  resolve only addressed threads. Recheck the reviewed implementation head's
+  required checks and follow-up reviews, including every actual Insiders step
+  rather than only its allowed-failure job status. Any later documentation-only
+  revision remains subject to the same exact-head check before notifying the
+  owner that the PR is ready. Do not merge or enable auto-merge without explicit
+  direction.
 
 ## Acceptance matrix
 
@@ -567,17 +569,20 @@ privacy, correctness, coexistence, or explicit-merge gates.
   findings. The 146 model cases pass within 751 focused journal tests; forced
   workspace typecheck and scoped lint pass. Fencing/copy limits remain
   test-only policies, not filesystem or power-loss evidence.
-- [ ] Task 5: restart assessment, full regression gates, and reviewed PR.
+- [x] Task 5: restart assessment, full regression gates, and reviewed PR.
   The independently reviewed assessment core and public storage-type exports
   pass 50 recovery tests and forced typecheck. Local integration passes 2,745
   root tests, lint, coverage, both audits, both packages, Stable VSIX inspection,
-  and the isolated host matrix. PR #12 is open; implementation revision
-  `191e8c3` passes CI run `35418491432` (four jobs, all 47 actual steps).
-  Whole-branch review is complete; source-bound ordering and malformed
-  erasure-metadata corrections pass local regression gates. Request-bound
-  instrumentation now measures direct indexed reads with positive controls.
-  Proposed omitted-frame advancement
-  and blanket post-close rejection conflict with verified preparation/late-result
-  behavior; characterization tests preserve those existing contracts. Final
-  correction review, repository replies, and revised-head CI remain. No merge
-  or auto-merge is authorized.
+  and the isolated host matrix. PR #12 is open; corrected implementation
+  `9621281` passes CI run `35420461932` (four jobs, all 47 actual steps).
+  Independent full-branch and focused correction reviews close the source-bound,
+  erasure-metadata, fault-scope, and test-instrumentation findings. Repository
+  replies record fixes and verification; the actual inline thread is resolved.
+  Proposed omitted-frame advancement and blanket post-close rejection conflict
+  with verified preparation/late-result behavior; characterization tests preserve
+  those existing contracts. A later generation-fencing overview supplied no
+  concrete inline case. Focused cold-reconstruction probes found no actionable
+  violation, and a reasoned no-change response requests the missing case rather
+  than claiming reviewer approval or adding an unapproved stronger policy.
+  The PR's current revision must still satisfy its checks before readiness is
+  reported. No merge or auto-merge is authorized.

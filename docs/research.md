@@ -1798,6 +1798,17 @@ results, no private canary leakage, rejection of new authorization after closure
 and refusal to overwrite the first outcome. These preserve existing admission
 and preparation contracts rather than adding a stronger historical policy.
 
+Further bounded cold-reconstruction probes distinguish copy-record grammar
+from authoritative generation binding. Well-formed tags on ignored cache/staged
+records never select a generation: the payload and its full journal must match
+the current control. Pending/missing fences, mismatched authoritative payloads,
+malformed retirement metadata, retired retries, and generation reuse remained
+blocked. Legitimate failed replacement staging stayed pending until cleanup.
+No concrete violation was reproduced from a later generation-fencing review
+overview, which supplied no inline case; a reasoned response requests that case.
+This is scoped evidence, not proof that no defect can exist or a new external
+anti-rollback/authenticity guarantee.
+
 Integrated local verification on Node.js **24.21.0** passes forced workspace
 typecheck, full ESLint, and **2,745 root tests in 132 files**. The 548 added
 cases comprise 210 protocol, 75 replay/cache, 51 projection, 162 storage-model,
@@ -1814,6 +1825,15 @@ is shipped. Isolated extension hosts pass **17 cases each** on VS Code
 Insiders host suite. These verify unchanged inactive-zero/coexistence and the
 existing Growth preview, not disk persistence or live restart. The known Vite
 native-config-loader warning remains visible and no suppression was added.
+
+Corrected implementation revision **`9621281`** passes GitHub CI run
+**35420461932**: all four jobs and all **47 actual steps** succeed, including
+the raw Insiders smoke step rather than merely its allowed-failure job status.
+Independent full-branch and focused correction review identify no remaining
+actionable blocker. The original repository inline concern is answered and
+resolved; overview-only concerns retain their reasoned dispositions, not an
+invented approval. A later documentation-only checkpoint must still pass its
+own PR checks; this run does not claim evidence for a future revision.
 
 The maintained dependency inventory was refreshed again after implementation:
 **16 manifests, 49 declarations (25 internal/24 external), 16 external
