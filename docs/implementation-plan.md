@@ -187,7 +187,7 @@ actor, runtime revision, authority epoch, source text, or catch-all property:
   text before JSON parsing; count commits/facts/command keys before per-fact
   work. Validate UTF-8 byte length without Node APIs. Reject unknown versions,
   missing/extra keys, invalid tokens/enums, invalid times/TTL, empty batches,
-  and noninteger/unsafe counters. Deep-freeze newly parsed data.
+  and noninteger/unsafe/negative-zero counters. Deep-freeze newly parsed data.
 - [ ] Use `Invalid Pair durable journal:` with fixed codes `INVALID_TEXT`,
   `TEXT_LIMIT`, `BYTE_LIMIT`, `INVALID_JSON`, `UNSUPPORTED_VERSION`,
   `INVALID_ENVELOPE`, `INVALID_COMMIT`, `INVALID_FACT`, and `LIMIT_EXCEEDED`.
@@ -195,7 +195,7 @@ actor, runtime revision, authority epoch, source text, or catch-all property:
 - [ ] Add table-driven positive cases for every fact and negative mutations of
   every field; exact lower/upper bounds and one-over cases; nulls, boxed strings,
   hostile objects not inspected as text, unsafe keys, nonfinite numbers, negative
-  zero policy, nested freezing, and arbitrary sensitive extra-field canaries.
+  zero rejection, nested freezing, and arbitrary sensitive extra-field canaries.
   Schema-valid framing remains distinct from runtime replay consistency.
 - [ ] Run the new suite, existing event/journal suites, typecheck, and lint.
   Commit: `feat: define closed minimized durable journal framing`.
@@ -308,8 +308,11 @@ source command is rejected rather than assigned a second identity.
 - [ ] Implement the complete 21-event mapping in design section 13.2, building
   each payload from its allowed fields. For assistance/status fields use the
   privately reduced state at that event, not the final unrelated work unit.
-  `WorkUnitAgreed` emits work-unit and session status. Presence-affecting
-  session transitions record resulting presence consistently.
+  `WorkUnitAgreed` emits work-unit/session status and reset assistance.
+  Assistance events also emit any session transition to active; resume emits
+  needs-reconcile for a nonterminal work unit; entry capture emits a change to
+  engaged presence even though its content is omitted. Compare the complete
+  allowlisted before/after state at every event, not only its named payload.
 - [ ] A candidate containing off is an erasure barrier, not an append with a
   retained prefix. Reject a mixed erase-and-reenable candidate rather than
   silently dropping post-disable activity. Unsupported `BriefConfirmed`,
@@ -321,7 +324,9 @@ source command is rejected rather than assigned a second identity.
 - [ ] Verify every source variant, multicommand batches, all omitted strings
   seeded with source/path/credential canaries, grants omitted, no `undefined`
   wire fields, retry identity, mutated retry refusal, session/operation ID reuse
-  under new lifetime keys, and no cross-projector/global state.
+  under new lifetime keys, and no cross-projector/global state. Compare replay
+  after each admitted candidate with the allowlisted live reduction, including
+  entry capture from quiet, ready-to-active assistance, and pause/resume.
 - [ ] Run projection, replay, existing runtime/core, and architecture tests;
   force typecheck and lint. Commit: `feat: project privacy-minimized durable facts`.
 
@@ -346,7 +351,8 @@ export type DurableWriteResult =
 
 export type DurableStoreFailure =
   | "INVALID_REQUEST" | "BINDING_MISMATCH" | "GENERATION_CONFLICT"
-  | "HEAD_CONFLICT" | "IDENTITY_CONFLICT" | "LIMIT_EXCEEDED";
+  | "HEAD_CONFLICT" | "IDENTITY_CONFLICT" | "LIMIT_EXCEEDED"
+  | "ERASURE_PENDING";
 
 export type DurableReadResult =
   | { readonly status: "empty" }
@@ -371,8 +377,12 @@ export interface DurableStore {
 The port instance is bound to one trusted namespace by its future adapter.
 Creation accepts only a valid empty generation. Null expected generation means
 no preceding owned state; replacing an erased generation requires its matching
-fence and a fresh key. Existing present/blocked state cannot be overwritten by
-create. No generic upsert or auto-create-on-append is permitted.
+completed fence, verified absence of retired owned payload copies, and a fresh
+key. Pending cleanup or unresolved deletion publication makes load blocked and
+rejects both append and create with `ERASURE_PENDING`. Reconstruct this block
+from the persisted erasing fence/copies, not a volatile flag. Existing
+present/blocked state cannot be overwritten by create. No generic upsert or
+auto-create-on-append is permitted.
 
 - [ ] Write the seed test that creates an empty generation, injects a failure
   after authoritative publication but before acknowledgement, and expects
@@ -394,7 +404,10 @@ create. No generic upsert or auto-create-on-append is permitted.
 - [ ] Erase publishes a content-free fence before removing modeled payload
   copies. Failed cleanup returns cleanup-pending; lost fence acknowledgement
   returns indeterminate; both block further append. Retrying erase completes
-  cleanup without resurrecting data. The fence remains writable when the
+  cleanup without resurrecting data. Persist erasing before cleanup and erased
+  only after cleanup verification. Reconstruct the model at each fault boundary
+  and prove create cannot bypass unresolved erasure; a verified completed fence
+  can resolve a lost acknowledgement. The fence remains writable when the
   payload budget is exhausted. Fresh create cannot inherit old identities.
 - [ ] Cover before/after-publication failures, exact retry after intervening
   append, malformed retry, immutable receipts, independent namespaces, deleted

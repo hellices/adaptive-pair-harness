@@ -2052,15 +2052,23 @@ source commit may produce several durable facts:
 | --- | --- |
 | `PresenceEnabled`, non-off `PresenceChanged` | Recorded resulting presence status |
 | Off `PresenceChanged` | Erasure barrier, not an ordinary append retaining the earlier session |
-| `WorkspaceObserved`, `EntryCaptured` | No durable payload; observation and entry content stay volatile |
+| `WorkspaceObserved` | No durable payload; the observation counter stays volatile |
+| `EntryCaptured` | Resulting presence status, when changed; all entry content stays volatile |
 | `SessionStarted` | New session lifetime in briefing; resulting presence status |
 | `BriefConfirmed` | Reject: the current live reducer has no supported route; do not invent one |
 | `LearningConfirmed`, `ModeSelected` | Allowlisted learning boundary or mode |
-| `WorkUnitProposed`, `WorkUnitAgreed` | Work-unit classification, then recorded work-unit/session status |
-| `AttemptRecorded`, `HypothesisRecorded`, `HintRequested`, `SolutionRevealAuthorized` | Assistance flags/level only |
+| `WorkUnitProposed`, `WorkUnitAgreed` | Work-unit classification/status, resulting session status, and initialized/reset assistance flags |
+| `AttemptRecorded`, `HypothesisRecorded`, `HintRequested`, `SolutionRevealAuthorized` | Assistance flags/level and resulting session status, including the transition to active |
 | `UserActionGranted`, `UserActionConsumed` | No durable grant or reusable consent |
 | `OperationAuthorized`, `OperationObserved` | Operation metadata and pending/recorded outcome, without input or result text |
-| `SessionPaused`, `SessionResumed`, `SessionClosed` | Recorded status; resume means reconciling, not restored authority |
+| `SessionPaused`, `SessionResumed`, `SessionClosed` | Resulting session/presence status; resume also records a nonterminal work unit as needs-reconcile, never restored authority |
+
+The mapping includes every change to a retained field, not just the primary
+payload named by an event. Compare the allowlisted view before/after each
+private reduction and emit the necessary presence, session, work-unit, and
+assistance facts. Admitted-sequence tests must compare complete minimized
+replay with this view after each candidate; individually valid fact shapes
+are not sufficient evidence of exact projection.
 
 An entirely omitted source batch does not produce an empty durable commit or
 claim durable deduplication for that batch. Durable sequence numbers are
@@ -2157,14 +2165,22 @@ The deletion protocol is:
    but do not claim that an external process or previously applied edit stopped.
 2. Under the same writer exclusion as append, publish a content-free erased
    generation record. It contains only format/version, namespace, generation
-   fence, and erased status: no session, command, operation, or user data.
+   fence, and erasing/erased status: no session, command, operation, or user data.
 3. Remove the retired log, caches, staged files, and adapter-owned copies in
    that namespace. Never traverse arbitrary paths, follow a symlink outside the
    owned directory, touch another extension, or delete a user-chosen export.
 4. Drop in-memory references to retired projections and key maps. Report erasure
    complete only after the fence is acknowledged and all owned payload copies
    are removed. Otherwise report indeterminate or cleanup-pending with admission
-   still blocked. Repeating deletion is safe; no secure RAM-wipe claim is made.
+   still blocked. Publish the completed erased status only after cleanup is
+   verified. Repeating deletion is safe; no secure RAM-wipe claim is made.
+
+Cleanup-pending state is reconstructed from the persisted erasing fence and
+owned payload copies, not only a process-local flag. Load reports blocked
+until cleanup/publication uncertainty is resolved; both append and creation of
+a replacement generation are forbidden. A fresh generation requires a verified
+completed erased fence and absence of retired owned copies. A crash or lost
+acknowledgement at any deletion boundary cannot bypass this gate.
 
 Load consults the current fence first. A deleted/corrupt/ambiguous head never
 falls back to an older generation, cache, temporary file, or backup. Late
