@@ -1,6 +1,6 @@
 # P2b Minimized Persistence and Restart Contract Implementation Plan
 
-> **Status: implementation authorized; corrected contract review complete.**
+> **Status: pure implementation locally verified; final PR delivery pending.**
 > On September 19, 2026, the owner selected the minimized durable-state design,
 > reviewed its written boundaries, and then explicitly requested implementation
 > and continued progress toward a usable product. This is no longer a
@@ -88,13 +88,14 @@ storage dependency is required.
 | `packages/protocol/src/durableValidation.ts` | Fixed-code field/token/enum validation; no source-text filtering |
 | `packages/protocol/src/parseDurableJournal.ts` | Primitive-text framing, aggregate budgets, detached/frozen parsing |
 | `packages/protocol/src/index.ts` | Additive exports; existing exports unchanged |
-| `packages/runtime/src/durableTypes.ts` | Minimized replay state, key-issuer/projection/assessment contracts |
+| `packages/runtime/src/durableTypes.ts` | Minimized replay state and key-issuer/projection contracts |
 | `packages/runtime/src/durableProjection.ts` | Explicit v1-candidate allowlist and lifetime-key mapping |
 | `packages/runtime/src/durableProjectionView.ts` | Current allowlisted view, lifetime bindings, and complete retained-field differences |
 | `packages/runtime/src/durableProjectionIdentity.ts` | Frozen candidate identities, bounded volatile source IDs, and fixed errors |
 | `packages/runtime/src/durableReplay.ts` | Private ordered reduction, identities, pending-operation retention |
 | `packages/runtime/src/durableSnapshot.ts` | Private full-replay snapshot derivation and canonical cache comparison |
 | `packages/runtime/src/durableRecovery.ts` | Public expected-binding/time checks, derived cache, non-authorizing report |
+| `packages/runtime/src/durableRecoveryTypes.ts` | Closed assessment variants with literal-false authority flags |
 | `packages/runtime/src/durableStore.ts` | Separate port types, complete/indeterminate outcomes and erasure receipts |
 | `packages/runtime/src/index.ts` | Additive public contracts; no live-store wiring |
 | `packages/protocol/test/durableJournal.test.ts` | Format/privacy/budget/immutability/error tests |
@@ -103,12 +104,17 @@ storage dependency is required.
 | `packages/runtime/test/durableReplay.test.ts` | Sequence, identity, lifetime, reference, outcome and cache cases |
 | `packages/runtime/test/durableRecovery.test.ts` | Identity/clock/expiry/failure isolation and denied authority |
 | `packages/runtime/test/durableStoreModel.ts` | Test-only single-namespace publication/erasure model with injected faults |
-| `packages/runtime/test/durableStore.test.ts` | Port conformance schedules, retry/CAS/deletion/cleanup assertions |
+| `packages/runtime/test/durableStoreState.ts` | Closed versioned controls, retained-copy bounds, and authoritative reads |
+| `packages/runtime/test/durableStorePreparation.ts` | Validated full-head staging, original receipts, and retirement capacity |
+| `packages/runtime/test/durableStoreRequest.ts` | Descriptor-safe closed request copying and bounded encoding before serialization |
+| `packages/runtime/test/durableStoreFixtures.ts` | Shared-medium schedules and cold reconstruction without filesystem effects |
+| `packages/runtime/test/durableStore*.test.ts` | Eight suites covering conformance, concurrency, corruption, deletion, framing, request bounds, and retained capacity |
 
 Split a helper or test by responsibility if needed to retain the existing
 400-line source/100-line-function and 600-line-test/200-line-function gates;
-do not exempt a file or weaken lint to fit this plan. No production host, store,
-coordinator, reducer, command/event schema, or manifest change is planned.
+do not exempt a file or weaken lint to fit this plan. Existing host, live-store,
+coordinator, reducer, command/event schema, and contribution behavior remain
+unchanged. Development-runner version maintenance is recorded separately.
 
 ## Task 1: Closed minimized wire contract
 
@@ -410,24 +416,35 @@ from the persisted erasing fence/copies, not a volatile flag. Existing
 present/blocked state cannot be overwritten by create. No generic upsert or
 auto-create-on-append is permitted.
 
-- [ ] Write the seed test that creates an empty generation, injects a failure
+Independent storage review additionally requires closed, versioned control
+framing and bounded preparation before serialization. The test model retains
+one payload, one current cache, and at most one abandoned staged candidate;
+each copy has the existing one-MiB code-unit/byte ceilings, independently, so
+aggregate copy text is at most 3,145,728 code units and bytes. Its content-free
+generation fence retains at most 1,024 retired keys without eviction; a
+replacement exceeding that capacity fails unchanged while erase remains
+available. Enforce the same bounds on cold reconstruction, and reclaim only
+after request/head validation and the final excluded generation/head check.
+These refine reference-model safety without prescribing a production layout.
+
+- [x] Write the seed test that creates an empty generation, injects a failure
   after authoritative publication but before acknowledgement, and expects
   indeterminate while `load` exposes the complete committed head. Run
   `npx vitest run packages/runtime/test/durableStore.test.ts` and observe RED.
-- [ ] Add the port types, then a **test-only** model with one authoritative
+- [x] Add the port types, then a **test-only** model with one authoritative
   namespace record, derived cache copies, an erasure fence, and deterministic
   fault points before publication, after publication, and during cleanup.
   Do not inject testing faults into production `InMemoryJournal`.
-- [ ] Append validates/stages the entire next log and deduplication state before
+- [x] Append validates/stages the entire next log and deduplication state before
   atomic publication. Check current generation before exact-retry lookup.
   Exact retry compares expected head, command keys, and canonical facts;
   return its original receipt. Changed payload, cross-commit command reuse,
   stale head, invalid replay, and retired generation leave the state unchanged.
-- [ ] Test concurrent schedules at the compare/publish boundary: two writers
+- [x] Test concurrent schedules at the compare/publish boundary: two writers
   at one head cannot both succeed, erase cannot be undone by a late append,
   and a lost acknowledgement does not create duplicate application. This is
   a reference schedule model, not evidence of a real process lock.
-- [ ] Erase publishes a content-free fence before removing modeled payload
+- [x] Erase publishes a content-free fence before removing modeled payload
   copies. Failed cleanup returns cleanup-pending; lost fence acknowledgement
   returns indeterminate; both block further append. Retrying erase completes
   cleanup without resurrecting data. Persist erasing before cleanup and erased
@@ -435,11 +452,11 @@ auto-create-on-append is permitted.
   and prove create cannot bypass unresolved erasure; a verified completed fence
   can resolve a lost acknowledgement. The fence remains writable when the
   payload budget is exhausted. Fresh create cannot inherit old identities.
-- [ ] Cover before/after-publication failures, exact retry after intervening
+- [x] Cover before/after-publication failures, exact retry after intervening
   append, malformed retry, immutable receipts, independent namespaces, deleted
   generation replay, orphan/corrupt head refusal, stale cache refusal, and
   cleanup failure/retry. Inspect serialized model state for omitted-field leaks.
-- [ ] Run port/model, projection/replay, and existing in-memory-store tests;
+- [x] Run port/model, projection/replay, and existing in-memory-store tests;
   force typecheck and lint. Commit: `feat: specify atomic durable storage and erasure port`.
 
 ## Task 5: Public restart assessment and regression delivery
@@ -456,7 +473,7 @@ and make no claim that effects settled. Valid nonexpired input returns the
 minimized snapshot, canonical cache text, cache disposition, and unsettled
 operation metadata. It is always review-required, including an empty log.
 
-- [ ] Add this RED authority seed (complete fixture helper from Task 2):
+- [x] Add this RED authority seed (complete fixture helper from Task 2):
 
   ```ts
   import { expect, it } from "vitest";
@@ -471,29 +488,30 @@ operation metadata. It is always review-required, including an empty log.
   });
   ```
 
-- [ ] Run `npx vitest run packages/runtime/test/durableRecovery.test.ts`;
+- [x] Run `npx vitest run packages/runtime/test/durableRecovery.test.ts`;
   observe the missing-export failure, then implement the public wrapper.
-- [ ] Return fixed blocked codes, not exceptions containing IDs or text; no
+- [x] Return fixed blocked codes, not exceptions containing IDs or text; no
   snapshot/cache on a failed or expired result. Validate the full log before
   deriving any cache. An invalid/missing cache never masks an invalid log.
-- [ ] Test exact expiry, shortened TTL, invalid/backward clock, namespace and
+- [x] Test exact expiry, shortened TTL, invalid/backward clock, namespace and
   generation mismatch, all unsettled phases across closed sessions, matching
   versus discarded cache, corrupt suffix, interleaved failing/successful calls,
   deep freezing, and absence of grants/inputs/live snapshot fields.
-- [ ] Verify type-level literal false flags and all unchanged P2a exports.
+- [x] Verify type-level literal false flags and all unchanged P2a exports.
   Verify production imports contain no filesystem, VS Code, timers, network,
   model, effect, coordinator, or host registration route. Preserve host tests
   for inactive-zero/coexistence rather than adding a feature command.
-- [ ] Force typecheck; run lint, root coverage, both audits, POC compile/unit
+- [x] Force typecheck; run lint, root coverage, both audits, POC compile/unit
   tests, build, Stable package/VSIX verification, and isolated host suites.
-  Inspect actual Insiders step outcomes, not just allowed-failure job status.
-- [ ] Update the four canonical documents with measured counts, dependency
+  Remote Insiders step outcomes remain part of the final PR gate below.
+- [x] Update the four canonical documents with measured counts, dependency
   decisions, real limitations, and implemented-versus-deferred boundaries.
   Commit: `feat: expose non-authorizing minimized restart assessment`.
 - [ ] Obtain independent full-branch and repository review. Verify each finding,
   fix real issues with regression tests, reply in its original thread, and
   resolve only addressed threads. Recheck the exact final head's required
-  checks and follow-up reviews, then notify the owner that the PR is ready.
+  checks and follow-up reviews, including every actual Insiders step rather
+  than only its allowed-failure job status, then notify the owner that the PR is ready.
   Do not merge or enable auto-merge without explicit direction.
 
 ## Acceptance matrix
@@ -544,5 +562,13 @@ privacy, correctness, coexistence, or explicit-merge gates.
   budget corrections. The 47 projection cases and 75 replay cases pass within
   388 focused runtime/core/script tests; forced workspace typecheck and full
   lint pass on Node.js 24.21.0.
-- [ ] Task 4: storage port and fault model.
+- [x] Task 4: storage port and fault model (`72fd844`). Independent spec/quality
+  re-review closes all three framing, preparation-budget, and retained-capacity
+  findings. The 146 model cases pass within 751 focused journal tests; forced
+  workspace typecheck and scoped lint pass. Fencing/copy limits remain
+  test-only policies, not filesystem or power-loss evidence.
 - [ ] Task 5: restart assessment, full regression gates, and reviewed PR.
+  The independently reviewed assessment core and public storage-type exports
+  pass 50 recovery tests and forced typecheck. Local integration passes 2,725
+  root tests, lint, coverage, both audits, both packages, Stable VSIX inspection,
+  and the isolated host matrix. Full-branch/PR review and final-head CI remain.

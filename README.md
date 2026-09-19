@@ -270,11 +270,13 @@ The [sequential roadmap](docs/design.md#sequential-delivery-roadmap) covers the
 remaining work through v2.0. The current
 [P2b persistence and restart contract plan](docs/implementation-plan.md) follows
 the merged P2a implementation (PR #11). P2a supplies bounded journal parsing and
-read-only inspection, not a durable store or working resume feature. The owner
-has authorized implementing the new minimized durable-state contracts next;
-their design and current execution status are in the plan. No existing journal
-is serialized wholesale, and no recovered record grants live authority. Disk
-storage, live restoration, Pair ownership/handoff, and P3 editing/UI retain
+read-only inspection, not a durable store or working resume feature. P2b adds a
+separate closed, minimized journal format, exact historical replay, trusted
+candidate projection with explicit commit resolution, and a non-authorizing
+restart assessment. The separate storage port has a test-only fault model;
+it is not a disk adapter or a second application-wired journal. No existing
+journal is serialized wholesale, and no recovered record grants live authority.
+Disk storage, live restoration, Pair ownership/handoff, and P3 editing/UI retain
 their separate design, review, verification, and merge gates.
 
 ## Development checks
@@ -343,12 +345,17 @@ the [journal inspection boundary](docs/design.md#131-p2a-journal-inspection):
 complete revision-zero histories, commit/revision/identity checks, and recorded
 unfinished-operation warnings. A successful report restores no session, grants,
 or authority and replays no effect. See the [implementation evidence](docs/research.md#p2a-implementation-evidence).
-The rest of P2 and the guarded edits and complete Stable Pair experience in P3
-remain separately gated. Neither
-increment is authorized by an earlier milestone's completion. Growth transfer
-completion and evaluation export remain release work, not completed preview
-features. Work proceeds one milestone at a time; there is no committed calendar
-release date.
+P2b implements the [minimized persistence/restart contracts](docs/design.md#132-p2b-persistence-and-restart-contracts)
+without filesystem access, live hydration, or automatic retries. Expired or
+invalid histories never return an executable request; pending/unknown records
+remain warnings, including after session closure. Pure helpers and a test-only
+storage schedule do not prove crash durability, physical deletion, or a working
+resume feature. The [current plan](docs/implementation-plan.md) records the
+implementation and delivery gates. The disk adapter, live admission, remaining
+P2 ownership/handoff, and guarded edits/complete Stable Pair experience in P3
+remain separately reviewed increments. Growth transfer completion and evaluation
+export remain release work, not completed preview features. Work proceeds one
+milestone at a time; there is no committed calendar release date.
 
 The merged P1 baseline passed typecheck, lint, 673
 tests across 43 files, Stable VSIX verification, and all 17 isolated Extension

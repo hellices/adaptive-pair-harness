@@ -1655,9 +1655,9 @@ new PR's merge still requires explicit direction.
 | P2a flags always deny authority/replay and retains unsettled operations across lifecycle changes | Preserve these guarantees while replaying a different, minimized state; neither reports nor historical outcomes are permissions |
 | `BriefConfirmed` is shape-valid but unsupported by the current reducer | A projection must reject this unsupported source route rather than quietly add a new session transition |
 
-These findings come from the merged protocol, reducers, runtime store and tool
-executor. No new parser, store, privacy filter, projection, or live restart path
-was implemented to obtain them.
+These findings were established from the merged protocol, reducers, runtime
+store, and tool executor before P2b implementation. The pure contract code and
+its validation are separate evidence, not retroactive proof of a disk adapter.
 
 #### Alternatives and limits
 
@@ -1691,8 +1691,9 @@ Official API documentation establishes useful limits, not an adapter proof:
 These sources were checked for API semantics on September 19, 2026. No system
 crash, power-loss, filesystem, multi-process-lock, or deletion experiment was
 run for P2b. Seven-day logical expiry, one-MiB encoded-byte bounds, 1,024-fact
-limits, and the content-free deletion fence are **proposed policy**, not
-measurements. Physical cleanup while inactive is explicitly not promised.
+limits, and the content-free deletion fence are **policy choices**, not
+performance or filesystem measurements. The pure contracts enforce their
+bounded representations; physical cleanup while inactive is explicitly not promised.
 An adapter prototype, if needed, requires its own authorized time-boxed spike;
 planning text is not evidence that a platform satisfies the contract.
 
@@ -1728,6 +1729,77 @@ After the Mocha update, both installations report zero audit findings,
 workspace typecheck and the POC compile/unit suite pass on Node.js 24.21.0.
 This maintenance checkpoint is not a substitute for final changed-code,
 isolated-host, packaging, and exact-PR-head CI verification.
+
+#### P2b implementation evidence
+
+The implementation is deliberately separate from the current event log, live
+store, coordinator, and host journal. The closed `adaptive-pair-durable` codec
+retains only opaque keys, finite classifications/assistance flags, bounded
+sequences/times, and recorded phases. Its private reducer reconstructs the
+complete minimized domain, including unsettled operations in closed sessions.
+The cache is derived from that full replay and cannot salvage a missing or
+corrupt prefix/suffix. The public inspection API always denies authority and
+automatic replay; expiry returns no historical payload and requests erasure,
+not an assertion that effects stopped.
+
+The projector uses command-admitted, deeply frozen candidate objects. Weak
+in-process identities distinguish exact retries without serializing or strongly
+retaining raw events/snapshots/operation inputs. An explicit resolution of the
+pending commit key is necessary: equal durable/live counters alone cannot prove
+which candidate committed. Candidate-local event identity/grouping checks also
+reject two distinct admitted commands that reuse one source command ID in their
+first batch. Omitted batches acquire no durable command receipt. The retained
+source-ID budget conservatively counts repeated occurrences across separately
+prepared candidates, including definitively noncommitted attempts; exhaustion
+never evicts retry evidence. These are construction/ordering guarantees within
+the trusted live-source boundary, not provenance or consent inferred from
+minimized-payload equality.
+
+Independent review produced concrete corrections before delivery: complete
+retained side-effect projection (including active assistance status, resume
+reconciliation, and entry-capture presence); a persisted cleanup gate that also
+blocks replacement creation; cross-commit aggregate-budget and unmasked safe
+counter tests; same-batch source-command reuse rejection; and resolution-enum
+validation before idempotence. A separate RED/GREEN regression corrected
+under-counting repeated source-ID text. The original review concerns and their
+verification were answered in their respective review conversations.
+
+Storage-model review additionally exposed missing fence framing, unbounded
+pre-serialization traversal of rejected request graphs, and accumulated copies
+and retired-generation metadata. The corrected model validates closed request
+fields before traversing their values, accounts for encoding before stringifying,
+keeps bounded payload/cache/staging slots, and never evicts retired tokens to
+admit a reused generation. Behavioral RED/GREEN tests cover shared/deep graphs,
+repeated publication failures, cold reconstruction, and the exact 1,024-token
+retirement boundary. These are finite model policies, not provider measurements.
+
+Integrated local verification on Node.js **24.21.0** passes forced workspace
+typecheck, full ESLint, and **2,725 root tests in 131 files**. The 528 added
+cases comprise 210 protocol, 75 replay/cache, 47 projection, 146 storage-model,
+and 50 recovery/public-contract tests. Property-test trials are not counted as
+additional test cases. Root coverage is **91.55% statements, 85.84% branches,
+93.45% functions, and 91.74% lines**. The isolated POC separately passes
+**21 unit cases in five files**, compile, and packaging.
+
+The built Stable VSIX passes the existing seven-entry verification policy;
+its production bundle measures **539,516 bytes**, compared with **536,711 bytes**
+for merged P2a. No source map, host test, test-only store, or POC contribution
+is shipped. Isolated extension hosts pass **17 cases each** on VS Code
+**1.136.2**, **1.137.0**, and **Insiders**; the POC passes its separate one-case
+Insiders host suite. These verify unchanged inactive-zero/coexistence and the
+existing Growth preview, not disk persistence or live restart. The known Vite
+native-config-loader warning remains visible and no suppression was added.
+
+The maintained dependency inventory was refreshed again after implementation:
+**16 manifests, 49 declarations (25 internal/24 external), 16 external
+packages, and both lockfiles**. Both full-graph audits remain at **zero**
+findings (root: 407 audited dependencies; isolated POC: 257). The retained
+version/availability and TypeScript peer-compatibility decisions in the table
+above remain current. The Mocha patch changes the resolved transitive graph,
+not the product's direct package boundaries. GitHub Actions pins also match
+their checked stable releases: checkout 7.0.1, setup-node 7.0.0, and
+upload-artifact 7.0.1; no workflow action update is required. The Microsoft
+release-API SAML restrictions remain unchanged and were not bypassed.
 
 ## 7. Evaluation hypotheses
 
