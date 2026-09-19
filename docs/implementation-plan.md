@@ -91,6 +91,7 @@ storage dependency is required.
 | `packages/runtime/src/durableTypes.ts` | Minimized replay state, key-issuer/projection/assessment contracts |
 | `packages/runtime/src/durableProjection.ts` | Explicit v1-candidate allowlist and lifetime-key mapping |
 | `packages/runtime/src/durableReplay.ts` | Private ordered reduction, identities, pending-operation retention |
+| `packages/runtime/src/durableSnapshot.ts` | Private full-replay snapshot derivation and canonical cache comparison |
 | `packages/runtime/src/durableRecovery.ts` | Public expected-binding/time checks, derived cache, non-authorizing report |
 | `packages/runtime/src/durableStore.ts` | Separate port types, complete/indeterminate outcomes and erasure receipts |
 | `packages/runtime/src/index.ts` | Additive public contracts; no live-store wiring |
@@ -204,7 +205,8 @@ actor, runtime revision, authority epoch, source text, or catch-all property:
 
 **Consumes:** Task 1's parsed complete journal.
 **Produces:** private `replayDurableJournal(journal): DurableState` and
-`createDurableSnapshot(journal, state): DurableSnapshot` for Task 4.
+`createDurableSnapshot(journal): DurableSnapshot` for Task 4. The helper performs
+complete replay internally rather than accepting caller-supplied state.
 
 `DurableState` has `headSequence`, `presence` (initially off), and ordered
 `sessions`. A session has its token, opened sequence, recorded status, nullable
@@ -214,7 +216,7 @@ flags. An operation has its own/session/work-unit keys, kind, opening sequence,
 and recorded status. No omitted v1 field is synthesized. `DurableSnapshot`
 contains format/version, namespace/generation, head, and only that state.
 
-- [ ] Add the first RED replay test against an internal source import:
+- [x] Add the first RED replay test against an internal source import:
 
   ```ts
   import { expect, it } from "vitest";
@@ -233,30 +235,30 @@ contains format/version, namespace/generation, head, and only that state.
   });
   ```
 
-- [ ] Run `npx vitest run packages/runtime/test/durableReplay.test.ts` and
+- [x] Run `npx vitest run packages/runtime/test/durableReplay.test.ts` and
   observe RED. Build protocol exports first when consuming workspace exports.
-- [ ] Implement full replay with invocation-local maps/sets. Each commit must
+- [x] Implement full replay with invocation-local maps/sets. Each commit must
   match the preceding head; commit keys and cross-commit command keys must be
   unique; each fact advances sequence by one; the final declared head must
   match. Never return a valid prefix after a later failure.
-- [ ] Session opening requires a new lifetime key and no unclosed previous
+- [x] Session opening requires a new lifetime key and no unclosed previous
   session. References must name earlier opened entities in their own session.
   Work-unit/operation keys cannot be reused across lifetimes; an operation
   must attach to an earlier work unit. Reject a status update that reopens a
   closed session and reject a second operation outcome, including after unknown.
   Recorded terminal outcomes never erase another pending operation.
-- [ ] Construct frozen state explicitly. Recording a closed session leaves its
+- [x] Construct frozen state explicitly. Recording a closed session leaves its
   operations in the history; no phase becomes cancelled because of closure.
   Recorded modes/owners are facts, not permission checks or new live routes.
-- [ ] Derive a frozen `DurableSnapshot` solely from validated full replay. Its
+- [x] Derive a frozen `DurableSnapshot` solely from validated full replay. Its
   canonical JSON representation is the optional cache encoding. Exact cache
   text mismatch is a discarded cache, not an alternate replay seed; canonical
   encoding avoids accepting extra or reordered cache payloads by accident.
-- [ ] Cover gaps, reordered commits, duplicate IDs, two-command batches,
+- [x] Cover gaps, reordered commits, duplicate IDs, two-command batches,
   dangling/cross-session references, repeated openings, close and later fresh
   session, all pending and terminal phases, unknown overwrite, invalid suffix,
   immutable detached state, and matching/stale/extra-field cache candidates.
-- [ ] Run replay + protocol + existing P2a runtime suites, typecheck, lint.
+- [x] Run replay + protocol + existing P2a runtime suites, typecheck, lint.
   Commit: `feat: replay minimized durable state without live hydration`.
 
 ## Task 3: Trusted candidate projection
@@ -286,6 +288,27 @@ for source command identity, session-start revision, work-unit lifetime, and
 operation lifetime; they are never serialized or logged. Repeating the same
 candidate returns the same commit/command keys; changed content under a reused
 source command is rejected rather than assigned a second identity.
+
+Implementation review identified that a head/revision pair cannot establish
+which candidate committed. Keep the three-argument `project` method and add
+`resolve(commitKey, outcome)` with the closed outcomes `committed`,
+`not-committed`, and `indeterminate`. Only the trusted caller's explicit
+resolution of that exact pending key may promote/discard its staged lifetime
+bindings. Indeterminate candidates permit only exact retry or erasure; another
+candidate cannot infer success from equal counters. This is a pure handshake,
+not a storage call or proof that an effect ran.
+
+Retries retain the same deeply frozen previous snapshot and ordered event
+objects supplied by the live decider. Weak object identities establish this
+in-process candidate identity without serializing or strongly retaining raw
+snapshots/events/inputs. Reparsed copies are not an import or an exact retry.
+Lifetime bindings instead use session-start, proposal, and authorization
+revisions. Omitted batches acquire no durable command receipt. Bound retained
+source-identity text by the existing input-code-unit ceiling, and retained
+candidate events, commands, commits, and facts by their generation ceilings;
+fail closed rather than evicting retry evidence. A failed preparation publishes
+no binding/receipt/reservation changes. Off retires the projector before retry
+lookup and clears its volatile tables.
 
 - [ ] Add a RED test for the omitted route without requesting any keys:
 
@@ -510,7 +533,9 @@ privacy, correctness, coexistence, or explicit-merge gates.
   aggregate-budget and unmasked-counter coverage corrections. The 210 new
   cases pass within 823 protocol tests; 109 existing runtime journal cases,
   forced typecheck, and lint also pass on Node.js 24.21.0.
-- [ ] Task 2: minimized replay and cache.
+- [x] Task 2: minimized replay and cache. Independent spec/quality review passes
+  with no findings. All 75 new replay cases pass within 1,007 focused tests,
+  with forced workspace typecheck and full lint on Node.js 24.21.0.
 - [ ] Task 3: trusted candidate projection.
 - [ ] Task 4: storage port and fault model.
 - [ ] Task 5: restart assessment, full regression gates, and reviewed PR.
