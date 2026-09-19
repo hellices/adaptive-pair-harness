@@ -1,6 +1,6 @@
 # P2b Minimized Persistence and Restart Contract Implementation Plan
 
-> **Status: implementation authorized; contract review precedes execution.**
+> **Status: implementation authorized; corrected contract review complete.**
 > On September 19, 2026, the owner selected the minimized durable-state design,
 > reviewed its written boundaries, and then explicitly requested implementation
 > and continued progress toward a usable product. This is no longer a
@@ -160,7 +160,7 @@ actor, runtime revision, authority epoch, source text, or catch-all property:
 | `OperationOpened` | `sessionKey`, `workUnitKey`, `operationKey`, `kind`: read/edit/check, `status`: planned/authorized/started |
 | `OperationOutcomeRecorded` | `sessionKey`, `operationKey`, `status`: confirmed/failed/declined/cancelled/unknown |
 
-- [ ] Add this RED seed before production exports exist:
+- [x] Add this RED seed before production exports exist:
 
   ```ts
   import { describe, expect, it } from "vitest";
@@ -181,23 +181,23 @@ actor, runtime revision, authority epoch, source text, or catch-all property:
   });
   ```
 
-- [ ] Run `npx vitest run packages/protocol/test/durableJournal.test.ts` and
+- [x] Run `npx vitest run packages/protocol/test/durableJournal.test.ts` and
   observe the missing-export failure. Do not count a runner/config error as RED.
-- [ ] Implement the exact type/field table and primitive-text parser. Bound
+- [x] Implement the exact type/field table and primitive-text parser. Bound
   text before JSON parsing; count commits/facts/command keys before per-fact
   work. Validate UTF-8 byte length without Node APIs. Reject unknown versions,
   missing/extra keys, invalid tokens/enums, invalid times/TTL, empty batches,
   and noninteger/unsafe/negative-zero counters. Deep-freeze newly parsed data.
-- [ ] Use `Invalid Pair durable journal:` with fixed codes `INVALID_TEXT`,
+- [x] Use `Invalid Pair durable journal:` with fixed codes `INVALID_TEXT`,
   `TEXT_LIMIT`, `BYTE_LIMIT`, `INVALID_JSON`, `UNSUPPORTED_VERSION`,
   `INVALID_ENVELOPE`, `INVALID_COMMIT`, `INVALID_FACT`, and `LIMIT_EXCEEDED`.
   Catch internal parsing failures without publishing payloads or causes.
-- [ ] Add table-driven positive cases for every fact and negative mutations of
+- [x] Add table-driven positive cases for every fact and negative mutations of
   every field; exact lower/upper bounds and one-over cases; nulls, boxed strings,
   hostile objects not inspected as text, unsafe keys, nonfinite numbers, negative
   zero rejection, nested freezing, and arbitrary sensitive extra-field canaries.
   Schema-valid framing remains distinct from runtime replay consistency.
-- [ ] Run the new suite, existing event/journal suites, typecheck, and lint.
+- [x] Run the new suite, existing event/journal suites, typecheck, and lint.
   Commit: `feat: define closed minimized durable journal framing`.
 
 ## Task 2: Exact minimized replay and cache derivation
@@ -504,8 +504,12 @@ privacy, correctness, coexistence, or explicit-merge gates.
 - [x] PR #11 merged; post-merge baseline CI verified.
 - [x] Owner selected and reviewed the minimized-state design direction.
 - [x] Owner explicitly requested actual implementation and continued delivery.
-- [ ] Independent contract/plan review and necessary corrections.
-- [ ] Task 1: closed wire format.
+- [x] Independent contract/plan review and necessary corrections (`0e7456a`;
+  follow-up review confirms both projection-side-effect and erasure-replacement gates).
+- [x] Task 1: closed wire format. Independent spec/quality review passes after
+  aggregate-budget and unmasked-counter coverage corrections. The 210 new
+  cases pass within 823 protocol tests; 109 existing runtime journal cases,
+  forced typecheck, and lint also pass on Node.js 24.21.0.
 - [ ] Task 2: minimized replay and cache.
 - [ ] Task 3: trusted candidate projection.
 - [ ] Task 4: storage port and fault model.
