@@ -1515,8 +1515,9 @@ This verifies bounded read-only inspection, not authentic consent, privacy-safe
 disk serialization, a durable store, working resume, authority restoration, or
 effect replay. A recorded unknown operation remains a warning; close and disable
 do not rewrite it as cancelled. Root, isolated POC, and host results are kept
-separate. Final delivery gates and review disposition are tracked in the
-[canonical implementation plan](implementation-plan.md).
+separate. Final P2a delivery gates and review disposition remain in Git at
+`133c7a8:docs/implementation-plan.md`; the canonical plan may then be deliberately
+replaced for the next reviewed increment.
 
 #### P2a dependency maintenance
 
@@ -1620,7 +1621,76 @@ state is `COMMENTED`, not approval, and it explicitly requests final human
 review. Both prior findings received linked replies to their original reviews;
 there were no inline threads to resolve. Any final documentation-only revision
 still requires same-head CI/review checks on the PR before readiness is
-reported. The open implementation PR requires a separate owner merge decision.
+reported. The owner subsequently authorized the merge; PR #11 merged on
+September 18, 2026 at `133c7a895abd217d9e63aae1d74b5fc190c34e33`. Final-head
+CI run **35357471177** and post-merge main CI run **35358366256** both pass all
+four jobs and all 47 actual steps, including the allowed-failure Insiders
+steps. Final repository review **5249044377** reports no new comments; its
+formal `COMMENTED` status is not relabeled as approval. This completed P2a
+checkpoint does not authorize P2b implementation.
+
+### P2b persistence contract planning
+
+**Scope and provenance, September 19, 2026:** after authorizing PR #11's merge,
+the owner selected a storage/recovery design-and-plan PR, then selected a
+dedicated privacy-minimized durable event/snapshot contract over a warning-only
+memo. Work starts from merged `main` at `133c7a8` on a dedicated documentation
+branch. The earlier P2a implementation plan is preserved in that commit, not
+copied into another active plan. The selection authorizes documentation, not
+implementation, host integration, or the new PR's merge.
+
+#### Repository findings
+
+| Verified current behavior | Consequence for the proposed contract |
+| --- | --- |
+| `PairStore.load` returns a full runtime snapshot and seen command IDs; `commit` atomically accepts a revisioned event batch | A minimized durable loader cannot implement this interface by fabricating missing fields; a separate port and later explicit integration are necessary |
+| `InMemoryJournal` discards the prefix on disable while retaining revision and command-ID history | `events()` is not a durable export; do not use it to construct a complete log or assume persisted deduplication |
+| v1 events retain entry diagnostics, paths, work-unit prose/baselines, arbitrary operation input, and free-form outcomes | Bounds, encryption, or string sanitization alone do not establish data minimization; construct a different closed schema |
+| v1 workspace/session/command/operation IDs are caller-visible strings | Treating every identifier as safe metadata would still leak private content; a future trusted issuer must supply new opaque lifetime keys |
+| Existing read reconciliation can re-execute eligible authorized read operations | Never hydrate that path from a recovered journal; the new restart boundary prohibits automatic replay of reads as well as mutations |
+| P2a flags always deny authority/replay and retains unsettled operations across lifecycle changes | Preserve these guarantees while replaying a different, minimized state; neither reports nor historical outcomes are permissions |
+| `BriefConfirmed` is shape-valid but unsupported by the current reducer | A projection must reject this unsupported source route rather than quietly add a new session transition |
+
+These findings come from the merged protocol, reducers, runtime store and tool
+executor. No new parser, store, privacy filter, projection, or live restart path
+was implemented to obtain them.
+
+#### Alternatives and limits
+
+The selected direction gives an event journal exact authority over an explicitly
+smaller durable domain. Omitted goals, paths, baselines, inputs, and grants must
+be recollected after restart. This is a deliberate product trade-off, not a
+claim to recover the existing runtime snapshot losslessly. A warning-only memo
+would be smaller but leave the authoritative durable-state contract unsettled.
+Whole-v1 persistence would preserve reducer inputs but violate the exclusion
+of source, diagnostics, sensitive inputs, and free-form text, including when
+encrypted or bounded. Neither alternative is silently treated as implemented.
+
+Official API documentation establishes useful limits, not an adapter proof:
+
+- [VS Code ExtensionContext](https://code.visualstudio.com/api/references/vscode-api#ExtensionContext)
+  describes workspace-scoped `storageUri`, which can be undefined when no
+  workspace is open, and notes that the directory may not exist. Its existence
+  is not an atomic-commit, trust, ownership, or crash-recovery guarantee.
+- [VS Code FileSystem](https://code.visualstudio.com/api/references/vscode-api#FileSystem)
+  and [FileSystemProvider](https://code.visualstudio.com/api/references/vscode-api#FileSystemProvider)
+  expose write/rename operations and errors across providers, but no portable
+  transaction, compare-and-swap, or directory-flush contract. Requiring one
+  writer and a tested supported-provider matrix is a design inference, not a
+  promise of the VS Code API.
+- [Node.js 24 file-system documentation](https://nodejs.org/docs/latest-v24.x/api/fs.html)
+  warns against overlapping writes to one file and documents optional file
+  flushing through `FileHandle.sync()`. That file-flush primitive does not
+  establish atomic multi-file publication, writer exclusion, directory-entry
+  durability, or uniform power-loss behavior for an arbitrary provider.
+
+These sources were checked for API semantics on September 19, 2026. No system
+crash, power-loss, filesystem, multi-process-lock, or deletion experiment was
+run for P2b. Seven-day logical expiry, one-MiB encoded-byte bounds, 1,024-fact
+limits, and the content-free deletion fence are **proposed policy**, not
+measurements. Physical cleanup while inactive is explicitly not promised.
+An adapter prototype, if needed, requires its own authorized time-boxed spike;
+planning text is not evidence that a platform satisfies the contract.
 
 ## 7. Evaluation hypotheses
 

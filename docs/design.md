@@ -263,11 +263,13 @@ M2 has three ordered increments, not three competing active plans:
    slice is
    **P2a journal and recovery contracts** in section 13.1: a bounded, complete
    journal format, deterministic inspection, and a restart assessment that
-   restores no authority. A durable adapter, privacy-safe persisted payloads,
-   restart admission, and ownership/lifecycle transitions follow in separately
-   reviewed increments. The canonical plan covers only the separately authorized
-   P2a implementation; its completion does not imply working persistence or
-   authorize the next increment.
+   restores no authority. P2a merged in PR #11 at `133c7a8`.
+   **P2b persistence and restart contracts**, proposed in section 13.2, next
+   separate privacy-minimized durable state from live execution state. The owner
+   authorized its design/plan PR, not implementation. A filesystem adapter,
+   live restart integration, and ownership/lifecycle transitions still require
+   separately reviewed increments. Neither journal inspection nor a published
+   persistence contract implies working persistence or authorizes the next step.
 3. **P3 — Stable Pair experience:** prove the host's guarded-edit boundary and
    then wire native diff/confirmation, the Pair chat route, operational tool
    declarations, and end-to-end verification. Reject stale document versions,
@@ -275,11 +277,11 @@ M2 has three ordered increments, not three competing active plans:
    enforcing the edit contract needs a prototype, use a bounded technical
    spike and record its decision here; do not quietly relax the contract.
 
-The runtime-boundary/code-size stabilization and subsequent event-validation
-increment between P1 and P2 are merged. The current authorized implementation
-adds only the reviewed P2a parser, private replay checks, and metadata-only
-inspection report. It adds no durable storage, live session recovery, Pair
-ownership, handoff, or editing feature.
+The runtime-boundary/code-size stabilization, event validation, and P2a
+implementation are merged. Implemented behavior includes the reviewed P2a
+parser, private replay checks, and metadata-only inspection report, but no
+durable runtime storage, live session recovery, Pair ownership, handoff, or
+editing feature. The next authorized deliverable is P2b documentation only.
 
 The full Pair Mode gate still requires P1, P2, and P3. A pure policy returning
 an admissible result is not edit permission, a completed handoff, or evidence
@@ -295,7 +297,8 @@ claims that a later milestone is already planned in implementation detail.
 |---|---|---|
 | Pair work-unit checks and related human follow-up policy | M2/P1 | Deterministic policy examples and negative cases; no state or host mutation |
 | Complete journal framing and non-authorizing restart assessment | M2/P2a, implemented without host wiring | Bounded parsing, commit/revision/ID checks, reducer compatibility, historical unsettled-operation warnings, no storage or live authority; see [measured evidence](research.md#p2a-implementation-evidence) |
-| Durable adapter, persisted-data minimization, deletion, and restart admission | M2/P2 after P2a | Atomic crash tests, privacy-safe records, deletion/checkpoint semantics, fresh host reconciliation and human confirmation; not satisfied by inspection |
+| Minimized durable state, atomic storage/deletion contracts, and restart admission boundaries | M2/P2b, design/plan only | Closed-field privacy matrix, deterministic replay, generation fencing, fault-model tests, and non-authorizing restart assessment; no filesystem or live restoration claim |
+| Durable adapter and live restart integration | M2/P2 after P2b, separately authorized | Measured provider/crash/concurrency behavior, deletion and retention checks, fresh host reconciliation and human confirmation; not satisfied by an in-memory storage model |
 | Handoff acceptance, takeover, completion, successors, and replay | M2/P2 | Core and coordinator fault tests, durable human decisions, stale-grant rejection, no automatic replay of unknown mutations |
 | Pair capability-category ownership and reflection | M2/P2, surfaced in P3 | Observed work-unit history and correctable reflection; no score inferred from typing or model prose |
 | Bounded AI edits and complete Pair chat/tool routes | M2/P3 | Real fixture edits and observed checks, conflict/cancellation tests, native diff/confirmation, public-tool parity |
@@ -1832,11 +1835,12 @@ to a live store or host adapter, and neither writes or restores durable state.
 ### 13.1 P2a: journal inspection
 
 **Authorization and status:** implemented after separate owner approval of the
-reviewed scope and the merge of documentation PR #10. The deliverable is a
+reviewed scope and the merge of documentation PR #10; implementation PR #11
+merged at `133c7a8` on September 18, 2026. The deliverable is a
 host-independent, read-only contract for examining a complete journal and
 identifying recorded unfinished work. It does not save a journal, restore a
 session, or make Pair Mode available. [Validation evidence](research.md#p2a-implementation-evidence)
-is distinct from the still-required implementation PR merge decision.
+includes the merge checkpoint; it does not authorize P2b implementation.
 
 **Why this boundary first:** a filesystem store now would combine unreviewed
 serialization/privacy, crash ordering, compaction, and live authority changes.
@@ -1957,33 +1961,280 @@ together; it must not serialize the current in-memory journal wholesale merely
 because P2a can inspect synthetic JSON. The host's edit-episode `LocalJournal`
 is separate and is neither converted nor changed here.
 
-### 13.2 Planned durable persistence
+### 13.2 P2b: persistence and restart contracts
 
-**Planned v2 persistence:** a durable store adapter will keep the authoritative
-event journal and immutable snapshots under extension storage, not in the
-repository, while preserving the same atomic commit contract.
+**Status: proposed; documentation only.** On September 19, 2026, the owner chose
+a dedicated, privacy-minimized durable event/snapshot contract rather than a
+warning-only recovery memo. This approves the design direction and preparation
+of a reviewed plan, not product implementation, a disk adapter, or this PR's
+merge. P2a and the Stable Growth preview remain unchanged.
 
-Pair Presence keeps its high-frequency observation window in memory. Only
-bounded semantic summaries needed for resume or an accepted session event may
-enter the journal.
+#### Decision and authority boundary
 
-The planned authoritative journal stores:
+The proposed journal is authoritative for a new **minimized durable state**,
+not a serialized `PairRuntimeSnapshot`. Its complete event history reproduces
+that state exactly. It cannot reproduce omitted text, resource scopes, grants,
+or executable requests. Immutable snapshots are derived caches of the same
+minimized state, never an alternative authority or an arbitrary replay seed.
 
-- domain events;
-- operation metadata and outcomes;
-- relative or hashed resource references;
-- bounded evidence summaries;
-- consent and profile decisions.
+This deliberately refines the earlier broad persistence proposal: relative or
+hashed paths, free-form evidence summaries, and portable profile decisions are
+not in the initial durable contract. Lossless replay means lossless replay of
+the explicitly retained domain, not of today's in-memory session. Full-fidelity
+v1 serialization, even encrypted or truncated, conflicts with minimization;
+a warning-only memo would defer the authoritative-state contract altogether.
+The rationale and upstream limits are in
+[the P2b planning evidence](research.md#p2b-persistence-contract-planning).
 
-It does not store raw source buffers, secrets, full diagnostics, terminal
-transcripts, or complete model conversations.
+Keep four boundaries separate:
 
-The planned writes use sequence numbers and atomic snapshot replacement. Startup verifies
-the last durable sequence, migrates supported schema versions, and reconciles
-the workspace before restoring mutation authority.
+1. The current in-memory runtime and `PairStore` keep their existing behavior.
+2. The proposed pure codec/reducer describes durable facts and their exact
+   replay; it neither saves them nor calls the existing runtime reducer on load.
+3. A later storage adapter implements atomic publication, fencing, and erasure
+   under extension-owned storage, outside the repository.
+4. A separately approved restart adapter creates fresh live state after human
+   confirmation and current-workspace reconciliation. A loaded durable state is
+   never passed to `PairStore.load`, `PairCoordinator.reconcile`, or an effect
+   executor. Existing bounded-read retry is not a restart policy.
 
-Developers can inspect, export, and delete session and profile state. Retention
-has finite defaults and configurable local limits.
+#### Retained data and trusted construction
+
+All stored objects are closed schemas. There is no arbitrary string, extension
+bag, `Record<string, unknown>`, natural-language summary, or optional raw-data
+escape hatch. New records are built field by field, not by spreading an event,
+snapshot, model response, or P2a report and deleting known sensitive fields.
+
+| Domain | Retained fields | Explicitly omitted |
+| --- | --- | --- |
+| Storage identity | Adapter-minted namespace, generation, commit, and command keys; bounded counters; host-created creation/expiry times | Workspace/session/command IDs copied from v1, URIs, repository names, paths, branch names, usernames, credentials |
+| Presence/session | Presence enum; fresh session-lifetime key; recorded session status and mode | Entry snapshot, diagnostics, goal/criteria text, pause reason, actor claims, live runtime revision and authority epoch |
+| Learning boundary | Capability-category enums and maximum hint level | Learning goals, familiar areas, delegatable-work prose, independent-check text, portable profile |
+| Work unit | Fresh work-unit key, owning session, mode, human/AI owner, learning-value/capability enums, recorded status | Objective, acceptance commands, verification plan, stopping condition, allowed paths, baseline contents or hashes |
+| Assistance | Whether attempt/hypothesis was recorded or bypassed; hint level; reveal flag | Attempt, hypothesis, solution, or model prose; an inferred learning score |
+| Operation | Fresh operation-lifetime key, session/work-unit keys, read/edit/check kind, recorded phase/outcome | Tool input/name supplied as text, result summary/observation, source, transcripts, model conversations, action-grant identifiers |
+
+Keys are 128-bit random values encoded as 32 lowercase hexadecimal characters,
+issued by a trusted adapter key source, not supplied by a model or derived from
+user text. A grammar check alone proves neither randomness nor privacy. The
+v1-to-durable identity map stays in memory; a new session lifetime receives a
+new key even when v1 reuses a session or operation ID. Retries retain their
+original commit/command keys until their commit outcome is resolved. Keys are
+local pseudonymous metadata, not secrets, permissions, or telemetry fields.
+
+The namespace binding comes from the host's extension-owned workspace storage
+context after explicit enablement, not from a file's self-description or a
+model argument. Missing/ambiguous binding, changed roots, and unsupported
+providers fail closed. Storage location alone does not prove unchanged files
+or authentic human consent. No imported journal establishes this binding.
+
+The proposed durable facts are `PresenceRecorded`, `SessionOpened`,
+`SessionStatusRecorded`, `LearningBoundaryRecorded`, `ModeRecorded`,
+`WorkUnitOpened`, `WorkUnitStatusRecorded`, `AssistanceRecorded`,
+`OperationOpened`, and `OperationOutcomeRecorded`. Their payloads contain only
+the fields in the table. Absence uses explicit null/empty values in the closed
+wire schema. Existing finite enums are reused as data, not as permission to
+activate unimplemented modes or ownership transitions.
+
+The future projection consumes a command-admitted candidate commit and its
+privately reduced result, with trusted fresh-key mappings, before publication
+to live state or dispatch of an effect. This is not a general redaction service
+for arbitrary v1 JSON. It maps the 21 current event variants as follows; one
+source commit may produce several durable facts:
+
+| Validated source candidates | Durable representation |
+| --- | --- |
+| `PresenceEnabled`, non-off `PresenceChanged` | Recorded resulting presence status |
+| Off `PresenceChanged` | Erasure barrier, not an ordinary append retaining the earlier session |
+| `WorkspaceObserved`, `EntryCaptured` | No durable payload; observation and entry content stay volatile |
+| `SessionStarted` | New session lifetime in briefing; resulting presence status |
+| `BriefConfirmed` | Reject: the current live reducer has no supported route; do not invent one |
+| `LearningConfirmed`, `ModeSelected` | Allowlisted learning boundary or mode |
+| `WorkUnitProposed`, `WorkUnitAgreed` | Work-unit classification, then recorded work-unit/session status |
+| `AttemptRecorded`, `HypothesisRecorded`, `HintRequested`, `SolutionRevealAuthorized` | Assistance flags/level only |
+| `UserActionGranted`, `UserActionConsumed` | No durable grant or reusable consent |
+| `OperationAuthorized`, `OperationObserved` | Operation metadata and pending/recorded outcome, without input or result text |
+| `SessionPaused`, `SessionResumed`, `SessionClosed` | Recorded status; resume means reconciling, not restored authority |
+
+An entirely omitted source batch does not produce an empty durable commit or
+claim durable deduplication for that batch. Durable sequence numbers are
+independent of live revisions. Until later integration exists, no projection
+is wired into the coordinator, host journal, tool path, or store.
+
+#### Framing, replay, and snapshots
+
+Use a separately discriminated `adaptive-pair-durable` format with version 1;
+this is neither event `protocolVersion: 1` nor P2a's `formatVersion: 1`.
+The closed envelope contains namespace/generation keys, creation/expiry times,
+head sequence, and complete revision-zero commits. Each nonempty commit has a
+commit key, expected sequence, distinct command keys, and ordered facts. Each
+fact advances the durable sequence by one. Command keys may group several
+commands in one atomic commit; reuse across distinct commits is rejected.
+
+Initial policy ceilings are 1,048,576 UTF-16 input code units for the pure JSON
+parser, 1,048,576 encoded UTF-8 bytes at the storage boundary, 1,024 commits,
+and 1,024 facts per generation. Both text and byte limits apply independently.
+At most 1,024 distinct command keys may appear across a generation; every
+commit has at least one. Cached state cannot exceed the lifetimes represented
+by the bounded facts. Counters/times are nonnegative safe integers; expiry must follow
+creation by no more than the configured finite lifetime. These are conservative
+policy choices, not measured performance or filesystem guarantees.
+
+Replay checks the entire envelope, closed payloads, expected sequence/head,
+key uniqueness, and session/work-unit/operation references before returning
+detached, frozen state. Reject dangling references, duplicate openings,
+cross-session operation attachment, reopening a closed session, and a second
+operation outcome, including one following `unknown`. `unknown` remains an
+unsettled warning even though a second outcome cannot overwrite it; it is not
+success or proof that an effect stopped. A future explicit reconciliation
+transition is outside this initial fact set. Closing a session
+does not discard unsettled operations from earlier sessions in the generation.
+
+Facts record historical state, not proof of legal command admission, current
+workspace contents, genuine tool execution, or product correctness. Replay
+never invokes the live decider/reducer or changes a recorded phase to cancelled.
+A cache carries the same format, namespace, generation, and head and must match
+complete replay. A missing/invalid cache can be rebuilt only from a valid full
+log; a valid cache never excuses a missing/corrupt prefix or suffix. No prefix
+salvage, checkpoints, compaction, legacy migration, import, or guessed upgrade
+is supported. Errors use fixed codes without input, raw exceptions, or causes.
+
+#### Atomic publication and failure outcomes
+
+P2b proposes a **separate durable-storage port**, not an implementation of the
+current `PairStore.load` contract. An append is conditional on a host-bound
+namespace, current generation fence, and expected durable head. Publication
+atomically selects the full fact batch, its head, and commit/command identity
+record. A snapshot cache is derived and cannot make a partial log authoritative.
+
+| Result | Meaning and required behavior |
+| --- | --- |
+| Committed | The complete batch and deduplication identities passed the adapter's declared durability boundary; return its receipt, never a live authority token |
+| Not committed | The authoritative state is known unchanged; no effect may depend on this rejected write |
+| Indeterminate | Publication may have happened; block admission, retain the original request identity, and inspect the committed head before any retry |
+
+Within the same current generation, an identical retry with the same commit
+key returns the recorded receipt without reapplying facts. That comparison
+includes expected head, command keys, and the exact canonical fact payload.
+A different payload under that key, command reuse, stale head, or retired
+generation is a conflict. Generation fencing precedes retry lookup, so a
+receipt from an erased generation cannot reopen it. A timeout, abort, or lost
+acknowledgement is not proof of a failed write; never mint a replacement key to
+hide an indeterminate outcome.
+
+A future integrated coordinator must publish an operation's pending metadata
+before acknowledging the live candidate, recheck cancellation/current authority
+before dispatch, and publish its observed outcome after dispatch. If the outcome write
+fails or is ambiguous, recovery still warns that the effect may have happened;
+there is no exactly-once external-effect claim. Budget exhaustion blocks new
+dispatch before the limit is reached and reserves capacity for outcomes and
+control records; it does not evict pending records to make room. Storage failure
+must be visible, not a silently acknowledged in-memory
+fallback.
+
+The adapter must serialize concurrent writers or reject unsupported concurrent
+access, including another window/process. An in-process queue or atomic rename
+alone is not cross-process compare-and-swap. The eventual adapter must publish
+its supported provider/platform matrix and measured process-crash guarantees.
+Node write completion, file flush, directory-entry persistence, atomic
+visibility, and power-loss survival are different claims. P2b proves none of
+them with a fake port; provider capability and crash tests are a later gate.
+
+#### Erasure, retention, and non-resurrection
+
+Disable retains its existing clear-continuity meaning. The future durable
+adapter must additionally fence its generation and erase its owned session
+records; this proposal does not change the separate host `LocalJournal` now.
+The deletion protocol is:
+
+1. Revoke local admission and fence pending/late work. Request cancellation,
+   but do not claim that an external process or previously applied edit stopped.
+2. Under the same writer exclusion as append, publish a content-free erased
+   generation record. It contains only format/version, namespace, generation
+   fence, and erased status: no session, command, operation, or user data.
+3. Remove the retired log, caches, staged files, and adapter-owned copies in
+   that namespace. Never traverse arbitrary paths, follow a symlink outside the
+   owned directory, touch another extension, or delete a user-chosen export.
+4. Drop in-memory references to retired projections and key maps. Report erasure
+   complete only after the fence is acknowledged and all owned payload copies
+   are removed. Otherwise report indeterminate or cleanup-pending with admission
+   still blocked. Repeating deletion is safe; no secure RAM-wipe claim is made.
+
+Load consults the current fence first. A deleted/corrupt/ambiguous head never
+falls back to an older generation, cache, temporary file, or backup. Late
+append/outcome writes and exact retries for a retired generation cannot recreate
+it. A missing head with orphaned data is an error, not permission to discover
+and adopt the newest-looking file. New enablement needs a fresh generation and
+fresh confirmation; erasing evidence proves neither operation termination nor
+a clean workspace. A fence prevents resurrection by the adapter's protocol,
+not malicious rollback of the entire storage area or restoration of OS backups.
+Unlinking files is not secure media erasure and does not remove external copies.
+
+The initial proposed payload lifetime is seven days from generation creation,
+with a local setting allowed only to shorten it. Closing does not extend it;
+appending never renews it indefinitely. Expired payload is ineligible for resume
+and is erased on the next explicit Pair access, even if it contains unresolved
+operations. Preserve only the content-free fence and surface that prior effect
+status is unavailable; never label missing evidence as a settled operation.
+The fence is storage control, not retained session history, and remains until
+explicit creation of a fresh generation supersedes it. Backward clock movement
+before creation is an invalid-time block, not an extension of retention.
+
+There is no inactive timer, automatic storage scan, or startup workspace read.
+Thus seven days is a logical expiry, not a promise to remove bytes while Pair is
+inactive. Storage management runs only after explicit enablement or a direct
+user request to inspect/delete Pair-owned data; management alone starts no
+Presence listener, workspace read, model call, network activity, or other
+session. No export/import UI, profile retention change, or background cleanup
+is implemented by this contract increment.
+
+#### Restart admission, not replayed permission
+
+On host restart, Pair is inactive and reads no journal automatically. After
+explicit enablement, the proposed loader may return a minimized historical
+candidate or fixed blocked/empty/erased assessment. Every result has
+`authorityRestored: false` and `automaticReplayAllowed: false`. No result is a
+grant, executable request, successful reconciliation, or ready live snapshot.
+
+A later live admission path must independently verify, in order:
+
+1. Current explicit enablement, workspace trust, supported storage binding,
+   generation/fence, format, expiry, and complete-log consistency.
+2. Exclusive writer ownership and resolution of any ambiguous publication or
+   deletion. Recorded actor/consent data cannot satisfy fresh human approval.
+3. Actual current workspace/root/scope and external-effect reconciliation.
+   `planned`, `authorized`, `started`, and `unknown` operations all need review;
+   even reads are never automatically retried from this journal. Recorded
+   terminal outcomes are not fresh product-verification evidence.
+4. A freshly confirmed goal, mode, learning boundary where applicable, resource
+   scope, edit ownership, and disclosure destination/consent. Omitted fields
+   are recollected, not filled with permissive defaults or recovered from logs.
+5. A new live authority epoch and single-use grants, plus an acknowledged
+   durable admission transition before any newly requested effect. That new
+   transition and its integration require a later reviewed core/host increment;
+   none of the initial durable fact variants grants it.
+
+Failure or unavailable reconciliation keeps mutation blocked. Inspection,
+explicit deletion, or a fresh-start request does not itself satisfy these
+gates. A fresh start uses new identities and agreements, does not clear an
+unresolved external-effect risk by assertion, and does not redispatch an old
+operation. Rollback of an applied effect remains a separate explicit action.
+
+#### Proposed delivery boundary
+
+The first proposed implementation after separate approval is pure: closed
+types/codec, explicit minimized projection and replay, a storage-port contract
+with an in-memory fault model, and non-authorizing restart assessment. Tests
+cover privacy canaries in every excluded v1 field, identity provenance, atomic
+batch/deduplication behavior, multiwriter schedules, lost acknowledgements,
+deletion at every publication boundary, expiry, and unchanged inactive-zero.
+
+Filesystem code, host wiring, real crash testing, provider support, migrations,
+live admission, new ownership transitions, P3 editing, and profile integration
+remain later increments. If a filesystem capability needs a prototype, obtain
+separate spike authorization, keep measured evidence in `docs/spikes/`, and
+integrate its decision here. A documentation PR or an in-memory fault model
+cannot approve or substitute for that work.
 
 ## 14. Privacy and security
 
