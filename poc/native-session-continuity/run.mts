@@ -20,7 +20,8 @@ try {
   const seeded = await launchPhase(run, extensionRoot, "seed");
   const resource = resourceFrom(seeded);
   const stored = await inspectOwnedPayloads(run, resource);
-  assert.ok(stored.some(payload => payload.includes("adaptive-pair-native-continuity/v1")),
+  const physicalSeedWitness = stored.some(payload => payload.includes("adaptive-pair-native-continuity/v1"));
+  assert.ok(physicalSeedWitness,
     "The seed must be physically persisted by the native host, not only an in-memory test service.");
   const resumed = await launchPhase(run, extensionRoot, "resume", resource);
   const forked = await launchPhase(run, extensionRoot, "fork", resource);
@@ -31,15 +32,17 @@ try {
   }
   const peer = await launchPhase(run, extensionRoot, "peer", resource);
   const deleted = await launchPhase(run, extensionRoot, "delete", resource);
-  assert.deepEqual(await inspectOwnedPayloads(run, resource), [], "Native deletion did not remove the original payload.");
-  assert.ok((await inspectOwnedPayloads(run, forkResource)).length > 0, "Deleting the original unexpectedly removed the fork.");
+  const originalPayloadRemoved = (await inspectOwnedPayloads(run, resource)).length === 0;
+  assert.ok(originalPayloadRemoved, "Native deletion did not remove the original payload.");
+  const forkPayloadRetained = (await inspectOwnedPayloads(run, forkResource)).length > 0;
+  assert.ok(forkPayloadRetained, "Deleting the original unexpectedly removed the fork.");
   const retained = await launchPhase(run, extensionRoot, "fork-after-delete", forkResource);
   const fresh = await launchPhase(run, extensionRoot, "fresh");
   const phases = [seeded, resumed, forked, peer, deleted, retained, fresh];
   const summary = {
     hostVersion: seeded.hostVersion, nodeVersion: seeded.nodeVersion, platform: process.platform, architecture: process.arch,
     phases: phases.map(result => ({ phase: result.phase, status: result.status })),
-    physicalSeedWitness: true, originalPayloadRemoved: true, forkPayloadRetained: true,
+    physicalSeedWitness, originalPayloadRemoved, forkPayloadRetained,
     allBootKeysDistinct: new Set(phases.map(result => result.state?.bootKey)).size === phases.length,
     totalModelCalls: phases.reduce((total, result) => total + (result.state?.modelCalls ?? 0), 0),
     totalTokenCountCalls: phases.reduce((total, result) => total + (result.state?.tokenCountCalls ?? NaN), 0),
