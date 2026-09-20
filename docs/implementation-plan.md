@@ -1,656 +1,588 @@
-# P2a Journal and Recovery Contract Implementation Plan
+# P2b Minimized Persistence and Restart Contract Implementation Plan
 
-> **Status: implemented; review findings addressed; owner merge decision pending.**
-> On September 18, 2026, the owner explicitly approved merging documentation
-> PR #10 and implementing its reviewed P2a scope. Implementation PR #11 remains
-> open for final human review and a separate merge decision.
+> **Status: pure P2b implementation and correction review complete.**
+> On September 19, 2026, the owner selected the minimized durable-state design,
+> reviewed its written boundaries, and then explicitly requested implementation
+> and continued progress toward a usable product. This is no longer a
+> documentation-only deliverable. The first executable scope is the pure P2b
+> contract below; a disk adapter, live admission, and editing are not smuggled
+> into it. Product development continues through reviewed increments, with
+> merge decisions still belonging to the owner.
 >
-> **For contributors and agents:** after implementation approval, execute one
-> checklist task at a time. First observe its failing test, implement only that
-> task, rerun its named checks, and commit the verified result. Stop for a scope
-> decision if the design cannot be met. Before delivery, have an independent
-> reviewer compare the changes with the design and acceptance matrix. Keep
-> progress here and in Git history; do not create competing active plans.
->
-> **Optional agent tooling:** [Superpowers](https://github.com/obra/superpowers)
-> provides `superpowers:executing-plans` (task execution with review checkpoints)
-> and `superpowers:requesting-code-review` (independent review). Agents that
-> already have these helpers may use them; they are not repository dependencies
-> or a prerequisite for following the tool-independent workflow above.
+> **For contributors and agents:** execute one checklist task at a time after
+> independent contract review. Observe RED, implement that task, observe GREEN,
+> and commit the verified result. Use `superpowers:executing-plans` or an
+> equivalent tool-independent test/review loop; optional subagent tooling is
+> not a repository dependency. Stop if the design cannot be met, not after
+> quietly weakening it. Keep progress here and in Git, not in parallel plans.
 
-**Goal:** Inspect a bounded, complete version-1 journal and report recorded
-unfinished operations without saving data, restoring authority, or replaying
-effects.
+**Goal:** Define, construct, replay, and inspect a bounded privacy-minimized
+durable history, and specify/test atomic storage and erasure behavior without
+persisting data or restoring live authority.
 
-**Architecture:** Add a primitive-JSON-text journal parser to `protocol`, then
-an internal pure replay helper and a public non-authorizing inspection report
-to `runtime`. Use the existing event parser and reducer unchanged. Do not wire
-the new APIs into `PairStore`, `PairCoordinator`, or any host surface.
+**Architecture:** `protocol` owns a separate closed wire format. `runtime`
+constructs allowlisted facts from validated live candidates and privately
+replays them into a distinct minimized state. A separate storage port and a
+test-only fault model describe publication/deletion semantics. Public inspection
+always denies authority and automatic replay; nothing wires these contracts
+into the current store, coordinator, or host.
 
-**Tech stack:** Existing TypeScript, Vitest, fast-check, ESLint, and workspace
-build/host/packaging gates. No new library, package edge, or host API is needed.
+**Tech stack:** Existing TypeScript, Vitest, fast-check, ESLint, and the two
+maintained npm graphs. No new package, dependency edge, host API, or external
+storage dependency is required.
 
 ## Authorization and baseline
 
-- PR #9 is merged at `469cb93`; its completed event-validation plan remains at
-  `469cb93:docs/implementation-plan.md`. This document deliberately replaces it.
-- The owner chose the journal/recovery foundation's design/plan PR instead of
-  planning all of P2 together. Only the four canonical documentation files
-  changed in PR #10. Its reference code was proposed text, not installed code.
-- PR #10 merged at `83dc8e8` after separate owner authorization. Implementation
-  starts from that refreshed `main` baseline on `agents/p2a-journal-inspection`.
-  Both dependency graphs install cleanly with Node.js 24.20.0; forced workspace
-  typecheck, lint, 1,980 root tests in 115 files, and the separate POC compile
-  and 21 tests in five files pass before implementation.
-- The scope and trade-offs are in [design section 13.1](design.md#131-p2a-journal-inspection).
-  Evidence and the unchanged baseline checks are in
-  [the planning checkpoint](research.md#journal-and-recovery-planning-checkpoint).
-- Execute only after separate owner approval, from a refreshed `main` on a
-  dedicated PR branch. Recheck the baseline then; this document cannot preapprove
-  a future dependency version or a changed reducer.
-- Neither this plan's publication/merge nor P2a completion authorizes a durable
-  adapter, persisted-data migration, live restart, P2 ownership/handoff, P3
-  editing/UI, or the next PR's merge. Notify the owner when each PR is ready.
+- Start from `main` at `133c7a8`, the September 18 merge of P2a PR #11, on the
+  dedicated `agents/p2b-persistence-contracts` branch. Its completed plan remains
+  at `133c7a8:docs/implementation-plan.md`; this deliberately replaces it.
+- The owner chose a dedicated minimized event/snapshot contract instead of
+  a warning-only memo, then approved using the written design for a plan/PR.
+  A subsequent explicit instruction expanded the work to actual development.
+- [Design section 13.2](design.md#132-p2b-persistence-and-restart-contracts)
+  is the contract, not the superseded broad persistence paragraph or the v1
+  archive. [Planning evidence](research.md#p2b-persistence-contract-planning)
+  separates repository findings, official API limits, and unmeasured proposals.
+- Post-merge main CI **35358366256** passed all four jobs and all 47 actual
+  steps. Revalidate the changed branch; a historical green run is not evidence
+  for new code, a future dependency, a disk adapter, or power-loss durability.
+- This plan does not authorize merging the new PR, changing Stable's Growth-only
+  product surface, or implementing an unreviewed ownership/editing transition.
 
 ## Global constraints
 
-- Preserve the 21 version-1 event variants, command/event behavior, package
-  boundaries, Growth-only Stable preview, additive opt-in, and inactive-zero.
-- Journal `formatVersion` is 1, independent of event `protocolVersion: 1`.
-  Accept only a complete revision-zero history; reject checkpoints, compacted
-  tails, legacy formats, unknown versions, and guessed migrations.
-- Inclusive limits: 1,048,576 UTF-16 text code units, 1,024 commits, and 1,024
-  total events. Every commit is nonempty. Preserve per-event depth 64 (root zero)
-  and 10,000 expanded values; do not impose these limits on commands.
-- Reject extra/missing own envelope fields, invalid counters, ordering gaps,
-  duplicate event IDs, command reuse across commits, invalid reductions, and
-  mismatched stream/final workspace/head. Multiple commands and repeated
-  command IDs **within one commit** remain allowed.
-- Errors contain a fixed `Invalid Pair journal:` code, not payloads or causes.
-  Return no valid prefix and keep no global mutable inspection state.
-- Reports contain metadata only, `authorityRestored: false`, and
-  `automaticReplayAllowed: false`. Never expose a replayed snapshot, grant,
-  operation input, source, diagnostics, or executable recovery request.
-- Preserve warnings across session close/disable/rebind in the supplied history.
-  Key operation lifetime by session-start revision plus operation ID, not ID alone.
-- No filesystem/VS Code imports, storage writes, listeners, timers, workspace
-  reads, models, network, host registration, live-store hydration, or effects.
-- A parsed/reducible history proves neither authentic consent nor product
-  correctness. Existing events are not approved as a privacy-safe disk format.
-- Keep authored production/config/release files below 400 effective lines and
-  functions below 100; tests/fixtures below 600/200. Do not suppress lint rules.
-- Inventory all manifests and both active lockfiles; audit development and
-  production dependencies, check registry/upstream metadata, explain retention,
-  and validate any authorized maintenance change. Keep repository docs English.
+- Preserve all current commands, 21 v1 events, reducer behavior, `PairStore`,
+  `InMemoryJournal`, `PairCoordinator`, bounded-read recovery, and `LocalJournal`.
+- Never serialize the current event log, snapshot, operation inputs, diagnostic
+  text, resource paths/hashes, free-form summaries, or arbitrary v1 IDs.
+- The new format is `format: "adaptive-pair-durable", version: 1`. It is not
+  P2a framing and cannot seed or hydrate a live `PairRuntimeSnapshot`.
+- All wire fields are closed and explicit. Keys are trusted-issuer 128-bit
+  tokens encoded as 32 lowercase hexadecimal characters; format validation
+  cannot establish their entropy, origin, or authenticity.
+- Limits per generation: 1,048,576 input UTF-16 code units; 1,048,576 encoded
+  UTF-8 bytes; 1,024 commits, facts, and distinct command keys. Every commit has
+  at least one fact and one command key. Counters/times are safe nonnegative
+  integers; default/max lifetime is seven days, locally shorten-able.
+- Require complete revision-zero replay. No checkpoint, compaction, migration,
+  import, valid-prefix salvage, or cache-only recovery is supported.
+- Recorded pending/unknown operations survive close and remain warnings;
+  a second outcome cannot overwrite `unknown` or a terminal outcome.
+- Reports contain literal `authorityRestored: false` and
+  `automaticReplayAllowed: false`. No tool call, grant, current-workspace check,
+  recovered read retry, or successful product-verification claim is produced.
+- No Node/VS Code imports in production contracts; no disk, listener, timer,
+  workspace/model/network activity, host registration, or new public tool.
+- A fake storage model proves only model behavior. Filesystem visibility,
+  process-crash/power-loss survival, cross-process locking, and physical erasure
+  require later provider-specific evidence.
+- Inventory every manifest and both lockfiles, including the isolated POC.
+  Check direct registry/upstream metadata, peer compatibility, and both audits;
+  retain older releases only with explicit reasons, not a blanket freeze.
 
 ## File map
 
-| Proposed file | Responsibility |
+| File | Responsibility |
 | --- | --- |
-| `packages/protocol/src/journalTypes.ts` | Framing types and shared finite limits |
-| `packages/protocol/src/parseJournal.ts` | Text/envelope/event validation and immutable output |
-| `packages/runtime/src/journalRecoveryTypes.ts` | Non-authorizing report and expected-identity contracts |
-| `packages/runtime/src/journalReplay.ts` | Internal ordering/reduction and lifetime-aware unfinished-work tracking |
-| `packages/runtime/src/journalRecovery.ts` | Public identity check and metadata-only report |
-| `packages/protocol/test/journal.test.ts` | Format, exact limits, unsafe/error/privacy cases |
-| `packages/runtime/test/journalRecoveryFixtures.ts` | Complete wire histories; no caller-supplied seed snapshot |
-| `packages/runtime/test/journalReplay.test.ts` | Transaction, identity, and reducer compatibility cases |
-| `packages/runtime/test/journalRecovery.test.ts` | Authority, lifetime, failure isolation, and privacy cases |
+| `packages/protocol/src/durableTypes.ts` | Closed facts/envelope, finite limits, operation and assistance enums |
+| `packages/protocol/src/durableValidation.ts` | Fixed-code field/token/enum validation; no source-text filtering |
+| `packages/protocol/src/parseDurableJournal.ts` | Primitive-text framing, aggregate budgets, detached/frozen parsing |
+| `packages/protocol/src/index.ts` | Additive exports; existing exports unchanged |
+| `packages/runtime/src/durableTypes.ts` | Minimized replay state and key-issuer/projection contracts |
+| `packages/runtime/src/durableProjection.ts` | Explicit v1-candidate allowlist and lifetime-key mapping |
+| `packages/runtime/src/durableProjectionView.ts` | Current allowlisted view, lifetime bindings, and complete retained-field differences |
+| `packages/runtime/src/durableProjectionIdentity.ts` | Frozen candidate identities, bounded volatile source IDs, and fixed errors |
+| `packages/runtime/src/durableReplay.ts` | Private ordered reduction, identities, pending-operation retention |
+| `packages/runtime/src/durableSnapshot.ts` | Private full-replay snapshot derivation and canonical cache comparison |
+| `packages/runtime/src/durableRecovery.ts` | Public expected-binding/time checks, derived cache, non-authorizing report |
+| `packages/runtime/src/durableRecoveryTypes.ts` | Closed assessment variants with literal-false authority flags |
+| `packages/runtime/src/durableStore.ts` | Separate port types, complete/indeterminate outcomes and erasure receipts |
+| `packages/runtime/src/index.ts` | Additive public contracts; no live-store wiring |
+| `packages/protocol/test/durableJournal.test.ts` | Format/privacy/budget/immutability/error tests |
+| `packages/runtime/test/durableFixtures.ts` | Synthetic safe keys, complete histories, trusted candidate builders |
+| `packages/runtime/test/durableProjection.test.ts` | All 21 source routes, omitted-field canaries, key provenance/lifetimes |
+| `packages/runtime/test/durableReplay.test.ts` | Sequence, identity, lifetime, reference, outcome and cache cases |
+| `packages/runtime/test/durableRecovery.test.ts` | Identity/clock/expiry/failure isolation and denied authority |
+| `packages/runtime/test/durableStoreModel.ts` | Test-only single-namespace publication/erasure model with injected faults |
+| `packages/runtime/test/durableStoreState.ts` | Closed versioned controls, retained-copy bounds, and authoritative reads |
+| `packages/runtime/test/durableStorePreparation.ts` | Validated full-head staging, original receipts, and retirement capacity |
+| `packages/runtime/test/durableStoreRequest.ts` | Descriptor-safe closed request copying and bounded encoding before serialization |
+| `packages/runtime/test/durableStoreFixtures.ts` | Shared-medium schedules and cold reconstruction without filesystem effects |
+| `packages/runtime/test/durableStore*.test.ts` | Eight suites covering conformance, concurrency, corruption, deletion, framing, request bounds, and retained capacity |
 
-Also append the listed exports to the two existing package entry points.
-Do not modify `journal.ts`, `ports.ts`, `coordinator.ts`, existing reducers,
-manifests, or host adapters to integrate inspection. Necessary dependency
-maintenance is a separately evidenced change, not permission to add integration.
+Split a helper or test by responsibility if needed to retain the existing
+400-line source/100-line-function and 600-line-test/200-line-function gates;
+do not exempt a file or weaken lint to fit this plan. Existing host, live-store,
+coordinator, reducer, command/event schema, and contribution behavior remain
+unchanged. Development-runner version maintenance is recorded separately.
 
-## Task 1: Bounded journal framing
+## Task 1: Closed minimized wire contract
 
-**Interface:** `parsePairJournal(value: unknown): PairJournal`. The public input
-type permits rejection of non-string values; accepted input is primitive JSON
-text only. The parser validates framing and event shapes, not causal admission.
+**Consumes:** existing finite protocol enums, not v1 payload serializers.
+**Produces:** `DurableFact`, `DurableCommit`, `DurableJournal`,
+`durableJournalLimits`, and `parseDurableJournal(unknown): DurableJournal`.
 
-- [x] Refresh `main`, install both graphs with Node.js 24+, and run the unchanged
-  baseline. Recheck the [dependency checkpoint](research.md#planning-dependency-recheck).
-  In particular, do not repeat the earlier claim that fast-check 4.10.0 is
-  unavailable: its exact registry metadata now resolves. Assess current
-  compatibility and update obtainable versions when warranted by the approved
-  implementation, preserving manifests/locks and all validation gates.
-- [x] Add the following first failing case to `packages/protocol/test/journal.test.ts`:
-
-```ts
-import { describe, expect, it } from "vitest";
-import { parsePairJournal } from "../src/index.js";
-
-const emptyText = JSON.stringify({
-  formatVersion: 1,
-  streamId: "stream-1",
-  initialWorkspaceId: "workspace-1",
-  headRevision: 0,
-  commits: [],
-});
-
-describe("parsePairJournal", () => {
-  it("accepts an immutable empty revision-zero journal", () => {
-    const journal = parsePairJournal(emptyText);
-    expect(journal.headRevision).toBe(0);
-    expect(Object.isFrozen(journal)).toBe(true);
-    expect(Object.isFrozen(journal.commits)).toBe(true);
-  });
-
-  it("rejects objects without invoking their conversion hooks", () => {
-    const input = { toString() { throw new Error("must not run"); } };
-    expect(() => parsePairJournal(input)).toThrow("Invalid Pair journal: INVALID_TEXT");
-  });
-});
-```
-
-- [x] Run `npx vitest run packages/protocol/test/journal.test.ts`; confirm RED
-  comes from the missing parser/export, not a fixture or toolchain failure.
-- [x] Implement the following proposed files and export them. Object property
-  reads occur only after checking all expected **own** keys. Do not replace
-  that check with inherited-property validation or expose JSON parser errors.
-
-### `packages/protocol/src/journalTypes.ts`
+The envelope and commit declarations are exact proposed interfaces:
 
 ```ts
-import type { PairEvent } from "./events.js";
+export interface DurableCommit {
+  readonly commitKey: string;
+  readonly expectedSequence: number;
+  readonly commandKeys: readonly string[];
+  readonly facts: readonly DurableFact[];
+}
 
-export const pairJournalLimits = Object.freeze({
+export interface DurableJournal {
+  readonly format: "adaptive-pair-durable";
+  readonly version: 1;
+  readonly namespaceKey: string;
+  readonly generationKey: string;
+  readonly createdAt: number;
+  readonly expiresAt: number;
+  readonly headSequence: number;
+  readonly commits: readonly DurableCommit[];
+}
+
+export const durableJournalLimits = Object.freeze({
   textCodeUnits: 1_048_576,
+  encodedBytes: 1_048_576,
   commits: 1_024,
-  events: 1_024,
+  facts: 1_024,
+  commandKeys: 1_024,
+  lifetimeMs: 7 * 24 * 60 * 60 * 1_000,
 });
-
-export interface PairJournalCommit {
-  readonly expectedRevision: number;
-  readonly events: readonly PairEvent[];
-}
-
-export interface PairJournal {
-  readonly formatVersion: 1;
-  readonly streamId: string;
-  readonly initialWorkspaceId: string;
-  readonly headRevision: number;
-  readonly commits: readonly PairJournalCommit[];
-}
 ```
 
-### `packages/protocol/src/parseJournal.ts`
+Every fact has exactly `type` and its row's fields, with no event/command ID,
+actor, runtime revision, authority epoch, source text, or catch-all property:
 
-```ts
-import { pairJournalLimits, type PairJournal, type PairJournalCommit } from "./journalTypes.js";
-import { parsePairEvent } from "./parseEvent.js";
+| Type | Payload and validation |
+| --- | --- |
+| `PresenceRecorded` | `status`: observing/engaged/quiet/paused; off requires erasure instead |
+| `SessionOpened` | `sessionKey`: fresh token; implicit briefing status |
+| `SessionStatusRecorded` | `sessionKey`, `status`: existing session enum except inactive |
+| `LearningBoundaryRecorded` | `sessionKey`, `humanOwnedCapabilities`: distinct existing capability enums, `maximumHintLevel`: integer 0–5 |
+| `ModeRecorded` | `sessionKey`, `mode`: growth/pair/delivery |
+| `WorkUnitOpened` | `sessionKey`, `workUnitKey`, `mode`, `owner`: human/ai, `learningValue`: high/mixed/low, `capability`: existing enum; implicit proposed status |
+| `WorkUnitStatusRecorded` | `sessionKey`, `workUnitKey`, `status`: existing work-unit enum |
+| `AssistanceRecorded` | `sessionKey`, `workUnitKey`, `attempt` and `hypothesis`: none/recorded/bypassed, `hintLevel`: null or integer 0–5, `solutionRevealed`: boolean |
+| `OperationOpened` | `sessionKey`, `workUnitKey`, `operationKey`, `kind`: read/edit/check, `status`: planned/authorized/started |
+| `OperationOutcomeRecorded` | `sessionKey`, `operationKey`, `status`: confirmed/failed/declined/cancelled/unknown |
 
-interface WireCommit {
-  readonly expectedRevision: number;
-  readonly events: readonly unknown[];
-}
+- [x] Add this RED seed before production exports exist:
 
-const fail = (code: string): never => {
-  throw new Error(`Invalid Pair journal: ${code}`);
-};
+  ```ts
+  import { describe, expect, it } from "vitest";
+  import { parseDurableJournal } from "../src/index.js";
 
-const hasKeys = (
-  value: unknown,
-  keys: readonly string[],
-): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value) &&
-  Object.keys(value).length === keys.length &&
-  keys.every(key => Object.hasOwn(value, key));
-
-const isCounter = (value: unknown): value is number =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-
-const isIdentifier = (value: unknown): value is string =>
-  typeof value === "string" && value.length > 0;
-
-const readText = (value: unknown): unknown => {
-  if (typeof value !== "string") return fail("INVALID_TEXT");
-  if (value.length > pairJournalLimits.textCodeUnits) return fail("TEXT_LIMIT");
-  try {
-    return JSON.parse(value) as unknown;
-  } catch {
-    return fail("INVALID_JSON");
-  }
-};
-
-const readCommit = (value: unknown): WireCommit => {
-  if (!hasKeys(value, ["expectedRevision", "events"])) return fail("INVALID_ENVELOPE");
-  const { expectedRevision, events } = value;
-  if (!isCounter(expectedRevision) || !Array.isArray(events) || events.length === 0) {
-    return fail("INVALID_ENVELOPE");
-  }
-  return { expectedRevision, events };
-};
-
-const parseCommit = (commit: WireCommit): PairJournalCommit => {
-  try {
-    return Object.freeze({
-      expectedRevision: commit.expectedRevision,
-      events: Object.freeze(commit.events.map(value => {
-        const event = parsePairEvent(value);
-        if (!isIdentifier(event.eventId) || !isIdentifier(event.commandId)) return fail("INVALID_EVENT");
-        return event;
-      })),
+  describe("minimized durable journal", () => {
+    it("parses a detached empty generation without granting authority", () => {
+      const text = JSON.stringify({
+        format: "adaptive-pair-durable", version: 1,
+        namespaceKey: "1".repeat(32), generationKey: "2".repeat(32),
+        createdAt: 100, expiresAt: 200, headSequence: 0, commits: [],
+      });
+      const journal = parseDurableJournal(text);
+      expect(journal.headSequence).toBe(0);
+      expect(Object.isFrozen(journal)).toBe(true);
+      expect(Object.isFrozen(journal.commits)).toBe(true);
     });
-  } catch {
-    return fail("INVALID_EVENT");
-  }
-};
-
-export const parsePairJournal = (value: unknown): PairJournal => {
-  const raw = readText(value);
-  if (!hasKeys(raw, ["formatVersion", "streamId", "initialWorkspaceId", "headRevision", "commits"])) {
-    return fail("INVALID_ENVELOPE");
-  }
-  const { formatVersion, streamId, initialWorkspaceId, headRevision, commits } = raw;
-  if (formatVersion !== 1) return fail("UNSUPPORTED_JOURNAL_VERSION");
-  if (!isIdentifier(streamId) || !isIdentifier(initialWorkspaceId) || !isCounter(headRevision) ||
-      !Array.isArray(commits) || commits.length > pairJournalLimits.commits) {
-    return fail("INVALID_ENVELOPE");
-  }
-  if (commits.length === 0 && headRevision !== 0) return fail("INVALID_ENVELOPE");
-  const wireCommits = commits.map(readCommit);
-  const eventCount = wireCommits.reduce((count, commit) => count + commit.events.length, 0);
-  if (eventCount > pairJournalLimits.events) return fail("EVENT_LIMIT");
-  return Object.freeze({
-    formatVersion,
-    streamId,
-    initialWorkspaceId,
-    headRevision,
-    commits: Object.freeze(wireCommits.map(parseCommit)),
   });
-};
-```
+  ```
 
-Append to `packages/protocol/src/index.ts`:
+- [x] Run `npx vitest run packages/protocol/test/durableJournal.test.ts` and
+  observe the missing-export failure. Do not count a runner/config error as RED.
+- [x] Implement the exact type/field table and primitive-text parser. Bound
+  text before JSON parsing; count commits/facts/command keys before per-fact
+  work. Validate UTF-8 byte length without Node APIs. Reject unknown versions,
+  missing/extra keys, invalid tokens/enums, invalid times/TTL, empty batches,
+  and noninteger/unsafe/negative-zero counters. Deep-freeze newly parsed data.
+- [x] Use `Invalid Pair durable journal:` with fixed codes `INVALID_TEXT`,
+  `TEXT_LIMIT`, `BYTE_LIMIT`, `INVALID_JSON`, `UNSUPPORTED_VERSION`,
+  `INVALID_ENVELOPE`, `INVALID_COMMIT`, `INVALID_FACT`, and `LIMIT_EXCEEDED`.
+  Catch internal parsing failures without publishing payloads or causes.
+- [x] Add table-driven positive cases for every fact and negative mutations of
+  every field; exact lower/upper bounds and one-over cases; nulls, boxed strings,
+  hostile objects not inspected as text, unsafe keys, nonfinite numbers, negative
+  zero rejection, nested freezing, and arbitrary sensitive extra-field canaries.
+  Schema-valid framing remains distinct from runtime replay consistency.
+- [x] Run the new suite, existing event/journal suites, typecheck, and lint.
+  Commit: `feat: define closed minimized durable journal framing`.
 
-```ts
-export { pairJournalLimits } from "./journalTypes.js";
-export type { PairJournal, PairJournalCommit } from "./journalTypes.js";
-export { parsePairJournal } from "./parseJournal.js";
-```
+## Task 2: Exact minimized replay and cache derivation
 
-- [x] Extend the RED/GREEN cycle with each format case in the acceptance matrix
-  below. Spy on `JSON.parse` to prove over-limit text is rejected before decoding;
-  use whitespace padding for the exact inclusive text boundary. Use complete
-  repeated observation events for event/commit limits, not an oversized fixture
-  that accidentally hits a different bound first. Verify nested event freezing,
-  wire omissions, and the existing command/event suites.
-- [x] Run `npx vitest run packages/protocol/test` and
-  `npm run typecheck -- --force`; require GREEN before committing
-  `feat: define bounded version-1 journal framing`.
+**Consumes:** Task 1's parsed complete journal.
+**Produces:** private `replayDurableJournal(journal): DurableState` and
+`createDurableSnapshot(journal): DurableSnapshot` for Task 4. The helper performs
+complete replay internally rather than accepting caller-supplied state.
 
-Initial Task 1 verification: both seed tests fail for the missing export, then all 106
-format cases fail before implementation and pass afterward. The protocol suite
-passes 611 tests in nine files; forced workspace typecheck and lint pass.
-The unchanged Vite native-config advisory remains visible, not suppressed.
-Independent read-only review of `83dc8e8..bbbf2bd` found no actionable
-specification or code-quality issues.
+`DurableState` has `headSequence`, `presence` (initially off), and ordered
+`sessions`. A session has its token, opened sequence, recorded status, nullable
+mode/learning boundary, and work-unit/operation arrays. A work unit has the
+allowlisted immutable classification, recorded status, and nullable assistance
+flags. An operation has its own/session/work-unit keys, kind, opening sequence,
+and recorded status. No omitted v1 field is synthesized. `DurableSnapshot`
+contains format/version, namespace/generation, head, and only that state.
 
-## Task 2: Private replay and operation-lifetime inspection
+- [x] Add the first RED replay test against an internal source import:
 
-**Consumes:** `PairJournal`, `createRuntime(workspaceId)`, and
-`reduce(snapshot, events)` from the existing core.
-**Produces:** internal `replayPairJournal(journal)` returning a historical
-snapshot and frozen warning metadata. Do not export this helper from the
-runtime package entry point or turn it into a store constructor.
+  ```ts
+  import { expect, it } from "vitest";
+  import { parseDurableJournal } from "@adaptive-pair/protocol";
+  import { replayDurableJournal } from "../src/durableReplay.js";
 
-- [x] Add a complete-history fixture builder and failing tests in
-  `journalRecoveryFixtures.ts` and `journalReplay.test.ts`. This base fixture
-  contains two different commands in one commit; implementations must preserve it:
-
-```ts
-export const enabledJournalText = (): string => JSON.stringify({
-  formatVersion: 1,
-  streamId: "stream-1",
-  initialWorkspaceId: "workspace-1",
-  headRevision: 2,
-  commits: [{
-    expectedRevision: 0,
-    events: [
-      {
-        protocolVersion: 1, eventId: "event-enable", commandId: "command-enable",
-        actor: "human", revision: 1, recordedAt: 10,
-        type: "PresenceEnabled", workspaceId: "workspace-1",
-      },
-      {
-        protocolVersion: 1, eventId: "event-observe", commandId: "command-observe",
-        actor: "host", revision: 2, recordedAt: 11, type: "WorkspaceObserved",
-      },
-    ],
-  }],
-});
-```
-
-First case in `journalReplay.test.ts`:
-
-```ts
-import { expect, it } from "vitest";
-import { parsePairJournal } from "@adaptive-pair/protocol";
-import { replayPairJournal } from "../src/journalReplay.js";
-import { enabledJournalText } from "./journalRecoveryFixtures.js";
-
-it("preserves a multi-command atomic commit", () => {
-  const replay = replayPairJournal(parsePairJournal(enabledJournalText()));
-  expect(replay.snapshot.revision).toBe(2);
-  expect(replay.snapshot.presence.observationRevision).toBe(1);
-  expect(replay.unsettledOperations).toEqual([]);
-});
-```
-
-- [x] Run `npx vitest run packages/runtime/test/journalReplay.test.ts` and
-  establish a missing-helper RED after rebuilding Task 1's protocol exports.
-- [x] Implement the types and private replay helper below. Reduce each event
-  locally to observe lifetime boundaries; publish nothing until the entire
-  journal passes. A later bad event must never leak the earlier valid prefix.
-
-### `packages/runtime/src/journalRecoveryTypes.ts`
-
-```ts
-import type { OperationRecord, SessionStatus } from "@adaptive-pair/protocol";
-
-export interface JournalExpectation {
-  readonly streamId: string;
-  readonly workspaceId: string;
-}
-
-export interface UnsettledJournalOperation {
-  readonly sessionStartedAtRevision: number;
-  readonly workspaceId: string;
-  readonly operationId: string;
-  readonly kind: OperationRecord["kind"];
-  readonly recordedStatus: "planned" | "authorized" | "started" | "unknown";
-}
-
-export interface JournalRecoveryReport {
-  readonly formatVersion: 1;
-  readonly streamId: string;
-  readonly workspaceId: string;
-  readonly headRevision: number;
-  readonly commitCount: number;
-  readonly eventCount: number;
-  readonly historicalSession: {
-    readonly sessionId: string;
-    readonly startedAtRevision: number;
-    readonly status: SessionStatus;
-  } | undefined;
-  readonly unsettledOperations: readonly UnsettledJournalOperation[];
-  readonly authorityRestored: false;
-  readonly automaticReplayAllowed: false;
-}
-```
-
-### `packages/runtime/src/journalReplay.ts`
-
-```ts
-import type { PairEvent, PairJournal, PairRuntimeSnapshot } from "@adaptive-pair/protocol";
-import { createRuntime, reduce } from "@adaptive-pair/session-core";
-import type { UnsettledJournalOperation } from "./journalRecoveryTypes.js";
-
-const fail = (code: string): never => {
-  throw new Error(`Invalid Pair journal: ${code}`);
-};
-
-const rememberOperation = (
-  snapshot: PairRuntimeSnapshot,
-  event: PairEvent,
-  unsettled: Map<string, UnsettledJournalOperation>,
-): void => {
-  if (event.type !== "OperationAuthorized" && event.type !== "OperationObserved") return;
-  const session = snapshot.session;
-  if (session === undefined) return fail("INVALID_EVENT_SEQUENCE");
-  const operationId = event.type === "OperationAuthorized" ? event.operation.id : event.operationId;
-  const operation = session.operations.find(candidate => candidate.id === operationId);
-  if (operation === undefined) return fail("INVALID_EVENT_SEQUENCE");
-  const key = JSON.stringify([session.startedAtRevision, operationId]);
-  const recordedStatus = operation.status;
-  if (recordedStatus === "planned" || recordedStatus === "authorized" ||
-      recordedStatus === "started" || recordedStatus === "unknown") {
-    unsettled.set(key, Object.freeze({
-      sessionStartedAtRevision: session.startedAtRevision,
-      workspaceId: snapshot.presence.workspaceId,
-      operationId,
-      kind: operation.kind,
-      recordedStatus,
+  it("replays only the minimized revision-zero state", () => {
+    const journal = parseDurableJournal(JSON.stringify({
+      format: "adaptive-pair-durable", version: 1,
+      namespaceKey: "1".repeat(32), generationKey: "2".repeat(32),
+      createdAt: 100, expiresAt: 200, headSequence: 0, commits: [],
     }));
-  } else {
-    unsettled.delete(key);
-  }
-};
-
-export const replayPairJournal = (journal: PairJournal): {
-  readonly snapshot: PairRuntimeSnapshot;
-  readonly unsettledOperations: readonly UnsettledJournalOperation[];
-} => {
-  let snapshot = createRuntime(journal.initialWorkspaceId);
-  const eventIds = new Set<string>();
-  const commandIds = new Set<string>();
-  const unsettled = new Map<string, UnsettledJournalOperation>();
-  for (const commit of journal.commits) {
-    if (commit.expectedRevision !== snapshot.revision) return fail("NON_CONTIGUOUS_REVISION");
-    for (const event of commit.events) {
-      if (event.revision !== snapshot.revision + 1) return fail("NON_CONTIGUOUS_REVISION");
-      if (eventIds.has(event.eventId)) return fail("DUPLICATE_EVENT_ID");
-      if (commandIds.has(event.commandId)) return fail("DUPLICATE_COMMAND_ID");
-      if (event.type === "BriefConfirmed") return fail("UNSUPPORTED_REPLAY_EVENT");
-      try {
-        snapshot = reduce(snapshot, [event]);
-      } catch {
-        return fail("INVALID_EVENT_SEQUENCE");
-      }
-      rememberOperation(snapshot, event, unsettled);
-      eventIds.add(event.eventId);
-    }
-    for (const event of commit.events) commandIds.add(event.commandId);
-  }
-  if (snapshot.revision !== journal.headRevision) return fail("HEAD_REVISION_MISMATCH");
-  return Object.freeze({
-    snapshot,
-    unsettledOperations: Object.freeze([...unsettled.values()]),
+    expect(replayDurableJournal(journal)).toEqual({
+      headSequence: 0, presence: "off", sessions: [],
+    });
   });
-};
-```
+  ```
 
-- [x] Add the ordering/lifetime cases from the matrix. Compare accepted
-  generated observation histories against existing `reduce` results with
-  fast-check. Separately mutate their revision, event ID, prior command ID,
-  commit boundary, and declared head and assert the corresponding rejection.
-  Keep fixtures that are intentionally reducible but not command-authorized:
-  replay is not a substitute for the decider or consent.
-- [x] Run `npx vitest run packages/runtime/test/journalReplay.test.ts` plus
-  existing journal, workspace-boundary, session-identity, and core suites;
-  typecheck and lint. Commit GREEN as
-  `feat: inspect journal ordering and unsettled operation lifetimes`.
+- [x] Run `npx vitest run packages/runtime/test/durableReplay.test.ts` and
+  observe RED. Build protocol exports first when consuming workspace exports.
+- [x] Implement full replay with invocation-local maps/sets. Each commit must
+  match the preceding head; commit keys and cross-commit command keys must be
+  unique; each fact advances sequence by one; the final declared head must
+  match. Never return a valid prefix after a later failure.
+- [x] Session opening requires a new lifetime key and no unclosed previous
+  session. References must name earlier opened entities in their own session.
+  Work-unit/operation keys cannot be reused across lifetimes; an operation
+  must attach to an earlier work unit. Reject a status update that reopens a
+  closed session and reject a second operation outcome, including after unknown.
+  Recorded terminal outcomes never erase another pending operation.
+- [x] Construct frozen state explicitly. Recording a closed session leaves its
+  operations in the history; no phase becomes cancelled because of closure.
+  Recorded modes/owners are facts, not permission checks or new live routes.
+- [x] Derive a frozen `DurableSnapshot` solely from validated full replay. Its
+  canonical JSON representation is the optional cache encoding. Exact cache
+  text mismatch is a discarded cache, not an alternate replay seed; canonical
+  encoding avoids accepting extra or reordered cache payloads by accident.
+- [x] Cover gaps, reordered commits, duplicate IDs, two-command batches,
+  dangling/cross-session references, repeated openings, close and later fresh
+  session, all pending and terminal phases, unknown overwrite, invalid suffix,
+  immutable detached state, and matching/stale/extra-field cache candidates.
+- [x] Run replay + protocol + existing P2a runtime suites, typecheck, lint.
+  Commit: `feat: replay minimized durable state without live hydration`.
 
-Task 2 verification: the seed and expanded suite first fail because the private
-helper is absent. All 72 replay cases then pass, including six 100-run generated
-history properties and all 20 supported reducer event routes. The existing
-journal, workspace-boundary, session-identity, and core suites pass 98 tests in
-13 files; forced workspace typecheck and lint pass. One new fixture initially
-used the unsupported actor label `model`; the existing schema and types require
-`ai`, so only that fixture was corrected. No existing reducer changed.
-Independent read-only review of `bbbf2bd..4f545ce` found no actionable
-specification or code-quality issues.
+## Task 3: Trusted candidate projection
 
-## Task 3: Public non-authorizing restart assessment
-
-**Interface:**
-`inspectPairJournal(value: unknown, expectation: JournalExpectation): JournalRecoveryReport`.
-The expectation is supplied by trusted adapter code, not a public model input.
-
-- [x] Write the first failing contract in `journalRecovery.test.ts`:
+**Consumes:** a trusted live snapshot and command-admitted event candidate,
+existing live reduction, and injected trusted key issuance.
+**Produces:** `createDurableProjector(issuer)` with a `project` method returning
+one of append, erase, or omitted. It never calls a store or executes an effect.
 
 ```ts
-import { expect, it } from "vitest";
-import { inspectPairJournal } from "../src/index.js";
-import { enabledJournalText } from "./journalRecoveryFixtures.js";
+export interface DurableKeyIssuer {
+  next(): string;
+}
 
-it("reports history without granting any restoration or replay authority", () => {
-  const report = inspectPairJournal(enabledJournalText(), {
-    streamId: "stream-1", workspaceId: "workspace-1",
-  });
-  expect(report).toMatchObject({
-    headRevision: 2, commitCount: 1, eventCount: 2,
-    authorityRestored: false, automaticReplayAllowed: false,
-  });
-  expect(report).not.toHaveProperty("snapshot");
-  expect(report).not.toHaveProperty("events");
-  expect(report).not.toHaveProperty("userActionGrants");
-  expect(Object.isFrozen(report)).toBe(true);
-});
+export type DurableProjection =
+  | { readonly kind: "append"; readonly commit: DurableCommit }
+  | { readonly kind: "erase" }
+  | { readonly kind: "omitted" };
 ```
 
-- [x] Run `npx vitest run packages/runtime/test/journalRecovery.test.ts` and
-  confirm a missing-public-API RED, then add the following implementation.
+The projector is instance-local to one host-bound generation. `project` takes
+the trusted previous live snapshot, the complete candidate event array, and
+the expected durable sequence. It privately reduces the candidate; does not
+publish live state; and does not accept a generic parsed P2a history as an
+import. The issuer supplies fresh valid keys. Maps use separate namespaces
+for source command identity, session-start revision, work-unit lifetime, and
+operation lifetime; they are never serialized or logged. Repeating the same
+candidate returns the same commit/command keys; changed content under a reused
+source command is rejected rather than assigned a second identity.
 
-### `packages/runtime/src/journalRecovery.ts`
+Implementation review identified that a head/revision pair cannot establish
+which candidate committed. Keep the three-argument `project` method and add
+`resolve(commitKey, outcome)` with the closed outcomes `committed`,
+`not-committed`, and `indeterminate`. Only the trusted caller's explicit
+resolution of that exact pending key may promote/discard its staged lifetime
+bindings. Indeterminate candidates permit only exact retry or erasure; another
+candidate cannot infer success from equal counters. This is a pure handshake,
+not a storage call or proof that an effect ran.
+
+Retries retain the same deeply frozen previous snapshot and ordered event
+objects supplied by the live decider. Weak object identities establish this
+in-process candidate identity without serializing or strongly retaining raw
+snapshots/events/inputs. Reparsed copies are not an import or an exact retry.
+Lifetime bindings instead use session-start, proposal, and authorization
+revisions. Omitted batches acquire no durable command receipt. Bound retained
+source-identity text by the existing input-code-unit ceiling, conservatively
+counting repeated identifiers in distinct prepared candidates, and retained
+candidate events, commands, commits, and facts by their generation ceilings;
+fail closed rather than evicting retry evidence. A failed preparation publishes
+no binding/receipt/reservation changes. Off retires the projector before retry
+lookup and clears its volatile tables.
+
+- [x] Add a RED test for the omitted route without requesting any keys:
+
+  ```ts
+  import { expect, it } from "vitest";
+  import { createRuntime } from "@adaptive-pair/session-core";
+  import { createDurableProjector } from "../src/durableProjection.js";
+
+  it("does not allocate durable identity for an empty candidate", () => {
+    const projector = createDurableProjector({
+      next: () => { throw new Error("unexpected allocation"); },
+    });
+    expect(projector.project(createRuntime("private-workspace"), [], 0))
+      .toEqual({ kind: "omitted" });
+  });
+  ```
+
+- [x] Run `npx vitest run packages/runtime/test/durableProjection.test.ts`;
+  observe the missing-module failure before implementing the factory.
+- [x] Implement the complete 21-event mapping in design section 13.2, building
+  each payload from its allowed fields. For assistance/status fields use the
+  privately reduced state at that event, not the final unrelated work unit.
+  `WorkUnitAgreed` emits work-unit/session status and reset assistance.
+  Assistance events also emit any session transition to active; resume emits
+  needs-reconcile for a nonterminal work unit; entry capture emits a change to
+  engaged presence even though its content is omitted. Compare the complete
+  allowlisted before/after state at every event, not only its named payload.
+- [x] A candidate containing off is an erasure barrier, not an append with a
+  retained prefix. Reject a mixed erase-and-reenable candidate rather than
+  silently dropping post-disable activity. Unsupported `BriefConfirmed`,
+  invalid reduction, missing lifetime mapping, issuer failure/collision, and
+  malformed keys fail with fixed codes and no original cause.
+- [x] Keep source identity/record comparisons in volatile state only. Treat
+  exact retry and a new command distinctly; never hash user content into a
+  persisted key. An omitted batch claims no durable command deduplication.
+- [x] Verify every source variant, multicommand batches, all omitted strings
+  seeded with source/path/credential canaries, grants omitted, no `undefined`
+  wire fields, retry identity, mutated retry refusal, session/operation ID reuse
+  under new lifetime keys, and no cross-projector/global state. Compare replay
+  after each admitted candidate with the allowlisted live reduction, including
+  entry capture from quiet, ready-to-active assistance, and pause/resume.
+- [x] Run projection, replay, existing runtime/core, and architecture tests;
+  force typecheck and lint. Commit: `feat: project privacy-minimized durable facts`.
+
+## Task 4: Storage port and test-only fault model
+
+**Consumes:** closed parsed commits and validated replay; no live runtime.
+**Produces:** exported port/request/result types and a test-only conformance
+model, not a filesystem store or an application-wired second journal.
 
 ```ts
-import { parsePairJournal } from "@adaptive-pair/protocol";
-import { replayPairJournal } from "./journalReplay.js";
-import type { JournalExpectation, JournalRecoveryReport } from "./journalRecoveryTypes.js";
+export interface DurableReceipt {
+  readonly namespaceKey: string;
+  readonly generationKey: string;
+  readonly commitKey: string | null;
+  readonly headSequence: number;
+}
 
-export const inspectPairJournal = (
-  value: unknown,
-  expectation: JournalExpectation,
-): JournalRecoveryReport => {
-  const journal = parsePairJournal(value);
-  if (journal.streamId !== expectation.streamId) {
-    throw new Error("Invalid Pair journal: STREAM_MISMATCH");
-  }
-  const replay = replayPairJournal(journal);
-  const { snapshot } = replay;
-  if (snapshot.presence.workspaceId !== expectation.workspaceId) {
-    throw new Error("Invalid Pair journal: WORKSPACE_MISMATCH");
-  }
-  const session = snapshot.session;
-  return Object.freeze({
-    formatVersion: 1,
-    streamId: journal.streamId,
-    workspaceId: snapshot.presence.workspaceId,
-    headRevision: snapshot.revision,
-    commitCount: journal.commits.length,
-    eventCount: journal.commits.reduce((count, commit) => count + commit.events.length, 0),
-    historicalSession: session === undefined ? undefined : Object.freeze({
-      sessionId: session.sessionId,
-      startedAtRevision: session.startedAtRevision,
-      status: session.status,
-    }),
-    unsettledOperations: replay.unsettledOperations,
-    authorityRestored: false,
-    automaticReplayAllowed: false,
+export type DurableWriteResult =
+  | { readonly status: "committed"; readonly receipt: DurableReceipt }
+  | { readonly status: "not-committed"; readonly code: DurableStoreFailure }
+  | { readonly status: "indeterminate" };
+
+export type DurableStoreFailure =
+  | "INVALID_REQUEST" | "BINDING_MISMATCH" | "GENERATION_CONFLICT"
+  | "HEAD_CONFLICT" | "IDENTITY_CONFLICT" | "LIMIT_EXCEEDED"
+  | "ERASURE_PENDING";
+
+export type DurableReadResult =
+  | { readonly status: "empty" }
+  | { readonly status: "present"; readonly text: string }
+  | { readonly status: "erased"; readonly generationKey: string }
+  | { readonly status: "blocked" };
+
+export type DurableEraseResult =
+  | { readonly status: "erased" }
+  | { readonly status: "cleanup-pending" }
+  | { readonly status: "indeterminate" }
+  | { readonly status: "not-erased"; readonly code: DurableStoreFailure };
+
+export interface DurableStore {
+  load(): Promise<DurableReadResult>;
+  create(text: string, expectedGenerationKey: string | null): Promise<DurableWriteResult>;
+  append(generationKey: string, commit: DurableCommit): Promise<DurableWriteResult>;
+  erase(generationKey: string): Promise<DurableEraseResult>;
+}
+```
+
+The port instance is bound to one trusted namespace by its future adapter.
+Creation accepts only a valid empty generation. Null expected generation means
+no preceding owned state; replacing an erased generation requires its matching
+completed fence, verified absence of retired owned payload copies, and a fresh
+key. Pending cleanup or unresolved deletion publication makes load blocked and
+rejects both append and create with `ERASURE_PENDING`. Reconstruct this block
+from the persisted erasing fence/copies, not a volatile flag. Existing
+present/blocked state cannot be overwritten by create. No generic upsert or
+auto-create-on-append is permitted.
+
+Independent storage review additionally requires closed, versioned control
+framing and bounded preparation before serialization. The test model retains
+one payload, one current cache, and at most one abandoned staged candidate;
+each copy has the existing one-MiB code-unit/byte ceilings, independently, so
+aggregate copy text is at most 3,145,728 code units and bytes. Its content-free
+generation fence retains at most 1,024 retired keys without eviction; a
+replacement exceeding that capacity fails unchanged while erase remains
+available. Enforce the same bounds on cold reconstruction, and reclaim only
+after request/head validation and the final excluded generation/head check.
+These refine reference-model safety without prescribing a production layout.
+
+- [x] Write the seed test that creates an empty generation, injects a failure
+  after authoritative publication but before acknowledgement, and expects
+  indeterminate while `load` exposes the complete committed head. Run
+  `npx vitest run packages/runtime/test/durableStore.test.ts` and observe RED.
+- [x] Add the port types, then a **test-only** model with one authoritative
+  namespace record, derived cache copies, an erasure fence, and deterministic
+  fault points before publication, after publication, and during cleanup.
+  Do not inject testing faults into production `InMemoryJournal`.
+- [x] Append validates/stages the entire next log and deduplication state before
+  atomic publication. Check current generation before exact-retry lookup.
+  Exact retry compares expected head, command keys, and canonical facts;
+  return its original receipt. Changed payload, cross-commit command reuse,
+  stale head, invalid replay, and retired generation leave the state unchanged.
+- [x] Test concurrent schedules at the compare/publish boundary: two writers
+  at one head cannot both succeed, erase cannot be undone by a late append,
+  and a lost acknowledgement does not create duplicate application. This is
+  a reference schedule model, not evidence of a real process lock.
+- [x] Erase publishes a content-free fence before removing modeled payload
+  copies. Failed cleanup returns cleanup-pending; lost fence acknowledgement
+  returns indeterminate; both block further append. Retrying erase completes
+  cleanup without resurrecting data. Persist erasing before cleanup and erased
+  only after cleanup verification. Reconstruct the model at each fault boundary
+  and prove create cannot bypass unresolved erasure; a verified completed fence
+  can resolve a lost acknowledgement. The fence remains writable when the
+  payload budget is exhausted. Fresh create cannot inherit old identities.
+- [x] Cover before/after-publication failures, exact retry after intervening
+  append, malformed retry, immutable receipts, independent namespaces, deleted
+  generation replay, orphan/corrupt head refusal, stale cache refusal, and
+  cleanup failure/retry. Inspect serialized model state for omitted-field leaks.
+- [x] Run port/model, projection/replay, and existing in-memory-store tests;
+  force typecheck and lint. Commit: `feat: specify atomic durable storage and erasure port`.
+
+## Task 5: Public restart assessment and regression delivery
+
+**Consumes:** Task 1's raw-text parser and Task 2's private replay/cache helpers.
+**Produces:** `inspectDurableJournal(text, expectation, cacheText?)`, returning
+only a frozen `DurableRecoveryAssessment` with literal false authority flags.
+
+`expectation` contains trusted `namespaceKey`, `generationKey`, and `now`.
+Invalid expectations, identity mismatch, unsupported/corrupt input, unsafe time,
+or time before creation return a fixed blocked reason with no raw payload.
+`now >= expiresAt` is expired: return no historical payload, request erasure,
+and make no claim that effects settled. Valid nonexpired input returns the
+minimized snapshot, canonical cache text, cache disposition, and unsettled
+operation metadata. It is always review-required, including an empty log.
+
+- [x] Add this RED authority seed (complete fixture helper from Task 2):
+
+  ```ts
+  import { expect, it } from "vitest";
+  import { inspectDurableJournal } from "../src/index.js";
+  import { emptyDurableText, durableExpectation } from "./durableFixtures.js";
+
+  it("never turns successful empty replay into admission", () => {
+    const report = inspectDurableJournal(emptyDurableText(), durableExpectation);
+    expect(report.authorityRestored).toBe(false);
+    expect(report.automaticReplayAllowed).toBe(false);
+    expect(report.status).toBe("review-required");
   });
-};
-```
+  ```
 
-Append to `packages/runtime/src/index.ts`:
-
-```ts
-export { inspectPairJournal } from "./journalRecovery.js";
-export type {
-  JournalExpectation, JournalRecoveryReport, UnsettledJournalOperation,
-} from "./journalRecoveryTypes.js";
-```
-
-- [x] Add every authority/privacy/isolation case from the matrix. Place a unique
-  sentinel in operation inputs, summaries, diagnostics, and grant IDs; neither
-  the report nor failure message/cause may contain it. Enumerate the report's
-  exact keys so future fields cannot accidentally publish a snapshot. Verify
-  all nested metadata is frozen and calls after a rejected journal stay clean.
-- [x] Run `npx vitest run packages/runtime/test/journalRecovery.test.ts` and
-  the runtime/protocol/core/architecture suites; require GREEN typecheck and
-  lint. Commit `feat: expose non-authorizing journal recovery assessment`.
-
-Initial Task 3 verification: the public API seed and all 35 report cases fail for the
-missing export before implementation, then pass. The combined runtime,
-protocol, core, and architecture selection passes 1,085 tests in 39 files;
-forced workspace typecheck and lint pass. The deliberately extra-field event
-fixture is constructed before the typed history builder, preserving its invalid
-wire payload without weakening protocol types.
-Independent read-only review of `4f545ce..4885577` found no actionable
-specification or code-quality issues.
+- [x] Run `npx vitest run packages/runtime/test/durableRecovery.test.ts`;
+  observe the missing-export failure, then implement the public wrapper.
+- [x] Return fixed blocked codes, not exceptions containing IDs or text; no
+  snapshot/cache on a failed or expired result. Validate the full log before
+  deriving any cache. An invalid/missing cache never masks an invalid log.
+- [x] Test exact expiry, shortened TTL, invalid/backward clock, namespace and
+  generation mismatch, all unsettled phases across closed sessions, matching
+  versus discarded cache, corrupt suffix, interleaved failing/successful calls,
+  deep freezing, and absence of grants/inputs/live snapshot fields.
+- [x] Verify type-level literal false flags and all unchanged P2a exports.
+  Verify production imports contain no filesystem, VS Code, timers, network,
+  model, effect, coordinator, or host registration route. Preserve host tests
+  for inactive-zero/coexistence rather than adding a feature command.
+- [x] Force typecheck; run lint, root coverage, both audits, POC compile/unit
+  tests, build, Stable package/VSIX verification, and isolated host suites.
+  Remote Insiders step outcomes remain part of the final PR gate below.
+- [x] Update the four canonical documents with measured counts, dependency
+  decisions, real limitations, and implemented-versus-deferred boundaries.
+  Commit: `feat: expose non-authorizing minimized restart assessment`.
+- [x] Obtain independent full-branch and repository review. Verify each finding,
+  fix real issues with regression tests, reply in its original thread, and
+  resolve only addressed threads. Recheck the reviewed implementation head's
+  required checks and follow-up reviews, including every actual Insiders step
+  rather than only its allowed-failure job status. Any later documentation-only
+  revision remains subject to the same exact-head check before notifying the
+  owner that the PR is ready. Do not merge or enable auto-merge without explicit
+  direction.
 
 ## Acceptance matrix
 
-Every row is required; the three seed tests above are not the complete suite.
-Expected failures use the fixed prefix and code, never arbitrary input text.
-
-| Area | Required examples and expected result |
+| Risk | Owning task and required evidence |
 | --- | --- |
-| Text boundary | Reject object, boxed string, null, number, malformed/deep-invalid JSON without conversion hooks or raw parser diagnostics; accept exact text limit and reject limit + 1 before parsing |
-| Closed framing | Reject missing/extra root or commit keys, including prototype-key payloads; inherited required keys cannot supply an omission; reject non-1 format versions, empty identifiers, negative/fractional/unsafe counters, empty commits, and nonzero empty head |
-| Aggregate budgets | Accept exactly 1,024 commits/events under the text cap; reject 1,025; total events span all commits; invalid envelope/event totals fail before event parsing |
-| Event boundary | Exercise all 21 shape-valid variants in parser fixtures, optional wire omissions, explicit null, wrong event version, nested unknown fields, depth/node limits, nested freezing; reject empty envelope event/command IDs at both journal parsing and public inspection without changing standalone event parsing; retain all existing command/event regressions |
-| Atomic framing | Accept two command IDs in one commit and repeated command ID within that commit; reject reuse in a later commit; reject duplicate event IDs within/across commits |
-| Replay chain | Require initial expected revision zero, contiguous commit/event revisions, and matching declared head; reject removed/reordered/duplicated batches and `InMemoryJournal.events()` tails after disable; never synthesize a seed |
-| Core compatibility | Accept supported transitions unchanged; compare generated histories with the current reducer; reject `BriefConfirmed` explicitly and invalid state/epoch transitions with fixed errors; a reducible actor label is not authenticated consent |
-| Identity | Allow different stream and initial workspace IDs; reject expected-stream mismatch and wrong final workspace; accept legal reset/rebind and reject rebind without the core's required reset |
-| Recorded work | Preserve warnings for every planned/authorized/started/unknown read/edit/check; remove only on a recorded confirmed/failed/declined/cancelled observation; test close, disable, and rebind without losing unresolved historical warnings |
-| Lifetime | Reuse session and operation IDs after disable; keep separate warnings by start revision; settling the newer operation cannot erase the older warning; keep each warning's original workspace |
-| No authority | Test empty, briefing, ready, paused, reconciling, closed, grant-bearing, and unsettled histories; both authority/replay flags always false, no full snapshot/grant or action restored, no status rewritten as cancelled |
-| Privacy/isolation | Exact report keys, sentinel exclusion, no raw cause, detached/frozen nested data, no partial output or retained state after failure; existing live store/host surfaces remain untouched and architecture guards pass |
+| Sensitive source survives "metadata" selection | Tasks 1/3: every excluded field has a canary; keys come only from the trusted issuer, never original strings or hashes |
+| Minimized snapshot pretends to be the current live runtime | Tasks 2/5: distinct state shape, literal false flags, no live hydration or effect path |
+| Invalid partial history produces a valid prefix/cache | Tasks 1/2/5: complete-log failure with no state; cache cannot rescue corrupt history |
+| Retried command duplicates or mutates a committed batch | Tasks 3/4: stable retry identity, exact-payload comparison, cross-commit command rejection |
+| Lost acknowledgement is treated as failed dispatch | Task 4: indeterminate state retains complete committed metadata; no external effect is executed by any contract |
+| Delete/expiry silently clears effect risk or resurrects payload | Tasks 4/5: content-free fence, cleanup-pending/expired dispositions, no retired generation fallback or settled-status fabrication |
+| Two windows bypass generation/head fencing | Task 4: competing model schedules; real provider locking remains unproven and separately gated |
+| Optional cache or bound becomes a hidden migration | Tasks 1/2: exact version/full origin/budget checks; no checkpoints/imports |
+| New contracts change Stable, inactive-zero, or dependency boundaries | Task 5: architecture/coverage/host/packaging evidence and both maintained dependency graphs |
 
-## Task 4: Verified, reviewed delivery after implementation approval
+## Explicitly deferred product work
 
-- [x] Update `README.md`, `docs/design.md`, and `docs/research.md` only with
-  measured implementation evidence. Separate new test counts from the baseline,
-  root tests from the isolated POC, and read-only inspection from actual storage
-  or working session recovery. Mark completed tasks here, not in a handoff file.
-- [x] Inventory/audit both installed graphs and locks; compare direct dependencies
-  with obtainable registry versions and upstream stable releases. Record access
-  restrictions honestly and distinguish registry metadata from installed/tested
-  availability. Keep every material update and its compatibility evidence traceable.
-- [x] Build workspace exports before extension tests and run:
+The next product increment must choose and measure a concrete storage provider,
+then implement an adapter against the port's fault suite. Local/remote/web and
+multiwindow capability support must be explicit; Node flush/rename APIs are
+not proof of the required durability guarantees. No backend is selected here.
+Actual filesystem and crash evidence must precede durable-save claims.
 
-```sh
-npm ci
-npm --prefix poc/session-target ci
-npm run typecheck -- --force
-npm run lint
-npm test
-npm --prefix poc/session-target run check
-npm run build
-npm run package
-node scripts/verify-vsix.mjs
-npm --prefix poc/session-target run package
-npm audit --audit-level=low
-npm --prefix poc/session-target audit --audit-level=low
-env -u VSCODE_EXECUTABLE_PATH ADAPTIVE_PAIR_HOST_VERSION=1.136.2 npm run test:host
-env -u VSCODE_EXECUTABLE_PATH ADAPTIVE_PAIR_HOST_VERSION=1.137.0 npm run test:host
-env -u VSCODE_EXECUTABLE_PATH npm --prefix poc/session-target run test:host
-```
+Live restart then needs an independently reviewed admission transition,
+fresh-workspace reconciliation, renewed agreements/scopes/grants, pending-effect
+handling, and host integration that never retries a recovered read implicitly.
+Pair ownership/handoff and P3 guarded editing remain subsequent roadmap steps.
+The owner's continued-development request is not a waiver of these review,
+privacy, correctness, coexistence, or explicit-merge gates.
 
-Local delivery gates pass after clean installation with Node.js 24.20.0 and
-fast-check 4.10.0: full checks, coverage, both packages and audits, 17 host cases
-on each pinned Stable version and Insiders, and the separate POC's one Insiders
-host case. Detailed counts, compatibility/access limits, bundle-size evidence,
-and the unchanged warning are in [research](research.md#p2a-post-maintenance-validation).
+## Progress
 
-- [x] Obtain independent specification/code-quality review, commit and push,
-  open the implementation PR against `main`, and request repository review.
-  Check each finding against the actual code, add a failing regression for a
-  real defect, fix it, and reply in its original thread with verification or
-  a reasoned explanation. Resolve only addressed concerns.
-- [x] Recheck follow-up reviews and all final-head CI steps, including actual
-  Insiders results despite allowed failure. Report readiness without merging,
-  auto-merging, wiring a host route, or starting another milestone.
-
-PR #11's implementation checkpoint `1a5d6a5` passes all four CI jobs and all
-47 actual steps, including Insiders. Independent full-branch and focused
-follow-up reviews found no actionable issues. Both repository findings were
-verified, fixed, and answered with linked replies to their original reviews;
-neither produced an inline thread. The repository re-review reports zero new
-comments but remains `COMMENTED` and explicitly requests final human review,
-not approval. Final documentation-only revisions are rechecked on the PR
-before readiness is reported; this recorded checkpoint does not authorize
-merging, auto-merge, or the next milestone.
-
-## Completed documentation gate (PR #10)
-
-The documentation PR checked the spec against existing code, local links,
-reference types, unchanged baseline tests and both audits, and independent plus
-repository review. That gate did not execute Tasks 1–4 or authorize product
-implementation. The owner later explicitly approved its merge and this reviewed
-implementation scope. Current execution evidence is recorded in the tasks above
-and in [research](research.md#p2a-implementation-evidence); merging this
-implementation PR still requires separate owner direction.
+- [x] PR #11 merged; post-merge baseline CI verified.
+- [x] Owner selected and reviewed the minimized-state design direction.
+- [x] Owner explicitly requested actual implementation and continued delivery.
+- [x] Independent contract/plan review and necessary corrections (`0e7456a`;
+  follow-up review confirms both projection-side-effect and erasure-replacement gates).
+- [x] Task 1: closed wire format. Independent spec/quality review passes after
+  aggregate-budget and unmasked-counter coverage corrections. The 210 new
+  cases pass within 823 protocol tests; 109 existing runtime journal cases,
+  forced typecheck, and lint also pass on Node.js 24.21.0.
+- [x] Task 2: minimized replay and cache. Independent spec/quality review passes
+  with no findings. All 75 new replay cases pass within 1,007 focused tests,
+  with forced workspace typecheck and full lint on Node.js 24.21.0.
+- [x] Task 3: trusted candidate projection. Independent spec/quality review
+  passes after explicit-resolution, retry-ordering, and repeated-source-ID
+  budget corrections. The 47 projection cases and 75 replay cases pass within
+  388 focused runtime/core/script tests; forced workspace typecheck and full
+  lint pass on Node.js 24.21.0.
+- [x] Task 4: storage port and fault model (`72fd844`). Independent spec/quality
+  re-review closes all three framing, preparation-budget, and retained-capacity
+  findings. The 146 model cases pass within 751 focused journal tests; forced
+  workspace typecheck and scoped lint pass. Fencing/copy limits remain
+  test-only policies, not filesystem or power-loss evidence.
+- [x] Task 5: restart assessment, full regression gates, and reviewed PR.
+  The independently reviewed assessment core and public storage-type exports
+  pass 50 recovery tests and forced typecheck. Local integration passes 2,745
+  root tests, lint, coverage, both audits, both packages, Stable VSIX inspection,
+  and the isolated host matrix. PR #12 is open; corrected implementation
+  `9621281` passes CI run `35420461932` (four jobs, all 47 actual steps).
+  Independent full-branch and focused correction reviews close the source-bound,
+  erasure-metadata, fault-scope, and test-instrumentation findings. Repository
+  replies record fixes and verification; the actual inline thread is resolved.
+  Proposed omitted-frame advancement and blanket post-close rejection conflict
+  with verified preparation/late-result behavior; characterization tests preserve
+  those existing contracts. A later generation-fencing overview supplied no
+  concrete inline case. Focused cold-reconstruction probes found no actionable
+  violation, and a reasoned no-change response requests the missing case rather
+  than claiming reviewer approval or adding an unapproved stronger policy.
+  The PR's current revision must still satisfy its checks before readiness is
+  reported. No merge or auto-merge is authorized.

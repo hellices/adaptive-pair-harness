@@ -1515,8 +1515,9 @@ This verifies bounded read-only inspection, not authentic consent, privacy-safe
 disk serialization, a durable store, working resume, authority restoration, or
 effect replay. A recorded unknown operation remains a warning; close and disable
 do not rewrite it as cancelled. Root, isolated POC, and host results are kept
-separate. Final delivery gates and review disposition are tracked in the
-[canonical implementation plan](implementation-plan.md).
+separate. Final P2a delivery gates and review disposition remain in Git at
+`133c7a8:docs/implementation-plan.md`; the canonical plan may then be deliberately
+replaced for the next reviewed increment.
 
 #### P2a dependency maintenance
 
@@ -1620,7 +1621,230 @@ state is `COMMENTED`, not approval, and it explicitly requests final human
 review. Both prior findings received linked replies to their original reviews;
 there were no inline threads to resolve. Any final documentation-only revision
 still requires same-head CI/review checks on the PR before readiness is
-reported. The open implementation PR requires a separate owner merge decision.
+reported. The owner subsequently authorized the merge; PR #11 merged on
+September 18, 2026 at `133c7a895abd217d9e63aae1d74b5fc190c34e33`. Final-head
+CI run **35357471177** and post-merge main CI run **35358366256** both pass all
+four jobs and all 47 actual steps, including the allowed-failure Insiders
+steps. Final repository review **5249044377** reports no new comments; its
+formal `COMMENTED` status is not relabeled as approval. This completed P2a
+checkpoint does not authorize P2b implementation.
+
+### P2b persistence contract planning
+
+**Scope and provenance, September 19, 2026:** after authorizing PR #11's merge,
+the owner selected a storage/recovery design-and-plan PR, then selected a
+dedicated privacy-minimized durable event/snapshot contract over a warning-only
+memo. Work starts from merged `main` at `133c7a8` on a dedicated documentation
+branch. The earlier P2a implementation plan is preserved in that commit, not
+copied into another active plan. That initial selection authorized documentation
+only. After reviewing the written boundaries, the owner explicitly expanded the
+request to actual implementation and continued progress toward a usable product.
+The executable increment is the reviewed pure P2b contract; host integration
+and later product phases still need concrete plans and verification, and the
+new PR's merge still requires explicit direction.
+
+#### Repository findings
+
+| Verified current behavior | Consequence for the proposed contract |
+| --- | --- |
+| `PairStore.load` returns a full runtime snapshot and seen command IDs; `commit` atomically accepts a revisioned event batch | A minimized durable loader cannot implement this interface by fabricating missing fields; a separate port and later explicit integration are necessary |
+| `InMemoryJournal` discards the prefix on disable while retaining revision and command-ID history | `events()` is not a durable export; do not use it to construct a complete log or assume persisted deduplication |
+| v1 events retain entry diagnostics, paths, work-unit prose/baselines, arbitrary operation input, and free-form outcomes | Bounds, encryption, or string sanitization alone do not establish data minimization; construct a different closed schema |
+| v1 workspace/session/command/operation IDs are caller-visible strings | Treating every identifier as safe metadata would still leak private content; a future trusted issuer must supply new opaque lifetime keys |
+| Existing read reconciliation can re-execute eligible authorized read operations | Never hydrate that path from a recovered journal; the new restart boundary prohibits automatic replay of reads as well as mutations |
+| P2a flags always deny authority/replay and retains unsettled operations across lifecycle changes | Preserve these guarantees while replaying a different, minimized state; neither reports nor historical outcomes are permissions |
+| `BriefConfirmed` is shape-valid but unsupported by the current reducer | A projection must reject this unsupported source route rather than quietly add a new session transition |
+
+These findings were established from the merged protocol, reducers, runtime
+store, and tool executor before P2b implementation. The pure contract code and
+its validation are separate evidence, not retroactive proof of a disk adapter.
+
+#### Alternatives and limits
+
+The selected direction gives an event journal exact authority over an explicitly
+smaller durable domain. Omitted goals, paths, baselines, inputs, and grants must
+be recollected after restart. This is a deliberate product trade-off, not a
+claim to recover the existing runtime snapshot losslessly. A warning-only memo
+would be smaller but leave the authoritative durable-state contract unsettled.
+Whole-v1 persistence would preserve reducer inputs but violate the exclusion
+of source, diagnostics, sensitive inputs, and free-form text, including when
+encrypted or bounded. Neither alternative is silently treated as implemented.
+
+Official API documentation establishes useful limits, not an adapter proof:
+
+- [VS Code ExtensionContext](https://code.visualstudio.com/api/references/vscode-api#ExtensionContext)
+  describes workspace-scoped `storageUri`, which can be undefined when no
+  workspace is open, and notes that the directory may not exist. Its existence
+  is not an atomic-commit, trust, ownership, or crash-recovery guarantee.
+- [VS Code FileSystem](https://code.visualstudio.com/api/references/vscode-api#FileSystem)
+  and [FileSystemProvider](https://code.visualstudio.com/api/references/vscode-api#FileSystemProvider)
+  expose write/rename operations and errors across providers, but no portable
+  transaction, compare-and-swap, or directory-flush contract. Requiring one
+  writer and a tested supported-provider matrix is a design inference, not a
+  promise of the VS Code API.
+- [Node.js 24 file-system documentation](https://nodejs.org/docs/latest-v24.x/api/fs.html)
+  warns against overlapping writes to one file and documents optional file
+  flushing through `FileHandle.sync()`. That file-flush primitive does not
+  establish atomic multi-file publication, writer exclusion, directory-entry
+  durability, or uniform power-loss behavior for an arbitrary provider.
+
+These sources were checked for API semantics on September 19, 2026. No system
+crash, power-loss, filesystem, multi-process-lock, or deletion experiment was
+run for P2b. Seven-day logical expiry, one-MiB encoded-byte bounds, 1,024-fact
+limits, and the content-free deletion fence are **policy choices**, not
+performance or filesystem measurements. The pure contracts enforce their
+bounded representations; physical cleanup while inactive is explicitly not promised.
+An adapter prototype, if needed, requires its own authorized time-boxed spike;
+planning text is not evidence that a platform satisfies the contract.
+
+#### P2b baseline and dependency maintenance
+
+Before new contract code, both graphs installed cleanly on Node.js 24.20.0.
+Forced workspace typecheck, lint, all **2,197 root tests in 118 files**, coverage
+(91.04% statements/lines, 84.89% branches, 92.80% functions), the separate POC's
+compile and **21 tests in five files**, build, and seven-entry Stable VSIX
+verification passed. An initial validation command mistakenly requested a POC
+`test` script; the actual `test:unit` script was then run successfully. This was
+a command-selection error, not a product fix or an unrun test counted as passing.
+
+On September 19, the inventory again covered **16 manifests, 49 declarations
+(25 internal / 24 external), 16 external packages, and both active lockfiles**.
+Selected and registry-stable metadata, engines/peers, and accessible primary
+upstream records were compared, including the isolated POC outside workspace
+globs. Before maintenance, both explicit audits reported zero findings (401
+root graph entries and 257 POC entries). An outdated report was not the inventory.
+
+| Package/tool | Current decision and evidence |
+| --- | --- |
+| Mocha | Update both maintained graphs from 12.0.0 to obtainable **12.0.1**, preserving the extension's caret range and the POC's exact pin. Registry metadata agrees with the [upstream 12.0.1 release](https://github.com/mochajs/mocha/releases/tag/v12.0.1), including dependency/configuration fixes; its Node range accepts the host baselines. Upstream 12.0.2 exists but the exact registry lookup still returns E404. Both manifests and lockfiles are updated together. |
+| Node.js verification runtime | Move local subsequent verification to obtainable **24.21.0**, checked against the [official 24.21.0 release](https://nodejs.org/en/blog/release/v24.21.0). The repository's Node >=24 engine contract and package boundaries do not change. |
+| Vitest and coverage-v8 | Retain the matching 5.0.0 pair; exact 5.0.1 registry lookups remain E404 despite the upstream release. |
+| fast-check | Retain 4.10.0; upstream 4.10.1 remains unobtainable from the configured registry (exact E404). |
+| TypeScript / typescript-eslint | Retain 6.0.3 / 8.70.0; registry-latest TypeScript 7.0.2 is outside the linter's `>=4.8.4 <6.1.0` peer range. Root lint also covers the POC. |
+| Declaration floors | Retain @types/node 24.13.4 for Node 24 and @types/vscode 1.136.0 for the declared host API floor, rather than the unrelated latest tags 26.5.1 and 1.137.0. @types/mocha remains 10.0.10. |
+| Other direct packages | Stable registry metadata still agrees with @eslint/js 10.0.1, @vscode/dts 0.4.1, @vscode/test-electron 3.1.0, @vscode/vsce 4.0.0, Ajv 8.20.0, esbuild 0.28.2, and ESLint 10.10.0. Accessible tagged source/release records agree; no package edge or protocol/API migration is introduced. |
+| Upstream access limits | Microsoft TypeScript and VS Code-tooling release API requests still return an organization SAML restriction. No alternate credential/path was used to bypass it, and no independent release confirmation is claimed for those endpoints. Registry metadata is separately available. |
+
+After the Mocha update, both installations report zero audit findings,
+workspace typecheck and the POC compile/unit suite pass on Node.js 24.21.0.
+This maintenance checkpoint is not a substitute for final changed-code,
+isolated-host, packaging, and exact-PR-head CI verification.
+
+#### P2b implementation evidence
+
+The implementation is deliberately separate from the current event log, live
+store, coordinator, and host journal. The closed `adaptive-pair-durable` codec
+retains only opaque keys, finite classifications/assistance flags, bounded
+sequences/times, and recorded phases. Its private reducer reconstructs the
+complete minimized domain, including unsettled operations in closed sessions.
+The cache is derived from that full replay and cannot salvage a missing or
+corrupt prefix/suffix. The public inspection API always denies authority and
+automatic replay; expiry returns no historical payload and requests erasure,
+not an assertion that effects stopped.
+
+The projector uses command-admitted, deeply frozen candidate objects. Weak
+in-process identities distinguish exact retries without serializing or strongly
+retaining raw events/snapshots/operation inputs. An explicit resolution of the
+pending commit key is necessary: equal durable/live counters alone cannot prove
+which candidate committed. Candidate-local event identity/grouping checks also
+reject two distinct admitted commands that reuse one source command ID in their
+first batch. Omitted batches acquire no durable command receipt. The retained
+source-ID budget conservatively counts repeated occurrences across separately
+prepared candidates, including definitively noncommitted attempts; exhaustion
+never evicts retry evidence. These are construction/ordering guarantees within
+the trusted live-source boundary, not provenance or consent inferred from
+minimized-payload equality.
+
+Independent review produced concrete corrections before delivery: complete
+retained side-effect projection (including active assistance status, resume
+reconciliation, and entry-capture presence); a persisted cleanup gate that also
+blocks replacement creation; cross-commit aggregate-budget and unmasked safe
+counter tests; same-batch source-command reuse rejection; and resolution-enum
+validation before idempotence. A separate RED/GREEN regression corrected
+under-counting repeated source-ID text. The original review concerns and their
+verification were answered in their respective review conversations.
+
+Storage-model review additionally exposed missing fence framing, unbounded
+pre-serialization traversal of rejected request graphs, and accumulated copies
+and retired-generation metadata. The corrected model validates closed request
+fields before traversing their values, accounts for encoding before stringifying,
+keeps bounded payload/cache/staging slots, and never evicts retired tokens to
+admit a reused generation. Behavioral RED/GREEN tests cover shared/deep graphs,
+repeated publication failures, cold reconstruction, and the exact 1,024-token
+retirement boundary. These are finite model policies, not provider measurements.
+
+Whole-branch review found a source-event scan before its cardinality check and
+an erasure acknowledgement that could leave private payload in malformed outer
+model metadata. Behavioral RED/GREEN regressions now require zero oversized
+event reads/key issuance and unchanged failure for malformed outer metadata,
+including after cold reconstruction and at the final publication boundary.
+Valid, content-free metadata still permits erasing corrupt or oversized owned
+copies at allocator and retirement capacity. The model's head-publication fault
+is explicitly limited to create/append; a separate throwing erase hook verifies
+pre-fence interruption without pretending to measure a filesystem crash.
+An inline review also exposed a request-bound test instrumentation gap. Its
+numeric-index trap now independently counts direct reads as well as descriptor
+access and enumeration. Positive controls first failed with unobserved reads,
+then passed after the trap was added; oversized rejection still performs no
+element reads or serialization.
+
+Two proposed review changes were not applied because command-admitted
+counterexamples contradict them. An omitted preparation can be abandoned before
+publication, so it cannot advance the committed live frame to its computed next
+revision. A matching-epoch first result for an already-authorized operation can
+arrive after closure; projection/replay record that outcome while retaining
+the closed session. Characterization tests cover confirmed and unknown late
+results, no private canary leakage, rejection of new authorization after closure,
+and refusal to overwrite the first outcome. These preserve existing admission
+and preparation contracts rather than adding a stronger historical policy.
+
+Further bounded cold-reconstruction probes distinguish copy-record grammar
+from authoritative generation binding. Well-formed tags on ignored cache/staged
+records never select a generation: the payload and its full journal must match
+the current control. Pending/missing fences, mismatched authoritative payloads,
+malformed retirement metadata, retired retries, and generation reuse remained
+blocked. Legitimate failed replacement staging stayed pending until cleanup.
+No concrete violation was reproduced from a later generation-fencing review
+overview, which supplied no inline case; a reasoned response requests that case.
+This is scoped evidence, not proof that no defect can exist or a new external
+anti-rollback/authenticity guarantee.
+
+Integrated local verification on Node.js **24.21.0** passes forced workspace
+typecheck, full ESLint, and **2,745 root tests in 132 files**. The 548 added
+cases comprise 210 protocol, 75 replay/cache, 51 projection, 162 storage-model,
+and 50 recovery/public-contract tests. Property-test trials are not counted as
+additional test cases. Root coverage is **91.57% statements, 85.86% branches,
+93.45% functions, and 91.74% lines**. The isolated POC separately passes
+**21 unit cases in five files**, compile, and packaging.
+
+The built Stable VSIX passes the existing seven-entry verification policy;
+its production bundle measures **539,516 bytes**, compared with **536,711 bytes**
+for merged P2a. No source map, host test, test-only store, or POC contribution
+is shipped. Isolated extension hosts pass **17 cases each** on VS Code
+**1.136.2**, **1.137.0**, and **Insiders**; the POC passes its separate one-case
+Insiders host suite. These verify unchanged inactive-zero/coexistence and the
+existing Growth preview, not disk persistence or live restart. The known Vite
+native-config-loader warning remains visible and no suppression was added.
+
+Corrected implementation revision **`9621281`** passes GitHub CI run
+**35420461932**: all four jobs and all **47 actual steps** succeed, including
+the raw Insiders smoke step rather than merely its allowed-failure job status.
+Independent full-branch and focused correction review identify no remaining
+actionable blocker. The original repository inline concern is answered and
+resolved; overview-only concerns retain their reasoned dispositions, not an
+invented approval. A later documentation-only checkpoint must still pass its
+own PR checks; this run does not claim evidence for a future revision.
+
+The maintained dependency inventory was refreshed again after implementation:
+**16 manifests, 49 declarations (25 internal/24 external), 16 external
+packages, and both lockfiles**. Both full-graph audits remain at **zero**
+findings (root: 407 audited dependencies; isolated POC: 257). The retained
+version/availability and TypeScript peer-compatibility decisions in the table
+above remain current. The Mocha patch changes the resolved transitive graph,
+not the product's direct package boundaries. GitHub Actions pins also match
+their checked stable releases: checkout 7.0.1, setup-node 7.0.0, and
+upload-artifact 7.0.1; no workflow action update is required. The Microsoft
+release-API SAML restrictions remain unchanged and were not bypassed.
 
 ## 7. Evaluation hypotheses
 
