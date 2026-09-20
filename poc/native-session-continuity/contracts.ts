@@ -26,6 +26,7 @@ export interface ProbeState {
   readonly invocations: readonly Invocation[];
   readonly bootKey: string;
   readonly modelCalls: number;
+  readonly tokenCountCalls: number;
   readonly disposalApi: string;
   readonly disposalEvents: readonly string[];
 }
@@ -49,6 +50,7 @@ export interface ProbeEvidence {
   models?: readonly ModelChoice[];
   chatApiKeys?: readonly string[];
   commands?: readonly string[];
+  enabledApiProposals?: readonly string[];
   copilot?: readonly { readonly id: string; readonly version: string }[];
   state?: ProbeState;
   deletion?: { readonly ready: boolean; readonly confirmed?: boolean };

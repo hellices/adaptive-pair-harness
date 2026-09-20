@@ -19,10 +19,14 @@ interface PendingRequest {
 
 const waitForWorkbench = async (expression: string): Promise<{ readonly ready: boolean; readonly confirmed?: boolean }> => {
   const port = requiredEnvironment("AP_NATIVE_DEBUG_PORT");
-  const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json() as {
-    readonly type: string; readonly url: string; readonly webSocketDebuggerUrl: string;
+  const windowToken = requiredEnvironment("AP_NATIVE_WINDOW_TOKEN");
+  const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`, {
+    redirect: "error", signal: AbortSignal.timeout(5000),
+  })).json() as {
+    readonly type: string; readonly title: string; readonly url: string; readonly webSocketDebuggerUrl: string;
   }[];
-  const target = targets.find(candidate => candidate.type === "page" && candidate.url.includes("workbench"));
+  const target = targets.find(candidate => candidate.type === "page" && candidate.url.includes("workbench") &&
+    typeof candidate.title === "string" && candidate.title.includes(windowToken));
   if (!target) throw new Error("The isolated workbench debug target was not found.");
   const address = new URL(target.webSocketDebuggerUrl);
   if (!["127.0.0.1", "localhost"].includes(address.hostname) || address.port !== port) {
@@ -56,10 +60,14 @@ const waitForWorkbench = async (expression: string): Promise<{ readonly ready: b
       expression: source, returnByValue: true,
     } }));
   });
+  const guardedExpression = `(() => {
+    if (!document.title.includes(${JSON.stringify(windowToken)})) throw new Error('Not the owned probe window.');
+    return ${expression};
+  })()`;
   try {
     const deadline = Date.now() + 10000;
     while (Date.now() < deadline) {
-      const result = await evaluate(expression);
+      const result = await evaluate(guardedExpression);
       if (result.exceptionDetails) throw new Error("The isolated workbench evaluation failed.");
       if (result.result?.value?.ready) return result.result.value;
       await new Promise(resolve => setTimeout(resolve, 50));

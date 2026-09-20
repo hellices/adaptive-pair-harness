@@ -58,12 +58,17 @@ disabled for these test hosts. Only allowlisted OS, locale, temporary-directory,
 and GUI environment variables are inherited; profile overrides, credentials,
 Node bootstrap injection, and parent VS Code IPC variables are not forwarded.
 XDG configuration/data/cache/state roots are also owned by the run.
-The workbench driver binds to an allocated
-loopback debug port; only the generated synthetic session is deleted. The
+The workbench driver uses an allocated loopback debug port. A fresh per-run
+window token must match both the discovered target title and the live document
+title before any UI action, so an unrelated editor that acquires the released
+port is rejected. This is a diagnostic ownership check, not authentication
+against malicious same-user processes. Only the generated synthetic session is deleted. The
 watchdog targets only the spawned process group. Logs must open before the
 host is spawned; logging errors terminate and wait for the owned host.
-An already-exited group is tolerated during termination, while other signal
-errors fail the run without claiming successful cleanup. Artifacts are retained for
+An already-exited group is tolerated during termination. Other signal errors
+retain a bounded five-second wait for actual child closure; expiry reports
+cleanup as unconfirmed, releases pipe handles, and never claims termination.
+Artifacts are retained for
 inspection, not copied into public documentation or a user's normal profile.
 
 The probe loads no Copilot extension, uses no sign-in, and makes no fixture
@@ -101,6 +106,14 @@ Both reports record **zero fixture model calls**, **seven distinct boot keys**,
 **no Copilot extension**, and **no enabled API proposals**. Deletion has both a
 positive pre-deletion disk witness and a negative post-deletion witness. It is
 not inferred merely from a command returning or a dialog disappearing.
+
+`modelCalls` counts model-response/inference attempts; local token-count
+callbacks are reported separately as `tokenCountCalls` and aggregated in the
+summary. Both final host runs report zero for each count. Token counting
+remains a constant offline fixture, not a backend request. Proposal status is
+derived from the manifest evidence captured in
+every phase, with missing or nonempty lists rejected, and independently
+checked against the runtime disposal-API guard. It is not a hardcoded result.
 
 ## Supported contracts versus diagnostic internals
 
@@ -161,6 +174,12 @@ account sync, secure erasure, or complete removal of all derivative data.
    and process-group exit races. An allowlisted environment and owned-process
    lifecycle now address those cases; fault-injection regressions reproduce
    the original failures without launching a real host or signaling a process.
+7. Repository review identified the allocated-port handoff race and immediate
+   rejection after a failed termination signal. The final driver verifies its
+   per-run window token twice before acting and waits for a bounded cleanup
+   result. Additional regressions reject an unrelated endpoint and changed
+   document identity, and verify both early close and cleanup deadline paths.
+   Token-count accounting and proposal evidence were also made explicit.
 
 These observations are tied to the measured builds. They are not generalized
 as stable extension contracts or as a substitute for testing a future host.
@@ -187,9 +206,10 @@ and the three payload witness fields. The runner exits nonzero for failed
 assertions or a host timeout. Artifacts may contain generated absolute paths
 and host diagnostics; inspect locally and do not commit or publish raw logs.
 
-Root `typecheck` and `lint` include the typed probe, and **11 non-GUI regression
+Root `typecheck` and `lint` include the typed probe, and **18 non-GUI regression
 cases** run in the root test suite. They cover inherited environment isolation,
-log-open gating, log failure cleanup, termination races/errors, and rejection
+log-open gating, log failure cleanup, bounded termination races/errors,
+endpoint identity, model/token accounting, proposal evidence, and rejection
 of incorrect participant/session evidence. The GUI continuity run is
 **manual**, not an additional CI claim. The new private manifest declares no
 dependencies and adds no third dependency graph or lockfile. Normal product

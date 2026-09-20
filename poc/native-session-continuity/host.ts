@@ -13,6 +13,9 @@ export const run = async (): Promise<void> => {
     const extension = vscode.extensions.getExtension<ProbeApi>("adaptive-pair.native-session-continuity-probe");
     assert.ok(extension);
     api = await extension.activate();
+    const manifest = extension.packageJSON as { readonly enabledApiProposals?: readonly string[] };
+    evidence.enabledApiProposals = [...(manifest.enabledApiProposals ?? [])];
+    assert.deepEqual(evidence.enabledApiProposals, []);
     const models = await vscode.lm.selectChatModels({ vendor: "adaptive-pair-native-probe" });
     evidence.models = models.map(model => ({ id: model.id, vendor: model.vendor, family: model.family }));
     evidence.chatApiKeys = Object.keys(vscode.chat);

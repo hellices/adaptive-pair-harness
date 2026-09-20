@@ -42,12 +42,15 @@ try {
     physicalSeedWitness: true, originalPayloadRemoved: true, forkPayloadRetained: true,
     allBootKeysDistinct: new Set(phases.map(result => result.state?.bootKey)).size === phases.length,
     totalModelCalls: phases.reduce((total, result) => total + (result.state?.modelCalls ?? 0), 0),
+    totalTokenCountCalls: phases.reduce((total, result) => total + (result.state?.tokenCountCalls ?? NaN), 0),
     copilotExtensionsLoaded: phases.some(result => (result.copilot?.length ?? 0) > 0),
-    proposalsEnabled: false,
+    proposalsEnabled: phases.some(result => (result.enabledApiProposals?.length ?? 1) > 0),
   };
   assert.equal(summary.allBootKeysDistinct, true);
   assert.equal(summary.totalModelCalls, 0);
+  assert.ok(Number.isSafeInteger(summary.totalTokenCountCalls) && summary.totalTokenCountCalls >= 0);
   assert.equal(summary.copilotExtensionsLoaded, false);
+  assert.equal(summary.proposalsEnabled, false);
   await writeFile(join(run.directory, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
   console.log(JSON.stringify(summary, null, 2));
 } catch (error) {

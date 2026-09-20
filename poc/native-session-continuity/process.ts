@@ -9,6 +9,7 @@ const waitForExit = (child: ChildProcessWithoutNullStreams, log: WriteStream, ph
     let failure: Error | undefined;
     let closed = false;
     let terminationRequested = false;
+    let cleanupTimeout: ReturnType<typeof setTimeout> | undefined;
     const stop = (error: Error): void => {
       failure ??= error;
       if (closed || terminationRequested || child.pid === undefined) return;
@@ -19,7 +20,13 @@ const waitForExit = (child: ChildProcessWithoutNullStreams, log: WriteStream, ph
         if (typeof signalError === "object" && signalError !== null &&
           "code" in signalError && signalError.code === "ESRCH") return;
         clearTimeout(timeout);
-        rejectExit(new AggregateError([error, signalError], "The owned host could not be terminated."));
+        failure = new AggregateError([error, signalError], "The owned host could not be terminated.");
+        cleanupTimeout = setTimeout(() => {
+          child.stdout.destroy();
+          child.stderr.destroy();
+          child.unref();
+          rejectExit(new AggregateError([failure], "The owned host did not close within 5000 ms; cleanup is unconfirmed."));
+        }, 5000);
       }
     };
     const timeout = setTimeout(() => stop(new Error(`Native ${phase} phase exceeded 60000 ms.`)), 60000);
@@ -28,6 +35,7 @@ const waitForExit = (child: ChildProcessWithoutNullStreams, log: WriteStream, ph
     child.once("close", code => {
       closed = true;
       clearTimeout(timeout);
+      clearTimeout(cleanupTimeout);
       if (failure) rejectExit(failure);
       else if (code === 0) resolveExit();
       else rejectExit(new Error(`Native ${phase} host exited with ${String(code)}.`));

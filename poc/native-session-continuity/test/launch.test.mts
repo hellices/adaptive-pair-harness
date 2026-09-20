@@ -24,10 +24,13 @@ vi.mock("node:net", () => ({
   }),
 }));
 
-const run = { directory: "/owned/run", workspace: "/owned/run/workspace", userData: "/owned/run/user" };
+const run = {
+  directory: "/owned/run", workspace: "/owned/run/workspace", userData: "/owned/run/user", windowToken: "owned-window",
+};
 const evidence: ProbeEvidence = {
   phase: "seed", hostVersion: "1.138.0", nodeVersion: "24.18.1", status: "passed",
-  state: { invocations: [], bootKey: "fixture", modelCalls: 0, disposalApi: "fixture", disposalEvents: [] },
+  enabledApiProposals: [],
+  state: { invocations: [], bootKey: "fixture", modelCalls: 0, tokenCountCalls: 0, disposalApi: "fixture", disposalEvents: [] },
 };
 let child: ChildProcessWithoutNullStreams;
 let log: WriteStream;
@@ -38,7 +41,7 @@ beforeEach(() => {
   io.spawn.mockReset();
   io.createLog.mockReset();
   child = Object.assign(new EventEmitter(), {
-    pid: 43210, stdout: new PassThrough(), stderr: new PassThrough(),
+    pid: 43210, stdout: new PassThrough(), stderr: new PassThrough(), unref: vi.fn(),
   }) as unknown as ChildProcessWithoutNullStreams;
   const output = new PassThrough();
   output.resume();
@@ -141,12 +144,37 @@ it("handles an already exited process group without escaping the timeout", async
 
 it("reports a signal failure through the launch promise instead of throwing in a timer", async () => {
   const { outcome } = await startHost();
+  const settled = vi.fn();
+  void outcome.then(settled);
   const fault = Object.assign(new Error("Fixture signal denied"), { code: "EPERM" });
   kill.mockImplementation(() => { throw fault; });
   await vi.advanceTimersByTimeAsync(60000);
+  expect(settled).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(4999);
+  expect(settled).not.toHaveBeenCalled();
   child.emit("close", 0);
   const error = (await outcome).error;
   expect(error).toBeInstanceOf(AggregateError);
   expect((error as AggregateError).errors).toContain(fault);
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("bounds the cleanup wait and reports an unconfirmed close after signal failure", async () => {
+  const { outcome } = await startHost();
+  kill.mockImplementation(() => { throw Object.assign(new Error("Fixture signal denied"), { code: "EPERM" }); });
+  await vi.advanceTimersByTimeAsync(60000);
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(String((await outcome).error)).toContain("did not close within 5000 ms");
+  expect(child.stdout.destroyed).toBe(true);
+  expect(child.stderr.destroyed).toBe(true);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each([
+  { label: "missing", proposals: undefined }, { label: "enabled", proposals: ["chatParticipantPrivate"] },
+])("rejects $label proposal evidence", async ({ proposals }) => {
+  io.readFile.mockResolvedValue(JSON.stringify({ ...evidence, enabledApiProposals: proposals }));
+  const { outcome } = await startHost();
+  child.emit("close", 0);
+  expect(String((await outcome).error)).toContain("proposal evidence");
 });

@@ -1,11 +1,13 @@
 import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 
 export interface IsolatedRun {
   readonly directory: string;
   readonly workspace: string;
   readonly userData: string;
+  readonly windowToken: string;
 }
 
 export const createProbeEnvironment = (run: IsolatedRun): NodeJS.ProcessEnv => {
@@ -32,6 +34,7 @@ export const createIsolatedRun = async (): Promise<IsolatedRun> => {
   const directory = await mkdtemp(join(root, "run-"));
   const workspace = join(directory, "workspace");
   const userData = join(directory, "user");
+  const windowToken = randomUUID();
   await mkdir(workspace);
   await mkdir(join(userData, "User"), { recursive: true });
   for (const name of ["extensions", "shared", "home"]) await mkdir(join(directory, name));
@@ -43,8 +46,9 @@ export const createIsolatedRun = async (): Promise<IsolatedRun> => {
     "extensions.autoCheckUpdates": false,
     "extensions.autoUpdate": false,
     "window.dialogStyle": "custom",
+    "window.title": `Native Continuity ${windowToken}`,
   }));
-  return { directory, workspace, userData };
+  return { directory, workspace, userData, windowToken };
 };
 
 export const inspectOwnedPayloads = async (run: IsolatedRun, resourceText: string): Promise<readonly string[]> => {

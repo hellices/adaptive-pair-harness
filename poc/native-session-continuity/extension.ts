@@ -17,6 +17,7 @@ export const activate = (extensionContext: vscode.ExtensionContext): ProbeApi =>
   const invocations: Invocation[] = [];
   const bootKey = randomUUID();
   let modelCalls = 0;
+  let tokenCountCalls = 0;
   const disposalEvents: string[] = [];
   let disposalApi: string;
   try {
@@ -60,10 +61,15 @@ export const activate = (extensionContext: vscode.ExtensionContext): ProbeApi =>
         modelCalls += 1;
         return Promise.reject(new Error("The continuity probe must not invoke a language model."));
       },
-      provideTokenCount: () => Promise.resolve(1),
+      provideTokenCount: () => {
+        tokenCountCalls += 1;
+        return Promise.resolve(1);
+      },
     }),
   );
-  const api: ProbeApi = { getState: () => ({ invocations: [...invocations], bootKey, modelCalls, disposalApi, disposalEvents }) };
+  const api: ProbeApi = { getState: () => ({
+    invocations: [...invocations], bootKey, modelCalls, tokenCountCalls, disposalApi, disposalEvents,
+  }) };
   if (process.env.AP_NATIVE_DRIVER === "1") {
     setImmediate(() => {
       void run().catch((error: unknown) => console.error(error))

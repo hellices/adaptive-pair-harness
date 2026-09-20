@@ -1896,8 +1896,22 @@ not substitutes for the two-host native continuity measurement.
 Focused independent re-review closes all four findings without an additional
 blocker; both real-host seven-phase runs were repeated after those corrections.
 
+Repository review then identified a debug-port allocation/startup race and the
+need to await a bounded child-close result after a termination signal fails.
+The corrected driver checks a fresh per-run token in both the discovered
+workbench title and the actual document before acting; it rejects an unrelated
+endpoint rather than relying on a free-port check. Failed signaling retains a
+five-second close wait and reports unconfirmed cleanup on expiry. Additional
+regressions cover those counterexamples. Model-response attempts and local
+token-count callbacks are now recorded separately, and the proposal flag is
+derived from per-phase manifest evidence plus the runtime guard rather than
+hardcoded. The probe has **18 non-GUI regression cases** in total.
+Focused independent review finds no remaining blocker in these corrections;
+both native seven-phase runs were repeated again with the final identity and
+evidence checks, and both response and token-count totals are zero.
+
 Current-branch local verification on Node.js **24.21.0** passes typechecking,
-full ESLint, and **2,756 root tests in 134 files**, including the 11 new probe
+full ESLint, and **2,763 root tests in 136 files**, including the 18 new probe
 regressions. The isolated Session Target POC still passes its 21 unit cases,
 compile, and packaging. The product build and seven-entry Stable VSIX
 verification pass; the **539,516-byte** production bundle and its packaged
@@ -1907,7 +1921,7 @@ no warning suppression or lint exemption was introduced. Final-head remote
 checks and review remain delivery gates, not implied by these local results.
 
 **Decision:** native-first historical checkpoint design is feasible for the
-controlled participant route. Authenticated GHCP Agent/CLI/SDK integration,
+controlled participant route. Authenticated GitHub Copilot Agent/CLI/SDK integration,
 native Pair-tool routing, public session binding/lifecycle, context boundaries,
 permission and cancellation behavior remain unmeasured. No claim is made for
 P2b atomic publication, power-loss survival, restored authority, automatic

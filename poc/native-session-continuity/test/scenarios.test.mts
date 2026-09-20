@@ -34,7 +34,7 @@ const exercise = async (peer: Invocation, own: Invocation): Promise<unknown> => 
   const invocations: Invocation[] = [];
   const queued = [peer, own];
   const api: ProbeApi = { getState: () => ({
-    invocations, bootKey: "current-boot", modelCalls: 0, disposalApi: "fixture", disposalEvents: [],
+    invocations, bootKey: "current-boot", modelCalls: 0, tokenCountCalls: 0, disposalApi: "fixture", disposalEvents: [],
   }) };
   commands.executeCommand.mockImplementation(() => {
     const next = queued.shift();

@@ -37,12 +37,16 @@ export const launchPhase = async (
       ...createProbeEnvironment(run),
       AP_NATIVE_DRIVER: "1", AP_NATIVE_PHASE: phase, AP_NATIVE_RESULT: resultPath,
       AP_NATIVE_RESOURCE: resource ?? "", AP_NATIVE_DEBUG_PORT: String(debugPort),
+      AP_NATIVE_WINDOW_TOKEN: run.windowToken,
     }, join(run.directory, `${phase}.log`), phase);
   const result = JSON.parse(await readFile(resultPath, "utf8")) as ProbeEvidence;
   console.log(JSON.stringify({ phase, status: result.status, hostVersion: result.hostVersion,
     invocations: result.state?.invocations.length, modelCalls: result.state?.modelCalls, error: result.error }));
   if (result.phase !== phase || result.status !== "passed" || !result.state) {
     throw new Error(`Native ${phase}: ${result.error ?? "missing or invalid evidence"}`);
+  }
+  if (!Array.isArray(result.enabledApiProposals) || result.enabledApiProposals.length !== 0) {
+    throw new Error(`Native ${phase}: missing or enabled API proposal evidence.`);
   }
   return result;
 };
