@@ -1,0 +1,35 @@
+{
+  "name": "native-session-continuity-probe",
+  "displayName": "Adaptive Pair Native Session Continuity Probe",
+  "version": "0.0.1",
+  "publisher": "adaptive-pair",
+  "private": true,
+  "engines": {
+    "vscode": "^1.136.0",
+    "node": ">=24"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "adaptive-pair.native-continuity-probe",
+        "name": "nativeprobe",
+        "fullName": "Native Continuity Probe",
+        "description": "Synthetic native session persistence probe."
+      },
+      {
+        "id": "adaptive-pair.native-continuity-peer",
+        "name": "nativepeer",
+        "fullName": "Native Continuity Peer",
+        "description": "Synthetic participant isolation probe."
+      }
+    ],
+    "languageModelChatProviders": [
+      {
+        "vendor": "adaptive-pair-native-probe",
+        "displayName": "Native Probe Offline Fixture"
+      }
+    ]
+  }
+}

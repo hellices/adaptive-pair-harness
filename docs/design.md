@@ -1,12 +1,14 @@
 # Adaptive Pair v2: Product and System Design
 
-- **Updated:** September 18, 2026
+- **Updated:** September 20, 2026
 - **Status:** P1 policy contracts, runtime-boundary/code-size stabilization, and
   version-1 event validation (PR #9) are merged. The owner separately authorized
   merging documentation PR #10 and implementing its reviewed P2a scope. The
-  host-independent journal parser and non-authorizing inspection are implemented;
-  the implementation PR still needs its own merge decision. The remaining v2
-  roadmap requires separately reviewed implementation plans and approval.
+  host-independent P2a journal parser and P2b minimized persistence/restart
+  contracts are merged (PRs #11 and #12). A bounded native Local-participant
+  continuity probe now passes; authenticated Copilot Agent integration and
+  live authority restoration remain unproven. The remaining v2 roadmap
+  requires separately reviewed implementation plans and approval.
 - **Implementation:** Stable Growth Mode preview implemented (Tasks 1–12):
   host-agnostic protocol, in-memory authoritative runtime, versioned harness kernel, Growth
   restraint, Pair Presence with join-in-progress capture, observed verification,
@@ -18,14 +20,15 @@
   commands, and the native Agent Plugin remain out of scope for this preview.
   The modes package also implements tested Pair admission, related human
   follow-up, and handoff-preflight policies without runtime or host wiring.
-- **Current plan:** `implementation-plan.md` records the reviewed P2a journal and
-  recovery contract sequence, deliberately replacing the completed event plan
-  retained at `469cb93:docs/implementation-plan.md`. The refactoring, P1, and
-  Foundation plans remain at `ad4b570:docs/implementation-plan.md`,
-  `9eebbf1:docs/implementation-plan.md`, and `ae1f095:docs/implementation-plan.md`.
-  P2a changes no live store or host behavior. Its completion does not authorize
-  durable storage, live authority restoration, the remaining P2 lifecycle, or
-  P3 editing/UI. Each PR needs its own merge direction.
+- **Current plan:** `implementation-plan.md` records the completed, reviewed
+  P2b pure-contract sequence, replacing P2a's plan retained at
+  `133c7a8:docs/implementation-plan.md`. Earlier event, refactoring, P1, and
+  Foundation plans remain in Git history. The
+  [native continuity spike](spikes/native-session-continuity-spike.md) is a
+  feasibility investigation, not a competing implementation plan. Neither
+  P2b completion nor native historical continuity authorizes durable storage,
+  live authority restoration, the remaining P2 lifecycle, or P3 editing/UI.
+  Each PR needs its own merge direction.
 
 This document is the first complete product and architecture specification for
 Adaptive Pair v2. Every v2 behavior starts here as an initial design decision;
@@ -941,6 +944,9 @@ A `PairSession` snapshot contains:
 - bounded event and evaluation summaries.
 
 Chat history is presentation context, not authoritative state.
+Native participant metadata can carry non-authorizing historical continuity;
+[section 13.3](#133-native-session-reuse-measured-boundary) separates that
+measured capability from live authority and durable publication.
 
 ### 6.3 Learning agreement
 
@@ -1389,6 +1395,11 @@ refresh, immediate new-session creation, and provider streaming remain covered.
 
 The POC has not yet confirmed persisted history, Pair tool routing, native
 interruption, complete target-list coexistence, or visual quality.
+The separate September 20
+[Local-participant continuity probe](spikes/native-session-continuity-spike.md)
+does confirm native history after restart, fork, and source deletion on two
+Stable hosts. It does not close this proposed Session Target POC's gates or
+prove the Copilot harness's native Agent integration.
 
 The v2 strategy is therefore dual-track:
 
@@ -1454,6 +1465,13 @@ Native mode is enabled only when a startup capability probe verifies:
 
 Preview hooks may provide defense in depth, but are not a correctness or
 security boundary.
+
+Native chat persistence alone does not satisfy this capability gate. The
+controlled participant's `ChatContext.history` is not an assumed session
+binding for a custom agent's extension-tool loop. Authenticated Copilot
+integration still needs an isolated end-to-end proof using supported APIs;
+runtime-visible hidden fields and workbench test-driver commands are not
+product contracts.
 
 ### 9.4 Controlled chat adapter
 
@@ -2334,6 +2352,41 @@ remain later increments. If a filesystem capability needs a prototype, obtain
 separate spike authorization, keep measured evidence in `docs/spikes/`, and
 integrate its decision here. A documentation PR or an in-memory fault model
 cannot approve or substitute for that work.
+
+### 13.3 Native session reuse: measured boundary
+
+**Measured, not product-wired:** the September 20, 2026
+[continuity spike](spikes/native-session-continuity-spike.md) passes seven
+full-application phases on macOS arm64 Stable **1.136.2** and installed Stable
+**1.138.0**. Synthetic `ChatResult.metadata` returns in the same participant's
+`ChatContext.history` after explicit session reopening and native fork. A
+fresh chat has no history; another participant cannot read the fixture's
+metadata. Deleting the original native session removes its witnessed payload
+but leaves the independently reopened fork. No Copilot extension, sign-in,
+fixture model call, or API proposal is used.
+
+**Design direction:** prefer existing native history for a controlled `@pair`
+historical checkpoint before selecting an independent disk store. A later
+reviewed checkpoint contract must be closed, minimized, bounded, and explicitly
+non-authorizing. Forks copy history, not unique live identity; selected-session
+continuity is not automatic resume. Pair must not promise to erase native
+forks, backups, or other copies outside its ownership.
+
+**Still gated:** authenticated Copilot Agent/custom-agent/tool-loop integration,
+public session binding and lifecycle, context/cancellation/permission contracts,
+and real Pair-tool coexistence. The diagnostic `ChatRequest.sessionResource`
+used by the probe is absent from the maintained Stable declarations, while
+`onDidDisposeChatSession` throws a proposed-API restriction. Neither is approved
+for production use. This result also does not complete the separate proposed
+Session Target spike.
+
+**Not established:** an extension-controlled durable-write acknowledgement,
+atomic pre-effect publication, power-loss recovery, authoritative erasure, or
+live restart admission. Native metadata is not an implementation of the P2b
+storage port. Do not restore grants, scopes, ownership, or automatic replay
+from it. An independent adapter remains deferred rather than presumed
+necessary; any remaining storage requirement needs its own reviewed evidence
+and implementation plan. No production behavior changes in this investigation.
 
 ## 14. Privacy and security
 

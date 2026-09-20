@@ -268,8 +268,8 @@ compatibility, and version updates follow the
 must pass the affected regression checks.
 The [sequential roadmap](docs/design.md#sequential-delivery-roadmap) covers the
 remaining work through v2.0. The current
-[P2b persistence and restart contract plan](docs/implementation-plan.md) follows
-the merged P2a implementation (PR #11). P2a supplies bounded journal parsing and
+[P2b persistence and restart contract plan](docs/implementation-plan.md) is
+complete and merged (PR #12), following P2a (PR #11). P2a supplies bounded journal parsing and
 read-only inspection, not a durable store or working resume feature. P2b adds a
 separate closed, minimized journal format, exact historical replay, trusted
 candidate projection with explicit commit resolution, and a non-authorizing
@@ -278,6 +278,13 @@ it is not a disk adapter or a second application-wired journal. No existing
 journal is serialized wholesale, and no recovered record grants live authority.
 Disk storage, live restoration, Pair ownership/handoff, and P3 editing/UI retain
 their separate design, review, verification, and merge gates.
+
+Before choosing another store, the
+[native continuity feasibility probe](docs/spikes/native-session-continuity-spike.md)
+passes seven restart/fork/isolation/deletion phases on two Stable VS Code hosts.
+This supports native-first historical checkpoints for a controlled participant;
+it does **not** prove authenticated Copilot Agent integration, durable Pair
+authority, or automatic resume. No production persistence behavior changes.
 
 ## Development checks
 
@@ -292,8 +299,11 @@ npm run check
 npm --prefix poc/session-target run check
 ```
 
-`npm run check` runs workspace typechecking, ESLint, and the workspace test
-suite. `npm run lint` also covers the isolated POC's authored source/tests,
+`npm run check` runs workspace typechecking, ESLint, and the test suite,
+including the dependency-free native continuity probe's non-GUI regressions.
+Run its isolated desktop experiment explicitly with
+`npm run probe:native-continuity`; it is not part of GUI CI.
+`npm run lint` also covers the isolated POC's authored source/tests,
 host fixtures, and root/POC lint and test configurations. Production and regular
 tests use typed linting; standalone configurations and intentionally incomplete
 host fixtures use syntactic rules with the same size limits. Only fixture

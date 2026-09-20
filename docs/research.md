@@ -1846,6 +1846,87 @@ their checked stable releases: checkout 7.0.1, setup-node 7.0.0, and
 upload-artifact 7.0.1; no workflow action update is required. The Microsoft
 release-API SAML restrictions remain unchanged and were not bypassed.
 
+### Native session continuity feasibility
+
+On **September 20, 2026**, the owner required an actual native-session
+feasibility check before choosing the next persistence implementation. P2b
+PR #12 had merged at **`ba20468`**; post-merge CI **35481373400** passed all
+four jobs and all **47 actual steps**. That baseline is not evidence for the
+new probe or for a production storage adapter.
+
+The [bounded spike](spikes/native-session-continuity-spike.md) uses a private,
+typed [Local-participant fixture](../poc/native-session-continuity/) in normal
+development hosts. Seven separate full application launches establish seed,
+explicit reopen, fork, participant isolation, confirmed deletion, reopened
+fork after deletion, and fresh-chat behavior. Both **Stable 1.136.2** and
+**installed Stable 1.138.0** pass on macOS arm64. Each run has seven distinct
+extension boot keys, zero fixture model calls, no Copilot extension, and no
+enabled API proposals. A native payload containing the seed is witnessed
+before deletion; afterward the original is absent and the fork remains.
+This is selected-session historical continuity, not automatic resumption.
+
+The supported evidence producers are `ChatResult.metadata` and
+`ChatContext.history`, consistent with the official
+[participant guide](https://code.visualstudio.com/api/extension-guides/ai/chat)
+and [API reference](https://code.visualstudio.com/api/references/vscode-api#ChatResult).
+Native resource fields, workbench commands, CDP selectors, and private payload
+inspection are diagnostic-only. In particular, `ChatRequest.sessionResource`
+is not in the maintained public declarations, and accessing
+`onDidDisposeChatSession` throws the `chatParticipantPrivate` proposal guard.
+The [native session UI documentation](https://code.visualstudio.com/docs/agents/run/sessions/manage-sessions)
+does not establish third-party transactional storage or authority guarantees.
+
+The experiment corrected two misleading starting assumptions: extension-test
+mode in these hosts uses in-memory storage, and opening generic Chat after a
+restart need not reopen the old session. The final driver avoids
+`--extensionTestsPath`, isolates shared-data as well as user-data, explicitly
+reopens the synthetic session, and verifies actual native fork/delete effects.
+The spike records these corrections and reproducible commands without
+publishing raw local logs or machine-specific paths.
+
+Independent review also reproduced false peer-isolation evidence when the two
+requests were routed to different sessions, profile redirection through
+inherited VS Code bootstrap variables, and logging/termination error escapes.
+The final probe requires matching participant identities and the original
+session resource, allowlists the child environment, opens the log before
+spawning, and handles owned-group termination and log completion. Eleven
+non-GUI regression cases cover these review findings; their initial failures
+were observed before the fixes. They are automated safeguards for the probe,
+not substitutes for the two-host native continuity measurement.
+Focused independent re-review closes all four findings without an additional
+blocker; both real-host seven-phase runs were repeated after those corrections.
+
+Current-branch local verification on Node.js **24.21.0** passes typechecking,
+full ESLint, and **2,756 root tests in 134 files**, including the 11 new probe
+regressions. The isolated Session Target POC still passes its 21 unit cases,
+compile, and packaging. The product build and seven-entry Stable VSIX
+verification pass; the **539,516-byte** production bundle and its packaged
+entry-point scope remain unchanged. Documentation-relative links were checked
+separately. The existing Vite native-config-loader warning remains visible;
+no warning suppression or lint exemption was introduced. Final-head remote
+checks and review remain delivery gates, not implied by these local results.
+
+**Decision:** native-first historical checkpoint design is feasible for the
+controlled participant route. Authenticated GHCP Agent/CLI/SDK integration,
+native Pair-tool routing, public session binding/lifecycle, context boundaries,
+permission and cancellation behavior remain unmeasured. No claim is made for
+P2b atomic publication, power-loss survival, restored authority, automatic
+replay, or global erasure. A separate disk store is deferred, not selected by
+default. Neither this evidence nor a documentation merge authorizes a product
+implementation of the proposed checkpoint.
+
+The dependency inventory now contains **17 manifests**: the new private fixture
+adds no dependency declarations or lockfile, so the same two graphs remain.
+Both full audits have **zero vulnerabilities** (root: 407 dependencies;
+isolated Session Target POC: 257). The maintained `@types/vscode@1.136.0`
+compiles the probe; the exact `@types/vscode@1.138.0` registry request returned
+**E404**, so runtime-visible additions are not assumed public or used to force
+an unavailable upgrade. Authenticated Microsoft release/source API requests
+returned SAML **403** and were not bypassed. Installed build manifests and
+public API documentation support the scoped host report, not a “latest
+upstream verified” claim. Root typechecking/lint/tests include the probe; the GUI
+continuity test remains an explicit manual measurement, not a CI result.
+
 ## 7. Evaluation hypotheses
 
 The first studies test separate hypotheses:

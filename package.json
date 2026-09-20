@@ -12,8 +12,9 @@
   ],
   "scripts": {
     "clean": "npm run clean --workspaces --if-present",
-    "typecheck": "tsc -b",
-    "lint": "eslint packages apps scripts eslint.config.mjs vitest.config.ts poc/session-target/src poc/session-target/test poc/session-target/vitest.config.mts --max-warnings=0",
+    "typecheck": "tsc -b && tsc -p poc/native-session-continuity",
+    "lint": "eslint packages apps scripts eslint.config.mjs vitest.config.ts poc/session-target/src poc/session-target/test poc/session-target/vitest.config.mts poc/native-session-continuity --max-warnings=0",
+    "probe:native-continuity": "tsc -p poc/native-session-continuity && node poc/native-session-continuity/dist/run.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "build": "node scripts/build-extension.mjs",
