@@ -17,6 +17,7 @@ export async function createRuntimeFixture() {
   const effects: string[] = [];
   const calls: { tool: string; sessionId: string; toolCallId: string }[] = [];
   const hooks: { tool: string; sessionId: string }[] = [];
+  const hookFailures: { tool: string; sessionId: string }[] = [];
   const permissions: { kind: string; tool: string | undefined; sessionId: string; denied: boolean }[] = [];
   const makeClient = (): CopilotClient => new CopilotClient({
     mode: "empty",
@@ -61,18 +62,23 @@ export async function createRuntimeFixture() {
     onPermissionRequest: permissionHandler(),
     hooks: { onPreToolUse(input, invocation) {
       hooks.push({ tool: input.toolName, sessionId: invocation.sessionId });
-      if (input.toolName === "pair_denied") {
-        return { permissionDecision: "deny", permissionDecisionReason: "Synthetic deny" };
+      try {
+        if (input.toolName === "pair_denied") {
+          return { permissionDecision: "deny", permissionDecisionReason: "Synthetic deny" };
+        }
+        if (["pair_hook_error", "pair_guarded"].includes(input.toolName)) {
+          throw new Error("Synthetic hook failure");
+        }
+        return {};
+      } catch (error) {
+        hookFailures.push({ tool: input.toolName, sessionId: invocation.sessionId });
+        throw error;
       }
-      if (["pair_hook_error", "pair_guarded"].includes(input.toolName)) {
-        throw new Error("Synthetic hook failure");
-      }
-      return {};
     } },
     ...extra,
   });
   return {
-    root, model, effects, calls, hooks, permissions, configuration, permissionHandler,
+    root, model, effects, calls, hooks, hookFailures, permissions, configuration, permissionHandler,
     get client(): CopilotClient { return client; },
     async restart(): Promise<void> {
       assert.deepEqual(await client.stop(), []);

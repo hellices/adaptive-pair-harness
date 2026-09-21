@@ -72,6 +72,8 @@ await test("isolated Copilot SDK runtime reuse", { timeout: 120_000 }, async (co
 
   await context.test("honors an explicit pre-tool denial before requesting permission", async () => {
     await fixture.invoke(session, "pair_denied", "PAIR_SYNTHETIC_DENY");
+    assert(fixture.hooks.some((hook) => hook.tool === "pair_denied" && hook.sessionId === session.sessionId),
+      "Denying hook was not observed for this session");
     assert(!fixture.calls.some((call) => call.tool === "pair_denied"));
     assert(!fixture.permissions.some((request) => request.tool === "pair_denied"));
   });
@@ -85,12 +87,20 @@ await test("isolated Copilot SDK runtime reuse", { timeout: 120_000 }, async (co
 
   await context.test("does not treat a thrown hook as a denial", async () => {
     await fixture.invoke(session, "pair_hook_error", "PAIR_SYNTHETIC_HOOK_ERROR");
+    assert(fixture.hooks.some((hook) => hook.tool === "pair_hook_error" && hook.sessionId === session.sessionId),
+      "Throwing hook was not observed for this session");
+    assert(fixture.hookFailures.some((hook) => hook.tool === "pair_hook_error"
+      && hook.sessionId === session.sessionId), "Hook exception was not observed");
     assert(fixture.effects.includes("pair_hook_error"));
     assert(fixture.permissions.some((request) => request.tool === "pair_hook_error" && !request.denied));
   });
 
   await context.test("retains an effect-side guard despite hook failure and native permission", async () => {
     await fixture.invoke(session, "pair_guarded", "PAIR_SYNTHETIC_GUARD");
+    assert(fixture.hooks.some((hook) => hook.tool === "pair_guarded" && hook.sessionId === session.sessionId),
+      "Guarded tool's throwing hook was not observed for this session");
+    assert(fixture.hookFailures.some((hook) => hook.tool === "pair_guarded"
+      && hook.sessionId === session.sessionId), "Guarded tool's hook exception was not observed");
     assert(fixture.calls.some((call) => call.tool === "pair_guarded"));
     assert(fixture.permissions.some((request) => request.tool === "pair_guarded" && !request.denied));
     assert(!fixture.effects.includes("pair_guarded"));

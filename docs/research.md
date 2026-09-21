@@ -2006,8 +2006,14 @@ Local follow-up validation passes **2,764 root tests / 136 files**, full
 typechecking and lint, the SDK's ten Node test entries, and the Session Target
 POC's **21 tests / 5 files** plus compilation and packaging. The Stable VSIX
 still has seven entries and a **539,516-byte** production bundle, with no SDK
-or POC entry. Focused independent review found no issue in this follow-up's
-isolation, evidence, cleanup, or documentation boundaries. The existing Vite
+or POC entry. Initial focused independent review found no issue in this follow-up's
+isolation, evidence, cleanup, or documentation boundaries. Subsequent repository
+review prompted direct hook-invocation witnesses in three scenarios. A no-op
+mutation of both throwing-hook paths reproduced false positives before those
+witnesses, and fails both affected scenarios afterward; restoring the callbacks
+passes the suite. Separate exception witnesses reject a second mutation that
+logs invocation but returns instead of throwing. Neither mutation is retained.
+The existing Vite
 native-config-loader warning remains visible. Final-head remote CI and PR
 review remain separate delivery gates; local results do not imply either.
 

@@ -89,6 +89,10 @@ freshly rerun or as authentication tests. Linux CI execution is a delivery
 check, not a claim that native Linux VS Code continuity was measured. Windows
 is explicitly rejected by this POSIX shell-denial probe.
 
+The restart case uses single-call approvals, not remembered session approval
+rules. It does not prove that all cached permissions are reset. A product must
+recheck Pair authority at each effect regardless of the SDK's approval state.
+
 ## Important safety finding
 
 SDK 1.0.14's
@@ -157,6 +161,15 @@ Root ESLint includes the typed fixture with the existing test size limits;
 there are no new lint exemptions. The two CI/lint coverage regressions were
 observed failing before wiring these checks. Product source and the reviewed
 P2b implementation plan remain unchanged.
+
+Repository review requested direct hook-invocation witnesses. The explicit
+denial and both throwing-hook scenarios now assert the expected tool and
+session in the observed callback log. A temporary no-op mutation of the two
+throwing-hook paths passed the earlier assertions; with the new witnesses,
+both affected scenarios fail. Restoring the real callbacks passes the suite.
+The fixture also observes actual exceptions before rethrowing them to the SDK;
+a mutation that retains invocation logging but returns instead of throwing
+fails these exception witnesses. Neither mutation is retained in the fixture.
 
 ## Remaining product gates
 
