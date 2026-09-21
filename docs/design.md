@@ -1,13 +1,14 @@
 # Adaptive Pair v2: Product and System Design
 
-- **Updated:** September 20, 2026
+- **Updated:** September 21, 2026
 - **Status:** P1 policy contracts, runtime-boundary/code-size stabilization, and
   version-1 event validation (PR #9) are merged. The owner separately authorized
   merging documentation PR #10 and implementing its reviewed P2a scope. The
   host-independent P2a journal parser and P2b minimized persistence/restart
   contracts are merged (PRs #11 and #12). A bounded native Local-participant
-  continuity probe now passes; authenticated Copilot Agent integration and
-  live authority restoration remain unproven. The remaining v2 roadmap
+  continuity probe and an isolated Copilot SDK runtime probe now pass;
+  authenticated native Agent integration and live authority restoration remain
+  unproven. The remaining v2 roadmap
   requires separately reviewed implementation plans and approval.
 - **Implementation:** Stable Growth Mode preview implemented (Tasks 1–12):
   host-agnostic protocol, in-memory authoritative runtime, versioned harness kernel, Growth
@@ -412,10 +413,10 @@ changes, make any required protocol or storage migration explicit, and rerun
 the affected type, lint, unit, contract, isolated-host, and package checks.
 Audit development dependencies as well as production dependencies; an existing
 finding still needs triage and disposition. CI separately installs and runs
-`npm audit --audit-level=low` for the root workspace graph and the active
-`poc/session-target` graph, using `npm --prefix poc/session-target` for the latter.
-Both audits include development dependencies and block the build-and-package
-job on failure. The isolated POC also runs its compile/unit checks and packaging;
+`npm audit --audit-level=low` for the root workspace, `poc/session-target`, and
+`poc/copilot-runtime-reuse` graphs, using `npm --prefix` for each isolated graph.
+All three audits include development dependencies and block the build-and-package
+job on failure. The Session Target POC also runs its compile/unit checks and packaging;
 it remains separate from the Stable VSIX and its spike remains in progress.
 
 A toolchain refresh does not itself require a product or protocol version bump
@@ -2372,10 +2373,29 @@ non-authorizing. Forks copy history, not unique live identity; selected-session
 continuity is not automatic resume. Pair must not promise to erase native
 forks, backups, or other copies outside its ownership.
 
-**Still gated:** authenticated Copilot Agent/custom-agent/tool-loop integration,
+**Execution-engine reuse is distinct:** the September 21
+[SDK reuse spike](spikes/api-copilot-runtime-reuse-spike.md) exercises the actual
+Copilot SDK 1.0.14 / bundled runtime 1.0.85 with a scripted local model. Nine
+scenarios cover tool filtering, denial, hook failure, an independent effect
+guard, runtime restart, fresh permission decisions, cooperative cancellation,
+and API-visible session deletion. This supports an optional SDK adapter design,
+not an authenticated native Agent claim or a product implementation. A thrown
+hook does not deny execution: Pair must retain the actual effect boundary.
+
+**No implicit session bridge:** SDK/CLI history and VS Code participant history
+are different stores and lifecycles. A copied metadata/session ID cannot bind
+a native fork to the same live SDK authority. A future bridge needs explicit
+ownership, fresh admission, concurrency, fork, cancellation, and deletion
+semantics. Native custom agents and extension tools are documented integration
+points, but do not alone establish those contracts or strict Growth output
+restraint. Do not replace the controlled adapter or add a production SDK
+dependency on the strength of this experiment.
+
+**Still gated:** authenticated native Copilot Agent/custom-agent integration,
 public session binding and lifecycle, context/cancellation/permission contracts,
 and real Pair-tool coexistence. The diagnostic `ChatRequest.sessionResource`
-used by the probe is absent from the maintained Stable declarations, while
+used by the probe is absent from the maintained Stable declarations and the
+separately inspected published `@types/vscode@1.137.0`, while
 `onDidDisposeChatSession` throws a proposed-API restriction. Neither is approved
 for production use. This result also does not complete the separate proposed
 Session Target spike.

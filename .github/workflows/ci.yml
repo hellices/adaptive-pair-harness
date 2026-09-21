@@ -47,6 +47,15 @@ jobs:
       - name: Package Session Target POC
         run: npm --prefix poc/session-target run package
 
+      - name: Install Copilot runtime probe dependencies
+        run: npm --prefix poc/copilot-runtime-reuse ci
+
+      - name: Audit Copilot runtime probe dependencies
+        run: npm --prefix poc/copilot-runtime-reuse audit --audit-level=low
+
+      - name: Check Copilot runtime probe
+        run: npm --prefix poc/copilot-runtime-reuse run check
+
       - name: Build workspace package exports
         run: npm run typecheck
 

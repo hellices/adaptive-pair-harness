@@ -5,7 +5,7 @@ status: "Complete: bounded Local-participant feasibility; native Agent gate open
 priority: "High"
 timebox: "1 engineering day"
 created: 2026-09-20
-updated: 2026-09-20
+updated: 2026-09-21
 owner: "Adaptive Pair maintainers"
 tags: ["technical-spike", "vscode", "copilot", "persistence"]
 ---
@@ -28,6 +28,11 @@ The [design decision](../design.md#133-native-session-reuse-measured-boundary)
 and [research evidence](../research.md#native-session-continuity-feasibility)
 are the canonical integration points. The completed P2b
 [implementation plan](../implementation-plan.md) remains unchanged in scope.
+
+The September 21 [execution-engine follow-up](api-copilot-runtime-reuse-spike.md)
+separately verifies Copilot SDK mechanics with an unauthenticated, isolated
+runtime and a deterministic local model. It maps both reuse layers without
+relabeling this Local-participant experiment as a Copilot Agent integration test.
 
 | Gate | Result | Permitted conclusion |
 | --- | --- | --- |
@@ -212,7 +217,8 @@ log-open gating, log failure cleanup, bounded termination races/errors,
 endpoint identity, model/token accounting, proposal evidence, and rejection
 of incorrect participant/session evidence. The GUI continuity run is
 **manual**, not an additional CI claim. The new private manifest declares no
-dependencies and adds no third dependency graph or lockfile. Normal product
+dependencies and itself adds no dependency graph or lockfile. The subsequent
+SDK experiment has a separate third graph. Normal product
 build and package allowlists continue to exclude all POC code.
 
 ## Remaining gate before product implementation

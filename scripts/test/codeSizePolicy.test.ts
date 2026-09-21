@@ -74,7 +74,7 @@ describe("enforced code size policy", () => {
     };
 
     expect(manifest.scripts.lint).toBe(
-      "eslint packages apps scripts eslint.config.mjs vitest.config.ts poc/session-target/src poc/session-target/test poc/session-target/vitest.config.mts poc/native-session-continuity --max-warnings=0",
+      "eslint packages apps scripts eslint.config.mjs vitest.config.ts poc/session-target/src poc/session-target/test poc/session-target/vitest.config.mts poc/native-session-continuity poc/copilot-runtime-reuse/test --max-warnings=0",
     );
   });
 });
