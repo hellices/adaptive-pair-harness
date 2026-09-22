@@ -13,14 +13,14 @@ import { deriveNativeHistoryManifest, nativeHistoryEnvironment, verifyNativeHist
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** @param {string} executable @param {string[]} args @param {NodeJS.ProcessEnv} environment @param {string} logPath */
-const runOwnedNativeHost = async (executable, args, environment, logPath) => {
+export const runOwnedNativeHost = async (executable, args, environment, logPath) => {
   const log = createWriteStream(logPath, { flags: "wx" });
   const completedLog = finished(log).then(() => undefined,
     (error) => error instanceof Error ? error : new Error("Native log stream failed."));
   const child = spawn(executable, args, { detached: true, env: environment, stdio: ["ignore", "pipe", "pipe"] });
+  const state = { failed: false, closed: false, error: new Error("Native host failed.") };
   try {
     await new Promise((resolveExit, rejectExit) => {
-      const state = { failed: false, closed: false, error: new Error("Native host failed.") };
       const stop = (error = new Error("Native history phase exceeded 180 seconds.")) => {
         if (state.failed || state.closed) { return; }
         state.failed = true;
@@ -39,16 +39,19 @@ const runOwnedNativeHost = async (executable, args, environment, logPath) => {
       const timeout = setTimeout(stop, 180_000);
       log.once("error", stop);
       child.once("error", stop);
-      child.once("close", code => {
+      child.once("close", (code, signal) => {
         state.closed = true;
         clearTimeout(timeout);
         if (state.failed) { rejectExit(state.error); }
         else if (code === 0) { resolveExit(undefined); }
-        else { rejectExit(new Error(`Native history host exited with ${String(code)}.`)); }
+        else { rejectExit(new Error(`Native history host exited with code ${String(code)} and signal ${String(signal)}.`)); }
       });
       child.stdout.pipe(log, { end: false });
       child.stderr.pipe(log, { end: false });
     });
+  } catch (error) {
+    state.failed = true;
+    state.error = error instanceof Error ? error : new Error(String(error));
   } finally {
     child.stdout.unpipe(log);
     child.stderr.unpipe(log);
@@ -56,7 +59,11 @@ const runOwnedNativeHost = async (executable, args, environment, logPath) => {
     await completedLog;
   }
   const logFailure = await completedLog;
-  if (logFailure) { throw logFailure; }
+  const failure = state.failed ? state.error : logFailure;
+  if (failure) {
+    const output = await readFile(logPath).catch(() => Buffer.from("Native host log is unavailable."));
+    throw new Error(`${failure.message}\nNative host output:\n${output.subarray(-8192).toString("utf8")}`, { cause: failure });
+  }
 };
 
 /** @param {string} executable @param {string} directory @param {string} phase @param {string} [resource] */
