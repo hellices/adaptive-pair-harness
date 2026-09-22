@@ -1,7 +1,6 @@
-import type { PairToolName } from "@adaptive-pair/harness";
+import { nativeToolName, type PairToolName } from "@adaptive-pair/harness";
 import type { LearningAgreement, PairRuntimeSnapshot, WorkUnit } from "@adaptive-pair/protocol";
-import type { PairCoordinatorPort } from "@adaptive-pair/runtime";
-import { invokeGrowthUserAction } from "./growthUserActions.js";
+import type { InvokeToolOptions, PairCoordinatorPort } from "@adaptive-pair/runtime";
 import { parseVerificationScript } from "./verificationPlan.js";
 import { canonicalRelative, isBinaryPath, isSecretPath } from "./workspaceContext.js";
 
@@ -35,6 +34,14 @@ export const isSetupText = (value: string, maximum = 300): boolean =>
     return code >= 32 && code !== 127;
   });
 
+export const normalizeGrowthSetupPath = (value: string): string | undefined => {
+  if (!isSetupText(value, 1_024)) { return undefined; }
+  const path = canonicalRelative(value);
+  return path === undefined || isSecretPath(path) || isBinaryPath(path) ||
+    path.split("/").some(segment => segment === ".git" || segment === "node_modules")
+    ? undefined : path;
+};
+
 export const normalizeGrowthSetupInput = (input: GrowthSetupInput): GrowthSetupInput | undefined => {
   if (
     !isSetupText(input.objective) || !isSetupText(input.independentCheck) ||
@@ -42,14 +49,12 @@ export const normalizeGrowthSetupInput = (input: GrowthSetupInput): GrowthSetupI
   ) {
     return undefined;
   }
-  const allowedPath = canonicalRelative(input.allowedPath);
+  const allowedPath = normalizeGrowthSetupPath(input.allowedPath);
   const script = parseVerificationScript(input.verificationPlan);
   const plans = script === undefined ? [] : [script, ...["npm", "pnpm", "yarn"].flatMap(runner =>
     [`${runner} ${script}`, `${runner} run ${script}`])];
   if (
     allowedPath === undefined ||
-    isSecretPath(allowedPath) || isBinaryPath(allowedPath) ||
-    allowedPath.split("/").some(segment => segment === ".git" || segment === "node_modules") ||
     !plans.includes(input.verificationPlan.trim())
   ) {
     return undefined;
@@ -108,9 +113,9 @@ class SetupTransaction {
   public async apply(name: PairToolName, input: Readonly<Record<string, unknown>>, explicit = true): Promise<void> {
     const before = this.current();
     const observed = { runtimeRevision: before.revision, authorityEpoch: before.session?.authorityEpoch };
-    const result = explicit
-      ? await invokeGrowthUserAction(this.deps.coordinator, name, input, this.signal, observed)
-      : await this.deps.coordinator.invokeTool(name, input, this.signal, observed);
+    const options = explicit ? await this.grant(name, before) : observed;
+    this.current();
+    const result = await this.deps.coordinator.invokeTool(name, input, this.signal, options);
     if (result.status !== "confirmed") {
       throw new Error("SETUP_ACTION_FAILED");
     }
@@ -123,6 +128,26 @@ class SetupTransaction {
     }
     this.expected = after;
     this.current();
+  }
+
+  private async grant(name: PairToolName, before: PairRuntimeSnapshot): Promise<InvokeToolOptions> {
+    const userActionId = await this.deps.coordinator.grantUserAction(name, this.signal, {
+      runtimeRevision: before.revision, authorityEpoch: before.session?.authorityEpoch,
+    });
+    this.signal.throwIfAborted();
+    const granted = this.deps.snapshotNow();
+    const record = granted.session?.userActionGrants.find(grant => grant.id === userActionId);
+    if (
+      !sameSession(before, granted) || granted.revision !== before.revision + 1 ||
+      granted.session?.authorityEpoch !== before.session?.authorityEpoch ||
+      record?.status !== "available" || record.nativeToolName !== nativeToolName(name) ||
+      record.runtimeRevision !== granted.revision || record.authorityEpoch !== granted.session?.authorityEpoch
+    ) {
+      throw new Error("SETUP_STALE");
+    }
+    this.expected = granted;
+    this.current();
+    return { userActionId, runtimeRevision: granted.revision, authorityEpoch: granted.session?.authorityEpoch };
   }
 }
 
@@ -140,6 +165,49 @@ const workUnitFor = (input: GrowthSetupInput, snapshot: PairRuntimeSnapshot): Wo
   baseline: {}, status: "proposed",
 });
 
+const descriptionsFor = (input: GrowthSetupInput): Readonly<Record<GrowthSetupStage, string>> => ({
+  learning: `Learning goal: ${input.objective}. You own implementation, diagnosis, and repair.\nHint ceiling: 4. Independent variation: ${input.independentCheck}.`,
+  mode: "Use Growth mode? You own all edits; the assistant only offers bounded guidance.",
+  "work-unit": `Objective: ${input.objective}. Scope: ${input.allowedPath}. Owner: you.\nVerification: ${input.verificationPlan}. The script is checked and separately confirmed when /check runs.`,
+});
+
+const proposedInput = (snapshot: PairRuntimeSnapshot): GrowthSetupInput | undefined => {
+  const session = snapshot.session;
+  const unit = session?.workUnit;
+  const agreement = session?.learningAgreement;
+  if (
+    session?.mode !== "growth" || unit?.status !== "proposed" || unit.mode !== "growth" ||
+    unit.owner !== "human" || unit.capability !== "implementation" || unit.learningValue !== "high" ||
+    unit.allowedPaths.length !== 1 || unit.allowedPaths[0] === undefined || agreement === undefined ||
+    agreement.maximumHintLevel !== 4 || agreement.learningGoals.length !== 1 ||
+    agreement.learningGoals[0] !== unit.objective || agreement.familiarAreas.length !== 0 ||
+    agreement.delegatableWork.length !== 0 ||
+    agreement.humanOwnedCapabilities.join(",") !== "implementation,diagnosis,repair" ||
+    unit.acceptanceChecks.length !== 2 || unit.acceptanceChecks[0] !== unit.objective ||
+    unit.acceptanceChecks[1] !== "The agreed verification passes" || Object.keys(unit.baseline).length !== 0 ||
+    unit.stoppingCondition !== "The objective and verification are satisfied"
+  ) {
+    return undefined;
+  }
+  return normalizeGrowthSetupInput({
+    objective: unit.objective, allowedPath: unit.allowedPaths[0],
+    independentCheck: agreement.independentCheck, verificationPlan: unit.verificationPlan,
+  });
+};
+
+const resumeProposal = async (transaction: SetupTransaction): Promise<GrowthSetupOutcome> => {
+  const initial = transaction.current();
+  const input = proposedInput(initial);
+  const unit = initial.session?.workUnit;
+  if (input === undefined || unit === undefined) { return "unavailable"; }
+  const descriptions = descriptionsFor(input);
+  for (const stage of ["learning", "mode", "work-unit"] as const) {
+    if (!await transaction.confirm(stage, descriptions[stage])) { return "cancelled"; }
+  }
+  await transaction.apply("pair_agree_work_unit", { workUnitId: unit.id });
+  return "completed";
+};
+
 export const runGrowthSetup = async (
   deps: GrowthSetupDependencies,
   signal: AbortSignal,
@@ -149,13 +217,15 @@ export const runGrowthSetup = async (
   }
   const initial = deps.snapshotNow();
   if (
-    !enabled(initial) || initial.session?.status !== "briefing" || initial.session.workUnit !== undefined ||
+    !enabled(initial) || initial.session?.status !== "briefing" ||
+    (initial.session.workUnit !== undefined && initial.session.workUnit.status !== "proposed") ||
     (initial.session.mode !== undefined && initial.session.mode !== "growth") || deps.isAvailable?.() === false
   ) {
     return "unavailable";
   }
   const transaction = new SetupTransaction(deps, signal, initial);
   try {
+    if (initial.session.workUnit !== undefined) { return await resumeProposal(transaction); }
     const collected = await deps.ui.collect(signal);
     transaction.current();
     if (collected === undefined) {
@@ -166,21 +236,16 @@ export const runGrowthSetup = async (
       return "unavailable";
     }
     await transaction.prepare();
-    if (!await transaction.confirm("learning", [
-      `Learning goal: ${input.objective}. You own implementation, diagnosis, and repair.`,
-      `Hint ceiling: 4. Independent variation: ${input.independentCheck}.`,
-    ].join("\n"))) {
+    const descriptions = descriptionsFor(input);
+    if (!await transaction.confirm("learning", descriptions.learning)) {
       return "cancelled";
     }
     await transaction.apply("pair_confirm_learning", { agreement: agreementFor(input) });
-    if (!await transaction.confirm("mode", "Use Growth mode? You own all edits; the assistant only offers bounded guidance.")) {
+    if (!await transaction.confirm("mode", descriptions.mode)) {
       return "cancelled";
     }
     await transaction.apply("pair_select_mode", { mode: "growth" });
-    if (!await transaction.confirm("work-unit", [
-      `Objective: ${input.objective}. Scope: ${input.allowedPath}. Owner: you.`,
-      `Verification: ${input.verificationPlan}. The script is checked and separately confirmed when /check runs.`,
-    ].join("\n"))) {
+    if (!await transaction.confirm("work-unit", descriptions["work-unit"])) {
       return "cancelled";
     }
     const workUnit = workUnitFor(input, transaction.current());

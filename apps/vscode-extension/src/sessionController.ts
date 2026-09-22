@@ -135,7 +135,8 @@ export class SessionController implements vscode.Disposable {
     this.ensureUsable();
     const lifetime = AbortSignal.any([signal, this.captureLifetime.signal]);
     lifetime.throwIfAborted();
-    const observed = await this.snapshot();
+    const observed = this.snapshotNow();
+    await this.snapshot();
     const assertCurrent = (): void => {
       lifetime.throwIfAborted();
       const current = this.snapshotNow();

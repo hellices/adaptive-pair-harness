@@ -145,4 +145,17 @@ describe("SessionController — explicitly requested Growth entry", () => {
     await expect(controller.prepareGrowthEntry(new AbortController().signal)).rejects.toThrow();
     expect(controller.snapshotNow().session?.entrySnapshot).toBeUndefined();
   });
+
+  it("does not rebind entry capture when revision changes during its first await", async () => {
+    const controller = new SessionController();
+    await controller.startSession();
+    const capture = vi.spyOn(WorkspaceContext.prototype, "capture").mockResolvedValue(entry);
+    vi.spyOn(controller, "snapshot").mockImplementationOnce(async () => {
+      await controller.bumpObservationRevision();
+      return controller.snapshotNow();
+    });
+    await expect(controller.prepareGrowthEntry(new AbortController().signal)).rejects.toThrow();
+    expect(capture).not.toHaveBeenCalled();
+    expect(controller.snapshotNow().session?.entrySnapshot).toBeUndefined();
+  });
 });

@@ -138,6 +138,43 @@ describe("Growth setup admission boundaries", () => {
     expect(harness.store.snapshotNow().session?.userActionGrants).toHaveLength(0);
   });
 
+  it.each(["pair_confirm_learning", "pair_select_mode", "pair_agree_work_unit"] as const)(
+    "rechecks host admission after the %s grant before invocation", async blockedTool => {
+      const harness = await createHarness();
+      let available = true;
+      const grant = harness.coordinator.grantUserAction.bind(harness.coordinator);
+      vi.spyOn(harness.coordinator, "grantUserAction").mockImplementation(async (name, signal, observed) => {
+        const grantId = await grant(name, signal, observed);
+        if (name === blockedTool) { available = false; }
+        return grantId;
+      });
+      const invoke = vi.spyOn(harness.coordinator, "invokeTool");
+      expect(await runGrowthSetup({ ...harness.dependencies, isAvailable: () => available }, harness.controller.signal)).toBe("stale");
+      expect(invoke.mock.calls.map(call => call[0])).not.toContain(blockedTool);
+      expect(harness.store.snapshotNow().session?.workUnit?.status).not.toBe("agreed");
+    },
+  );
+
+  it("reconfirms an existing proposal after an agreement failure without replacing its scope", async () => {
+    const harness = await createHarness();
+    const invoke = harness.coordinator.invokeTool.bind(harness.coordinator);
+    let failAgreement = true;
+    vi.spyOn(harness.coordinator, "invokeTool").mockImplementation((name, values, signal, options) => {
+      if (failAgreement && name === "pair_agree_work_unit") { return Promise.reject(new Error("TEMPORARY_FAILURE")); }
+      return invoke(name, values, signal, options);
+    });
+    expect(await runGrowthSetup(harness.dependencies, harness.controller.signal)).toBe("failed");
+    const proposed = harness.store.snapshotNow().session?.workUnit;
+    expect(proposed?.status).toBe("proposed");
+    failAgreement = false;
+    harness.confirmations.length = 0;
+    harness.collect.mockClear();
+    expect(await runGrowthSetup(harness.dependencies, harness.controller.signal)).toBe("completed");
+    expect(harness.confirmations).toEqual(["learning", "mode", "work-unit"]);
+    expect(harness.collect).not.toHaveBeenCalled();
+    expect(harness.store.snapshotNow().session?.workUnit).toEqual({ ...proposed, status: "agreed" });
+  });
+
   it.each(["learning", "mode", "work-unit"] as const)("does not agree work when %s is declined", async rejected => {
     const harness = await createHarness();
     harness.confirm.mockImplementation(stage => {

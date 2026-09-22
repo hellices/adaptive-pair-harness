@@ -1,13 +1,12 @@
-import { stat } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { realpath, stat } from "node:fs/promises";
+import { relative } from "node:path";
 import * as vscode from "vscode";
 import type { PairRuntimeSnapshot } from "@adaptive-pair/protocol";
 import type { ActivityLedger } from "./activityLedger.js";
 import {
-  isSetupText, normalizeGrowthSetupInput,
+  isSetupText, normalizeGrowthSetupInput, normalizeGrowthSetupPath,
   type GrowthSetupInput, type GrowthSetupStage, type GrowthSetupUi,
 } from "./growthSetup.js";
-import { VscodeScopeAccess } from "./scopeAccess.js";
 import { withinRoot } from "./workspacePaths.js";
 
 const prompt = async (
@@ -59,12 +58,19 @@ export class VscodeGrowthSetupUi implements GrowthSetupUi {
     const selected = selection[0];
     if (selected?.scheme !== "file" || !withinRoot(root.fsPath, selected.fsPath)) { return undefined; }
     const relativePath = relative(root.fsPath, selected.fsPath).replace(/\\/gu, "/");
-    if (!isSetupText(relativePath, 1_024)) { return undefined; }
-    const paths = await new VscodeScopeAccess(root.fsPath, this.ledger).canonicalPaths([relativePath], signal);
-    if (!current() || paths.length !== 1 || paths[0] === undefined) { return undefined; }
+    if (normalizeGrowthSetupPath(relativePath) === undefined) { return undefined; }
+    signal.throwIfAborted();
     this.ledger?.recordWorkspaceRead();
-    const file = await stat(join(root.fsPath, paths[0]));
-    return current() && file.isFile() ? paths[0] : undefined;
+    const canonicalRoot = await realpath(root.fsPath);
+    if (!current()) { return undefined; }
+    this.ledger?.recordWorkspaceRead();
+    const canonicalFile = await realpath(selected.fsPath);
+    if (!current() || !withinRoot(canonicalRoot, canonicalFile)) { return undefined; }
+    const allowedPath = normalizeGrowthSetupPath(relative(canonicalRoot, canonicalFile).replace(/\\/gu, "/"));
+    if (allowedPath === undefined) { return undefined; }
+    this.ledger?.recordWorkspaceRead();
+    const file = await stat(canonicalFile);
+    return current() && file.isFile() ? allowedPath : undefined;
   }
 
   public async collect(signal: AbortSignal): Promise<GrowthSetupInput | undefined> {
