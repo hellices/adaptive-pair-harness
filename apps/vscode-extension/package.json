@@ -158,6 +158,18 @@
         "isSticky": true,
         "commands": [
           {
+            "name": "setup",
+            "description": "Agree a scoped Growth task through explicit native confirmations"
+          },
+          {
+            "name": "checkpoint",
+            "description": "Explicitly save a minimized historical checkpoint in this chat"
+          },
+          {
+            "name": "history",
+            "description": "Inspect historical progress without restoring live state or permissions"
+          },
+          {
             "name": "brief",
             "description": "Report the agreed brief from current state"
           },

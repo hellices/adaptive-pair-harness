@@ -70,7 +70,7 @@ const transferHarness = (format: ModelFormat, consentDecision = Promise.resolve(
     confirmSolutionReveal: () => Promise.resolve(true),
     now: () => 1_000,
   });
-  const run = (): Promise<void> => participant.handle(
+  const run = (): ReturnType<typeof participant.handle> => participant.handle(
     createRequest(model, { command: "transfer" }), createContext(), stream, createToken(),
   );
   return {

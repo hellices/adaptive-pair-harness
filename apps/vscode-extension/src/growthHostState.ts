@@ -2,6 +2,7 @@ import type * as vscode from "vscode";
 import type { HintLevel, PairRuntimeSnapshot } from "@adaptive-pair/protocol";
 import type { GrowthModel, PairCoordinatorPort, PairToolResult } from "@adaptive-pair/runtime";
 import type { GrowthResponse } from "@adaptive-pair/restraint";
+import type { GrowthSetupOutcome } from "./growthSetup.js";
 
 export type GrowthEvaluationOutcome =
   | "delivered"
@@ -141,6 +142,8 @@ export interface GrowthParticipantDependencies {
     model: vscode.LanguageModelChat,
   ) => Promise<boolean>;
   readonly stayQuiet?: () => Promise<unknown>;
+  readonly setup?: (signal: AbortSignal) => Promise<GrowthSetupOutcome>;
+  readonly confirmCheckpoint?: (signal: AbortSignal) => Promise<boolean>;
   readonly now?: () => number;
 }
 

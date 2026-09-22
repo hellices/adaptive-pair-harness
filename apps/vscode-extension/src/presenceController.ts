@@ -143,7 +143,7 @@ export class PresenceController implements vscode.Disposable {
 
   private async disablePresence(): Promise<void> {
     const choice = await vscode.window.showWarningMessage(
-      "Disable Adaptive Pair Presence and clear local continuity?",
+      "Disable Adaptive Pair Presence and clear its local observation journal and live state? VS Code chat history and saved native checkpoints remain under native controls; delete those chats separately if needed.",
       { modal: true },
       "Disable and clear",
     );
