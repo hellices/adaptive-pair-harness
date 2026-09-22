@@ -2017,6 +2017,179 @@ The existing Vite
 native-config-loader warning remains visible. Final-head remote CI and PR
 review remain separate delivery gates; local results do not imply either.
 
+### Native Growth trial implementation evidence
+
+The owner approved the native-first hands-on contract on September 22, 2026.
+The implementation starts from `ba20468` on a dedicated trial branch; the
+unmerged native/SDK feasibility PR #13 is neither merged nor required to run
+this product. The approved boundary is [design section 13.3](design.md#133-native-growth-hands-on-milestone).
+This record concerns an installable Growth trial, not an implementation of the
+P2b durable-store adapter, a Copilot SDK bridge, or demonstrated learning gains.
+
+The prior first-use instructions could not bootstrap themselves: model
+guidance needs an agreed work unit, but a fresh session has only briefing
+state. A deterministic `@pair /setup` now gathers bounded inputs and uses the
+real coordinator, three explicit confirmations, and current revision/epoch
+checks to agree human-owned Growth work. It does not bypass the model guard.
+Independent setup review reproduced and resolved three boundary problems:
+host admission changing between grant and invocation, a later filesystem read
+after disable during file validation, and retry of a compatible pending
+proposal. Entry capture also binds its observation before the first await.
+Public-route review then reproduced a final completion-message race: a real
+disable could commit after the adapter's state check but before the response
+was rendered. The adapter now retains the setup transaction's last validated
+snapshot and provides a synchronous freshness predicate, checked by the route
+immediately before publishing completion. The registered-runtime regression
+samples actual state inside the response callback and rejects the old false
+completion. No snapshot, predicate, or authority is stored in chat metadata.
+
+`/checkpoint` returns only the approved nine-field v1 object under
+`ChatResult.metadata.adaptivePairCheckpoint`, after a separate confirmation.
+`/history` inspects at most 32 public context turns and never hydrates the live
+runtime. The pure contract has 131 unit/property cases; an independent bounded
+enumeration of 6,804 valid combinations found a largest payload of 215 UTF-8
+bytes, below the 512-byte contract. These records contain no source, paths,
+objectives, identifiers, grants, verification results, or learning claims.
+Ordinary native transcripts are separate data retained by VS Code, not made
+private or deleted by the minimized checkpoint format.
+
+#### Actual native restart measurement
+
+The extended isolated host runner passed on VS Code **1.136.2**,
+**1.138.0**, and **1.139.0-insider**, using Node **24.21.0** for the runner.
+These complete runs were repeated after the response-boundary correction and
+the Vitest 5.0.1 refresh. Each version passed the
+existing **17** inactive-zero/coexistence/Growth smoke cases and then launched
+two separate VS Code application processes with the same disposable profile.
+The restart scenario drives the actual registered production participant
+through native chat submission, rather than constructing a fake history array:
+
+1. Start from off with zero recorded product activity; explicitly enable and
+   start a briefing session. Decline one setup confirmation, retry, and observe
+   fresh learning, mode, and work-unit confirmations before agreement.
+2. Run `/check` against the deliberately faulty exercise and observe failure.
+   Record an attempt and hypothesis, simulate a human edit in the disposable
+   fixture through VS Code's editing API, save, and observe a passing `/check`.
+   Each process run receives its own verification confirmation.
+3. Decline one checkpoint request and verify no metadata is returned. Accept
+   the next request and compare its actual returned metadata with the live
+   minimized projection. Saving changes no live runtime state.
+4. Quit the application and launch it again with a distinct extension-process
+   identity. The runtime starts off. Explicitly enable Presence, reopen the
+   original native chat, and call `/history` without starting a Pair session.
+   The actual public history contains the saved attempt/hypothesis flags;
+   live work units, agreements, assistance, and grants remain absent. The
+   history turn leaves both the live snapshot and activity counters unchanged.
+5. Open a new native chat and observe an empty checkpoint history, not a
+   workspace-wide leak of the previously selected chat's metadata.
+
+The fixture uses a registered offline model identity with **zero model
+requests** and no Copilot extension loaded. Fixed input and confirmation ports
+replace human dialog interaction only in the gated development-host entry;
+production continues to use native dialogs. Setup UI unit tests additionally
+exercise real filesystem eligibility and cancellation boundaries. Neither
+callback fixtures nor zero-model history turns prove authenticated inference,
+account entitlement, a human completing the UI walkthrough, or learning.
+
+The driver uses private workbench open/submit commands and reads the diagnostic
+`ChatRequest.sessionResource` only to locate its synthetic native chat. No API
+proposal is enabled, but those driver details are **not public product API
+dependencies**. The fixture entry, offline provider, diagnostic access, test
+auto-confirmations, and runner stay outside the production bundle/VSIX. The
+runner uses POSIX process-group isolation and is measured on macOS; Linux is
+covered by the delivery workflow, not inferred from the local run. Windows
+restart-driver coverage is not claimed.
+
+The first native run exposed a test-observer defect: VS Code freezes response
+stream properties, so a proxy cannot substitute a different `markdown` value.
+The fixture now delegates from a separate stream object without changing the
+native object. Subsequent complete runs on all three versions passed. This was a
+test instrumentation correction, not a production API workaround.
+
+#### Current dependency and tooling evidence
+
+The September 22, 2026 UTC trial audit inventoried **17 source manifests** and
+one generated host-staging manifest, not just workspace globs or an outdated
+report. There are **two active lockfiles**: the root/workspace graph and the
+isolated Session Target POC. The source manifests declare 25 internal and 24
+external dependencies, covering **16 distinct direct external packages**.
+The private, dependency-free exercise adds no lockfile. The SDK prototype in
+the unmerged research branch is not part of this checkout or either graph.
+
+Exact registry requests now make **Vitest 5.0.1** and its matching coverage
+package available. Both graphs were updated with normal strict-peer npm
+installation, retaining all unrelated package resolutions. Only Vitest,
+`@vitest/mocker`, and `@vitest/spy` change in both locks; root
+`@vitest/coverage-v8` changes with them. No package locations were added or
+removed, and no overrides or temporary dependency constraints remain. This
+supersedes earlier dated 5.0.1-unavailability observations; it is maintenance,
+not a newly discovered security advisory.
+
+The refreshed direct-package decisions are:
+
+| Package | Selected version | Current evidence and retention boundary |
+| --- | --- | --- |
+| `@eslint/js` | 10.0.1 | Matches registry metadata and the component manifest in [ESLint 10.11.0](https://github.com/eslint/eslint/tree/v10.11.0/packages/js). |
+| `@types/mocha` | 10.0.10 | Matches the observed published registry version; [DefinitelyTyped](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/mocha) is the publishing source, not an independently versioned package release record. |
+| `@types/node` | 24.13.4 | Highest observed stable Node 24 declarations; retain the Node 24 baseline rather than admit APIs from the newer 26.5.1 declarations. |
+| `@types/vscode` | 1.136.0 | Matches the [public API floor](https://github.com/microsoft/vscode/blob/1.136.0/src/vscode-dts/vscode.d.ts). Newer declarations could permit APIs absent from the minimum host. |
+| `@vitest/coverage-v8` | 5.0.1 | Updated with its exact Vitest peer; [upstream 5.0.1](https://github.com/vitest-dev/vitest/releases/tag/v5.0.1) and registry metadata agree. |
+| `@vscode/dts` | 0.4.1 | Matches registry metadata and [upstream 0.4.1](https://github.com/microsoft/vscode-dts/releases/tag/v0.4.1); isolated POC only. |
+| `@vscode/test-electron` | 3.1.0 | Registry selection and declared Node compatibility are confirmed. Matching release/tag provenance in the [official repository](https://github.com/microsoft/vscode-test) could not be independently confirmed; retain this existing pin provisionally, not as a fully verified upstream release. |
+| `@vscode/vsce` | 4.0.0 | Matches registry metadata and [upstream 4.0.0](https://github.com/microsoft/vscode-vsce/releases/tag/v4.0.0); 4.0.1-0 is a prerelease, not a stable update. |
+| `ajv` | 8.20.0 | Matches registry metadata and [upstream 8.20.0](https://github.com/ajv-validator/ajv/releases/tag/v8.20.0); workspace-local resolution was included. |
+| `esbuild` | 0.28.2 | Matches registry metadata and [upstream 0.28.2](https://github.com/evanw/esbuild/releases/tag/v0.28.2). |
+| `eslint` | 10.10.0 | [Upstream 10.11.0](https://github.com/eslint/eslint/releases/tag/v10.11.0) is newer; its exact metadata request returns E404 at the tested mirror. Retain for measured availability, not because 10.10.0 is upstream-current. |
+| `fast-check` | 4.10.0 | [Upstream 4.10.2](https://github.com/dubzzz/fast-check/releases/tag/v4.10.2) is newer; exact 4.10.1 and 4.10.2 mirror requests return E404. |
+| `mocha` | 12.0.1 | [Upstream 12.0.2](https://github.com/mochajs/mocha/releases/tag/v12.0.2) is newer; its exact mirror request returns E404. |
+| `typescript` | 6.0.3 | Retain for the `>=4.8.4 <6.1.0` peer contract of typescript-eslint 8.70.0. Available [TypeScript 7.0.2](https://github.com/microsoft/TypeScript/releases/tag/v7.0.2) does not meet that contract; root lint also covers the POC. |
+| `typescript-eslint` | 8.70.0 | Stable [upstream 8.70.1](https://github.com/typescript-eslint/typescript-eslint/releases/tag/v8.70.1) exists but its exact mirror request returns E404. The mirror's `latest` tag is 8.70.1-alpha.15; do not replace a stable toolchain with that prerelease. |
+| `vitest` | 5.0.1 | Updated in both graphs; the declared engine accepts the tested Node 24.21.0 baseline. |
+
+Both post-update **full-lockfile** audits include development, optional, and
+peer dependencies and exit zero: **407 root** and **257 POC** audit entries,
+with **zero findings at every severity**. Complete installed-tree checks also
+pass. The unfiltered outdated reports still list four root and two POC entries
+for the compatibility/prerelease reasons above. Direct public npmjs requests
+failed with `ENOTCONN`; successful metadata and advisory results came from the
+configured anonymous mirror. An exact mirror E404 is not global package
+unavailability, and zero reported findings are not a vulnerability-free
+guarantee. These access/provenance gaps remain explicit.
+
+Local validation uses **Node 24.21.0 / npm 10.9.4**. Node 24 is the retained LTS
+baseline; newer Current Node 26 is not silently substituted. npm is an ambient
+tool, not a repository dependency pin: available npm 12.0.2 was checked against
+its upstream release and engine metadata, but no global npm migration is
+claimed. Workflow action pins match the checked stable releases of
+[checkout 7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1),
+[setup-node 7.0.0](https://github.com/actions/setup-node/releases/tag/v7.0.0), and
+[upload-artifact 7.0.1](https://github.com/actions/upload-artifact/releases/tag/v7.0.1).
+Final CI's actual runner/tool versions are separate observations. The POC's
+vendored proposed-API provenance was not refreshed by this maintenance and
+does not establish a Stable product dependency.
+
+#### Combined local verification
+
+After the completion-boundary fix and dependency update, `npm run check`
+passes typecheck, full lint, and **2,997 tests in 140 files**. The separate
+coverage run passes the same suite with the matched 5.0.1 provider: statements
+**91.7%**, branches **86.36%**, functions **93.67%**, and lines **92%**. The
+existing Vite native-config advisory remains visible; no warning suppression
+or relaxed timeout/test gate was added. The isolated POC passes compilation,
+**21 tests in five files**, and packaging. POC results are not added to the
+root case count and its VSIX is not part of the Stable trial.
+
+All four implementation tasks passed independent spec and quality review,
+including re-review of the final setup-response correction. The three-host
+restart results above were freshly repeated on these dependencies. Stable
+build, packaging, and archive verification pass with exactly **seven entries**:
+the two VSIX envelope files, license, public README, manifest, Growth walkthrough,
+and production bundle. No SDK, isolated POC, host fixture, test-only offline
+provider, auto-confirmation, or private session diagnostic is packaged.
+Whole-branch review and final-revision PR checks are tracked in the
+[current implementation plan](implementation-plan.md). Authenticated
+selected-model hints remain an explicit owner trial check.
+
 ## 7. Evaluation hypotheses
 
 The first studies test separate hypotheses:

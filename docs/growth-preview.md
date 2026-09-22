@@ -7,9 +7,10 @@ are separate; this trial makes no learning or productivity claim.
 
 **Evidence status:** the route contract and disposable exercise checks are
 implemented. Native checkpoint/reopen checks passed across separate application
-launches on **VS Code 1.136.2 and 1.138.0**, with no restored live authority.
-Authenticated account/selected-model inference and final combined release checks
-remain **pending**. See [observed host evidence](#observed-host-evidence): these
+launches on **VS Code 1.136.2, 1.138.0, and 1.139.0-insider**, with no restored
+live authority. Local root/POC checks, refreshed dependency audits, and Stable
+packaging pass. Whole-branch PR review/CI and authenticated account/selected-model
+inference remain **pending**. See [observed host evidence](#observed-host-evidence): these
 zero-model-call runs and injected fixture models are not authenticated inference.
 
 ## Install and prerequisites
@@ -292,6 +293,7 @@ isolated profile, with regular local VS Code Chat in **Ask** mode:
 | --- | --- | --- | --- |
 | 1.136.2 | 24.18.1 | 24.21.0 | Checkpoint returned after reopening; no live authority restored. |
 | 1.138.0 | 24.18.1 | 24.21.0 | Checkpoint returned after reopening; no live authority restored. |
+| 1.139.0-insider | 24.20.0 | 24.21.0 | Checkpoint returned after reopening; no live authority restored. |
 
 The first launch submitted real native `/setup` requests, cancelled a partial
 setup, then completed a retry with three fresh confirmations. It observed a real
@@ -317,8 +319,11 @@ with model access and an explicitly authorized manual trial.
 
 ## Preview limits and pending evidence
 
-- **Pending:** final combined root-suite, Stable package, CI, and PR review gates,
-  plus authenticated selected-model inference with the owner's account. The
+- **Passed locally:** full typecheck/lint and 2,997 root tests, both dependency
+  audits, isolated POC checks, the three-host runs, and the seven-entry Stable
+  VSIX inspection. The test driver and its private diagnostics are not shipped.
+- **Pending:** whole-branch PR review/final-revision CI and authenticated
+  selected-model inference with the owner's account. The
   observed native reopen results are bounded to the hosts and controlled
   scenarios above; fixture
   models and synthetic histories cannot replace that evidence.

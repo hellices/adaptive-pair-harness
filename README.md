@@ -25,11 +25,12 @@ never edits your files, and makes **no learning or productivity claim**. Native
 `/setup` establishes the task without a model-generated bootstrap. Explicit
 `/checkpoint` and `/history` report historical progress, never restored authority.
 
-**Evidence status:** VS Code **1.136.2 and 1.138.0** each passed 17 isolated host
-smokes and a two-launch native checkpoint/reopen check using production wiring.
+**Evidence status:** VS Code **1.136.2, 1.138.0, and 1.139.0-insider** each passed
+17 isolated host smokes and a two-launch native checkpoint/reopen check using production wiring.
 Historical metadata returned without restoring live authority. Those runs made
 zero model calls, loaded no Copilot extension, and used no proposed API;
-authenticated selected-model inference and final combined release checks remain
+the 2,997-test root check, both dependency audits, and Stable packaging pass.
+Whole-branch PR review/CI and authenticated selected-model inference remain
 pending. See the [trial walkthrough](docs/growth-preview.md#observed-host-evidence)
 for the evidence boundaries and remaining manual checks.
 
@@ -412,10 +413,10 @@ commands, and the native Agent Plugin remain out of scope for this preview.
 
 The `0.2.0-preview.2` native Growth trial adds deterministic `/setup`, an
 independent retry exercise, and explicit minimized `/checkpoint` and `/history`
-routes. Native checkpoint/reopen checks passed on VS Code 1.136.2 and 1.138.0;
-authenticated account/model inference and final combined release checks remain
-pending. Earlier host results below are historical evidence, not completion of
-this trial's release gates. The [walkthrough](docs/growth-preview.md) separates
+routes. Native checkpoint/reopen checks passed on VS Code 1.136.2, 1.138.0, and
+1.139.0-insider. Local checks, refreshed audits, and Stable packaging pass;
+whole-branch PR review/CI and authenticated account/model inference remain
+pending. Earlier host results below remain historical evidence. The [walkthrough](docs/growth-preview.md) separates
 the implemented route contract, observed host behavior, and outstanding checks.
 
 P1 adds tested, side-effect-free Pair work-unit admission, related human

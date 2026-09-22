@@ -2410,13 +2410,18 @@ and implementation plan. No production behavior changes in this investigation.
 
 ### 13.4 Native Growth hands-on milestone
 
-**Status: written contract approved; implementation in progress.** On
+**Status: approved contract implemented on the native-trial branch; release
+review in progress.** On
 September 22, 2026, the owner selected a native `@pair` trial rather than an
 SDK-first adapter and then approved this written contract for implementation,
-testing, packaging, and PR review. This contract scopes that trial; it is not a claim that the
-behavior below already ships. Start from main at `ba20468` on a dedicated PR
-branch. The separate native-reuse research PR #13 remains unmerged and is not
-an implementation dependency.
+testing, packaging, and PR review. The branch implements the contract below
+from main at `ba20468`; this is not a claim that the trial has merged or that
+authenticated model inference has been observed. Actual native checkpoint
+history has survived separate application launches on VS Code 1.136.2,
+1.138.0, and 1.139.0-insider without restoring live authority. See the measured boundaries in
+[the research record](research.md#native-growth-trial-implementation-evidence).
+The separate native-reuse research PR #13 remains unmerged and is not an
+implementation dependency.
 
 #### Outcome and integration boundary
 

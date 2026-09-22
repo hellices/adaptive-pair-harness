@@ -6,7 +6,13 @@
 > Subagent tooling is optional, not a product dependency.
 
 **Status:** owner approved the written contract on September 22, 2026;
-implementation is in progress. This deliberately replaces the completed P2b
+implementation and task-scoped review are complete for Tasks 1–4. The final
+completion-boundary correction passed independent re-review. The full root
+check passes 2,997 cases on Vitest 5.0.1; both refreshed dependency graphs pass
+their audits, and real-host restart validation passes on both Stable hosts
+and Insiders. Stable packaging and seven-entry archive inspection also pass.
+Whole-branch review and final-revision PR delivery remain in progress.
+This deliberately replaces the completed P2b
 plan, retained at `ba20468:docs/implementation-plan.md` in Git. PR #13's
 unmerged feasibility work is evidence, not an implicit merge or product
 dependency.
@@ -64,7 +70,7 @@ The helpers import protocol types only; they do not depend on VS Code, a
 coordinator, a disk store, a model, or time. `inspectNativeHistory` accepts only
 metadata under `adaptivePairCheckpoint` from `adaptivePair.chat` responses.
 
-- [ ] Add tests for the exact allowlist, privacy sentinels, inactive/paused
+- [x] Add tests for the exact allowlist, privacy sentinels, inactive/paused
   snapshots, enum validation, unknown fields/versions, accessor rejection,
   foreign participants, the 32-turn bound, and invalid-newest non-fallback.
   A copied checkpoint may be displayed but cannot mutate its input snapshot.
@@ -76,11 +82,11 @@ metadata under `adaptivePairCheckpoint` from `adaptivePair.chat` responses.
   expect(Buffer.byteLength(JSON.stringify(checkpoint), "utf8")).toBeLessThanOrEqual(512);
   ```
 
-- [ ] Run `npx vitest run apps/vscode-extension/test/nativeCheckpoint.test.ts`;
+- [x] Run `npx vitest run apps/vscode-extension/test/nativeCheckpoint.test.ts`;
   observe the missing-export RED before adding the module.
-- [ ] Project explicit fields, validate closed data descriptors and bounded
+- [x] Project explicit fields, validate closed data descriptors and bounded
   primitives, and produce static historical/non-authorizing presentation.
-- [ ] Run the focused suite and typecheck; review every field against the
+- [x] Run the focused suite and typecheck; review every field against the
   privacy contract, then commit `feat: define minimized native checkpoints`.
 
 ## Task 2: Reachable, explicitly approved Growth setup
@@ -114,7 +120,7 @@ It produces `GrowthSetupOutcome`, never a grant or an authority-bearing restored
 snapshot. The native UI validates bounded text and a selected local workspace
 file; the coordinator still owns final action admission.
 
-- [ ] Reproduce the missing first-use path with a real empty coordinator,
+- [x] Reproduce the missing first-use path with a real empty coordinator,
   explicitly enable/start, and assert no work unit or model request exists.
   Add a RED test for a completed setup using three independent confirmations.
 
@@ -127,15 +133,15 @@ file; the coordinator still owns final action admission.
   expect(confirmations).toEqual(["learning", "mode", "work-unit"]);
   ```
 
-- [ ] Observe RED with `npx vitest run apps/vscode-extension/test/growthSetup.test.ts`.
-- [ ] Collect input before mutation, prepare bounded entry, confirm learning,
+- [x] Observe RED with `npx vitest run apps/vscode-extension/test/growthSetup.test.ts`.
+- [x] Collect input before mutation, prepare bounded entry, confirm learning,
   select Growth, propose a human-owned scoped unit, and agree it. Use the
   existing coordinator grant/invoke APIs with current revision/epoch checks.
   Never overwrite an operational unit or bypass an explicit confirmation.
-- [ ] Cover every declined/cancelled dialog, invalid input/scope, cancellation
+- [x] Cover every declined/cancelled dialog, invalid input/scope, cancellation
   during entry capture, disabled/paused/replaced session, stale revision, a
   failed coordinator action, and retry of an incomplete briefing.
-- [ ] Run the setup/controller suites and typecheck, then commit
+- [x] Run the setup/controller suites and typecheck, then commit
   `feat: add explicit native Growth setup`.
 
 ## Task 3: Public participant routes and metadata publication
@@ -153,7 +159,7 @@ confirmation port; production always supplies both. Existing harnesses can
 omit them and receive an explicit unavailable response, never automatic
 approval. The handler's new local intents are `setup`, `checkpoint`, `history`.
 
-- [ ] Add RED public-handler tests for all three slash commands and their
+- [x] Add RED public-handler tests for all three slash commands and their
   natural-language equivalents. Check `/setup` does not use the model;
   `/checkpoint` returns the agreed namespace only after confirmation;
   `/history` reads metadata without invoking any coordinator mutation.
@@ -164,16 +170,16 @@ approval. The handler's new local intents are `setup`, `checkpoint`, `history`.
   expect(liveSnapshotAfterHistory).toEqual(liveSnapshotBeforeHistory);
   ```
 
-- [ ] Run the new route suite and observe RED, then wire only these routes.
+- [x] Run the new route suite and observe RED, then wire only these routes.
   Keep checkpoint publication behind enabled/active/current-state and abort
   checks. Do not add checkpoint metadata to model context.
-- [ ] Distinguish selected-chat historical state from the current window's
+- [x] Distinguish selected-chat historical state from the current window's
   live state. Make first-use errors point to `/setup`. Explain native history
   retention in both checkpoint and disable confirmations.
-- [ ] Cover declined/stale/cancelled publication, empty/malformed/foreign
+- [x] Cover declined/stale/cancelled publication, empty/malformed/foreign
   history, disabled zero-activity, a freshly started runtime with old metadata,
   and a fork-shaped copy which does not satisfy an attempt/hint gate.
-- [ ] Run all Growth, extension lifecycle, and presence suites plus typecheck
+- [x] Run all Growth, extension lifecycle, and presence suites plus typecheck
   and lint; commit `feat: expose native Growth checkpoint and history routes`.
 
 ## Task 4: Reproducible exercise and installable trial
@@ -184,17 +190,17 @@ approval. The handler's new local intents are `setup`, `checkpoint`, `history`.
 `docs/growth-preview.md`, `docs/research.md`, root/extension versions and their
 lockfile entries. Extend existing manifest/packaging assertions as necessary.
 
-- [ ] Add a small deliberate retry-boundary defect and Node built-in tests.
+- [x] Add a small deliberate retry-boundary defect and Node built-in tests.
   The exercise's `test` script is `node --test`; it has no dependencies and
   needs no installation. Prove its initial expected failing case, then verify
   the intended human repair only in a disposable copy, not in the shipped task.
-- [ ] Document the exact enable/start/setup/attempt/hint/check/checkpoint/reopen
+- [x] Document the exact enable/start/setup/attempt/hint/check/checkpoint/reopen
   sequence, Copilot/model access prerequisites, native history ownership,
   cancellation/reset, and known preview limits. Do not claim authenticated
   inference based on mocks or fixture models.
-- [ ] Set the product trial version to `0.2.0-preview.2`, maintain manifests and
+- [x] Set the product trial version to `0.2.0-preview.2`, maintain manifests and
   lockfiles consistently, and test the package's public commands/routes.
-- [ ] Run documentation-link and package checks. Commit
+- [x] Run documentation-link and package checks. Commit
   `docs: ship the native Growth trial walkthrough and exercise`.
 
 ## Task 5: Real host validation and reviewed delivery
@@ -205,16 +211,16 @@ or add a narrowly scoped native-history smoke runner if separate application
 launches are necessary. Any testing-only private diagnostic stays out of the
 production bundle and is identified as such in measured evidence.
 
-- [ ] Test empty-to-agreed setup through production wiring and real
+- [x] Test empty-to-agreed setup through production wiring and real
   coordinator state. Exercise actual callback confirmations, state changes,
   verification, and cancellation rather than pre-seeding an agreed snapshot.
-- [ ] Exercise checkpoint return and historical inspection after host restart,
+- [x] Exercise checkpoint return and historical inspection after host restart,
   including a fresh live runtime and no recovered authority. Reuse prior
   native-reopening evidence only as explicitly attributed evidence; do not
   mislabel manually supplied history as measured native persistence.
-- [ ] Inventory all manifests and lockfiles, cross-check registry/upstream
+- [x] Inventory all manifests and lockfiles, cross-check registry/upstream
   releases and compatibility constraints, and run each applicable audit.
-- [ ] Run `npm run check`, affected isolated-prototype checks, Stable host
+- [x] Run `npm run check`, affected isolated-prototype checks, Stable host
   smoke, build, and packaging under the Node 24 baseline. Inspect VSIX entries
   for accidental SDK, prototype, test, and private-API inclusion.
 - [ ] Record exact observed results and remaining user-account checks in the
