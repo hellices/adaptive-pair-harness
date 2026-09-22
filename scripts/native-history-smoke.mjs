@@ -76,7 +76,7 @@ const launchPhase = async (executable, directory, phase, resource = "") => {
     `--shared-data-dir=${join(directory, "shared")}`, `--logsPath=${join(directory, `${phase}-logs`)}`,
     "--disable-extensions", "--disable-workspace-trust", "--skip-welcome", "--skip-release-notes",
     "--disable-updates", "--disable-telemetry", "--disable-crash-reporter", "--skip-add-to-recently-opened",
-    "--force-disable-user-env", "--use-inmemory-secretstorage", "--sync=off", "--locale=en",
+    "--force-disable-user-env", "--use-inmemory-secretstorage", "--sync=off", "--locale=en", "--verbose",
   ], {
     ...nativeHistoryEnvironment(directory), ADAPTIVE_PAIR_NATIVE_HISTORY_TEST: "1",
     ADAPTIVE_PAIR_NATIVE_HISTORY_PHASE: phase, ADAPTIVE_PAIR_NATIVE_HISTORY_RESULT: resultPath,

@@ -107,4 +107,21 @@ describe("CI clean-checkout ordering", () => {
       "name: Run isolated Extension Host smoke on Insiders",
     ]);
   });
+
+  it.each([
+    { name: "Stable", start: "  host-smoke:", end: "  host-insiders:" },
+    { name: "Insiders", start: "  host-insiders:", end: undefined },
+  ])("preserves only owned native diagnostics after $name host failures", ({ start, end }) => {
+    const steps = job(start, end).split(/^ {6}-(?=\s)/mu).slice(1);
+    const diagnostic = steps.find(step => step.includes("name: Upload native host failure logs")) ?? "";
+    expect(diagnostic).toContain("if: failure()");
+    expect(diagnostic).toContain("uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
+    expect(diagnostic).toContain("~/.ap-host/run-*/native-history/*.log");
+    expect(diagnostic).toContain("~/.ap-host/run-*/native-history/*.json");
+    expect(diagnostic).toContain("~/.ap-host/run-*/native-history/*-logs/**/*.log");
+    expect(diagnostic).toContain("include-hidden-files: true");
+    expect(diagnostic).toContain("retention-days: 3");
+    expect(diagnostic).not.toContain("profile/");
+    expect(diagnostic).not.toContain("home/");
+  });
 });

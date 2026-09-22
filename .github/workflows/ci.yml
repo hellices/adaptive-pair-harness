@@ -115,6 +115,19 @@ jobs:
       - name: Run isolated Extension Host smoke
         run: xvfb-run -a npm run test:host
 
+      - name: Upload native host failure logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-host-failure-${{ matrix.vscode }}
+          path: |
+            ~/.ap-host/run-*/native-history/*.log
+            ~/.ap-host/run-*/native-history/*.json
+            ~/.ap-host/run-*/native-history/*-logs/**/*.log
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 3
+
   host-insiders:
     name: Host smoke (Insiders, allowed failure)
     runs-on: ubuntu-latest
@@ -140,3 +153,16 @@ jobs:
 
       - name: Run isolated Extension Host smoke on Insiders
         run: xvfb-run -a npm run test:host
+
+      - name: Upload native host failure logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-host-failure-insiders
+          path: |
+            ~/.ap-host/run-*/native-history/*.log
+            ~/.ap-host/run-*/native-history/*.json
+            ~/.ap-host/run-*/native-history/*-logs/**/*.log
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 3
