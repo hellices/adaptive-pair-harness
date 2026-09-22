@@ -322,6 +322,15 @@ describe("native history recency and bounds", () => {
 });
 
 describe("native history presentation is non-authorizing", () => {
+  it.each([false, true])("renders solutionRevealed=%s as historical authorization rather than delivered code", solutionRevealed => {
+    const checkpoint = { ...checkpointFixture(), solutionRevealed };
+    const report = renderNativeHistory(inspectCheckpoint(checkpoint));
+    expect(report).toContain(`Solution reveal authorized: ${solutionRevealed ? "yes" : "no"}`);
+    expect(report).toContain("historical only; not evidence that a solution was shown");
+    expect(report).not.toContain("Solution revealed:");
+    expect(report).toContain("cannot restore live state, satisfy an attempt gate, or grant permissions");
+  });
+
   it("renders empty and invalid states without exposing rejected data", () => {
     expect(renderNativeHistory({ status: "missing" })).toContain("No checkpoint");
     const invalid = renderNativeHistory({ status: "invalid" });

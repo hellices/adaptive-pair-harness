@@ -31,7 +31,7 @@ export interface GrowthSetupDependencies {
 export const isSetupText = (value: string, maximum = 300): boolean =>
   value.length <= maximum && value.trim().length > 0 && Array.from(value).every(character => {
     const code = character.charCodeAt(0);
-    return code >= 32 && code !== 127;
+    return code >= 32 && code !== 127 && code !== 0x2028 && code !== 0x2029;
   });
 
 export const normalizeGrowthSetupPath = (value: string): string | undefined => {

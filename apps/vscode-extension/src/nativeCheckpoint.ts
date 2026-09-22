@@ -168,7 +168,7 @@ export const renderNativeHistory = (inspection: NativeHistoryInspection): string
     `- Attempt: ${checkpoint.attempt}`,
     `- Hypothesis: ${checkpoint.hypothesis}`,
     `- Hint level: ${checkpoint.hintLevel ?? "none"}`,
-    `- Solution revealed: ${checkpoint.solutionRevealed ? "yes" : "no"}`,
+    `- Solution reveal authorized: ${checkpoint.solutionRevealed ? "yes" : "no"} (historical only; not evidence that a solution was shown)`,
     "",
     HISTORY_BOUNDARY,
   ].join("\n");

@@ -7,7 +7,7 @@ import {
 import { createNativeCheckpoint } from "../src/nativeCheckpoint.js";
 import { runGrowthSetup } from "../src/growthSetup.js";
 import type { GrowthSetupResult } from "../src/growthHostState.js";
-import { ATTEMPT_REQUIRED_MESSAGE } from "../src/growthPresentation.js";
+import { ATTEMPT_REQUIRED_MESSAGE, RESTRAINT_FAILURE_MESSAGE } from "../src/growthPresentation.js";
 
 const createHarness = (coordinator = realCoordinator(growthSnapshot({
   session: { assistance: {
@@ -19,13 +19,15 @@ const createHarness = (coordinator = realCoordinator(growthSnapshot({
   const setupCurrent = vi.fn(() => true);
   const setup = vi.fn<() => Promise<GrowthSetupResult>>(() => Promise.resolve({ outcome: "completed", isCurrent: setupCurrent }));
   const confirmCheckpoint = vi.fn<() => Promise<boolean>>(() => Promise.resolve(true));
+  const confirmSolutionReveal = vi.fn<() => Promise<boolean>>(() => Promise.resolve(false));
   const requestWorkspaceConsent = vi.fn<() => Promise<boolean>>(() => Promise.resolve(false));
+  const createModel = vi.fn(() => { throw new Error("A guarded local route created a model"); });
+  const evaluations = new GrowthEvaluationLog();
   const mutation = vi.spyOn(coordinator, "invokeTool");
   const participant = new GrowthParticipant({
     coordinator, snapshotNow: () => coordinator.snapshotNow(),
-    consent: new ModelConsentRegistry(), evaluations: new GrowthEvaluationLog(),
-    requestWorkspaceConsent,
-    confirmSolutionReveal: () => Promise.resolve(false), setup, confirmCheckpoint,
+    consent: new ModelConsentRegistry(), evaluations, createModel,
+    requestWorkspaceConsent, confirmSolutionReveal, setup, confirmCheckpoint,
   });
   const { stream, collected } = createResponseStream();
   const request = (command: string | undefined, prompt = "") => {
@@ -33,7 +35,10 @@ const createHarness = (coordinator = realCoordinator(growthSnapshot({
     Object.defineProperty(result, "model", { get: () => { throw new Error("A local route accessed the model"); } });
     return result;
   };
-  return { coordinator, participant, model, setup, setupCurrent, confirmCheckpoint, requestWorkspaceConsent, mutation, stream, collected, request };
+  return {
+    coordinator, participant, model, setup, setupCurrent, confirmCheckpoint, confirmSolutionReveal,
+    requestWorkspaceConsent, createModel, evaluations, mutation, stream, collected, request,
+  };
 };
 
 const createFreshCoordinator = async () => {
@@ -119,7 +124,9 @@ describe("native local Growth participant routes", () => {
       harness.request("checkpoint"), createContext(), harness.stream, createToken(),
     );
     expect(harness.confirmCheckpoint).toHaveBeenCalledOnce();
-    expect(result?.metadata).toEqual({ adaptivePairCheckpoint: expectedCheckpoint });
+    expect(result).toEqual({ metadata: { adaptivePairCheckpoint: expectedCheckpoint } });
+    expect(Reflect.ownKeys(result ?? {})).toEqual(["metadata"]);
+    expect(structuredClone(result)).toEqual(result);
     expect(JSON.stringify(result)).not.toContain("private-attempt");
     expect(harness.coordinator.snapshotNow()).toEqual(before);
     expect(harness.mutation).not.toHaveBeenCalled();
@@ -167,6 +174,60 @@ describe("native local Growth participant routes", () => {
 });
 
 describe("historical checkpoints never admit live work", () => {
+  it("reports historical authorization, not display, after a fresh setup blocks reveal at ceiling four", async () => {
+    const harness = createHarness(await createFreshCoordinator());
+    const before = harness.coordinator.snapshotNow();
+    expect(before.session?.learningAgreement?.maximumHintLevel).toBe(4);
+    expect(before.session?.assistance?.solutionReveal).toBeUndefined();
+    harness.confirmSolutionReveal.mockResolvedValue(true);
+    harness.requestWorkspaceConsent.mockResolvedValue(true);
+
+    await harness.participant.handler()(
+      createRequest(harness.model, { command: "reveal" }), createContext(), harness.stream, createToken(),
+    );
+
+    expect(harness.collected.markdown).toEqual([RESTRAINT_FAILURE_MESSAGE]);
+    expect(harness.evaluations.records).toMatchObject([
+      { outcome: "restraint-failure", reason: "HINT_EXCEEDS_AGREEMENT" },
+    ]);
+    expect(harness.confirmSolutionReveal).toHaveBeenCalledOnce();
+    expect(harness.requestWorkspaceConsent).toHaveBeenCalledOnce();
+    const afterReveal = harness.coordinator.snapshotNow();
+    expect(afterReveal.session?.assistance?.solutionReveal).toBeDefined();
+    expect(afterReveal.session?.assistance?.hint).toBeUndefined();
+    expect(afterReveal.session?.learningAgreement?.maximumHintLevel).toBe(4);
+    harness.mutation.mockClear();
+    const saved = await harness.participant.handler()(
+      harness.request("checkpoint"), createContext(), harness.stream, createToken(),
+    );
+    expect(saved).toEqual({ metadata: { adaptivePairCheckpoint: {
+      format: "adaptive-pair-native-checkpoint", version: 1, mode: "growth",
+      workUnitStatus: "agreed", maximumHintLevel: 4, attempt: "none", hypothesis: "none",
+      hintLevel: null, solutionRevealed: true,
+    } } });
+    const history = createResponseStream();
+    await harness.participant.handler()(
+      harness.request("history"), createContext([{ participant: "adaptivePair.chat", result: saved }]),
+      history.stream, createToken(),
+    );
+    const live = createResponseStream();
+    await harness.participant.handler()(harness.request("session"), createContext(), live.stream, createToken());
+
+    const report = history.collected.markdown.join("\n");
+    expect(report).toContain("Historical report only");
+    expect(report).toContain("Solution reveal authorized: yes");
+    expect(report).toContain("not evidence that a solution was shown");
+    expect(report).not.toContain("Solution revealed: yes");
+    expect(report).toContain("cannot restore live state");
+    expect(live.collected.markdown.join("\n")).toContain("Solution reveal authorized: yes");
+    expect(harness.coordinator.snapshotNow()).toEqual(afterReveal);
+    expect(harness.coordinator.snapshotNow().session?.userActionGrants).toEqual(afterReveal.session?.userActionGrants);
+    expect(harness.mutation).not.toHaveBeenCalled();
+    expect(harness.createModel).not.toHaveBeenCalled();
+    expect(harness.model.sendCount).toBe(0);
+    expect(harness.model.countTokensCount).toBe(0);
+  });
+
   it("displays a native-history-shaped checkpoint without modifying a fresh runtime", async () => {
     const harness = createHarness();
     const checkpoint = createNativeCheckpoint(harness.coordinator.snapshotNow());

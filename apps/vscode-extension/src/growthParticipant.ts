@@ -71,8 +71,13 @@ export class GrowthParticipant {
         case "setup":
           await this.native.setup(response, signal);
           return;
-        case "checkpoint":
-          return await this.native.checkpoint(response, signal);
+        case "checkpoint": {
+          const checkpoint = await this.native.checkpoint(response, signal);
+          if (!signal.aborted && checkpoint?.isCurrent()) {
+            return checkpoint.result;
+          }
+          return;
+        }
         case "history":
           this.native.history(context, response, signal);
           return;

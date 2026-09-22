@@ -12,6 +12,11 @@ const SETUP_MESSAGES: Readonly<Record<GrowthSetupOutcome, string>> = {
   failed: "Growth setup did not complete. Inspect /brief before retrying. Run /setup to review a compatible pending proposal with fresh confirmations, or explicitly disable and start again to discard it. No verification or learning outcome is claimed.",
 };
 
+interface GrowthCheckpointResult {
+  readonly result: vscode.ChatResult;
+  readonly isCurrent: () => boolean;
+}
+
 export class GrowthCheckpointRoutes {
   public constructor(private readonly deps: GrowthParticipantDependencies) {}
 
@@ -53,7 +58,7 @@ export class GrowthCheckpointRoutes {
       current.session?.authorityEpoch === observed.session?.authorityEpoch;
   }
 
-  public async checkpoint(response: vscode.ChatResponseStream, signal: AbortSignal): Promise<vscode.ChatResult | void> {
+  public async checkpoint(response: vscode.ChatResponseStream, signal: AbortSignal): Promise<GrowthCheckpointResult | void> {
     if (!this.enabled(response, signal)) { return; }
     const observed = this.deps.snapshotNow();
     const checkpoint = createNativeCheckpoint(observed);
@@ -80,7 +85,10 @@ export class GrowthCheckpointRoutes {
     }
     response.markdown("Requested a minimized checkpoint for this response. Use /history in this chat to inspect it. VS Code controls native retention; this is not a disk-durability acknowledgement or permission to resume work. Disabling Pair does not delete native chat history.");
     if (this.isCurrent(observed, signal)) {
-      return { metadata: { adaptivePairCheckpoint: checkpoint } };
+      return {
+        result: { metadata: { adaptivePairCheckpoint: checkpoint } },
+        isCurrent: () => this.isCurrent(observed, signal),
+      };
     }
   }
 }

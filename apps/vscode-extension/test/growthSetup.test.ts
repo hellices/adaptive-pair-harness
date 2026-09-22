@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { InMemoryJournal, PairCoordinator } from "@adaptive-pair/runtime";
 import { FakeClock, FakeIdSource } from "@adaptive-pair/testkit";
 import {
+  isSetupText,
+  normalizeGrowthSetupInput,
   runGrowthSetup,
   type GrowthSetupDependencies,
   type GrowthSetupInput,
@@ -14,6 +16,47 @@ const input: GrowthSetupInput = {
   independentCheck: "Try a different retry limit independently",
   verificationPlan: "npm test",
 };
+
+const unicodeSeparators = [
+  { label: "U+2028", separator: "\u2028" },
+  { label: "U+2029", separator: "\u2029" },
+] as const;
+
+describe("one-line Growth setup input", () => {
+  it.each([{ label: "LF", separator: "\n" }, ...unicodeSeparators])(
+    "rejects $label anywhere in shared text validation", ({ separator }) => {
+      for (const value of [`first${separator}second`, `${separator}first`, `first${separator}`]) {
+        expect(isSetupText(value)).toBe(false);
+      }
+    },
+  );
+
+  it.each(unicodeSeparators)("rejects embedded $label in objective and independent variation normalization", ({ separator }) => {
+    for (const field of ["objective", "independentCheck"] as const) {
+      expect(normalizeGrowthSetupInput({ ...input, [field]: `first${separator}second` })).toBeUndefined();
+    }
+  });
+
+  it.each(unicodeSeparators.flatMap(separator =>
+    (["objective", "independentCheck", "allowedPath", "verificationPlan"] as const).map(field => ({ ...separator, field })),
+  ))("rejects $label in $field before trimming during normalization", ({ separator, field }) => {
+    for (const value of [`${separator}${input[field]}`, `${input[field]}${separator}`]) {
+      expect(normalizeGrowthSetupInput({ ...input, [field]: value })).toBeUndefined();
+    }
+  });
+
+  it.each([
+    "재시도 경계를 확인해요", "境界条件を検証する", "تحقق من حدود المحاولة",
+    "Vérifier les limites", "Retry 🔁 with cafe\u0301",
+  ])("preserves normal international one-line text: %s", text => {
+    expect(isSetupText(text)).toBe(true);
+    expect(normalizeGrowthSetupInput({
+      ...input, objective: ` ${text} `, independentCheck: ` ${text} `, allowedPath: `src/${text}.mjs`,
+    })).toEqual({
+      objective: text, independentCheck: text, allowedPath: `src/${text}.mjs`, verificationPlan: "npm run test",
+    });
+  });
+});
 
 const createHarness = async () => {
   const store = new InMemoryJournal("workspace-setup");
