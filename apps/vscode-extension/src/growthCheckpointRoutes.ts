@@ -31,8 +31,10 @@ export class GrowthCheckpointRoutes {
       response.markdown("Native Growth setup is unavailable in this host.");
       return;
     }
-    const outcome = await this.deps.setup(signal);
-    if (!signal.aborted) { response.markdown(SETUP_MESSAGES[outcome]); }
+    const result = await this.deps.setup(signal);
+    if (signal.aborted) { return; }
+    const outcome = result.outcome === "completed" && !result.isCurrent() ? "stale" : result.outcome;
+    response.markdown(SETUP_MESSAGES[outcome]);
   }
 
   public history(context: vscode.ChatContext, response: vscode.ChatResponseStream, signal: AbortSignal): void {

@@ -5,7 +5,8 @@ import {
   realCoordinator, growthSnapshot, createRequest, createContext, createResponseStream, createToken,
 } from "./growthTestHarness.js";
 import { createNativeCheckpoint } from "../src/nativeCheckpoint.js";
-import { runGrowthSetup, type GrowthSetupOutcome } from "../src/growthSetup.js";
+import { runGrowthSetup } from "../src/growthSetup.js";
+import type { GrowthSetupResult } from "../src/growthHostState.js";
 import { ATTEMPT_REQUIRED_MESSAGE } from "../src/growthPresentation.js";
 
 const createHarness = (coordinator = realCoordinator(growthSnapshot({
@@ -15,7 +16,8 @@ const createHarness = (coordinator = realCoordinator(growthSnapshot({
   } },
 }))) => {
   const model = new FakeModel([]);
-  const setup = vi.fn<() => Promise<GrowthSetupOutcome>>(() => Promise.resolve("completed"));
+  const setupCurrent = vi.fn(() => true);
+  const setup = vi.fn<() => Promise<GrowthSetupResult>>(() => Promise.resolve({ outcome: "completed", isCurrent: setupCurrent }));
   const confirmCheckpoint = vi.fn<() => Promise<boolean>>(() => Promise.resolve(true));
   const requestWorkspaceConsent = vi.fn<() => Promise<boolean>>(() => Promise.resolve(false));
   const mutation = vi.spyOn(coordinator, "invokeTool");
@@ -31,7 +33,7 @@ const createHarness = (coordinator = realCoordinator(growthSnapshot({
     Object.defineProperty(result, "model", { get: () => { throw new Error("A local route accessed the model"); } });
     return result;
   };
-  return { coordinator, participant, model, setup, confirmCheckpoint, requestWorkspaceConsent, mutation, stream, collected, request };
+  return { coordinator, participant, model, setup, setupCurrent, confirmCheckpoint, requestWorkspaceConsent, mutation, stream, collected, request };
 };
 
 const createFreshCoordinator = async () => {
@@ -95,13 +97,14 @@ describe("native local Growth participant routes", () => {
     const harness = createHarness();
     await harness.participant.handler()(harness.request("setup"), createContext(), harness.stream, createToken());
     expect(harness.setup).toHaveBeenCalledOnce();
+    expect(harness.setupCurrent).toHaveBeenCalledOnce();
     expect(harness.collected.markdown.join("\n")).toContain("/brief");
     expect(harness.model.sendCount).toBe(0);
   });
 
   it.each(["cancelled", "unavailable", "stale", "failed"] as const)("reports setup outcome %s without claiming completion", async outcome => {
     const harness = createHarness();
-    harness.setup.mockResolvedValue(outcome);
+    harness.setup.mockResolvedValue({ outcome, isCurrent: harness.setupCurrent });
     await harness.participant.handle(harness.request("setup"), createContext(), harness.stream, createToken());
     expect(harness.collected.markdown.join("\n")).not.toContain("Growth setup is complete");
     expect(harness.mutation).not.toHaveBeenCalled();

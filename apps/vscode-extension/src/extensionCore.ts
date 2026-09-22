@@ -27,8 +27,9 @@ import {
   type ConfirmationPort,
 } from "./verificationAdapter.js";
 import { VscodeScopeAccess } from "./workspaceContextAccess.js";
-import { runGrowthSetup, type GrowthSetupOutcome, type GrowthSetupUi } from "./growthSetup.js";
+import { runGrowthSetup, type GrowthSetupUi } from "./growthSetup.js";
 import { VscodeGrowthSetupUi } from "./growthSetupUi.js";
+import type { GrowthSetupResult } from "./growthHostState.js";
 
 export const GROWTH_PARTICIPANT_ID = "adaptivePair.chat";
 
@@ -66,7 +67,7 @@ const setupGrowthWork = async (
   toolContext: PairToolContext,
   ui: GrowthSetupUi,
   signal: AbortSignal,
-): Promise<GrowthSetupOutcome> => {
+): Promise<GrowthSetupResult> => {
   let validated = sessionController.snapshotNow();
   const outcome = await runGrowthSetup({
     coordinator: sessionController.coordinator(),
@@ -77,20 +78,21 @@ const setupGrowthWork = async (
     prepareEntry: currentSignal => sessionController.prepareGrowthEntry(currentSignal),
     isAvailable: () => workspaceAvailable(sessionController), ui,
   }, signal);
+  const completion = validated;
+  const isCurrent = (): boolean => {
+    const current = sessionController.snapshotNow();
+    return !signal.aborted && workspaceAvailable(sessionController) && current.revision === completion.revision &&
+      current.presence.status !== "off" && current.presence.status !== "paused" &&
+      current.presence.workspaceId === completion.presence.workspaceId &&
+      current.session?.sessionId === completion.session?.sessionId &&
+      current.session?.startedAtRevision === completion.session?.startedAtRevision &&
+      current.session?.authorityEpoch === completion.session?.authorityEpoch;
+  };
   await toolContext.accept(sessionController.snapshotNow());
-  if (signal.aborted) { return "cancelled"; }
-  const current = sessionController.snapshotNow();
-  if (outcome === "completed" && (
-    !workspaceAvailable(sessionController) || current.revision !== validated.revision ||
-    current.presence.status === "off" || current.presence.status === "paused" ||
-    current.presence.workspaceId !== validated.presence.workspaceId ||
-    current.session?.sessionId !== validated.session?.sessionId ||
-    current.session?.startedAtRevision !== validated.session?.startedAtRevision ||
-    current.session?.authorityEpoch !== validated.session?.authorityEpoch
-  )) {
-    return "stale";
-  }
-  return outcome;
+  return {
+    outcome: signal.aborted ? "cancelled" : outcome === "completed" && !isCurrent() ? "stale" : outcome,
+    isCurrent,
+  };
 };
 
 const requestNativeCheckpoint = async (

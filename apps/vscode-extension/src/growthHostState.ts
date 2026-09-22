@@ -129,6 +129,11 @@ export type GrowthConsentResult =
   | { readonly status: "granted"; readonly taskContext: string | undefined }
   | { readonly status: "declined" | "stale" };
 
+export interface GrowthSetupResult {
+  readonly outcome: GrowthSetupOutcome;
+  readonly isCurrent: () => boolean;
+}
+
 export interface GrowthParticipantDependencies {
   readonly coordinator: PairCoordinatorPort;
   readonly snapshotNow: () => PairRuntimeSnapshot;
@@ -142,7 +147,7 @@ export interface GrowthParticipantDependencies {
     model: vscode.LanguageModelChat,
   ) => Promise<boolean>;
   readonly stayQuiet?: () => Promise<unknown>;
-  readonly setup?: (signal: AbortSignal) => Promise<GrowthSetupOutcome>;
+  readonly setup?: (signal: AbortSignal) => Promise<GrowthSetupResult>;
   readonly confirmCheckpoint?: (signal: AbortSignal) => Promise<boolean>;
   readonly now?: () => number;
 }

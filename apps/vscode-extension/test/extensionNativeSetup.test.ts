@@ -188,3 +188,38 @@ describe("setup transaction resolution boundary", () => {
     expect(runtime.ledger.snapshot().modelRequests).toBe(0);
   });
 });
+
+describe("setup response publication", () => {
+  it("rejects completion when disable commits after the adapter check but before the message", async () => {
+    const { runtime, handler } = await createSetupHarness();
+    const executeCommand = fakeVscode.module.commands.executeCommand;
+    let started = false;
+    let disabling: Promise<void> | undefined;
+    vi.spyOn(fakeVscode.module.commands, "executeCommand").mockImplementation(async (name, ...args) => {
+      const result = await executeCommand(name, ...args);
+      if (!started && name === "setContext" && args[0] === "adaptivePair.mode" && args[1] === "growth") {
+        started = true;
+        disabling = runtime.presenceController.performDisable();
+        await Promise.resolve();
+      }
+      return result;
+    });
+    const publications: { text: string; state: ReturnType<typeof runtime.sessionController.snapshotNow> }[] = [];
+    const stream = { markdown: (text: string) => {
+      publications.push({ text, state: runtime.sessionController.snapshotNow() });
+    } } as unknown as vscode.ChatResponseStream;
+    await handler(request("setup"), { history: [] }, stream, token);
+    await disabling;
+    expect(started).toBe(true);
+    expect(publications).toHaveLength(1);
+    expect(publications[0]?.state.presence.status).toBe("off");
+    expect(publications[0]?.state.session).toBeUndefined();
+    expect(publications[0]?.text).not.toContain("Growth setup is complete");
+    expect(publications[0]?.text).toContain("current workspace or session changed");
+    expect(runtime.ledger.snapshot().modelRequests).toBe(0);
+    expect(Object.fromEntries(fakeVscode.state.contextKeys)).toEqual({
+      "adaptivePair.presenceEnabled": false, "adaptivePair.sessionActive": false,
+      "adaptivePair.mode": "", "adaptivePair.aiCanEdit": false,
+    });
+  });
+});
