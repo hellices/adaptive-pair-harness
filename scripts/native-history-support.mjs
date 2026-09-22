@@ -4,6 +4,9 @@ import { parseJsonObject, stringArrayField, stringField } from "./json.mjs";
 
 export const NATIVE_HISTORY_VENDOR = "adaptive-pair-native-history-fixture";
 
+export const nativeHistorySandboxArguments = (platform = process.platform) =>
+  platform === "linux" ? ["--no-sandbox", "--disable-gpu-sandbox"] : [];
+
 /** @param {Record<string, unknown>} manifest */
 export const deriveNativeHistoryManifest = (manifest) => {
   assert.ok(stringField(manifest, "main"), "The production manifest needs a main entry.");

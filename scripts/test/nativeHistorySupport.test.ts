@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveNativeHistoryManifest, nativeHistoryEnvironment, verifyNativeHistoryReports } from "../native-history-support.mjs";
+import { deriveNativeHistoryManifest, nativeHistoryEnvironment, nativeHistorySandboxArguments, verifyNativeHistoryReports } from "../native-history-support.mjs";
 
 const seed = {
   status: "passed", phase: "seed", bootId: "first-process", hostVersion: "1.138.0",
@@ -15,6 +15,14 @@ const resumed = {
 };
 
 describe("native history host isolation", () => {
+  it("uses the existing test-electron sandbox flags only for isolated Linux launches", () => {
+    expect(nativeHistorySandboxArguments("linux")).toEqual(["--no-sandbox", "--disable-gpu-sandbox"]);
+  });
+
+  it("preserves native sandbox defaults on macOS", () => {
+    expect(nativeHistorySandboxArguments("darwin")).toEqual([]);
+  });
+
   it("preserves product contributions and uses only a test-local fixture model", () => {
     const manifest = {
       main: "./dist/extension.cjs", activationEvents: ["onCommand:adaptivePair.enablePresence"],

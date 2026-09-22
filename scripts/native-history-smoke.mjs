@@ -8,7 +8,7 @@ import { clearTimeout, setTimeout } from "node:timers";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { parseJsonObject, stringField } from "./json.mjs";
-import { deriveNativeHistoryManifest, nativeHistoryEnvironment, verifyNativeHistoryReports } from "./native-history-support.mjs";
+import { deriveNativeHistoryManifest, nativeHistoryEnvironment, nativeHistorySandboxArguments, verifyNativeHistoryReports } from "./native-history-support.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -70,6 +70,7 @@ export const runOwnedNativeHost = async (executable, args, environment, logPath)
 const launchPhase = async (executable, directory, phase, resource = "") => {
   const resultPath = join(directory, `${phase}.json`);
   await runOwnedNativeHost(executable, [
+    ...nativeHistorySandboxArguments(),
     join(directory, "workspace"), `--extensionDevelopmentPath=${join(directory, "extension")}`,
     `--user-data-dir=${join(directory, "profile")}`, `--extensions-dir=${join(directory, "extensions")}`,
     `--shared-data-dir=${join(directory, "shared")}`, `--logsPath=${join(directory, `${phase}-logs`)}`,
