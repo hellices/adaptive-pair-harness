@@ -2410,9 +2410,10 @@ and implementation plan. No production behavior changes in this investigation.
 
 ### 13.4 Native Growth hands-on milestone
 
-**Status: direction selected; written contract awaiting owner review.** On
+**Status: written contract approved; implementation in progress.** On
 September 22, 2026, the owner selected a native `@pair` trial rather than an
-SDK-first adapter. This contract scopes that trial; it is not a claim that the
+SDK-first adapter and then approved this written contract for implementation,
+testing, packaging, and PR review. This contract scopes that trial; it is not a claim that the
 behavior below already ships. Start from main at `ba20468` on a dedicated PR
 branch. The separate native-reuse research PR #13 remains unmerged and is not
 an implementation dependency.
