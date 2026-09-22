@@ -184,7 +184,9 @@ need a different task or scope.
 
 The checkpoint is a closed **version 1** object capped at **512 UTF-8 bytes**.
 It contains a format marker, mode, work-unit status, maximum hint level,
-attempt/hypothesis flags, hint level, and whether a solution was revealed. It
+attempt/hypothesis flags, hint level, and historical solution-reveal
+authorization. The v1 field named `solutionRevealed` records authorization,
+not proof that a solution was displayed; `/history` labels that distinction. It
 contains no paths, file content, objective, summaries, identifiers, timestamps,
 hashes, grants, baselines, verification results, or learning-outcome claims.
 
@@ -285,15 +287,22 @@ selected provider's network service; there is no Pair cloud sync or telemetry.
 
 ## Observed host evidence
 
-Each supported test host passed the existing **17 isolated smoke tests**, then
+Each of these test hosts passed the existing **17 isolated smoke tests** on
+macOS and Linux, then
 two clean application launches using production participant wiring in an
-isolated profile, with regular local VS Code Chat in **Ask** mode:
+isolated profile, with regular local VS Code Chat in **Ask** mode. The Node
+versions in this table are the local macOS measurements:
 
 | VS Code | Embedded Node.js | Runner Node.js | Native history result |
 | --- | --- | --- | --- |
 | 1.136.2 | 24.18.1 | 24.21.0 | Checkpoint returned after reopening; no live authority restored. |
 | 1.138.0 | 24.18.1 | 24.21.0 | Checkpoint returned after reopening; no live authority restored. |
 | 1.139.0-insider | 24.20.0 | 24.21.0 | Checkpoint returned after reopening; no live authority restored. |
+
+Linux CI run **35757672754**, at source revision `d9f222e`, passes all three
+actual host steps, including the allowed-failure Insiders job's smoke step.
+Its runners use Node 24.20.0–24.21.0 and npm 11.19.0. These are fixture results,
+not authenticated model or Windows restart evidence.
 
 The first launch submitted real native `/setup` requests, cancelled a partial
 setup, then completed a retry with three fresh confirmations. It observed a real
@@ -311,19 +320,24 @@ checkpoint. Both launches started with Presence off.
 These runs made **zero model and token-count calls**, loaded **no Copilot
 extension**, and used **no proposed API**. Private native-chat automation commands
 and session-resource diagnostics belong only to the isolated test driver; they
-are not production dependencies. The automation runner supports Linux/macOS
-POSIX hosts, not Windows host-proof claims. Normal restart/reopen evidence is
-not proof of power-loss durability, arbitrary native fork retention, or an
+are not production dependencies. The automation runner uses an isolated,
+automation-specific quit boundary so a native in-progress-session dialog
+cannot block teardown; it still uses real disk-backed chat history, not the
+in-memory extension-test storage path. The optional POSIX restart phase
+explicitly skips Windows without failing the existing baseline host tests.
+This controlled restart/reopen evidence is not proof of power-loss durability,
+interactive quit-confirmation behavior, arbitrary native fork retention, or an
 authenticated selected-model response. The latter still needs an owner account
 with model access and an explicitly authorized manual trial.
 
 ## Preview limits and pending evidence
 
-- **Passed locally:** full typecheck/lint and 2,997 root tests, both dependency
-  audits, isolated POC checks, the three-host runs, and the seven-entry Stable
-  VSIX inspection. The test driver and its private diagnostics are not shipped.
-- **Pending:** whole-branch PR review/final-revision CI and authenticated
-  selected-model inference with the owner's account. The
+- **Verified:** full typecheck/lint and 3,040 root tests, both dependency audits,
+  isolated POC checks, three-host macOS and Linux runs, and the seven-entry
+  Stable VSIX inspection. The test driver and its private diagnostics are not
+  shipped. PR #14 records review dispositions and current revision checks.
+- **Pending manual evidence:** authenticated selected-model inference with
+  the owner's account and completion of the interactive walkthrough. The
   observed native reopen results are bounded to the hosts and controlled
   scenarios above; fixture
   models and synthetic histories cannot replace that evidence.

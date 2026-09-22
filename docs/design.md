@@ -2478,7 +2478,8 @@ the Growth guidance gate to run a model before agreement.
 background persistence service. With Presence enabled and a live Growth work
 unit, show a confirmation that the minimized record will be attached to the
 response and retained under VS Code's native chat-history controls. Revalidate
-the live state after confirmation and before returning `ChatResult.metadata`.
+the original live-state identity after confirmation and synchronously after
+the public handler's final await, before returning `ChatResult.metadata`.
 Cancellation, a stale revision, a paused/disabled session, or a declined prompt
 returns no checkpoint. No disk adapter is added.
 
@@ -2495,7 +2496,7 @@ object, containing only:
 | `attempt` | `none`, `recorded`, or `bypassed` |
 | `hypothesis` | `none`, `recorded`, or `bypassed` |
 | `hintLevel` | `null` or integer 0–5 |
-| `solutionRevealed` | Boolean |
+| `solutionRevealed` | Boolean recording historical reveal authorization, not proof of solution delivery |
 
 There are no paths, file contents, objectives, summaries, diagnostic text,
 timestamps, hashes, runtime/session/work-unit IDs, SDK IDs, grants, baselines,
@@ -2503,6 +2504,11 @@ verification results, or learning-outcome claims. Construct the record by
 allowlisting live fields, never by serializing a snapshot. Reject additional
 keys, accessors, malformed values, unsupported versions, and oversized shapes.
 The fixed v1 object must fit within 512 UTF-8 bytes.
+
+The field name is retained for v1 compatibility. A reveal authorization may
+exist even when the agreed hint ceiling prevents delivery; historical display
+must not claim that a solution was shown. Neither boolean value restores live
+permission or establishes an assistance or learning outcome.
 
 #### Historical display, never live admission
 

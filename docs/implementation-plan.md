@@ -6,12 +6,16 @@
 > Subagent tooling is optional, not a product dependency.
 
 **Status:** owner approved the written contract on September 22, 2026;
-implementation and task-scoped review are complete for Tasks 1–4. The final
-completion-boundary correction passed independent re-review. The full root
-check passes 2,997 cases on Vitest 5.0.1; both refreshed dependency graphs pass
-their audits, and real-host restart validation passes on both Stable hosts
-and Insiders. Stable packaging and seven-entry archive inspection also pass.
-Whole-branch review and final-revision PR delivery remain in progress.
+implementation and task-scoped review are complete. The final setup and
+checkpoint publication-boundary corrections passed independent re-review;
+whole-branch findings I1–I5 and M1 are closed at reviewed source `d9f222e`.
+The full root check passes 3,040 cases in 142 files on Vitest 5.0.1; both
+refreshed dependency graphs pass their audits. Real-host restart validation
+passes on both Stable hosts and Insiders on macOS and Linux. Stable packaging
+and seven-entry archive inspection also pass. PR #14 records original review
+thread dispositions and the latest revision's delivery checks; readiness is
+reported only after those current checks and follow-up feedback are verified.
+Authenticated owner-model guidance remains a manual trial, not fixture proof.
 This deliberately replaces the completed P2b
 plan, retained at `ba20468:docs/implementation-plan.md` in Git. PR #13's
 unmerged feasibility work is evidence, not an implicit merge or product
@@ -223,8 +227,12 @@ production bundle and is identified as such in measured evidence.
 - [x] Run `npm run check`, affected isolated-prototype checks, Stable host
   smoke, build, and packaging under the Node 24 baseline. Inspect VSIX entries
   for accidental SDK, prototype, test, and private-API inclusion.
-- [ ] Record exact observed results and remaining user-account checks in the
+- [x] Record exact observed results and remaining user-account checks in the
   canonical docs; commit verified changes, push, and open the PR against main.
-- [ ] Obtain review, verify and fix actionable findings, reply in their original
-  threads, and recheck all required checks on the final SHA. Supply the actual
-  local VSIX and a short user trial; report merge readiness without merging.
+- [x] Obtain review, verify and fix actionable findings, and reply in their
+  original threads. Prepare the actual local VSIX and a short user trial.
+
+**Final delivery gate:** recheck follow-up review feedback and every required
+check on the latest PR SHA before reporting readiness. A prior source approval
+or passing run never approves a later revision. Report readiness without
+merging or enabling auto-merge; the owner still controls those actions.

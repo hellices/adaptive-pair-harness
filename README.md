@@ -26,12 +26,14 @@ never edits your files, and makes **no learning or productivity claim**. Native
 `/checkpoint` and `/history` report historical progress, never restored authority.
 
 **Evidence status:** VS Code **1.136.2, 1.138.0, and 1.139.0-insider** each passed
-17 isolated host smokes and a two-launch native checkpoint/reopen check using production wiring.
+17 isolated host smokes and a two-launch native checkpoint/reopen check on
+macOS and Linux using production wiring.
 Historical metadata returned without restoring live authority. Those runs made
-zero model calls, loaded no Copilot extension, and used no proposed API;
-the 2,997-test root check, both dependency audits, and Stable packaging pass.
-Whole-branch PR review/CI and authenticated selected-model inference remain
-pending. See the [trial walkthrough](docs/growth-preview.md#observed-host-evidence)
+zero model and token-count calls, loaded no Copilot extension, and used no
+proposed API; the 3,040-test root check, both dependency audits, and Stable
+packaging pass. PR #14 tracks review and the latest revision's delivery checks.
+Authenticated selected-model inference remains an explicit owner trial check.
+See the [trial walkthrough](docs/growth-preview.md#observed-host-evidence)
 for the evidence boundaries and remaining manual checks.
 
 ### Quickstart
@@ -414,9 +416,10 @@ commands, and the native Agent Plugin remain out of scope for this preview.
 The `0.2.0-preview.2` native Growth trial adds deterministic `/setup`, an
 independent retry exercise, and explicit minimized `/checkpoint` and `/history`
 routes. Native checkpoint/reopen checks passed on VS Code 1.136.2, 1.138.0, and
-1.139.0-insider. Local checks, refreshed audits, and Stable packaging pass;
-whole-branch PR review/CI and authenticated account/model inference remain
-pending. Earlier host results below remain historical evidence. The [walkthrough](docs/growth-preview.md) separates
+1.139.0-insider on macOS and Linux. Local checks, refreshed audits, and Stable
+packaging pass; PR #14 records review and the latest revision's CI.
+Authenticated account/model inference remains a manual trial check. Earlier
+host results below remain historical evidence. The [walkthrough](docs/growth-preview.md) separates
 the implemented route contract, observed host behavior, and outstanding checks.
 
 P1 adds tested, side-effect-free Pair work-unit admission, related human

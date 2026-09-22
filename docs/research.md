@@ -2046,7 +2046,7 @@ completion. No snapshot, predicate, or authority is stored in chat metadata.
 `/checkpoint` returns only the approved nine-field v1 object under
 `ChatResult.metadata.adaptivePairCheckpoint`, after a separate confirmation.
 `/history` inspects at most 32 public context turns and never hydrates the live
-runtime. The pure contract has 131 unit/property cases; an independent bounded
+runtime. The initial pure-contract suite covered 131 unit/property cases; an independent bounded
 enumeration of 6,804 valid combinations found a largest payload of 215 UTF-8
 bytes, below the 512-byte contract. These records contain no source, paths,
 objectives, identifiers, grants, verification results, or learning claims.
@@ -2057,8 +2057,9 @@ private or deleted by the minimized checkpoint format.
 
 The extended isolated host runner passed on VS Code **1.136.2**,
 **1.138.0**, and **1.139.0-insider**, using Node **24.21.0** for the runner.
-These complete runs were repeated after the response-boundary correction and
-the Vitest 5.0.1 refresh. Each version passed the
+These complete macOS runs were repeated after the final publication-boundary
+corrections and the Vitest 5.0.1 refresh; the same three versions also passed
+the Linux delivery workflow described below. Each version passed the
 existing **17** inactive-zero/coexistence/Growth smoke cases and then launched
 two separate VS Code application processes with the same disposable profile.
 The restart scenario drives the actual registered production participant
@@ -2083,8 +2084,8 @@ through native chat submission, rather than constructing a fake history array:
 5. Open a new native chat and observe an empty checkpoint history, not a
    workspace-wide leak of the previously selected chat's metadata.
 
-The fixture uses a registered offline model identity with **zero model
-requests** and no Copilot extension loaded. Fixed input and confirmation ports
+The fixture uses a registered offline model identity with **zero model and
+token-count requests** and no Copilot extension loaded. Fixed input and confirmation ports
 replace human dialog interaction only in the gated development-host entry;
 production continues to use native dialogs. Setup UI unit tests additionally
 exercise real filesystem eligibility and cancellation boundaries. Neither
@@ -2096,15 +2097,72 @@ The driver uses private workbench open/submit commands and reads the diagnostic
 proposal is enabled, but those driver details are **not public product API
 dependencies**. The fixture entry, offline provider, diagnostic access, test
 auto-confirmations, and runner stay outside the production bundle/VSIX. The
-runner uses POSIX process-group isolation and is measured on macOS; Linux is
-covered by the delivery workflow, not inferred from the local run. Windows
-restart-driver coverage is not claimed.
+runner uses POSIX process-group isolation. Both macOS and Linux are measured;
+Windows explicitly skips only this optional phase without failing the existing
+baseline host tests. Windows restart-driver coverage is not claimed.
 
 The first native run exposed a test-observer defect: VS Code freezes response
 stream properties, so a proxy cannot substitute a different `markdown` value.
 The fixture now delegates from a separate stream object without changing the
 native object. Subsequent complete runs on all three versions passed. This was a
 test instrumentation correction, not a production API workaround.
+
+#### Whole-branch corrections and Linux delivery proof
+
+Whole-branch review found a second publication race, this time on checkpoint
+metadata: a real coordinator disable, pause, or revision commit could settle
+after the inner route's check but before the public handler returned. The
+route now carries its original identity-bound freshness predicate separately
+from the public result; the handler checks it synchronously after its final
+await. Regressions observe that handler promise's actual settlement, including
+real coordinator commits, cancellation, and equal-revision identity changes.
+Only the closed checkpoint projection is serialized.
+
+The nine-field v1 schema is unchanged. Its `solutionRevealed` flag comes from
+reveal authorization, not necessarily delivered content: fresh setup's ceiling
+of four can reject a level-five response before a model is created. Historical
+rendering now states authorization and explicitly declines delivery evidence.
+A real setup/reveal/checkpoint/history regression verifies that distinction
+without relaxing the ceiling or restoring authority. Shared setup validation
+also rejects Unicode line/paragraph separators before trimming, while retaining
+ordinary international text.
+
+Host-review corrections preserve the Windows baseline through an explicit
+optional-phase skip and gate the POSIX signal tests accordingly. The native
+runner no longer inherits ordinary D-Bus, XDG runtime, or Wayland endpoints.
+It creates an owned mode-0700 runtime directory and supplies one escaped
+nonexistent socket address inside it, with no D-Bus autolaunch fallback; only
+intentional graphical transport is inherited. Address escaping follows the
+[D-Bus address grammar](https://dbus.freedesktop.org/doc/dbus-specification.html#addresses).
+Both the driver and report verifier require explicit zero model **and**
+token-count metrics in both phases, and reject missing/nonzero evidence.
+
+Linux delivery initially failed before the fixture ran: Chromium reported an
+incorrectly configured downloaded SUID sandbox helper and exited with SIGTRAP.
+The native launch now matches test-electron's existing Linux sandbox arguments.
+After that correction, the seed scenario passed but application exit timed
+out: the native chat lifecycle veto opened an in-progress-session confirmation
+dialog. The captured seed report and renderer log separated a passing product
+scenario from blocked teardown; extending the timeout would not resolve it.
+The runner now passes `--enable-smoke-test-driver` only to disposable native
+test launches, matching the explicit automation exit branch in
+[VS Code 1.138.0's chat lifecycle contribution](https://github.com/microsoft/vscode/blob/1.138.0/src/vs/workbench/contrib/chat/electron-browser/chat.contribution.ts).
+It does not pass an extension-test entry point or replace real disk-backed
+history with in-memory test storage. This measures a controlled automation
+quit/reopen, not interactive confirmation behavior or crash durability. The
+flag is forbidden in production bundles and every shipped text entry. Failure
+uploads retain only synthetic-driver reports/logs, not profile or HOME trees.
+
+[CI run 35757672754](https://github.com/hellices/adaptive-pair-harness/actions/runs/35757672754),
+at `d9f222e`, passes the full build/package job and all three Linux host jobs.
+Each host log records 17 passing baseline cases and **both** native phases:
+restored historical metadata, no restored authority, empty fresh-chat history,
+failed-to-passed verification, and zero model/token calls. The Insiders smoke
+step itself passed; its allowed-failure job status is not used as a substitute
+for evidence. Local macOS runs also pass all three versions after these fixes.
+The local Insiders download resolver briefly timed out; the repeated test used
+the existing binary after checking its actual `1.139.0-insider` manifest, not
+an assumed latest version. PR #14 tracks the final revision's follow-up checks.
 
 #### Current dependency and tooling evidence
 
@@ -2164,24 +2222,34 @@ claimed. Workflow action pins match the checked stable releases of
 [checkout 7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1),
 [setup-node 7.0.0](https://github.com/actions/setup-node/releases/tag/v7.0.0), and
 [upload-artifact 7.0.1](https://github.com/actions/upload-artifact/releases/tag/v7.0.1).
-Final CI's actual runner/tool versions are separate observations. The POC's
+The recorded Linux run uses Node **24.20.0 / npm 11.19.0** for build/package
+and Insiders, and Node **24.21.0 / npm 11.19.0** for both Stable host jobs.
+These are separate runner observations, not a manifest pin or a global npm
+upgrade. The POC's
 vendored proposed-API provenance was not refreshed by this maintenance and
 does not establish a Stable product dependency.
 
 #### Combined local verification
 
-After the completion-boundary fix and dependency update, `npm run check`
-passes typecheck, full lint, and **2,997 tests in 140 files**. The separate
+After the whole-branch fixes and dependency update, `npm run check`
+passes typecheck, full lint, and **3,040 tests in 142 files**. The separate
 coverage run passes the same suite with the matched 5.0.1 provider: statements
-**91.7%**, branches **86.36%**, functions **93.67%**, and lines **92%**. The
+**91.11%**, branches **86.04%**, functions **93.35%**, and lines **91.48%**. The
+expanded coverage graph includes the native process runner; these percentages
+are not directly comparable to the earlier graph that omitted that module. The
 existing Vite native-config advisory remains visible; no warning suppression
 or relaxed timeout/test gate was added. The isolated POC passes compilation,
 **21 tests in five files**, and packaging. POC results are not added to the
 root case count and its VSIX is not part of the Stable trial.
 
 All four implementation tasks passed independent spec and quality review,
-including re-review of the final setup-response correction. The three-host
-restart results above were freshly repeated on these dependencies. Stable
+including re-review of the final setup-response correction. The subsequent
+whole-branch review's five Important and one Minor findings were corrected;
+targeted independent re-review approves source `d9f222e` with no remaining
+findings. Each of the four original Copilot review threads received a fix and
+verification reply and was resolved. Final documentation and latest-revision
+checks remain separately reviewable in PR #14. The three-host restart results
+above were freshly repeated on macOS and Linux. Stable
 build, packaging, and archive verification pass with exactly **seven entries**:
 the two VSIX envelope files, license, public README, manifest, Growth walkthrough,
 and production bundle. No SDK, isolated POC, host fixture, test-only offline
