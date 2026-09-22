@@ -31,6 +31,9 @@ export const PRODUCTION_FORBIDDEN_TOKENS = Object.freeze([
   "HostTestAutoConfirmPort",
   "createHostTestApi",
   ".host-test",
+  "ADAPTIVE_PAIR_NATIVE_HISTORY_TEST",
+  "adaptive-pair-native-history-fixture",
+  "sessionResource",
 ]);
 
 /**
