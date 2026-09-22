@@ -8,7 +8,7 @@ import { clearTimeout, setTimeout } from "node:timers";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { parseJsonObject, stringField } from "./json.mjs";
-import { deriveNativeHistoryManifest, nativeHistoryEnvironment, nativeHistorySandboxArguments, verifyNativeHistoryReports } from "./native-history-support.mjs";
+import { deriveNativeHistoryManifest, nativeHistoryLaunchArguments, prepareNativeHistoryEnvironment, verifyNativeHistoryReports } from "./native-history-support.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -66,11 +66,11 @@ export const runOwnedNativeHost = async (executable, args, environment, logPath)
   }
 };
 
-/** @param {string} executable @param {string} directory @param {string} phase @param {string} [resource] */
-const launchPhase = async (executable, directory, phase, resource = "") => {
+/** @param {string} executable @param {string} directory @param {NodeJS.ProcessEnv} environment @param {string} phase @param {string} [resource] */
+const launchPhase = async (executable, directory, environment, phase, resource = "") => {
   const resultPath = join(directory, `${phase}.json`);
   await runOwnedNativeHost(executable, [
-    ...nativeHistorySandboxArguments(),
+    ...nativeHistoryLaunchArguments(),
     join(directory, "workspace"), `--extensionDevelopmentPath=${join(directory, "extension")}`,
     `--user-data-dir=${join(directory, "profile")}`, `--extensions-dir=${join(directory, "extensions")}`,
     `--shared-data-dir=${join(directory, "shared")}`, `--logsPath=${join(directory, `${phase}-logs`)}`,
@@ -78,7 +78,7 @@ const launchPhase = async (executable, directory, phase, resource = "") => {
     "--disable-updates", "--disable-telemetry", "--disable-crash-reporter", "--skip-add-to-recently-opened",
     "--force-disable-user-env", "--use-inmemory-secretstorage", "--sync=off", "--locale=en", "--verbose",
   ], {
-    ...nativeHistoryEnvironment(directory), ADAPTIVE_PAIR_NATIVE_HISTORY_TEST: "1",
+    ...environment, ADAPTIVE_PAIR_NATIVE_HISTORY_TEST: "1",
     ADAPTIVE_PAIR_NATIVE_HISTORY_PHASE: phase, ADAPTIVE_PAIR_NATIVE_HISTORY_RESULT: resultPath,
     ADAPTIVE_PAIR_NATIVE_HISTORY_RESOURCE: resource,
   }, join(directory, `${phase}.log`));
@@ -87,11 +87,16 @@ const launchPhase = async (executable, directory, phase, resource = "") => {
   return report;
 };
 
-/** @param {string} executable @param {string} ownedRunDirectory */
-export const runNativeHistorySmoke = async (executable, ownedRunDirectory) => {
-  if (process.platform === "win32") { throw new Error("The native restart smoke requires a POSIX process-group host."); }
+/** @param {string} executable @param {string} ownedRunDirectory @param {NodeJS.Platform} [platform] */
+export const runNativeHistorySmoke = async (executable, ownedRunDirectory, platform = process.platform) => {
+  if (platform === "win32") {
+    const reason = "Native restart proof requires POSIX process groups.";
+    console.log(`[host-test] Native restart proof skipped on ${platform}: ${reason} This is not persistence evidence.`);
+    return { status: "skipped", platform, reason };
+  }
   const directory = join(ownedRunDirectory, "native-history");
   await mkdir(directory);
+  const environment = await prepareNativeHistoryEnvironment(directory);
   for (const name of ["extension", "extensions", "shared", "home", "profile/User"]) {
     await mkdir(join(directory, name), { recursive: true });
   }
@@ -109,10 +114,10 @@ export const runNativeHistorySmoke = async (executable, ownedRunDirectory) => {
     target: "node24", external: ["vscode"], sourcemap: false, logLevel: "warning",
   });
   console.log(`[host-test] Native restart proof: ${directory}`);
-  const seeded = await launchPhase(executable, directory, "seed");
+  const seeded = await launchPhase(executable, directory, environment, "seed");
   const resource = stringField(seeded, "resource");
   assert.ok(resource, "The seed must identify its own native chat.");
-  const resumed = await launchPhase(executable, directory, "resume", resource);
+  const resumed = await launchPhase(executable, directory, environment, "resume", resource);
   const summary = verifyNativeHistoryReports(seeded, resumed);
   await writeFile(join(directory, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
   console.log(`[host-test] Native restart proof passed: ${JSON.stringify(summary)}`);

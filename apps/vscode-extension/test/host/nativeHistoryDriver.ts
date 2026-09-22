@@ -119,6 +119,7 @@ export const runNativeHistoryDriver = async (api: NativeHistoryApi, context: vsc
     else if (phase === "resume") { Object.assign(evidence, await resume(api)); }
     else { throw new Error(`Unknown native history phase: ${phase}`); }
     assert.equal(api.metrics().modelCalls, 0);
+    assert.equal(api.metrics().tokenCountCalls, 0);
     assert.equal(api.activity().modelRequests, 0);
     evidence.status = "passed";
   } catch (error) {

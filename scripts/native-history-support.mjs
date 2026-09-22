@@ -1,11 +1,13 @@
 import { strict as assert } from "node:assert";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { parseJsonObject, stringArrayField, stringField } from "./json.mjs";
 
 export const NATIVE_HISTORY_VENDOR = "adaptive-pair-native-history-fixture";
 
-export const nativeHistorySandboxArguments = (platform = process.platform) =>
-  platform === "linux" ? ["--no-sandbox", "--disable-gpu-sandbox"] : [];
+export const nativeHistoryLaunchArguments = (platform = process.platform) => [
+  "--enable-smoke-test-driver", ...(platform === "linux" ? ["--no-sandbox", "--disable-gpu-sandbox"] : []),
+];
 
 /** @param {Record<string, unknown>} manifest */
 export const deriveNativeHistoryManifest = (manifest) => {
@@ -26,15 +28,25 @@ export const deriveNativeHistoryManifest = (manifest) => {
 /** @param {string} directory @param {NodeJS.ProcessEnv} [source] @returns {NodeJS.ProcessEnv} */
 export const nativeHistoryEnvironment = (directory, source = process.env) => {
   const environment = Object.fromEntries([
-    "PATH", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TMP", "TEMP", "DISPLAY", "WAYLAND_DISPLAY",
-    "XAUTHORITY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "SystemRoot", "WINDIR",
+    "PATH", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TMP", "TEMP", "DISPLAY",
+    "XAUTHORITY", "SystemRoot", "WINDIR",
   ].flatMap(key => source[key] === undefined ? [] : [[key, source[key]]]));
   const home = join(directory, "home");
+  const runtime = join(directory, "runtime");
+  const busPath = encodeURIComponent(join(runtime, "unavailable-bus"))
+    .replace(/[!'()~]/gu, character => `%${character.charCodeAt(0).toString(16)}`);
   return {
     ...environment, HOME: home, COPILOT_HOME: join(home, ".copilot"),
     XDG_CONFIG_HOME: join(home, ".config"), XDG_DATA_HOME: join(home, ".local", "share"),
     XDG_STATE_HOME: join(home, ".local", "state"), XDG_CACHE_HOME: join(home, ".cache"),
+    XDG_RUNTIME_DIR: runtime, DBUS_SESSION_BUS_ADDRESS: `unix:path=${busPath}`,
   };
+};
+
+/** @param {string} directory @param {NodeJS.ProcessEnv} [source] */
+export const prepareNativeHistoryEnvironment = async (directory, source = process.env) => {
+  await mkdir(join(directory, "runtime"), { mode: 0o700 });
+  return nativeHistoryEnvironment(directory, source);
 };
 
 /** @param {Record<string, unknown>} seed @param {Record<string, unknown>} resumed */
@@ -44,6 +56,7 @@ export const verifyNativeHistoryReports = (seed, resumed) => {
     assert.ok(stringField(report, "bootId"), "Each process needs its own identity.");
     assert.ok(stringField(report, "hostVersion"), "The actual host version must be recorded.");
     assert.equal(report.modelCalls, 0, "Local checkpoint routes must make no model requests.");
+    assert.equal(report.tokenCountCalls, 0, "Local checkpoint routes must make no token-count requests.");
     assert.deepEqual(report.proposals, [], "No API proposals may be enabled.");
     assert.deepEqual(report.copilotExtensions, [], "The fixture must not use an authenticated Copilot extension.");
   }
@@ -63,6 +76,6 @@ export const verifyNativeHistoryReports = (seed, resumed) => {
   return {
     hostVersion: seed.hostVersion, phases: ["seed", "resume"], separateProcesses: true,
     historicalCheckpointRestored: true, authorityRestored: false, freshChatHasNoCheckpoint: true,
-    modelCalls: 0, verification: seed.verification,
+    modelCalls: 0, tokenCountCalls: 0, verification: seed.verification,
   };
 };

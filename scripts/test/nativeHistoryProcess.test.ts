@@ -10,7 +10,7 @@ const withProcessLog = async (run: (logPath: string) => Promise<void>) => {
   finally { await rm(directory, { recursive: true, force: true }); }
 };
 
-describe("owned native host process diagnostics", () => {
+describe.skipIf(process.platform === "win32")("owned POSIX native host process diagnostics", () => {
   it("flushes successful process output before returning", async () => {
     await withProcessLog(async logPath => {
       await runOwnedNativeHost(process.execPath, ["-e", 'process.stdout.write("host passed");'], {}, logPath);

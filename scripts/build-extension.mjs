@@ -34,6 +34,7 @@ export const PRODUCTION_FORBIDDEN_TOKENS = Object.freeze([
   "ADAPTIVE_PAIR_NATIVE_HISTORY_TEST",
   "adaptive-pair-native-history-fixture",
   "sessionResource",
+  "--enable-smoke-test-driver",
 ]);
 
 /**

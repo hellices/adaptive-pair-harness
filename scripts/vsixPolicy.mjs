@@ -27,6 +27,7 @@ const FORBIDDEN_CONTENT_PATTERNS = Object.freeze([
   { pattern: /ADAPTIVE_PAIR_NATIVE_HISTORY_TEST/u, label: "ADAPTIVE_PAIR_NATIVE_HISTORY_TEST" },
   { pattern: /adaptive-pair-native-history-fixture/u, label: "adaptive-pair-native-history-fixture" },
   { pattern: /sessionResource/u, label: "sessionResource" },
+  { pattern: /--enable-smoke-test-driver/u, label: "--enable-smoke-test-driver" },
   { pattern: /ADAPTIVE_PAIR_HOST_TEST/u, label: "ADAPTIVE_PAIR_HOST_TEST" },
   { pattern: /__pairHostTest/u, label: "__pairHostTest" },
   { pattern: /HostTestAutoConfirmPort/u, label: "HostTestAutoConfirmPort" },
