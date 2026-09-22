@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { SessionController } from "./presenceTestHarness.js";
+import { describe, expect, it, vi } from "vitest";
+import { SessionController, harness } from "./presenceTestHarness.js";
+import { WorkspaceContext } from "../src/workspaceContext.js";
 
 describe("SessionController — authoritative state transitions", () => {
   it("accepts only one concurrent command at the same revision", async () => {
@@ -89,5 +90,59 @@ describe("SessionController — authoritative state transitions", () => {
       observationRevision: 0,
     });
     expect(controller.snapshotNow().revision).toBeGreaterThan(before.revision);
+  });
+});
+
+describe("SessionController — explicitly requested Growth entry", () => {
+  const entry = {
+    workspaceId: "file:///workspace", dirtyPaths: [],
+    openPaths: ["src/retry.mjs"], diagnostics: [], protectedPaths: [], capturedAt: 100,
+  };
+
+  it("captures entry for a started session without selecting a mode or granting authority", async () => {
+    const controller = new SessionController();
+    await controller.startSession();
+    vi.spyOn(WorkspaceContext.prototype, "capture").mockResolvedValue(entry);
+    const result = await controller.prepareGrowthEntry(new AbortController().signal);
+    expect(result.session).toMatchObject({
+      status: "briefing", mode: undefined,
+      entrySnapshot: { workspaceId: entry.workspaceId, openPaths: entry.openPaths, capturedAt: entry.capturedAt },
+    });
+    expect(result.session?.entrySnapshot?.branch).toBeUndefined();
+    expect(result.session?.userActionGrants).toHaveLength(0);
+  });
+
+  it("refuses entry capture while disabled or untrusted", async () => {
+    const controller = new SessionController();
+    const capture = vi.spyOn(WorkspaceContext.prototype, "capture");
+    await expect(controller.prepareGrowthEntry(new AbortController().signal)).rejects.toThrow();
+    await controller.startSession();
+    harness.state.workspaceTrusted = false;
+    await expect(controller.prepareGrowthEntry(new AbortController().signal)).rejects.toThrow();
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("combines user cancellation with the controller lifetime", async () => {
+    const controller = new SessionController();
+    await controller.startSession();
+    const cancellation = new AbortController();
+    vi.spyOn(WorkspaceContext.prototype, "capture").mockImplementation(signal => {
+      cancellation.abort();
+      expect(signal?.aborted).toBe(true);
+      return Promise.resolve(entry);
+    });
+    await expect(controller.prepareGrowthEntry(cancellation.signal)).rejects.toThrow();
+    expect(controller.snapshotNow().session?.entrySnapshot).toBeUndefined();
+  });
+
+  it("rejects a changed workspace after asynchronous capture", async () => {
+    const controller = new SessionController();
+    await controller.startSession();
+    vi.spyOn(WorkspaceContext.prototype, "capture").mockImplementation(() => {
+      harness.state.workspaceFolders = [{ uri: harness.createUri("/replacement") }];
+      return Promise.resolve(entry);
+    });
+    await expect(controller.prepareGrowthEntry(new AbortController().signal)).rejects.toThrow();
+    expect(controller.snapshotNow().session?.entrySnapshot).toBeUndefined();
   });
 });
