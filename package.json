@@ -1,6 +1,6 @@
 {
   "name": "adaptive-pair-monorepo",
-  "version": "0.2.0-preview.1",
+  "version": "0.2.0-preview.2",
   "private": true,
   "license": "Apache-2.0",
   "engines": {
@@ -13,7 +13,7 @@
   "scripts": {
     "clean": "npm run clean --workspaces --if-present",
     "typecheck": "tsc -b && tsc -p poc/native-session-continuity",
-    "lint": "eslint packages apps scripts eslint.config.mjs vitest.config.ts poc/session-target/src poc/session-target/test poc/session-target/vitest.config.mts poc/native-session-continuity poc/copilot-runtime-reuse/test --max-warnings=0",
+    "lint": "eslint packages apps scripts examples eslint.config.mjs vitest.config.ts poc/session-target/src poc/session-target/test poc/session-target/vitest.config.mts poc/native-session-continuity poc/copilot-runtime-reuse/test --max-warnings=0",
     "probe:native-continuity": "tsc -p poc/native-session-continuity && node poc/native-session-continuity/dist/run.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

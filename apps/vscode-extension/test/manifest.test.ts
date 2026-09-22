@@ -3,6 +3,23 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("VS Code manifest", () => {
+  it("aligns the native Growth trial release with the lockfile", () => {
+    const version = "0.2.0-preview.2";
+    for (const manifestPath of ["package.json", "apps/vscode-extension/package.json"]) {
+      const manifest = JSON.parse(readFileSync(resolve(manifestPath), "utf8")) as {
+        version: string;
+      };
+      expect(manifest.version, manifestPath).toBe(version);
+    }
+    const lockfile = JSON.parse(readFileSync(resolve("package-lock.json"), "utf8")) as {
+      version: string;
+      packages: Record<string, { version: string }>;
+    };
+    expect(lockfile.version).toBe(version);
+    expect(lockfile.packages[""]?.version).toBe(version);
+    expect(lockfile.packages["apps/vscode-extension"]?.version).toBe(version);
+  });
+
   it("contributes every Pair Presence command", () => {
     const manifest = JSON.parse(readFileSync(
       resolve("apps/vscode-extension/package.json"),
