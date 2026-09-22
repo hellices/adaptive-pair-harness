@@ -67,12 +67,29 @@ const setupGrowthWork = async (
   ui: GrowthSetupUi,
   signal: AbortSignal,
 ): Promise<GrowthSetupOutcome> => {
+  let validated = sessionController.snapshotNow();
   const outcome = await runGrowthSetup({
-    coordinator: sessionController.coordinator(), snapshotNow: () => sessionController.snapshotNow(),
+    coordinator: sessionController.coordinator(),
+    snapshotNow: () => {
+      validated = sessionController.snapshotNow();
+      return validated;
+    },
     prepareEntry: currentSignal => sessionController.prepareGrowthEntry(currentSignal),
     isAvailable: () => workspaceAvailable(sessionController), ui,
   }, signal);
   await toolContext.accept(sessionController.snapshotNow());
+  if (signal.aborted) { return "cancelled"; }
+  const current = sessionController.snapshotNow();
+  if (outcome === "completed" && (
+    !workspaceAvailable(sessionController) || current.revision !== validated.revision ||
+    current.presence.status === "off" || current.presence.status === "paused" ||
+    current.presence.workspaceId !== validated.presence.workspaceId ||
+    current.session?.sessionId !== validated.session?.sessionId ||
+    current.session?.startedAtRevision !== validated.session?.startedAtRevision ||
+    current.session?.authorityEpoch !== validated.session?.authorityEpoch
+  )) {
+    return "stale";
+  }
   return outcome;
 };
 
