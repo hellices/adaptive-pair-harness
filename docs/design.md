@@ -2564,6 +2564,51 @@ host's native transcript; that transcript remains subject to native controls.
   recheck the final revision's CI. Provide the local VSIX, exact trial steps,
   and remaining account/manual checks. Do not merge without owner direction.
 
+### 13.4 Codespaces trial configuration
+
+**Owner-authorized scope:** prepare this repository so the owner can create a
+Codespace and try the existing native Growth preview. This is environment and
+onboarding work, not another Pair mode, a browser-only port, or permission to
+create a billable Codespace on the owner's behalf.
+
+- Run the existing Node extension in the workspace extension host. Declare
+  `extensionKind: ["workspace"]` explicitly so desktop clients connected to a
+  Codespace do not run filesystem access or verification on the client machine.
+  Ordinary local VS Code still uses its local Node extension host.
+- Use the official `node:24-bookworm` image and its non-root `node` user. Node 24
+  matches the supported LTS toolchain; the image has no Dev Container extension
+  recommendations that silently install another extension. Keep the VS Code
+  engine floor unchanged and let native VSIX installation enforce compatibility.
+- The creation hook installs the root lockfile, typechecks, builds and verifies
+  the Stable VSIX, then prepares a sibling `<repository>-growth-trial` directory
+  from the dependency-free fixture's package, source, and tests. Wait for this
+  hook before declaring container preparation finished. The isolated Session
+  Target prototype is not required or installed for this trial.
+- Never overwrite an existing exercise. Reject symlink/non-directory targets
+  and incomplete copies with an actionable error; preserve completed human edits
+  across hook reruns and container rebuilds. Do not repair the tracked fixture.
+- Installation is a separate owner-invoked command from the Codespace terminal.
+  It installs only the generated Adaptive Pair VSIX, without forcing replacement
+  or installing/configuring Copilot or any other extension. It must not run on
+  creation, attachment, or restart. Opening the exercise, trusting it, enabling
+  Presence, starting a session, selecting Chat/Ask/model, authentication, and all
+  Pair confirmations remain explicit owner actions.
+- Do not add editor settings, port forwarding, secrets, automatic model calls,
+  proposed APIs, or persistent Pair state. Provisioning commands are repository
+  development tooling, not extension activation or workspace observation.
+- Test hook ordering/failure propagation, safe copy/retry behavior, explicit
+  installation arguments, configuration, and workspace-host placement. Exercise
+  real provisioning in the selected Linux image in CI. Native Codespaces UI,
+  authenticated inference, remote verification, and reconnect/history remain
+  owner checks until observed in an actual Codespace; a Linux container test is
+  not that evidence.
+
+The chosen route automates preparation but not installation/activation. An
+attach-time installer would repeat side effects on reconnection; a web-extension
+rewrite would replace working Node filesystem/process capabilities unnecessarily.
+Neither is part of this change. Continue on the dedicated native-trial PR based
+on the current main baseline; do not merge it without separate owner direction.
+
 ## 14. Privacy and security
 
 Adaptive Pair separates four data planes:

@@ -8,19 +8,20 @@ are separate; this trial makes no learning or productivity claim.
 **Evidence status:** the route contract and disposable exercise checks are
 implemented. Native checkpoint/reopen checks passed across separate application
 launches on **VS Code 1.136.2, 1.138.0, and 1.139.0-insider**, with no restored
-live authority. Local root/POC checks, refreshed dependency audits, and Stable
-packaging pass. Whole-branch PR review/CI and authenticated account/selected-model
-inference remain **pending**. See [observed host evidence](#observed-host-evidence): these
-zero-model-call runs and injected fixture models are not authenticated inference.
+live authority. The native-preview baseline's local root/POC checks, dependency
+audits, and Stable packaging passed. Whole-branch PR review/CI and authenticated
+account/selected-model inference remain **pending**. See
+[observed host evidence](#observed-host-evidence): these zero-model-call runs and
+injected fixture models are not authenticated inference or Codespaces UI evidence.
 
 ## Install and prerequisites
 
 - Use VS Code Stable compatible with the extension's `^1.136.0` engine range.
   No proposed API, Session Target, SDK, or replacement chat UI is required.
-- Open **regular local VS Code Chat**, choose **Ask** mode, and invoke `@pair`
+- Open **ordinary built-in VS Code Chat**, choose **Ask** mode, and invoke `@pair`
   there. Do not use Copilot CLI, another Session Target, or your current
   Agents-provider conversation for this measured trial. You choose the model,
-  local chat session, and mode explicitly; Pair never switches them or changes
+  chat session, and mode explicitly; Pair never switches them or changes
   your defaults automatically.
 - Use Node.js **24 or later** and npm, available to VS Code's terminal and
   verification process. The exercise's only script is `npm test` (`node --test`).
@@ -35,9 +36,15 @@ zero-model-call runs and injected fixture models are not authenticated inference
   exercise. Model-provider permission, Pair's workspace-disclosure consent, setup
   confirmations, and process authorization are separate decisions.
 
-Install the trial through **Extensions: Install from VSIX...**. The target
-release artifact is `adaptive-pair-0.2.0-preview.2-stable.vsix`. To build from a
-repository checkout, run these commands at the repository root:
+"Local Chat" in the trial instructions means ordinary built-in VS Code Chat
+rather than another agent provider; it does not rule out a remote repository.
+For an owner-created Codespace, use the [Codespaces route](#codespaces-owner-run-trial)
+instead of the local build and temporary-copy instructions. Both routes share
+the same explicit native Growth setup and permission boundaries.
+
+For a local checkout, install through **Extensions: Install from VSIX...**. The
+target release artifact is `adaptive-pair-0.2.0-preview.2-stable.vsix`. To build
+from a repository checkout, run these commands at the repository root:
 
 ```sh
 npm ci
@@ -51,7 +58,150 @@ version is `0.2.0-preview.2`. These development dependencies belong to the
 repository, **not** the exercise. Final combined package and release validation
 remain release gates; do not infer them from the instructions alone.
 
+## Codespaces owner-run trial
+
+This is repository preparation for the existing native VS Code extension, **not
+a web app preview** or a proven Codespaces integration. You create the Codespace
+yourself using your authorized account and quota/billing arrangement; neither
+Pair nor these scripts create one. Review GitHub's
+[Codespaces billing](https://docs.github.com/en/billing/concepts/product-billing/github-codespaces)
+before proceeding. This repository configuration adds no forwarded ports, editor
+settings, or third-party extension installs.
+
+### Create, prepare, and explicitly install
+
+1. **Choose the trial branch before creation.** Until PR #14 is merged, with
+   `ba20468` as its original `main` baseline, do not assume `main` contains this setup.
+   On the repository page, select `agents/native-growth-trial` before opening
+   **Code > Codespaces**, or use **New with options** and explicitly select that
+   branch. After merge, use the updated `main` branch instead. Review the payer
+   and machine choice, then choose **Create codespace**
+   yourself. GitHub documents these [branch and creation options](https://docs.github.com/en/codespaces/developing-in-a-codespace/creating-a-codespace-for-a-repository?tool=webui).
+2. **Wait for preparation to finish successfully.** Creation and container
+   rebuilds run `.devcontainer/setup.sh` using `node:24-bookworm`, the non-root
+   `node` user, and `waitFor: postCreateCommand`. The hook requires Node.js 24+
+   and runs root `npm ci`, then `npm run typecheck`, then `npm run package`,
+   which builds and verifies the Stable VSIX. Only after success does it prepare
+   a sibling `<absolute-repository-path>-growth-trial` directory, copying only
+   `package.json`, `src`, and `test` from `examples/growth-trial`. The tracked
+   fixture stays broken; the isolated Session Target POC is not installed. Preparation
+   never installs the VSIX, opens a folder, or enables Pair, and does not run on
+   attachment or start. These are repository build commands, not Pair activation.
+3. **Install only when you choose to.** In the connected Codespace's repository
+   terminal, after successful preparation, run:
+
+   ```sh
+   npm run codespaces:install
+   ```
+
+   This refuses to run outside `CODESPACES=true`. It derives the artifact version
+   from the extension manifest, requires a regular built VSIX, and runs only
+   `code --install-extension <absolute-generated-vsix-path>`, without `--force`.
+   Native installer errors are forwarded. The current artifact is
+   `adaptive-pair-0.2.0-preview.2-stable.vsix`; verify installed version
+   **0.2.0-preview.2** in the Codespace's Extensions view. The VS Code engine floor
+   stays **`^1.136.0`**: let the native installer reject an incompatible host.
+   Installation does not grant trust, enable Presence, or authorize model access.
+4. **Open the sibling exercise in the same Codespace.** Before switching, keep
+   this walkthrough open in a browser tab and note the repository path for
+   retries. Use **File > Open Folder...** in the connected window and select the
+   exercise path printed by preparation as the **single workspace root**, not an
+   added monorepo folder. Alternatively, explicitly run its printed
+   `code --reuse-window` command in the Codespace terminal. With the default
+   checkout `/workspaces/adaptive-pair-harness`, that command is:
+
+   ```sh
+   code --reuse-window /workspaces/adaptive-pair-harness-growth-trial
+   ```
+
+   Use the actual printed paths if your checkout has another name. Do not create
+   a second Codespace or use the local temporary-copy/`--new-window` route below.
+   The `codespaces:*` npm commands belong to the repository, not the exercise;
+   return to the recorded repository directory when retrying them.
+5. **Observe the intentionally failing exercise.** In a terminal rooted at the
+   copied exercise, run `node --version` and `npm test`. It has no dependencies
+   and needs no install. A fresh copy reports **2 passing, 4 failing**, exit
+   **1**; this is the intended starting point, not failed provisioning. Repair
+   only the copied source, never the tracked fixture or the tests. Reruns preserve
+   your existing exercise, so a previously repaired copy need not fail again.
+6. **Continue with the shared [native first-use walkthrough](#native-first-use-walkthrough).**
+   Use ordinary built-in VS Code Chat in **Ask** mode in this connected window.
+   Trust the copied workspace and explicitly run **Adaptive Pair: Enable
+   Presence**. Only **after enabling**, use **Developer: Show Running Extensions**
+   to [check execution location](https://code.visualstudio.com/api/advanced-topics/remote-extensions#incorrect-execution-location):
+   Adaptive Pair should run in the remote workspace extension host, as requested
+   by `extensionKind: ["workspace"]`, not on your desktop client. Absence from
+   running extensions before enablement is not an installation failure. Continue
+   with **Start a Session**, `@pair /setup`, the copied `src/retry.mjs`, `npm test`,
+   and all **three separate Continue once confirmations**. Use your own native
+   sign-in and selected-provider access from the prerequisites; Pair adds no
+   custom authentication or automatic provider configuration. After your own
+   repair, `@pair /check` still needs its per-run process confirmation; the target
+   is **6 passing tests**, exit **0**, not a learning verdict.
+
+### Failure, retry, and same-version updates
+
+- **Preparation failed:** inspect the first creation/terminal error and fix its
+  cause before running `npm run codespaces:setup` from the repository. For a
+  container/image problem, use **Codespaces: Rebuild Container** and wait for
+  successful preparation. Do not install an old artifact after a failed build.
+  Setup reruns rebuild the VSIX but preserve a complete exercise and your edits.
+- **Unsafe or incomplete exercise:** setup rejects a symlink, file, or incomplete
+  target without deleting it. Inspect and back up any wanted work, then explicitly
+  move the blocking path aside before retrying. Setup is not a reset command and
+  never silently repairs or overwrites that directory.
+- **Installer failed:** use a terminal in VS Code connected to this Codespace,
+  not a local shell. For a missing artifact, rerun successful preparation first.
+  Check `code --version` if the native installer reports incompatibility; use a
+  compatible host or wait for one. Do not lower `^1.136.0` or force installation
+  to bypass [VS Code's compatibility gate](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#visual-studio-code-compatibility).
+- **Rebuilt the same version:** an already-installed CLI result may leave the
+  old **0.2.0-preview.2** content in place. To replace it, explicitly uninstall
+  **only the Codespace copy of Adaptive Pair** from the Extensions view, honor
+  native reload prompts, and rerun `npm run codespaces:install` from the
+  repository. Reload when the native UI requires it; reload alone does not replace
+  an unchanged installed package. Do not uninstall, disable, or reconfigure another
+  extension.
+
+### Reconnect, storage, and evidence boundaries
+
+Save your edits before leaving. GitHub documents that files under `/workspaces`
+[survive stop/start and container rebuilds](https://docs.github.com/en/codespaces/developing-in-a-codespace/rebuilding-the-container-in-a-codespace#persisting-data-over-a-rebuild).
+That includes the default repository and sibling exercise, not a promise for
+arbitrary files elsewhere. Rebuild reruns preparation, not automatic installation
+or enablement. If installation is needed again, make that explicit choice.
+
+Exercise persistence is **not chat-history persistence or restored authority**.
+Use the shared [checkpoint and fresh-runtime procedure](#checkpoint-history-and-a-fresh-runtime)
+as a manual owner acceptance check in this same Codespace. Reconnection alone
+does not prove the extension host restarted; deliberately reload the window to
+test a fresh runtime. Enable Presence explicitly, reopen the native chat, and
+inspect `/history` and `/session`. Any returned checkpoint is historical only,
+never restored scope, consent, grants, assistance gates, or verification. Start
+and repeat `/setup` with fresh confirmations before new work. A missing history
+record is not permission to reconstruct authority from the transcript.
+
+Stop the Codespace explicitly when finished; merely closing a browser tab does
+not stop it, and stopped Codespaces still use storage quota or incur storage
+charges. [Deleting the whole Codespace, including automatic retention deletion](https://docs.github.com/en/codespaces/about-codespaces/understanding-the-codespace-lifecycle),
+removes its filesystem, including any unexported exercise. Save that work
+elsewhere before deletion: the sibling is outside the repository and is not
+backed up by pushing repository commits. Pair does not back it up or create cloud
+resources for you.
+
+**Evidence boundary:** preparation and explicit-install tooling are implemented,
+but there is no local Docker daemon and the selected-image CI provisioning smoke
+has not yet been executed. A future successful image smoke would establish
+provisioning only. The existing macOS/Linux Electron host tests do **not** prove
+Codespaces UI or authentication. Actual browser and desktop-connected Codespaces
+UI, authenticated selected-model inference, remote file selection and `/check`,
+and reconnect/reload history with no recovered live authority remain **unobserved
+owner acceptance checks**. Do not report this walkthrough as a passed cloud trial.
+
 ## Prepare a fresh exercise copy
+
+This manual copy step is for the local route. Codespaces preparation already
+creates its sibling exercise; continue from there to the shared native steps.
 
 The source checkout includes `examples/growth-trial`. It is
 separate from the VSIX and is never installed into another workspace by Pair.
@@ -102,7 +252,7 @@ the repair.
    the Command Palette. Installation alone never enables observation.
 2. Run **Adaptive Pair: Start a Session**. This enters briefing; it does not
    establish a learning agreement or an operational work unit.
-3. In **regular local VS Code Chat** with **Ask** selected, send
+3. In **ordinary built-in VS Code Chat** with **Ask** selected, send
    **`@pair /setup`**. Use the native prompts to enter a bounded objective,
    choose one eligible file, describe an independent variation, and select the
    verification expression. For this exercise, use:
@@ -290,7 +440,8 @@ selected provider's network service; there is no Pair cloud sync or telemetry.
 Each of these test hosts passed the existing **17 isolated smoke tests** on
 macOS and Linux, then
 two clean application launches using production participant wiring in an
-isolated profile, with regular local VS Code Chat in **Ask** mode. The Node
+isolated profile, with ordinary built-in VS Code Chat in **Ask** mode. These are
+desktop/Electron hosts, including Linux CI, not Codespaces clients. The Node
 versions in this table are the local macOS measurements:
 
 | VS Code | Embedded Node.js | Runner Node.js | Native history result |
@@ -332,18 +483,20 @@ with model access and an explicitly authorized manual trial.
 
 ## Preview limits and pending evidence
 
-- **Verified:** full typecheck/lint and 3,040 root tests, both dependency audits,
-  isolated POC checks, three-host macOS and Linux runs, and the seven-entry
-  Stable VSIX inspection. The test driver and its private diagnostics are not
-  shipped. PR #14 records review dispositions and current revision checks.
+- **Verified native-preview baseline:** full typecheck/lint and 3,040 root tests,
+  both dependency audits, isolated POC checks, three-host macOS and Linux runs,
+  and the seven-entry Stable VSIX inspection. The test driver and its private
+  diagnostics are not shipped. PR #14 records review dispositions and current
+  revision checks.
 - **Pending manual evidence:** authenticated selected-model inference with
-  the owner's account and completion of the interactive walkthrough. The
-  observed native reopen results are bounded to the hosts and controlled
-  scenarios above; fixture
-  models and synthetic histories cannot replace that evidence.
-- The measured surface is regular local Chat in Ask mode. Fixture proof does
-  not establish support for Copilot CLI, another Session Target, or an
-  Agents-provider conversation.
+  the owner's account and completion of the interactive walkthrough, including
+  the separate [Codespaces owner acceptance checks](#codespaces-owner-run-trial).
+  The observed native reopen results are bounded to the hosts and controlled
+  scenarios above; fixture models and synthetic histories cannot replace that
+  evidence.
+- The measured surface is ordinary built-in Chat in Ask mode on desktop hosts.
+  Fixture proof does not establish support for Copilot CLI, another Session
+  Target, or an Agents-provider conversation.
 - Growth is the only implemented mode. Pair Mode AI edits, Delivery commands,
   and the native Agent Plugin are outside this trial. The AI never edits the
   exercise or changes another participant's behavior.

@@ -47,7 +47,7 @@ describe("CI clean-checkout ordering", () => {
 
     expect(installIndex).toBeGreaterThanOrEqual(0);
     expect(steps[installIndex + 1]?.trim()).toBe(
-      "name: Audit all dependencies\n        run: npm audit --audit-level=low",
+      "name: Audit all dependencies\n        run: npm audit --package-lock-only --audit-level=low",
     );
   });
 
@@ -61,17 +61,23 @@ describe("CI clean-checkout ordering", () => {
 
     expect(installIndex).toBeGreaterThanOrEqual(0);
     expect(steps[installIndex + 1]?.trim()).toBe(
-      "name: Audit Session Target POC dependencies\n        run: npm --prefix poc/session-target audit --audit-level=low",
+      "name: Audit Session Target POC dependencies\n        run: npm --prefix poc/session-target audit --package-lock-only --audit-level=low",
     );
     expectOrdered(steps.slice(installIndex).join("\n"), [
       "run: npm --prefix poc/session-target ci",
-      "run: npm --prefix poc/session-target audit --audit-level=low",
+      "run: npm --prefix poc/session-target audit --package-lock-only --audit-level=low",
       "run: npm --prefix poc/session-target run check",
       "run: npm --prefix poc/session-target run package",
     ]);
   });
 
-  it("builds workspace exports before both stable host smoke jobs", () => {
+  it("retains the tested minimum and previous host alongside current Stable", () => {
+    expect(job("  host-smoke:", "  host-insiders:")).toContain(
+      'vscode: ["1.136.2", "1.138.0", "1.140.0"]',
+    );
+  });
+
+  it("builds workspace exports before every Stable host smoke job", () => {
     expectOrdered(job("  host-smoke:", "  host-insiders:"), [
       "run: npm ci",
       "name: Build workspace package exports",

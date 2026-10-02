@@ -20,6 +20,23 @@ describe("VS Code manifest", () => {
     expect(lockfile.packages["apps/vscode-extension"]?.version).toBe(version);
   });
 
+  it("keeps filesystem and process work in the workspace Node host at the current engine floor", () => {
+    const manifest = JSON.parse(readFileSync(
+      resolve("apps/vscode-extension/package.json"),
+      "utf8",
+    )) as {
+      extensionKind?: string[];
+      main: string;
+      browser?: unknown;
+      engines: { vscode: string; node: string };
+    };
+
+    expect(manifest.extensionKind).toEqual(["workspace"]);
+    expect(manifest.main).toBe("./dist/extension.cjs");
+    expect(manifest.browser).toBeUndefined();
+    expect(manifest.engines).toEqual({ vscode: "^1.136.0", node: ">=24" });
+  });
+
   it("contributes every Pair Presence command", () => {
     const manifest = JSON.parse(readFileSync(
       resolve("apps/vscode-extension/package.json"),

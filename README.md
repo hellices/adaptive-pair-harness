@@ -30,13 +30,25 @@ never edits your files, and makes **no learning or productivity claim**. Native
 macOS and Linux using production wiring.
 Historical metadata returned without restoring live authority. Those runs made
 zero model and token-count calls, loaded no Copilot extension, and used no
-proposed API; the 3,040-test root check, both dependency audits, and Stable
-packaging pass. PR #14 tracks review and the latest revision's delivery checks.
+proposed API. At that native-preview revision, the 3,040-test root check, both
+dependency audits, and Stable packaging passed. PR #14 tracks review and the
+latest revision's delivery checks.
 Authenticated selected-model inference remains an explicit owner trial check.
 See the [trial walkthrough](docs/growth-preview.md#observed-host-evidence)
 for the evidence boundaries and remaining manual checks.
 
-### Quickstart
+### Codespaces (owner-run)
+
+Use the single [Codespaces walkthrough](docs/growth-preview.md#codespaces-owner-run-trial)
+to create the trial under your own account and quota/billing arrangement.
+**Until PR #14 is merged:** select `agents/native-growth-trial`, not `main`,
+before creating the Codespace; after merge, use the updated `main` branch.
+Preparation builds the VSIX and a separate
+exercise; installation, opening that folder, sign-in, and Pair enablement stay
+explicit. Codespaces UI, authenticated inference, and reconnect/history checks
+remain owner acceptance work, not results established by the desktop host tests.
+
+### Local quickstart
 
 Use VS Code Stable compatible with `^1.136.0`, Node.js **24 or later**, and npm.
 Install the trial VSIX through **Extensions: Install from VSIX...**; the target
@@ -48,11 +60,13 @@ Copilot sign-in and entitlement; other providers have their own access
 requirements. Pair adds no authentication flow. Availability and provider
 consent are separate from Pair's permissions; installing Pair grants none of them.
 
-For this trial, open **regular local VS Code Chat**, choose **Ask** mode, and
+For this trial, open **ordinary built-in VS Code Chat**, choose **Ask** mode, and
 invoke `@pair` there, not in Copilot CLI, another Session Target, or your current
 Agents-provider conversation. These are your opt-in UI choices: Pair never
-switches your model, session, mode, or defaults automatically. The observed host
-evidence covers this local Chat/Ask route, not those other surfaces.
+switches your model, session, mode, or defaults automatically. Here, "local Chat"
+means that ordinary chat surface, not a requirement for files to reside on your
+computer. The observed desktop host evidence covers Chat/Ask, not those other
+agent surfaces or Codespaces UI.
 
 From the repository root, make a fresh temporary copy of the exercise and open
 that copy as its own workspace. Do not repair the repository fixture:
@@ -70,7 +84,7 @@ typed-lint project configuration is not needed in this copy. In its terminal,
 
 1. Trust only the copied exercise workspace. Run **Adaptive Pair: Enable
    Presence**, then **Adaptive Pair: Start a Session** from the Command Palette.
-2. In that local Ask chat, send `@pair /setup`. Enter your repair objective,
+2. In that Ask chat, send `@pair /setup`. Enter your repair objective,
    select `src/retry.mjs`, describe an independent variation, and choose
    `npm test` as verification.
 3. Review three separate **Continue once** confirmations: the learning

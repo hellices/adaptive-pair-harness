@@ -26,6 +26,9 @@
     "onChatParticipant:adaptivePair.chat"
   ],
   "main": "./dist/extension.cjs",
+  "extensionKind": [
+    "workspace"
+  ],
   "files": [
     "dist/extension.cjs",
     "LICENSE",
@@ -227,6 +230,6 @@
     "@types/vscode": "1.136.0",
     "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "4.0.0",
-    "mocha": "^12.0.1"
+    "mocha": "^12.0.2"
   }
 }

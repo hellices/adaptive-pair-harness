@@ -2258,6 +2258,144 @@ Whole-branch review and final-revision PR checks are tracked in the
 [current implementation plan](implementation-plan.md). Authenticated
 selected-model hints remain an explicit owner trial check.
 
+### Codespaces trial preparation and dependency follow-up
+
+The owner authorized a repository configuration for an owner-created Codespace;
+no cloud workspace or paid resource was created during this work. The contract
+is [design section 13.4](design.md#134-codespaces-trial-configuration), with one
+[Codespaces walkthrough](growth-preview.md#codespaces-owner-run-trial) shared by the README.
+
+#### Platform choice and implementation
+
+The public [extension-host documentation](https://code.visualstudio.com/api/advanced-topics/extension-host)
+describes the remote Node host available behind both browser and desktop
+Codespaces clients. This supports trying the existing Node extension; it is not
+proof that its UI, permissions, verification, or history work in a Codespace.
+The manifest now explicitly requests the workspace host so filesystem and
+process operations stay beside the remote repository rather than the desktop
+client. The public VS Code engine floor and explicit activation events do not
+change, and no web-only entry point or proposed production API is introduced.
+
+The configuration uses the official `node:24-bookworm` image with `remoteUser`
+`node`, a blocking `postCreateCommand`, and no attach/start hook, port, editor
+setting, or extension recommendation. The Node image's
+[Dockerfile](https://github.com/nodejs/docker-node/blob/main/24/bookworm/Dockerfile)
+provides Node and the non-root account. This avoids the unrelated ESLint
+recommendation in the [Dev Container JavaScript image customization](https://github.com/devcontainers/images/blob/main/src/javascript-node/.devcontainer/devcontainer.json).
+The [Dev Container lifecycle contract](https://containers.dev/implementors/json_reference/#lifecycle-scripts)
+defines when provisioning runs; it does not grant Pair permission to activate.
+
+Preparation runs strict root-lockfile installation, typechecking, and the
+existing verified Stable packaging pipeline. It then copies only the package,
+source, and tests into a persistent sibling exercise, preserving completed
+copies on retry and rejecting unsafe or incomplete paths without deletion.
+Installation is a separate owner-invoked Codespaces-terminal command. It only
+installs our generated VSIX, does not force a replacement, and propagates native
+installer errors. Login, model selection, opening/trusting the exercise,
+Presence, setup, and every permission remain explicit owner actions.
+
+Initial targeted tests observed RED before implementation, then passed 27
+configuration, lifecycle, and manifest cases. A real fresh macOS checkout with
+spaces in its path ran the unmodified preparation hook twice: both runs built
+and verified the seven-entry VSIX; the copied exercise initially reported
+exactly two passes and four deliberate failures; source edits and an extra note
+survived the second run, and the source fixture was unchanged. No actual editor
+installation or provider inference was performed in that check. Windows skips
+only the Bash execution cases; pure configuration assertions remain portable.
+
+An independent task review found no actionable configuration/lifecycle defects.
+The selected-image CI job additionally provisions a disposable repository as
+non-root `node`, verifies the archive and exact initial test totals, and repeats
+preparation to prove preservation. It does not launch VS Code or a Codespace.
+Local Docker was unavailable; final-revision Linux execution and review results
+are recorded in PR #14 rather than inferred from local shell tests.
+
+#### October 2, 2026 UTC inventory and remediation
+
+The follow-up inspected all **17 tracked source manifests**, generated host
+staging, **two active lockfiles**, and the same **16 distinct direct external
+packages**. The dependency-free exercise and scripts add no separate graph;
+the isolated Session Target POC remains outside root workspaces and is not
+installed by Codespaces preparation. No SDK graph was introduced.
+
+The initial full audits reported three affected root packages and two POC
+packages, including a high-severity finding. These were not dismissed as
+pre-existing. Normal compatible lockfile resolution updates both graphs to
+`brace-expansion` **5.0.12** and `serialize-javascript` **7.1.2**, and the root
+graph to `fast-uri` **3.1.8**, addressing the reported
+[brace rewriting](https://github.com/advisories/GHSA-q2hr-2g5m-vwhr),
+[nested-brace recursion](https://github.com/advisories/GHSA-qhr7-859c-m2p7),
+[comma-part recursion](https://github.com/advisories/GHSA-6j4f-fj2g-mc7p),
+[URI normalization](https://github.com/advisories/GHSA-hrr3-gc8f-f4qj), and
+[serialization](https://github.com/advisories/GHSA-gfhx-hw2g-v5hg) advisories.
+There are no overrides, forced peer resolutions, or audit suppressions.
+
+Direct-package checks now support these selections:
+
+| Package | Selected version | Current evidence and retention boundary |
+| --- | --- | --- |
+| `@eslint/js` | 10.0.1 | Available registry version and ESLint component release agree. |
+| `@types/mocha` | 10.0.10 | Available published declarations; DefinitelyTyped remains the publishing source. |
+| `@types/node` | 24.13.6 | Updated to the highest available stable Node 24 declarations; 26.6.2 describes a different runtime baseline. |
+| `@types/vscode` | 1.136.0 | Retained to prevent compiling against APIs above the supported floor; newer host releases do not raise that floor automatically. |
+| `@vitest/coverage-v8` | 5.0.2 | Updated with its exact Vitest peer; upstream 5.0.3 is not available from the configured feed. |
+| `@vscode/dts` | 0.4.1 | Registry metadata and upstream release agree; isolated POC only. |
+| `@vscode/test-electron` | 3.1.0 | Available existing compatible pin; the official repository's latest-release endpoint returned 404, so independent matching-release provenance remains unconfirmed. |
+| `@vscode/vsce` | 4.0.0 | Registry metadata and upstream release agree; the observed engine supports Node 24. |
+| `ajv` | 8.20.0 | Registry metadata and upstream release agree; its root `fast-uri` resolution is remediated. |
+| `esbuild` | 0.28.2 | Registry metadata and upstream release agree. |
+| `eslint` | 10.11.0 | Now available and updated to the checked upstream stable release. |
+| `fast-check` | 4.10.2 | Now available and updated to the checked upstream stable release. |
+| `mocha` | 12.0.2 | Updated in both graphs; upstream 12.0.3 returns an exact-version E404 from the configured feed. |
+| `typescript` | 6.0.3 | TypeScript 7.0.2 is outside typescript-eslint 8.70.1's confirmed `>=4.8.4 <6.1.0` peer contract. |
+| `typescript-eslint` | 8.70.1 | Highest available stable release; do not choose the feed's 8.70.2-alpha.7 `latest` tag. Upstream 8.71.0 returns an exact-version feed E404. |
+| `vitest` | 5.0.2 | Updated in both graphs with matching root coverage; upstream 5.0.3 returns an exact-version feed E404. |
+
+The relevant newer upstream records are [Vitest 5.0.3](https://github.com/vitest-dev/vitest/releases/tag/v5.0.3),
+[Mocha 12.0.3](https://github.com/mochajs/mocha/releases/tag/v12.0.3), and
+[typescript-eslint 8.71.0](https://github.com/typescript-eslint/typescript-eslint/releases/tag/v8.71.0).
+These availability observations supersede the September 22 table for this
+follow-up, without rewriting that historical evidence. Direct public npmjs
+metadata access again failed with `ENOTCONN`; the successful registry/advisory
+queries used the configured mirror. An exact feed E404 is not global
+unavailability, and a feed's `latest` tag is not evidence of the latest stable
+upstream release.
+
+Fresh full-lockfile audits using `--package-lock-only` report **400 root** and
+**250 POC** entries, with zero findings at every severity. Complete installed
+tree checks also pass. CI now explicitly audits the lockfiles rather than
+depending on a platform's installed optional subset. Both locks retain their
+platform-specific optional binaries; the smaller graph replaces obsolete
+Vitest/Mocha support packages, not Linux dependencies. Clean `npm ci` succeeds
+for both graphs without approving additional install scripts or changing global
+npm configuration. npm's unapproved-install-script warnings for esbuild and the
+VSIX signing helper remain visible; packaging is checked rather than assuming
+those warnings establish success or failure.
+
+The checked official VS Code update service reports **1.140.0 Stable** and
+**1.141.0-insider**. CI adds 1.140.0 alongside the existing 1.136.2 floor fixture
+and 1.138.0 regression fixture; the Insiders job remains explicit. This is host
+compatibility coverage, not evidence of the version deployed to an owner's
+Codespace. Browser/desktop Codespaces UI, selected-provider authentication and
+inference, remote `/check`, and reconnect/history without restored authority
+remain unobserved owner acceptance checks.
+
+The refreshed local check passes typechecking, lint, and **3,065 tests in 144
+files**. Coverage with matched Vitest/provider **5.0.2** remains **91.11%
+statements, 86.04% branches, 93.35% functions, and 91.48% lines**; this Node
+coverage report does not instrument the Bash hooks, which have subprocess tests
+and separate real provisioning checks. The isolated POC passes compilation,
+**21 tests in five files**, and packaging. Stable packaging verifies exactly
+seven archive entries. The existing Vite native-config advisory is still visible.
+
+Fresh macOS desktop host runs pass on **1.136.2, 1.140.0, and
+1.141.0-insider**. Each passes **17 baseline cases** and separate native
+seed/resume application launches: historical metadata returns, live authority
+does not, fresh-chat history is empty, and both model and token-count calls are
+zero. These are isolated Electron fixtures with controlled shutdown, not
+authenticated inference, browser/remote-host integration, or crash-durability
+proof. The final-revision Linux CI remains a separate delivery gate in PR #14.
+
 ## 7. Evaluation hypotheses
 
 The first studies test separate hypotheses:

@@ -21,8 +21,14 @@ plan, retained at `ba20468:docs/implementation-plan.md` in Git. PR #13's
 unmerged feasibility work is evidence, not an implicit merge or product
 dependency.
 
+**Codespaces follow-up:** the owner has now authorized repository configuration
+for their own Codespaces trial. Execute Task 7 under design section 13.4. The
+completed desktop evidence above remains historical; do not extend its claims
+to Codespaces or mark the follow-up complete before its own review and checks.
+
 **Goal:** deliver a Stable VSIX with reachable Growth setup, explicitly saved
-native historical checkpoints, and a reproducible local exercise.
+native historical checkpoints, and a reproducible local exercise, then prepare
+the same preview for an owner-run Codespace without changing opt-in behavior.
 
 **Architecture:** native input and confirmation ports drive the existing
 coordinator from briefing into an agreed human-owned Growth work unit. A
@@ -236,3 +242,87 @@ production bundle and is identified as such in measured evidence.
 check on the latest PR SHA before reporting readiness. A prior source approval
 or passing run never approves a later revision. Report readiness without
 merging or enabling auto-merge; the owner still controls those actions.
+
+## Task 7: Owner-run Codespaces trial
+
+**Contract:** [design section 13.4](design.md#134-codespaces-trial-configuration).
+Use the existing isolated `agents/native-growth-trial` worktree; its main
+baseline remains `ba20468`. Do not create a Codespace, merge the PR, or alter
+another worktree. No dependency or VS Code engine downgrade is authorized.
+
+### 7a. Container and workspace host
+
+**Files:** create `.devcontainer/devcontainer.json` and
+`scripts/test/codespacesConfig.test.ts`; update `.github/workflows/ci.yml`,
+`apps/vscode-extension/package.json`, and its `test/manifest.test.ts`.
+
+**Interface:** `.devcontainer/setup.sh` is the creation hook, runs with the
+repository as its current directory, and exits nonzero on preparation failure.
+
+- [x] Add failing configuration and manifest tests, then run
+  `npx vitest run scripts/test/codespacesConfig.test.ts apps/vscode-extension/test/manifest.test.ts`.
+- [x] Add the minimal configuration and explicit workspace placement:
+
+  ```json
+  {
+    "name": "Adaptive Pair Growth trial",
+    "image": "node:24-bookworm",
+    "remoteUser": "node",
+    "waitFor": "postCreateCommand",
+    "postCreateCommand": "bash .devcontainer/setup.sh"
+  }
+  ```
+
+  The extension manifest adds `"extensionKind": ["workspace"]`; no browser
+  entry, activation event, other extension, or user setting changes.
+- [x] Add a bounded Linux-image CI job using the same image. In a disposable
+  `/workspaces/adaptive-pair-harness` copy, run the hook as `node`, verify the
+  VSIX, observe the exercise's expected 2-pass/4-fail result, change a harmless
+  copy-only file, and rerun to prove preservation. Do not install VS Code or
+  call this a native Codespaces integration test.
+- [x] Re-run the targeted suites; review configuration, image/user parity,
+  permissions, timeout, failure propagation, and absence of UI side effects.
+
+### 7b. Preparation and explicit installation
+
+**Files:** create `.devcontainer/setup.sh`, `.devcontainer/install.sh`, and
+`scripts/test/codespacesSetup.test.ts`; update root `package.json` scripts.
+
+**Interfaces:** `npm run codespaces:setup` invokes the creation hook;
+`npm run codespaces:install` invokes installation. Both scripts derive the
+repository root from their own location, not the caller's current directory.
+
+- [x] Add failing subprocess tests using a disposable repository and fake
+  `npm`/`code` executables. Cover ordered `ci`, `run typecheck`, `run package`;
+  abort at any failure; copying only package/src/test; no auto-install/open;
+  non-overwrite on retry; symlink/file/incomplete-target rejection; quoted
+  paths; and missing-artifact/non-Codespaces/CLI-install failures.
+- [x] Run `npx vitest run scripts/test/codespacesSetup.test.ts` and observe RED.
+- [x] Implement the Bash hooks with `set -euo pipefail`. Prepare a sibling
+  `<repository>-growth-trial` copy only after successful packaging. Preserve
+  existing complete copies, reject unsafe or incomplete paths without deleting
+  them, and print explicit install/open instructions. The installer requires
+  `CODESPACES=true`, derives the VSIX version from the extension manifest, and
+  executes only `code --install-extension <absolute-vsix-path>` without force.
+- [x] Run the targeted suite and `bash -n .devcontainer/setup.sh .devcontainer/install.sh`.
+  Exercise real preparation in a temporary checkout without touching the
+  owner's earlier exercise, then review safety and error behavior.
+
+### 7c. Walkthrough, evidence, and delivery
+
+**Files:** update `README.md`, `docs/growth-preview.md`, `docs/research.md`, and
+this plan. Keep one walkthrough rather than a competing Codespaces document.
+
+- [x] Document branch selection before merge, preparation output, explicit
+  installation, opening the separate exercise in the same Codespace, Copilot
+  access, host-version compatibility, manual Growth commands, restart versus
+  history/authority, rebuild preservation, costs, and recovery from setup errors.
+- [x] Inventory all active manifests/lockfiles, audit both root and isolated
+  prototype graphs, and cross-check current direct versions and image evidence.
+- [x] Run `npm run check`, affected prototype checks, supported host checks,
+  `npm run package`, and the release verifier. Record exact observed results;
+  Docker availability and actual owner-authenticated Codespaces checks are
+  separate evidence, not inferred from local tests.
+- [ ] Obtain independent review, address verified findings, commit, push, and
+  update PR #14. Reply in any original review threads, and recheck follow-up
+  feedback plus every final-head CI job before reporting ready for owner trial.
