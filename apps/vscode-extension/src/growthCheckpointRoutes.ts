@@ -14,6 +14,7 @@ const SETUP_MESSAGES: Readonly<Record<GrowthSetupOutcome, string>> = {
 
 interface GrowthCheckpointResult {
   readonly result: vscode.ChatResult;
+  readonly message: string;
   readonly isCurrent: () => boolean;
 }
 
@@ -83,10 +84,10 @@ export class GrowthCheckpointRoutes {
       response.markdown("The checkpoint was not saved. Your current work was not changed.");
       return;
     }
-    response.markdown("Requested a minimized checkpoint for this response. Use /history in this chat to inspect it. VS Code controls native retention; this is not a disk-durability acknowledgement or permission to resume work. Disabling Pair does not delete native chat history.");
     if (this.isCurrent(observed, signal)) {
       return {
         result: { metadata: { adaptivePairCheckpoint: checkpoint } },
+        message: "Requested a minimized checkpoint for this response. Use /history in this chat to inspect it. VS Code controls native retention; this is not a disk-durability acknowledgement or permission to resume work. Disabling Pair does not delete native chat history.",
         isCurrent: () => this.isCurrent(observed, signal),
       };
     }

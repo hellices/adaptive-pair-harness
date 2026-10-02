@@ -2307,8 +2307,12 @@ An independent task review found no actionable configuration/lifecycle defects.
 The selected-image CI job additionally provisions a disposable repository as
 non-root `node`, verifies the archive and exact initial test totals, and repeats
 preparation to prove preservation. It does not launch VS Code or a Codespace.
-Local Docker was unavailable; final-revision Linux execution and review results
-are recorded in PR #14 rather than inferred from local shell tests.
+Local Docker was unavailable. [CI run 37028398049](https://github.com/hellices/adaptive-pair-harness/actions/runs/37028398049)
+at `b8c5a58` passes all six jobs, including actual non-root provisioning in the
+selected image. The container logs show both verified builds, the deliberate
+two-pass/four-fail result, and preserved owner edits; the shell's fixture and
+copy comparisons also pass. Final-revision checks and review remain tracked in
+PR #14 rather than inferred from this earlier run.
 
 #### October 2, 2026 UTC inventory and remediation
 
@@ -2372,8 +2376,8 @@ npm configuration. npm's unapproved-install-script warnings for esbuild and the
 VSIX signing helper remain visible; packaging is checked rather than assuming
 those warnings establish success or failure.
 
-The checked official VS Code update service reports **1.140.0 Stable** and
-**1.141.0-insider**. CI adds 1.140.0 alongside the existing 1.136.2 floor fixture
+The checked [official VS Code update service](https://update.code.visualstudio.com/api/update/darwin-arm64/stable/latest)
+reports **1.140.0 Stable** and **1.141.0-insider**. CI adds 1.140.0 alongside the existing 1.136.2 floor fixture
 and 1.138.0 regression fixture; the Insiders job remains explicit. This is host
 compatibility coverage, not evidence of the version deployed to an owner's
 Codespace. Browser/desktop Codespaces UI, selected-provider authentication and
@@ -2394,7 +2398,67 @@ seed/resume application launches: historical metadata returns, live authority
 does not, fresh-chat history is empty, and both model and token-count calls are
 zero. These are isolated Electron fixtures with controlled shutdown, not
 authenticated inference, browser/remote-host integration, or crash-durability
-proof. The final-revision Linux CI remains a separate delivery gate in PR #14.
+proof. The same Linux run also passes **1.136.2, 1.138.0, 1.140.0, and
+1.141.0-insider**, each with 17 baseline cases and both native phases. The
+actual Insiders smoke step passes, not just its allowed-failure job status.
+The final-revision Linux CI remains a separate delivery gate in PR #14.
+
+#### Remote URI review disposition
+
+A follow-up review proposed accepting raw `vscode-remote` URIs in the native
+setup adapter. Upstream source does not support its premise for the selected
+**remote Node workspace host**. The checked VS Code **1.136.0, 1.136.1, 1.136.2,
+and 1.140.0** implementations use the same incoming mapping: workbench-side
+`vscode-remote` becomes host-side `file`, while client-side `file` becomes
+`vscode-local`. Outgoing host files acquire the connected remote authority.
+See the immutable [1.136.2 transformer](https://github.com/microsoft/vscode/blob/88e44fa0e00b08f7758b4f6d05632e4fd5e4df6f/src/vs/base/common/uriTransformer.ts)
+and [1.140.0 transformer](https://github.com/microsoft/vscode/blob/07f806f999227108933c2e30515b26eecc1fda74/src/vs/base/common/uriTransformer.ts).
+
+The remote host [installs this transformer on its RPC protocol](https://github.com/microsoft/vscode/blob/07f806f999227108933c2e30515b26eecc1fda74/src/vs/workbench/api/common/extensionHostMain.ts).
+The [RPC implementation](https://github.com/microsoft/vscode/blob/07f806f999227108933c2e30515b26eecc1fda74/src/vs/workbench/services/extensions/common/rpcProtocol.ts)
+transforms both incoming call arguments and replies. This covers initial
+`$initializeWorkspace` folder data as well as `showOpenDialog` selections before
+the extension revives their URIs. An isolated check executes the exact upstream
+transformer function, with TypeScript types stripped, across all four versions:
+**32 cases pass**, including both directions, client files, virtual schemes,
+and foreign-authority behavior. These checks are not part of the root test count.
+
+Retain the setup adapter's `file` gates and canonical path/symlink checks rather
+than interpreting a raw remote descriptor with native `fsPath`, `realpath`, and
+`stat`. The transformer itself does **not** compare incoming authorities, so
+the file gate must not be described as independent remote-authority
+authentication. No production scheme broadening is needed for this finding.
+This source and isolated-function evidence does not replace actual Codespaces
+file selection or verification, which remain owner acceptance checks.
+
+#### Checkpoint acknowledgement follow-up
+
+The follow-up review identified a real publication race: the helper emitted its
+checkpoint acknowledgement before the public handler's final freshness guard.
+That guard correctly withheld stale metadata but could leave misleading success
+text. The helper now returns the buffered message; the public handler checks
+the original identity and cancellation, then emits the acknowledgement and
+returns metadata synchronously without another await. No authority, grant,
+model call, or persistence mechanism is added.
+
+All **nine publication-boundary cases** failed before this source correction and
+pass afterward. They cover real coordinator disable, pause, and revision commits;
+cancellation after the inner guard; equal-revision workspace, session, start,
+and epoch replacement; and successful publication before a later cancellation.
+The tests observe the public promise's actual settlement, not a caller's later
+continuation. Independent focused review found no remaining source or test-timing
+defects. The five targeted suites pass **189 cases**. Fresh typecheck/lint
+and the complete root suite pass **3,066 cases in 144 files**; coverage remains
+**91.11% statements, 86.04% branches, 93.35% functions, and 91.48% lines**.
+Both full-lockfile audits again report zero findings (400 root/250 POC entries).
+
+The corrected source freshly passes all 17 baseline host cases and both native
+launches on macOS **1.136.2, 1.140.0, and 1.141.0-insider**. Historical metadata
+returns without live authority, fresh-chat history is empty, and model/token
+calls remain zero. The README, design, and walkthrough now distinguish the
+earlier 1.139.0-insider measurements from the October follow-up host set.
+Original review replies and final-revision Linux checks remain recorded in
+PR #14; the `b8c5a58` container run is not presented as testing this later fix.
 
 ## 7. Evaluation hypotheses
 

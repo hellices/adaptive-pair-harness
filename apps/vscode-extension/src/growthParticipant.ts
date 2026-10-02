@@ -74,6 +74,7 @@ export class GrowthParticipant {
         case "checkpoint": {
           const checkpoint = await this.native.checkpoint(response, signal);
           if (!signal.aborted && checkpoint?.isCurrent()) {
+            response.markdown(checkpoint.message);
             return checkpoint.result;
           }
           return;

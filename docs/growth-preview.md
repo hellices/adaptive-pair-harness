@@ -6,11 +6,13 @@ The AI remains a read-only navigator. Product correctness and learning outcomes
 are separate; this trial makes no learning or productivity claim.
 
 **Evidence status:** the route contract and disposable exercise checks are
-implemented. Native checkpoint/reopen checks passed across separate application
-launches on **VS Code 1.136.2, 1.138.0, and 1.139.0-insider**, with no restored
-live authority. The native-preview baseline's local root/POC checks, dependency
-audits, and Stable packaging passed. Whole-branch PR review/CI and authenticated
-account/selected-model inference remain **pending**. See
+implemented. The October 2, 2026 UTC native checkpoint/reopen checks passed
+across separate application launches on **VS Code 1.136.2, 1.140.0, and
+1.141.0-insider** on macOS and Linux, plus **1.138.0** on Linux, with no restored
+live authority. The Codespaces-preparation baseline (`b8c5a58`) passed local
+root/POC checks, dependency audits, Stable packaging, and all six CI jobs.
+PR #14 tracks subsequent review and final-revision checks; authenticated
+account/selected-model inference remains **pending**. See
 [observed host evidence](#observed-host-evidence): these zero-model-call runs and
 injected fixture models are not authenticated inference or Codespaces UI evidence.
 
@@ -189,14 +191,17 @@ elsewhere before deletion: the sibling is outside the repository and is not
 backed up by pushing repository commits. Pair does not back it up or create cloud
 resources for you.
 
-**Evidence boundary:** preparation and explicit-install tooling are implemented,
-but there is no local Docker daemon and the selected-image CI provisioning smoke
-has not yet been executed. A future successful image smoke would establish
-provisioning only. The existing macOS/Linux Electron host tests do **not** prove
-Codespaces UI or authentication. Actual browser and desktop-connected Codespaces
-UI, authenticated selected-model inference, remote file selection and `/check`,
-and reconnect/reload history with no recovered live authority remain **unobserved
-owner acceptance checks**. Do not report this walkthrough as a passed cloud trial.
+**Evidence boundary:** [CI run 37028398049](https://github.com/hellices/adaptive-pair-harness/actions/runs/37028398049)
+at `b8c5a58` passes all six jobs, including preparation in the selected Linux
+image as non-root `node`. That job builds and verifies the VSIX, observes the
+initial 2-pass/4-fail exercise, and reruns preparation without changing the edited
+copy or tracked fixture. This proves provisioning, not actual Codespaces UI or
+authentication. The separate macOS/Linux Electron host tests also do **not**
+establish browser or remote-host behavior. Actual browser and desktop-connected
+Codespaces UI, authenticated selected-model inference, remote file selection and
+`/check`, and reconnect/reload history with no recovered live authority remain
+**unobserved owner acceptance checks**. PR #14 tracks final-revision checks; do
+not report this walkthrough as a passed cloud trial.
 
 ## Prepare a fresh exercise copy
 
@@ -307,16 +312,18 @@ need a different task or scope.
    Read its separate confirmation: a minimized record will be attached to this
    response and retained under **VS Code's native chat-history controls**.
 2. Confirm only if you want that attachment. Declining, cancelling, pausing,
-   disabling, or changing the relevant session state during confirmation returns
-   no checkpoint. A save response acknowledges metadata attachment, **not atomic
-   disk publication, crash durability, or permission to resume work**.
+   disabling, or changing the relevant session state before response publication
+   returns neither a checkpoint nor its success acknowledgement. The acknowledgement
+   and metadata are published together only while the original session is current;
+   this is **not atomic disk publication, crash durability, or permission to resume
+   work**.
 3. Send **`@pair /history`** in the same chat. If checkpoint metadata is available,
    it renders a deterministic **historical report, not live state or verified
    evidence**. It does not call a model or run a tool.
 4. To exercise a fresh runtime, reload the VS Code window or close and reopen
    the workspace, then reopen the previous chat using VS Code's native history
-   UI. This sequence has been observed on VS Code 1.136.2 and 1.138.0; it is not
-   a promise of crash durability or identical behavior on every host version.
+   UI. See the measured host versions in [observed host evidence](#observed-host-evidence);
+   this is not a promise of crash durability or identical behavior on every host version.
    Merely switching or forking chats in the existing window is not a runtime
    restart: the live Pair runtime is workspace-window scoped, not per chat.
 5. Enable Presence explicitly before asking **`@pair /history`** again. If the
@@ -437,8 +444,25 @@ selected provider's network service; there is no Pair cloud sync or telemetry.
 
 ## Observed host evidence
 
-Each of these test hosts passed the existing **17 isolated smoke tests** on
-macOS and Linux, then
+### October 2, 2026 UTC follow-up
+
+The Codespaces-preparation baseline (`b8c5a58`) passed **17 isolated smoke tests**
+and both native checkpoint/reopen launches on the following hosts:
+
+| Platform | VS Code versions |
+| --- | --- |
+| Local macOS | 1.136.2, 1.140.0, 1.141.0-insider |
+| Linux CI | 1.136.2, 1.138.0, 1.140.0, 1.141.0-insider |
+
+[CI run 37028398049](https://github.com/hellices/adaptive-pair-harness/actions/runs/37028398049)
+passes all six jobs, including the actual Insiders smoke step and the separate
+selected-image preparation job. These remain controlled Electron and container
+fixtures, not actual Codespaces UI, provider authentication, or cloud history
+acceptance. PR #14 records later revisions and their delivery checks.
+
+### Historical native-preview baseline
+
+The earlier hosts below passed **17 isolated smoke tests** on macOS and Linux, then
 two clean application launches using production participant wiring in an
 isolated profile, with ordinary built-in VS Code Chat in **Ask** mode. These are
 desktop/Electron hosts, including Linux CI, not Codespaces clients. The Node

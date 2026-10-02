@@ -2416,9 +2416,12 @@ September 22, 2026, the owner selected a native `@pair` trial rather than an
 SDK-first adapter and then approved this written contract for implementation,
 testing, packaging, and PR review. The branch implements the contract below
 from main at `ba20468`; this is not a claim that the trial has merged or that
-authenticated model inference has been observed. Actual native checkpoint
-history has survived separate application launches on VS Code 1.136.2,
-1.138.0, and 1.139.0-insider without restoring live authority. See the measured boundaries in
+authenticated model inference has been observed. The October 2, 2026 UTC
+follow-up observed native checkpoint history across separate application
+launches on VS Code 1.136.2, 1.140.0, and 1.141.0-insider on macOS and Linux,
+plus the 1.138.0 Linux regression fixture, without restoring live authority.
+The earlier 1.139.0-insider run remains historical evidence, not the current
+follow-up host set. See the measured boundaries in
 [the research record](research.md#native-growth-trial-implementation-evidence).
 The separate native-reuse research PR #13 remains unmerged and is not an
 implementation dependency.
@@ -2479,7 +2482,8 @@ background persistence service. With Presence enabled and a live Growth work
 unit, show a confirmation that the minimized record will be attached to the
 response and retained under VS Code's native chat-history controls. Revalidate
 the original live-state identity after confirmation and synchronously after
-the public handler's final await, before returning `ChatResult.metadata`.
+the public handler's final await, before emitting the acknowledgement and
+returning `ChatResult.metadata` synchronously with no intervening await.
 Cancellation, a stale revision, a paused/disabled session, or a declined prompt
 returns no checkpoint. No disk adapter is added.
 
@@ -2575,6 +2579,11 @@ create a billable Codespace on the owner's behalf.
   `extensionKind: ["workspace"]` explicitly so desktop clients connected to a
   Codespace do not run filesystem access or verification on the client machine.
   Ordinary local VS Code still uses its local Node extension host.
+  Keep the native setup adapter's `file` URI gates: the checked remote host
+  transforms workbench-side `vscode-remote` workspace/dialog URIs to `file`
+  before extension API delivery. This is not an independent authority check or
+  proof of a completed Codespaces trial; see the
+  [upstream URI review evidence](research.md#remote-uri-review-disposition).
 - Use the official `node:24-bookworm` image and its non-root `node` user. Node 24
   matches the supported LTS toolchain; the image has no Dev Container extension
   recommendations that silently install another extension. Keep the VS Code

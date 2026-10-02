@@ -43,12 +43,29 @@ const createFixture = () => {
   return { before, store, coordinator, confirmCheckpoint, createModel, stream, collected, invoke };
 };
 
+const createCancellation = () => {
+  let cancelled = false;
+  let notify = (): void => undefined;
+  const token: vscode.CancellationToken = {
+    get isCancellationRequested() { return cancelled; },
+    onCancellationRequested: listener => {
+      notify = () => { listener(undefined); };
+      return { dispose: () => undefined };
+    },
+  };
+  return {
+    token,
+    cancel: (): void => { cancelled = true; notify(); },
+    isCancelled: (): boolean => cancelled,
+  };
+};
+
 describe("checkpoint publication at the public handler return", () => {
   it.each([
     { transition: "disable", turns: 3, presence: "off" },
     { transition: "pause", turns: 3, presence: "paused" },
     { transition: "revision", turns: 6, presence: "engaged" },
-  ] as const)("withholds metadata when a real $transition commits after the inner check", async ({ transition, turns, presence }) => {
+  ] as const)("withholds acknowledgement and metadata when a real $transition commits after the inner check", async ({ transition, turns, presence }) => {
     const fixture = createFixture();
     const trace: { readonly boundary: string; readonly presence: string; readonly revision: number }[] = [];
     const observe = (boundary: string): void => {
@@ -79,38 +96,52 @@ describe("checkpoint publication at the public handler return", () => {
     await invalidation;
 
     expect(trace).toEqual([
-      { boundary: "checkpoint message", presence: "engaged", revision: fixture.before.revision },
       { boundary: "coordinator commit", presence, revision: fixture.before.revision + 1 },
       { boundary: "public return", presence, revision: fixture.before.revision + 1 },
     ]);
-    expect(fixture.collected.markdown.join("\n")).toContain("Requested a minimized checkpoint");
+    expect(fixture.collected.markdown.join("\n")).not.toContain("Requested a minimized checkpoint");
     expect(result?.metadata).toBeUndefined();
     expect(fixture.createModel).not.toHaveBeenCalled();
   });
 
-  it("withholds metadata when cancellation arrives after the inner check", async () => {
+  it("withholds acknowledgement and metadata when cancellation arrives after the inner check", async () => {
     const fixture = createFixture();
-    let cancelled = false;
-    let notify = (): void => undefined;
-    const token: vscode.CancellationToken = {
-      get isCancellationRequested() { return cancelled; },
-      onCancellationRequested: listener => {
-        notify = () => { listener(undefined); };
-        return { dispose: () => undefined };
-      },
-    };
+    const cancellation = createCancellation();
+    fixture.confirmCheckpoint.mockImplementation(() => {
+      queueMicrotask(() => { queueMicrotask(cancellation.cancel); });
+      return Promise.resolve(true);
+    });
+    const atReturn: boolean[] = [];
+
+    const result = await observePublicReturn(
+      () => fixture.invoke(cancellation.token), () => { atReturn.push(cancellation.isCancelled()); },
+    );
+
+    expect(atReturn).toEqual([true]);
+    expect(fixture.collected.markdown.join("\n")).not.toContain("Requested a minimized checkpoint");
+    expect(result?.metadata).toBeUndefined();
+    expect(fixture.store.snapshotNow()).toEqual(fixture.before);
+    expect(fixture.createModel).not.toHaveBeenCalled();
+  });
+
+  it("publishes acknowledgement and metadata together before a later cancellation", async () => {
+    const fixture = createFixture();
+    const cancellation = createCancellation();
     const markdown = fixture.stream.markdown.bind(fixture.stream);
     vi.spyOn(fixture.stream, "markdown").mockImplementation(value => {
-      queueMicrotask(() => { cancelled = true; notify(); });
+      queueMicrotask(cancellation.cancel);
       return markdown(value);
     });
     const atReturn: boolean[] = [];
 
-    const result = await observePublicReturn(() => fixture.invoke(token), () => { atReturn.push(cancelled); });
+    const result = await observePublicReturn(
+      () => fixture.invoke(cancellation.token), () => { atReturn.push(cancellation.isCancelled()); },
+    );
 
-    expect(atReturn).toEqual([true]);
+    expect(atReturn).toEqual([false]);
+    expect(cancellation.isCancelled()).toBe(true);
     expect(fixture.collected.markdown.join("\n")).toContain("Requested a minimized checkpoint");
-    expect(result?.metadata).toBeUndefined();
+    expect(result?.metadata?.["adaptivePairCheckpoint"]).toBeDefined();
     expect(fixture.store.snapshotNow()).toEqual(fixture.before);
     expect(fixture.createModel).not.toHaveBeenCalled();
   });
@@ -139,10 +170,9 @@ describe("checkpoint publication at the public handler return", () => {
         reads.push(current);
         return current;
       });
-      const markdown = fixture.stream.markdown.bind(fixture.stream);
-      vi.spyOn(fixture.stream, "markdown").mockImplementation(value => {
-        queueMicrotask(() => { current = after; });
-        return markdown(value);
+      fixture.confirmCheckpoint.mockImplementation(() => {
+        queueMicrotask(() => { queueMicrotask(() => { current = after; }); });
+        return Promise.resolve(true);
       });
       const atReturn: PairRuntimeSnapshot[] = [];
 
@@ -150,7 +180,7 @@ describe("checkpoint publication at the public handler return", () => {
 
       expect(atReturn).toEqual([after]);
       expect(after.revision).toBe(before.revision);
-      expect(fixture.collected.markdown.join("\n")).toContain("Requested a minimized checkpoint");
+      expect(fixture.collected.markdown.join("\n")).not.toContain("Requested a minimized checkpoint");
       expect(result?.metadata).toBeUndefined();
       expect(reads.at(-1)).toBe(after);
       expect(fixture.createModel).not.toHaveBeenCalled();

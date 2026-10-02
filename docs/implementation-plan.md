@@ -22,9 +22,12 @@ unmerged feasibility work is evidence, not an implicit merge or product
 dependency.
 
 **Codespaces follow-up:** the owner has now authorized repository configuration
-for their own Codespaces trial. Execute Task 7 under design section 13.4. The
-completed desktop evidence above remains historical; do not extend its claims
-to Codespaces or mark the follow-up complete before its own review and checks.
+for their own Codespaces trial. Task 7 implements design section 13.4; baseline
+`b8c5a58` passes all six CI jobs, including selected-image provisioning. The
+checkpoint-acknowledgement follow-up passes 3,066 root cases and fresh macOS
+host checks. The desktop evidence above remains historical; do not extend its
+claims to Codespaces or mark the follow-up complete before its own review and
+final-revision checks.
 
 **Goal:** deliver a Stable VSIX with reachable Growth setup, explicitly saved
 native historical checkpoints, and a reproducible local exercise, then prepare
@@ -323,6 +326,9 @@ this plan. Keep one walkthrough rather than a competing Codespaces document.
   `npm run package`, and the release verifier. Record exact observed results;
   Docker availability and actual owner-authenticated Codespaces checks are
   separate evidence, not inferred from local tests.
+- [x] Reproduce and correct premature checkpoint acknowledgements at the public
+  handler boundary, distinguish historical/current host evidence, and verify the
+  remote URI premise against upstream source before changing scheme gates.
 - [ ] Obtain independent review, address verified findings, commit, push, and
   update PR #14. Reply in any original review threads, and recheck follow-up
   feedback plus every final-head CI job before reporting ready for owner trial.
