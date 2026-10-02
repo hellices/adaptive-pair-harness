@@ -2410,8 +2410,8 @@ and implementation plan. No production behavior changes in this investigation.
 
 ### 13.4 Native Growth hands-on milestone
 
-**Status: approved contract implemented on the native-trial branch; release
-review in progress.** On
+**Status: approved contract implemented and independently reviewed on the
+native-trial branch; owner acceptance and merge direction remain pending.** On
 September 22, 2026, the owner selected a native `@pair` trial rather than an
 SDK-first adapter and then approved this written contract for implementation,
 testing, packaging, and PR review. The branch implements the contract below

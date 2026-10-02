@@ -2460,6 +2460,43 @@ earlier 1.139.0-insider measurements from the October follow-up host set.
 Original review replies and final-revision Linux checks remain recorded in
 PR #14; the `b8c5a58` container run is not presented as testing this later fix.
 
+#### Reviewed implementation delivery checkpoint
+
+Implementation `89505d2` passes all six jobs in
+[CI run 37032213466](https://github.com/hellices/adaptive-pair-harness/actions/runs/37032213466):
+the 3,066-case root check, both audits and POC checks, Stable packaging,
+selected-image non-root preparation/rerun, and Linux 1.136.2, 1.138.0, 1.140.0,
+and 1.141.0-insider host fixtures. Every actual smoke step passes, including
+Insiders, and all four logs record both native restart phases with no restored
+authority or model/token calls.
+
+A later documentation-only local replay of the default `npm run check` hit
+three five-second timeouts in the production-bundle and Codespaces lifecycle
+suites, without assertion failures. High system load and unrelated concurrent
+validation processes were observed; that context does not establish causation.
+Without changing assertions, deadlines, or repository configuration, the two
+affected suites pass **23 cases** with `--maxWorkers=1`. Fresh typecheck and lint
+then pass, and `npm test -- --maxWorkers=2` passes all **3,066 cases in 144
+files**. Stable packaging and independent seven-entry VSIX verification also
+pass. No unrelated process was stopped, and no earlier failed run is relabeled
+successful. Default-concurrency Linux CI remains the separate final-head gate.
+
+All eight original Copilot threads have replies and resolved dispositions.
+The subsequent review at `89505d2` reports **no new findings** and acknowledges
+the four follow-up dispositions; its broader human-review recommendation is
+not an approval. Its overview also repeats the earlier native-launch timeout
+concern. That historical teardown failure was corrected at `d9f222e`, and both
+phases pass on the four current Linux hosts. Fresh process-diagnostic tests
+pass all three cases; an additional missing-executable check rejects in
+**25 ms** with `ENOENT`, rather than waiting for the runner's retained 180-second
+unresponsive-host deadline. No new launch failure was reproduced.
+
+The implementation is committed and pushed for owner review. The documentation
+follow-up must also pass final-revision checks before a readiness report;
+PR #14 records that head and outcome. The PR stays open without auto-merge.
+Actual Codespaces UI, authenticated guidance, remote verification, and cloud
+history acceptance remain unobserved, and no paid Codespace was created.
+
 ## 7. Evaluation hypotheses
 
 The first studies test separate hypotheses:

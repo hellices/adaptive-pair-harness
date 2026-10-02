@@ -21,13 +21,18 @@ plan, retained at `ba20468:docs/implementation-plan.md` in Git. PR #13's
 unmerged feasibility work is evidence, not an implicit merge or product
 dependency.
 
-**Codespaces follow-up:** the owner has now authorized repository configuration
-for their own Codespaces trial. Task 7 implements design section 13.4; baseline
-`b8c5a58` passes all six CI jobs, including selected-image provisioning. The
-checkpoint-acknowledgement follow-up passes 3,066 root cases and fresh macOS
-host checks. The desktop evidence above remains historical; do not extend its
-claims to Codespaces or mark the follow-up complete before its own review and
-final-revision checks.
+**Codespaces follow-up:** Task 7 implements the owner-authorized design section
+13.4. Reviewed implementation `89505d2` passes all six jobs in CI run
+`37032213466`, including selected-image provisioning and every actual host-smoke
+step. Earlier default-concurrency local checks passed 3,066 cases, and fresh
+macOS native history checks also pass. A later documentation-only replay hit
+three test timeouts; the unchanged 3,066-case suite passes with two workers,
+as recorded in the [delivery evidence](research.md#reviewed-implementation-delivery-checkpoint).
+Independent follow-up review found no source defects, all eight original
+Copilot threads have dispositions, and its subsequent review reports no new
+findings. PR #14 tracks the final documentation revision's checks. The desktop
+evidence above remains historical, and actual Codespaces UI/authenticated
+inference remains owner acceptance work. No merge or auto-merge is authorized.
 
 **Goal:** deliver a Stable VSIX with reachable Growth setup, explicitly saved
 native historical checkpoints, and a reproducible local exercise, then prepare
@@ -329,6 +334,11 @@ this plan. Keep one walkthrough rather than a competing Codespaces document.
 - [x] Reproduce and correct premature checkpoint acknowledgements at the public
   handler boundary, distinguish historical/current host evidence, and verify the
   remote URI premise against upstream source before changing scheme gates.
-- [ ] Obtain independent review, address verified findings, commit, push, and
-  update PR #14. Reply in any original review threads, and recheck follow-up
-  feedback plus every final-head CI job before reporting ready for owner trial.
+- [x] Obtain independent review, address verified findings, commit, push, and
+  update PR #14. Reply in every original review thread and inspect follow-up
+  feedback. Implementation `89505d2` passes all six CI jobs, including the actual
+  Insiders step; the follow-up Copilot review reports no new findings.
+
+Before reporting readiness, recheck feedback and every required check on the
+final documentation revision as well. Keep the PR open until explicit owner
+merge direction; preparing the trial does not complete its manual acceptance.
