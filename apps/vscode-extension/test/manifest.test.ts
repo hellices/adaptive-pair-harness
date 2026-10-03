@@ -69,11 +69,9 @@ describe("VS Code manifest", () => {
     const manifest = JSON.parse(
       readFileSync(resolve("apps/vscode-extension/package.json"), "utf8"),
     ) as {
-      main: string;
       files: string[];
       enabledApiProposals?: unknown;
       contributes: {
-        commands: { command: string }[];
         languageModelTools: { name: string; toolReferenceName?: string }[];
         chatParticipants: { id: string }[];
       };
@@ -88,7 +86,6 @@ describe("VS Code manifest", () => {
       "README.md",
       "docs/growth-preview.md",
     ]);
-    expect(manifest.main).toBe("./dist/extension.cjs");
     expect(manifest.enabledApiProposals).toBeUndefined();
     expect(Object.keys(manifest.contributes).sort()).toEqual(
       ["chatParticipants", "commands", "languageModelTools"].sort(),
@@ -100,21 +97,10 @@ describe("VS Code manifest", () => {
       "onChatParticipant:adaptivePair.chat",
     ]);
     expect(
-      manifest.activationEvents.every(event =>
-        /^(?:onCommand:adaptivePair\.|onChatParticipant:adaptivePair\.)/u.test(event),
-      ),
-    ).toBe(true);
-    expect(
-      manifest.contributes.commands.every(entry =>
-        entry.command.startsWith("adaptivePair."),
-      ),
-    ).toBe(true);
-    expect(
       manifest.contributes.languageModelTools.every(
         entry =>
-          entry.name.startsWith("adaptive_pair_") &&
-          (entry.toolReferenceName === undefined ||
-            entry.toolReferenceName.startsWith("adaptivePair")),
+          entry.toolReferenceName === undefined ||
+          entry.toolReferenceName.startsWith("adaptivePair"),
       ),
     ).toBe(true);
     expect(

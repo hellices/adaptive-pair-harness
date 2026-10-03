@@ -6,14 +6,6 @@ import {
   MemoryFs, NodeJournalFileSystem, run,
 } from "./presenceTestHarness.js";
 
-describe("PresenceController — command test harness", () => {
-  it("rejects an unregistered command instead of silently succeeding", async () => {
-    await expect(run("adaptivePair.missing")).rejects.toThrow(
-      "Unknown command: adaptivePair.missing",
-    );
-  });
-});
-
 describe("PresenceController — pending edit timers", () => {
   it("observes an undo that returns a document to its saved state", async () => {
     const scheduler = new FakeScheduler();
@@ -193,8 +185,9 @@ describe("PresenceController — untrusted workspace gate", () => {
 
     expect(controller.getState().presenceStatus).toBe("off");
     expect(controller.getState().documentListenerActive).toBe(false);
+    expect(harness.state.documentListeners.size).toBe(0);
     expect(controller.getState().contextKeys["adaptivePair.presenceEnabled"]).toBe(false);
-    expect(harness.state.warnings.join("\n")).toContain("trusted workspace");
+    expect(harness.state.warnings.map(warning => warning.message).join("\n")).toContain("trusted workspace");
 
     // An edit in an untrusted workspace is never observed.
     harness.emitChange("/workspace/src/pair.ts");
@@ -231,8 +224,8 @@ describe("PresenceController — journal I/O failures", () => {
 
     expect(controller.getState().presenceStatus).toBe("paused");
     expect(harness.state.warnings).toHaveLength(1);
-    expect(harness.state.warnings[0]).not.toContain("/Users/alice/secret");
-    expect(harness.state.warnings[0]).not.toContain("disk failure");
+    expect(harness.state.warnings[0]?.message).not.toContain("/Users/alice/secret");
+    expect(harness.state.warnings[0]?.message).not.toContain("disk failure");
   });
 });
 

@@ -99,7 +99,7 @@ describe("Presence lifecycle intent", () => {
       documentListenerActive: true,
     });
     expect(controller.getState().contextKeys["adaptivePair.presenceEnabled"]).toBe(true);
-    expect(harness.state.statusText).toContain("Pair: observing");
+    expect(harness.state.statusItems.at(-1)?.text).toContain("Pair: observing");
   });
 
   it("ignores stale listener callbacks before any workspace read", async () => {

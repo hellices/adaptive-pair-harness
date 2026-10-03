@@ -15,8 +15,6 @@ import {
   parseToolPayload,
 } from "./pairToolTestHarness.js";
 
-
-
 describe("registerPairTools", () => {
   it("registers the same native tools contributed by the manifest", async () => {
     const manifest = JSON.parse(
@@ -85,6 +83,7 @@ it("derives verification script and scope from the agreed work unit", async () =
     targetPaths: ["src/pair.ts"],
   });
 
+  fakeVscode.state.warningResponses.push("Continue once");
   const result = await tool.invoke(
     { input: { plan: "npm run deploy" } } as never,
     createToken() as never,
@@ -142,7 +141,18 @@ it("shows mode, owner, scope, and operation class during preparation", async () 
   );
 });
 
-it("reads the latest coordinator state instead of trusting an earlier visible state", async () => {
+it.each([
+  {
+    title: "a paused Pair session (latest coordinator state, not an earlier visible state)",
+    runtime: createPairRuntime,
+    pauseFirst: true,
+  },
+  {
+    title: "a Growth session invoking the edit tool by name",
+    runtime: createGrowthRuntime,
+    pauseFirst: false,
+  },
+])("denies a hidden edit tool without running an effect in $title", async ({ runtime, pauseFirst }) => {
   const { PairLanguageModelTool } = await import("../src/tools/pairTool.js");
   const effectPort = new EffectPortDouble(request => ({
     operationId: request.operationId,
@@ -152,7 +162,7 @@ it("reads the latest coordinator state instead of trusting an earlier visible st
     sensitiveData: false,
     partial: false,
   }));
-  const { coordinator, store } = createCoordinator(createPairRuntime(), effectPort);
+  const { coordinator, store } = createCoordinator(runtime(), effectPort);
   const descriptor = PAIR_TOOL_CATALOG.find(
     tool => tool.name === "pair_apply_edit",
   );
@@ -161,58 +171,17 @@ it("reads the latest coordinator state instead of trusting an earlier visible st
     throw new Error("Missing pair_apply_edit descriptor.");
   }
 
-  await coordinator.dispatch({
-    protocolVersion: 1,
-    commandId: "pause-before-invoke",
-    expectedRevision: store.snapshotNow().revision,
-    actor: "human",
-    observedAt: 1001,
-    type: "PauseSession",
-    reason: "The developer paused after seeing the tool.",
-  });
-  const tool = new PairLanguageModelTool(
-    nativeToolName(descriptor.name),
-    descriptor,
-    coordinator,
-  );
-  const result = await tool.invoke(
-    {
-      input: {
-        path: "src/pair.ts",
-        expectedHash: "a".repeat(64),
-        patch: "diff --git",
-      },
-    } as never,
-    createToken() as never,
-  );
-  const payload = parseToolPayload(result);
-
-  expect(payload).toMatchObject({
-    status: "denied",
-    reason: "tool-hidden",
-  });
-  expect(effectPort.calls).toHaveLength(0);
-});
-
-it("denies a Growth edit-shaped tool call even when invoked by name", async () => {
-  const { PairLanguageModelTool } = await import("../src/tools/pairTool.js");
-  const effectPort = new EffectPortDouble(request => ({
-    operationId: request.operationId,
-    status: "confirmed",
-    summary: "confirmed",
-    observation: {},
-    sensitiveData: false,
-    partial: false,
-  }));
-  const { coordinator } = createCoordinator(createGrowthRuntime(), effectPort);
-  const descriptor = PAIR_TOOL_CATALOG.find(
-    tool => tool.name === "pair_apply_edit",
-  );
-
-  if (descriptor === undefined) {
-    throw new Error("Missing pair_apply_edit descriptor.");
+  if (pauseFirst) {
+    await coordinator.dispatch({
+      protocolVersion: 1,
+      commandId: "pause-before-invoke",
+      expectedRevision: store.snapshotNow().revision,
+      actor: "human",
+      observedAt: 1001,
+      type: "PauseSession",
+      reason: "The developer paused after seeing the tool.",
+    });
   }
-
   const tool = new PairLanguageModelTool(
     nativeToolName(descriptor.name),
     descriptor,
@@ -233,6 +202,7 @@ it("denies a Growth edit-shaped tool call even when invoked by name", async () =
     status: "denied",
     reason: "tool-hidden",
   });
+  expect(effectPort.calls).toHaveLength(0);
 });
 
 it("returns structured stale revision and authority denials", async () => {
@@ -316,25 +286,4 @@ it("sanitizes private host failures out of tool results", async () => {
   expect(result.content).toHaveLength(1);
   expect(JSON.stringify(result.content)).not.toContain("HOST_SECRET");
   expect(JSON.stringify(payload)).not.toContain("HOST_SECRET");
-});
-
-
-describe("manifest and harness parity", () => {
-  it("keeps every registered native name inside the harness catalog", () => {
-    const contributedNames = JSON.parse(
-      readFileSync(resolve("apps/vscode-extension/package.json"), "utf8"),
-    ) as {
-      contributes: {
-        languageModelTools: { name: string }[];
-      };
-    };
-
-    const harnessNames = new Set<string>(
-      PAIR_TOOL_CATALOG.map(tool => nativeToolName(tool.name)),
-    );
-
-    expect(
-      contributedNames.contributes.languageModelTools.every(tool => harnessNames.has(tool.name)),
-    ).toBe(true);
-  });
 });

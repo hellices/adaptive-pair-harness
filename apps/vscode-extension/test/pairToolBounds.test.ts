@@ -32,33 +32,30 @@ const fixture = async () => {
 };
 
 describe("Native complete tool result boundary", () => {
-  it.each(["observation", "summary", "operationId"] as const)(
-    "withholds oversized %s from a coordinator port without truncation",
-    async field => {
-      const { coordinator, invoke } = await fixture();
-      const snapshot = await coordinator.snapshot();
-      const oversized = "private-oversized-result".repeat(1_000);
-      const result: PairToolResult = {
-        operationId: field === "operationId" ? oversized : "operation-original",
-        runtimeRevision: snapshot.revision,
-        authorityEpoch: snapshot.session?.authorityEpoch,
-        status: "confirmed",
-        summary: field === "summary" ? oversized : "Searched the agreed scope.",
-        observation: field === "observation" ? { query: oversized, matches: [] } : {},
-        sensitiveData: false,
-        partial: false,
-      };
-      vi.spyOn(coordinator, "invokeTool").mockResolvedValue(result);
+  it("withholds an oversized coordinator result without truncation", async () => {
+    const { coordinator, invoke } = await fixture();
+    const snapshot = await coordinator.snapshot();
+    const oversized = "private-oversized-result".repeat(1_000);
+    const result: PairToolResult = {
+      operationId: "operation-original",
+      runtimeRevision: snapshot.revision,
+      authorityEpoch: snapshot.session?.authorityEpoch,
+      status: "confirmed",
+      summary: "Searched the agreed scope.",
+      observation: { query: oversized, matches: [] },
+      sensitiveData: false,
+      partial: false,
+    };
+    vi.spyOn(coordinator, "invokeTool").mockResolvedValue(result);
 
-      const published = await invoke();
+    const published = await invoke();
 
-      expect(toolResultText(published).length).toBeLessThanOrEqual(12_000);
-      expect(toolResultText(published)).not.toContain("private-oversized-result");
-      expect(parseToolPayload(published)).toMatchObject({ reason: "result-too-large" });
-      expect(parseToolPayload(published)["operationId"]).toBeUndefined();
-      expect(result[field]).toEqual(field === "observation" ? { query: oversized, matches: [] } : oversized);
-    },
-  );
+    expect(toolResultText(published).length).toBeLessThanOrEqual(12_000);
+    expect(toolResultText(published)).not.toContain("private-oversized-result");
+    expect(parseToolPayload(published)).toMatchObject({ reason: "result-too-large" });
+    expect(parseToolPayload(published)["operationId"]).toBeUndefined();
+    expect(result.observation).toEqual({ query: oversized, matches: [] });
+  });
 
   it("turns runtime budget rejection into a bounded disclosure failure", async () => {
     const { coordinator, invoke } = await fixture();

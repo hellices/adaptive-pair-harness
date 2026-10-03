@@ -42,7 +42,7 @@ describe("extension lifecycle", () => {
     const api = activate(asExtensionContext(createContext())) as AdaptivePairExtensionApi;
 
     await fakeVscode.module.commands.executeCommand("adaptivePair.enablePresence");
-    fakeVscode.emitDocumentChange("/workspace/src/pair.ts");
+    fakeVscode.emitChange("/workspace/src/pair.ts");
     expect(api.getState().observationCount).toBe(1);
 
     await fakeVscode.module.commands.executeCommand("adaptivePair.stayQuiet");
@@ -77,7 +77,7 @@ describe("extension lifecycle", () => {
     const api = activate(asExtensionContext(createContext())) as AdaptivePairExtensionApi;
 
     await fakeVscode.module.commands.executeCommand("adaptivePair.enablePresence");
-    fakeVscode.emitDocumentChange("/workspace/src/pair.ts");
+    fakeVscode.emitChange("/workspace/src/pair.ts");
     expect(api.getState().observationCount).toBe(1);
 
     fakeVscode.state.warningResponses.push("Disable and clear");
@@ -90,18 +90,6 @@ describe("extension lifecycle", () => {
       documentListenerActive: false,
     });
     expect(fakeVscode.state.statusItems[0]?.text).toBe("$(circle-slash) Pair: off");
-  });
-
-  it("keeps presence off in an untrusted workspace and surfaces the reason", async () => {
-    const { activate } = await import("../src/extension.js");
-    fakeVscode.state.workspaceTrusted = false;
-    const api = activate(asExtensionContext(createContext())) as AdaptivePairExtensionApi;
-
-    await fakeVscode.module.commands.executeCommand("adaptivePair.enablePresence");
-
-    expect(api.getState().presenceStatus).toBe("off");
-    expect(fakeVscode.state.documentListeners.size).toBe(0);
-    expect(fakeVscode.state.warnings[0]?.message).toContain("trusted workspace");
   });
 
   it("does not write native chat, copilot, model, permission, keybinding, or isolation settings", async () => {

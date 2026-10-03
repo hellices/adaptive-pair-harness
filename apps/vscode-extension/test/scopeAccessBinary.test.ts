@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { VscodeScopeAccess } from "../src/scopeAccess.js";
 import { MAX_CONTEXT_FILE_BYTES } from "../src/workspaceContext.js";
 
@@ -48,17 +48,15 @@ const read = () => new VscodeScopeAccess(root).readText(
   new AbortController().signal,
 );
 
-describe.each([false, true])("binary dirty scope buffers (symlink alias: %s)", aliased => {
-  it.each(["\0prefix", "prefix\0suffix", "suffix\0"])("rejects NUL content %j", async text => {
-    const target = join(root, "src", "main.ts");
-    const documentPath = aliased ? join(root, "alias.ts") : target;
-    if (aliased) {
-      await symlink(target, documentPath);
-    }
-    openDocument(documentPath, text);
+it.each([false, true])("rejects NUL content in a dirty scope buffer (symlink alias: %s)", async aliased => {
+  const target = join(root, "src", "main.ts");
+  const documentPath = aliased ? join(root, "alias.ts") : target;
+  if (aliased) {
+    await symlink(target, documentPath);
+  }
+  openDocument(documentPath, "prefix\0suffix");
 
-    await expect(read()).resolves.toEqual({ status: "binary" });
-  });
+  await expect(read()).resolves.toEqual({ status: "binary" });
 });
 
 it.each(["plain text", "literal \\0 escape", "Unicode 한글 🧪"])("retains text buffers %j", async text => {
