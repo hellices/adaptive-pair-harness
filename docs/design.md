@@ -2411,20 +2411,22 @@ and implementation plan. No production behavior changes in this investigation.
 ### 13.4 Native Growth hands-on milestone
 
 **Status: approved contract implemented and independently reviewed on the
-native-trial branch; owner acceptance and merge direction remain pending.** On
+native-trial branch; owner acceptance remains pending. The owner conditionally
+authorized merging PR #14 after fresh checks and review on October 3, 2026.** On
 September 22, 2026, the owner selected a native `@pair` trial rather than an
 SDK-first adapter and then approved this written contract for implementation,
 testing, packaging, and PR review. The branch implements the contract below
-from main at `ba20468`; this is not a claim that the trial has merged or that
-authenticated model inference has been observed. The October 2, 2026 UTC
+originally from main at `ba20468`; this is not a claim that the trial has merged
+or that authenticated model inference has been observed. The October 2, 2026 UTC
 follow-up observed native checkpoint history across separate application
 launches on VS Code 1.136.2, 1.140.0, and 1.141.0-insider on macOS and Linux,
 plus the 1.138.0 Linux regression fixture, without restoring live authority.
 The earlier 1.139.0-insider run remains historical evidence, not the current
 follow-up host set. See the measured boundaries in
 [the research record](research.md#native-growth-trial-implementation-evidence).
-The separate native-reuse research PR #13 remains unmerged and is not an
-implementation dependency.
+The native-reuse research PR #13 merged on October 3, 2026 at `d0b4a0d`, and
+the owner requested rebasing this trial onto that baseline. Its isolated probes
+remain research evidence, not production dependencies or a new runtime adapter.
 
 #### Outcome and integration boundary
 
@@ -2568,7 +2570,7 @@ host's native transcript; that transcript remains subject to native controls.
   recheck the final revision's CI. Provide the local VSIX, exact trial steps,
   and remaining account/manual checks. Do not merge without owner direction.
 
-### 13.4 Codespaces trial configuration
+### 13.5 Codespaces trial configuration
 
 **Owner-authorized scope:** prepare this repository so the owner can create a
 Codespace and try the existing native Growth preview. This is environment and

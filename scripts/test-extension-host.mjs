@@ -45,7 +45,7 @@ const SEEDED_SETTINGS = {
   "editor.tabSize": 3,
   "editor.defaultFormatter": null,
   "editor.suggestSelection": "recentlyUsed",
-  "workbench.colorTheme": "Default Dark Modern",
+  "workbench.colorTheme": "Dark Modern",
   "workbench.editorAssociations": { "*.apfixture": "default" },
   "git.enabled": true,
   "chat.commandCenter.enabled": false,

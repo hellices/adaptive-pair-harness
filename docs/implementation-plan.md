@@ -16,13 +16,16 @@ and seven-entry archive inspection also pass. PR #14 records original review
 thread dispositions and the latest revision's delivery checks; readiness is
 reported only after those current checks and follow-up feedback are verified.
 Authenticated owner-model guidance remains a manual trial, not fixture proof.
-This deliberately replaces the completed P2b
-plan, retained at `ba20468:docs/implementation-plan.md` in Git. PR #13's
-unmerged feasibility work is evidence, not an implicit merge or product
-dependency.
+This deliberately replaces the completed P2b plan. That plan, including the
+merged feasibility follow-up, remains at `d0b4a0d:docs/implementation-plan.md`
+in Git. PR #13 merged on October 3, 2026; the owner then requested this branch's
+rebase onto `d0b4a0d`. Its isolated probes remain research evidence, not product
+dependencies. Earlier delivery SHAs and test counts describe pre-rebase
+history, not validation of the rebased branch; see the
+[rebase evidence](research.md#october-3-2026-upstream-rebase).
 
 **Codespaces follow-up:** Task 7 implements the owner-authorized design section
-13.4. Reviewed implementation `89505d2` passes all six jobs in CI run
+13.5. Reviewed implementation `89505d2` passes all six jobs in CI run
 `37032213466`, including selected-image provisioning and every actual host-smoke
 step. Earlier default-concurrency local checks passed 3,066 cases, and fresh
 macOS native history checks also pass. A later documentation-only replay hit
@@ -32,7 +35,10 @@ Independent follow-up review found no source defects, all eight original
 Copilot threads have dispositions, and its subsequent review reports no new
 findings. PR #14 tracks the final documentation revision's checks. The desktop
 evidence above remains historical, and actual Codespaces UI/authenticated
-inference remains owner acceptance work. No merge or auto-merge is authorized.
+inference remains owner acceptance work. No merge was authorized at that
+checkpoint. On October 3, 2026, the owner separately requested merging PR #14
+only after the rebased revision passes fresh checks and review. Do not merge
+with unresolved blockers; do not enable auto-merge.
 
 **Goal:** deliver a Stable VSIX with reachable Growth setup, explicitly saved
 native historical checkpoints, and a reproducible local exercise, then prepare
@@ -50,9 +56,10 @@ new credential store, proposed production API, or durable-storage adapter.
 
 ## Global constraints
 
-- Implement [design section 13.3](design.md#133-native-growth-hands-on-milestone).
-- Work from `ba20468` on `agents/native-growth-trial`; do not merge PR #13 or
-  modify unrelated worktrees.
+- Implement [design section 13.4](design.md#134-native-growth-hands-on-milestone).
+- Continue on `agents/native-growth-trial`, originally based on `ba20468` and
+  now rebased onto `d0b4a0d`. Merge PR #14 only under the conditional approval
+  above; do not modify unrelated worktrees.
 - Preserve inactive-zero, additive integration, all effect-side authorization,
   Growth restraints, and separate product/learning outcomes.
 - Keep the live runtime workspace-window scoped; checkpoints do not identify
@@ -83,7 +90,7 @@ function inspectNativeHistory(history: readonly unknown[]): NativeHistoryInspect
 function renderNativeHistory(inspection: NativeHistoryInspection): string;
 ```
 
-`NativeGrowthCheckpoint` has exactly the nine fields in design section 13.3.
+`NativeGrowthCheckpoint` has exactly the nine fields in design section 13.4.
 The helpers import protocol types only; they do not depend on VS Code, a
 coordinator, a disk store, a model, or time. `inspectNativeHistory` accepts only
 metadata under `adaptivePairCheckpoint` from `adaptivePair.chat` responses.
@@ -253,10 +260,11 @@ merging or enabling auto-merge; the owner still controls those actions.
 
 ## Task 7: Owner-run Codespaces trial
 
-**Contract:** [design section 13.4](design.md#134-codespaces-trial-configuration).
+**Contract:** [design section 13.5](design.md#135-codespaces-trial-configuration).
 Use the existing isolated `agents/native-growth-trial` worktree; its main
-baseline remains `ba20468`. Do not create a Codespace, merge the PR, or alter
-another worktree. No dependency or VS Code engine downgrade is authorized.
+baseline is now `d0b4a0d`. Do not create a Codespace or alter another worktree.
+The conditional merge approval above is separate from this task. No dependency
+or VS Code engine downgrade is authorized.
 
 ### 7a. Container and workspace host
 

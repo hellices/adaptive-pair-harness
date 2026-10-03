@@ -2020,9 +2020,11 @@ review remain separate delivery gates; local results do not imply either.
 ### Native Growth trial implementation evidence
 
 The owner approved the native-first hands-on contract on September 22, 2026.
-The implementation starts from `ba20468` on a dedicated trial branch; the
-unmerged native/SDK feasibility PR #13 is neither merged nor required to run
-this product. The approved boundary is [design section 13.3](design.md#133-native-growth-hands-on-milestone).
+The implementation started from `ba20468` on a dedicated trial branch. At that
+checkpoint, native/SDK feasibility PR #13 was unmerged and not required to run
+the product. It merged on October 3, 2026; the
+[rebase record](#october-3-2026-upstream-rebase) distinguishes that later baseline.
+The approved boundary is [design section 13.4](design.md#134-native-growth-hands-on-milestone).
 This record concerns an installable Growth trial, not an implementation of the
 P2b durable-store adapter, a Copilot SDK bridge, or demonstrated learning gains.
 
@@ -2164,15 +2166,15 @@ The local Insiders download resolver briefly timed out; the repeated test used
 the existing binary after checking its actual `1.139.0-insider` manifest, not
 an assumed latest version. PR #14 tracks the final revision's follow-up checks.
 
-#### Current dependency and tooling evidence
+#### September 22, 2026 dependency and tooling evidence
 
 The September 22, 2026 UTC trial audit inventoried **17 source manifests** and
 one generated host-staging manifest, not just workspace globs or an outdated
-report. There are **two active lockfiles**: the root/workspace graph and the
+report. That checkout had **two active lockfiles**: the root/workspace graph and the
 isolated Session Target POC. The source manifests declare 25 internal and 24
 external dependencies, covering **16 distinct direct external packages**.
 The private, dependency-free exercise adds no lockfile. The SDK prototype in
-the unmerged research branch is not part of this checkout or either graph.
+the then-unmerged research branch was not part of that checkout or either graph.
 
 Exact registry requests now make **Vitest 5.0.1** and its matching coverage
 package available. Both graphs were updated with normal strict-peer npm
@@ -2262,7 +2264,7 @@ selected-model hints remain an explicit owner trial check.
 
 The owner authorized a repository configuration for an owner-created Codespace;
 no cloud workspace or paid resource was created during this work. The contract
-is [design section 13.4](design.md#134-codespaces-trial-configuration), with one
+is [design section 13.5](design.md#135-codespaces-trial-configuration), with one
 [Codespaces walkthrough](growth-preview.md#codespaces-owner-run-trial) shared by the README.
 
 #### Platform choice and implementation
@@ -2320,7 +2322,7 @@ The follow-up inspected all **17 tracked source manifests**, generated host
 staging, **two active lockfiles**, and the same **16 distinct direct external
 packages**. The dependency-free exercise and scripts add no separate graph;
 the isolated Session Target POC remains outside root workspaces and is not
-installed by Codespaces preparation. No SDK graph was introduced.
+installed by Codespaces preparation. That follow-up introduced no SDK graph.
 
 The initial full audits reported three affected root packages and two POC
 packages, including a high-severity finding. These were not dismissed as
@@ -2496,6 +2498,53 @@ follow-up must also pass final-revision checks before a readiness report;
 PR #14 records that head and outcome. The PR stays open without auto-merge.
 Actual Codespaces UI, authenticated guidance, remote verification, and cloud
 history acceptance remain unobserved, and no paid Codespace was created.
+
+### October 3, 2026 upstream rebase
+
+The owner merged native-reuse feasibility PR #13 at `d0b4a0d` on October 3,
+2026, then requested rebasing the existing native Growth/Codespaces PR #14.
+All 21 trial commits were replayed without dropping or squashing a commit.
+The upstream native-continuity and Copilot-runtime probes remain unchanged;
+their checks and the trial's exercise checks are both retained. Design section
+13.3 keeps the upstream measured reuse boundary; the trial and Codespaces
+contracts move to sections 13.4 and 13.5 with corresponding link updates.
+The completed upstream P2b plan remains available at
+`d0b4a0d:docs/implementation-plan.md` rather than becoming a second active plan.
+
+The inventory now contains **19 tracked source manifests and three lockfiles**:
+the root workspaces, isolated Session Target POC, and isolated Copilot-runtime
+probe are the three dependency graphs.
+The native-continuity probe and Growth exercise add no dependency graph.
+The SDK remains restricted to its upstream research prototype; neither the
+production extension nor Codespaces setup installs that isolated graph.
+Earlier trial counts, audits, host observations, and CI run IDs remain evidence
+for their original pre-rebase revisions, not for the combined revision.
+Rebasing alone was not merge authorization. The owner subsequently authorized
+merging PR #14 only after fresh checks and review show no unresolved blockers.
+Owner-authenticated Codespaces acceptance remains unobserved.
+
+Fresh local validation on Node **24.21.0** / npm **11.19.0** passes typechecking,
+full lint, and **3,085 root tests in 148 files** with two workers. The isolated
+Session Target POC passes compilation, **21 tests**, and packaging. The SDK
+probe passes its **nine scenarios / ten runner-reported tests** using runtime
+**1.0.85**, protocol **3**, and **15 loopback model requests**, without
+authenticated inference. All three full-lockfile audits, including development,
+optional, and peer dependencies, report zero findings. Stable packaging and
+archive verification pass with exactly **seven allowlisted entries**.
+
+The first fresh Stable host run exposed an existing fixture race: VS Code
+normalizes the obsolete `Default Dark Modern` theme ID to `Dark Modern` after
+the coexistence baseline is captured. Reverting only that value in the failed
+settings file exactly restores the baseline hash; the installed workbench
+contains that explicit migration. The runner now seeds the canonical ID
+declared by every tested host. No product code, baseline assertion, timeout, or
+comparison was relaxed. After this fixture-only correction, macOS **1.136.2**,
+**1.140.0**, and **1.141.0-insider** each pass all **17** baseline cases plus
+separate native seed/resume application launches: historical checkpoints return,
+live authority does not, fresh chat has no checkpoint, and model/token calls
+remain zero. The complete root check was repeated after this correction.
+Final-revision CI and follow-up review belong to the rebased PR #14 head,
+not the earlier delivery run IDs.
 
 ## 7. Evaluation hypotheses
 
