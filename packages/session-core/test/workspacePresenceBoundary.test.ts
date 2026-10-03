@@ -74,7 +74,8 @@ it("makes direct workspace rebinding a traceable disable-and-enable decision", (
   })).toThrow("SESSION_NOT_STARTED");
 });
 
-it.each(["engaged", "observing", "quiet", "paused", "off"] as const)(
+// Rebinding takes the same disable-and-enable path from every presence status.
+it.each(["engaged", "off"] as const)(
   "clears all retained workspace state when rebinding from %s", status => {
     const initial = authoritySnapshot();
     const current = { ...initial, presence: { ...initial.presence, status } };

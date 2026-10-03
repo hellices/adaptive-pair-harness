@@ -1,47 +1,28 @@
-import type { PairRuntimeSnapshot } from "@adaptive-pair/protocol";
+import type { OperationRecord, PairRuntimeSnapshot } from "@adaptive-pair/protocol";
 import { expect, it } from "vitest";
-import { createRuntime, createSession, decide, reduce } from "../src/index.js";
+import { decide, reduce } from "../src/index.js";
+import { command, createSessionRuntime, event } from "./sessionCoreFixtures.js";
 
-const createToolRuntime = (): PairRuntimeSnapshot => ({
-  ...createRuntime("workspace-1"),
-  presence: {
-    workspaceId: "workspace-1",
-    observationRevision: 0,
-    status: "engaged",
-    activeSessionId: "session-1",
-  },
-  session: {
-    ...createSession("session-1"),
-    status: "active",
+const createToolRuntime = (): PairRuntimeSnapshot => createSessionRuntime({
+  mode: "pair",
+  workUnit: {
+    id: "wu-1",
+    objective: "Run the agreed verification",
     mode: "pair",
-    workUnit: {
-      id: "wu-1",
-      objective: "Run the agreed verification",
-      mode: "pair",
-      learningValue: "mixed",
-      capability: "verification",
-      owner: "human",
-      allowedPaths: ["packages/runtime"],
-      acceptanceChecks: ["npx vitest run packages/runtime/test"],
-      verificationPlan: "Run the runtime suite",
-      stoppingCondition: "The runtime suite is green",
-      baseline: {},
-      status: "agreed",
-    },
+    learningValue: "mixed",
+    capability: "verification",
+    owner: "human",
+    allowedPaths: ["packages/runtime"],
+    acceptanceChecks: ["npx vitest run packages/runtime/test"],
+    verificationPlan: "Run the runtime suite",
+    stoppingCondition: "The runtime suite is green",
+    baseline: {},
+    status: "agreed",
   },
 });
 
 const createBriefingRuntime = (): PairRuntimeSnapshot => ({
-  ...createRuntime("workspace-1"),
-  revision: 4,
-  presence: {
-    workspaceId: "workspace-1",
-    observationRevision: 0,
-    status: "engaged",
-    activeSessionId: "session-1",
-  },
-  session: {
-    ...createSession("session-1"),
+  ...createSessionRuntime({
     authorityEpoch: 2,
     status: "briefing",
     mode: "pair",
@@ -54,380 +35,139 @@ const createBriefingRuntime = (): PairRuntimeSnapshot => ({
       protectedPaths: [],
       capturedAt: 3,
     },
-  },
+  }),
+  revision: 4,
 });
+
+const verificationInput = { plan: "npx vitest run packages/runtime/test" };
+const operation = (fields: Partial<OperationRecord> = {}): OperationRecord => ({
+  id: "op-1",
+  workUnitId: "wu-1",
+  toolName: "pair_run_verification",
+  kind: "check",
+  input: verificationInput,
+  runtimeRevision: 1,
+  authorityEpoch: 0,
+  status: "authorized",
+  summary: undefined,
+  userActionGrantId: undefined,
+  ...fields,
+});
+const grantEvent = (nativeToolName = "adaptive_pair_run_verification") => event("UserActionGranted", 1, {
+  grantId: "grant-1", nativeToolName, runtimeRevision: 1, authorityEpoch: 0,
+});
+const authorizeVerification = (runtime: PairRuntimeSnapshot) => command("AuthorizeOperation", runtime.revision, {
+  operationId: "op-1",
+  toolName: "pair_run_verification",
+  kind: "check",
+  input: verificationInput,
+  userActionGrantId: "grant-1",
+}, { actor: "ai" });
 
 it("grants briefing capture-entry actions at the next immutable revision", () => {
   const runtime = createBriefingRuntime();
+  const decision = decide(runtime, command("GrantUserAction", runtime.revision, {
+    grantId: "grant-capture-1", nativeToolName: "adaptive_pair_capture_entry",
+  }, { at: 20 }));
 
-  const decision = decide(runtime, {
-    protocolVersion: 1,
-    commandId: "cmd-grant-capture",
-    expectedRevision: runtime.revision,
-    actor: "human",
-    type: "GrantUserAction",
-    grantId: "grant-capture-1",
+  expect(decision.events).toEqual([event("UserActionGranted", 5, {
+    grantId: "grant-capture-1", nativeToolName: "adaptive_pair_capture_entry", runtimeRevision: 5, authorityEpoch: 2,
+  }, { at: 20 })]);
+  expect(reduce(runtime, decision.events).session?.userActionGrants).toEqual([{
+    id: "grant-capture-1",
     nativeToolName: "adaptive_pair_capture_entry",
-    observedAt: 20,
-  });
-
-  expect(decision.events).toEqual([
-    {
-      protocolVersion: 1,
-      eventId: "cmd-grant-capture:0",
-      commandId: "cmd-grant-capture",
-      actor: "human",
-      revision: 5,
-      recordedAt: 20,
-      type: "UserActionGranted",
-      grantId: "grant-capture-1",
-      nativeToolName: "adaptive_pair_capture_entry",
-      runtimeRevision: 5,
-      authorityEpoch: 2,
-    },
-  ]);
-
-  const next = reduce(runtime, decision.events);
-
-  expect(next.session?.userActionGrants).toEqual([
-    {
-      id: "grant-capture-1",
-      nativeToolName: "adaptive_pair_capture_entry",
-      runtimeRevision: 5,
-      authorityEpoch: 2,
-      status: "available",
-    },
-  ]);
+    runtimeRevision: 5,
+    authorityEpoch: 2,
+    status: "available",
+  }]);
 });
 
 it("rejects operational user action grants during briefing", () => {
   const runtime = createBriefingRuntime();
-
-  expect(() =>
-    decide(runtime, {
-      protocolVersion: 1,
-      commandId: "cmd-grant-verification",
-      expectedRevision: runtime.revision,
-      actor: "human",
-      type: "GrantUserAction",
-      grantId: "grant-verification-1",
-      nativeToolName: "adaptive_pair_run_verification",
-      observedAt: 20,
-    }),
-  ).toThrow("SESSION_NOT_OPERATIONAL");
+  expect(() => decide(runtime, command("GrantUserAction", runtime.revision, {
+    grantId: "grant-verification-1", nativeToolName: "adaptive_pair_run_verification",
+  }))).toThrow("SESSION_NOT_OPERATIONAL");
 });
 
 it("grants one-shot user actions at the next immutable revision", () => {
   const runtime = createToolRuntime();
+  const decision = decide(runtime, command("GrantUserAction", runtime.revision, {
+    grantId: "grant-1", nativeToolName: "adaptive_pair_run_verification",
+  }));
 
-  const decision = decide(runtime, {
-    protocolVersion: 1,
-    commandId: "cmd-grant",
-    expectedRevision: runtime.revision,
-    actor: "human",
-    type: "GrantUserAction",
-    grantId: "grant-1",
+  expect(decision.events).toEqual([grantEvent()]);
+  expect(reduce(runtime, decision.events).session?.userActionGrants).toEqual([{
+    id: "grant-1",
     nativeToolName: "adaptive_pair_run_verification",
-    observedAt: 20,
-  });
-
-  expect(decision.events).toEqual([
-    {
-      protocolVersion: 1,
-      eventId: "cmd-grant:0",
-      commandId: "cmd-grant",
-      actor: "human",
-      revision: 1,
-      recordedAt: 20,
-      type: "UserActionGranted",
-      grantId: "grant-1",
-      nativeToolName: "adaptive_pair_run_verification",
-      runtimeRevision: 1,
-      authorityEpoch: 0,
-    },
-  ]);
-
-  const next = reduce(runtime, decision.events);
-
-  expect(next.session?.userActionGrants).toEqual([
-    {
-      id: "grant-1",
-      nativeToolName: "adaptive_pair_run_verification",
-      runtimeRevision: 1,
-      authorityEpoch: 0,
-      status: "available",
-    },
-  ]);
+    runtimeRevision: 1,
+    authorityEpoch: 0,
+    status: "available",
+  }]);
 });
 
 it("consumes a persisted grant atomically when authorizing an operation", () => {
-  const granted = reduce(createToolRuntime(), [
-    {
-      protocolVersion: 1,
-      eventId: "cmd-grant:0",
-      commandId: "cmd-grant",
-      actor: "human",
-      revision: 1,
-      recordedAt: 20,
-      type: "UserActionGranted",
-      grantId: "grant-1",
-      nativeToolName: "adaptive_pair_run_verification",
-      runtimeRevision: 1,
-      authorityEpoch: 0,
-    },
-  ]);
+  const granted = reduce(createToolRuntime(), [grantEvent()]);
+  const decision = decide(granted, authorizeVerification(granted));
 
-  const decision = decide(granted, {
-    protocolVersion: 1,
-    commandId: "cmd-authorize",
-    expectedRevision: granted.revision,
-    actor: "ai",
-    type: "AuthorizeOperation",
-    operationId: "op-1",
-    toolName: "pair_run_verification",
-    kind: "check",
-    input: {
-      plan: "npx vitest run packages/runtime/test",
-    },
-    userActionGrantId: "grant-1",
-    observedAt: 21,
-  });
-
-  expect(decision.events.map(event => event.type)).toEqual([
-    "UserActionConsumed",
-    "OperationAuthorized",
-  ]);
+  expect(decision.events.map(event => event.type)).toEqual(["UserActionConsumed", "OperationAuthorized"]);
 
   const next = reduce(granted, decision.events);
-
-  expect(next.session?.userActionGrants).toEqual([
-    {
-      id: "grant-1",
-      nativeToolName: "adaptive_pair_run_verification",
-      runtimeRevision: 1,
-      authorityEpoch: 0,
-      status: "consumed",
-    },
-  ]);
-  expect(next.session?.operations).toEqual([
-    {
-      id: "op-1",
-      workUnitId: "wu-1",
-      toolName: "pair_run_verification",
-      kind: "check",
-      input: {
-        plan: "npx vitest run packages/runtime/test",
-      },
-      runtimeRevision: 3,
-      authorityEpoch: 0,
-      status: "authorized",
-      summary: undefined,
-      userActionGrantId: "grant-1",
-    },
-  ]);
+  expect(next.session?.userActionGrants).toEqual([{
+    id: "grant-1",
+    nativeToolName: "adaptive_pair_run_verification",
+    runtimeRevision: 1,
+    authorityEpoch: 0,
+    status: "consumed",
+  }]);
+  expect(next.session?.operations).toEqual([operation({ runtimeRevision: 3, userActionGrantId: "grant-1" })]);
 });
 
 it("rejects stale grants during final operation authorization", () => {
   const granted = reduce(createToolRuntime(), [
-    {
-      protocolVersion: 1,
-      eventId: "cmd-grant:0",
-      commandId: "cmd-grant",
-      actor: "human",
-      revision: 1,
-      recordedAt: 20,
-      type: "UserActionGranted",
-      grantId: "grant-1",
-      nativeToolName: "adaptive_pair_run_verification",
-      runtimeRevision: 1,
-      authorityEpoch: 0,
-    },
-    {
-      protocolVersion: 1,
-      eventId: "cmd-unrelated:0",
-      commandId: "cmd-unrelated",
-      actor: "ai",
-      revision: 2,
-      recordedAt: 21,
-      type: "OperationAuthorized",
-      operation: {
-        id: "op-existing",
-        workUnitId: "wu-1",
-        toolName: "pair_read_scope",
-        kind: "read",
-        input: {
-          path: "packages/runtime",
-        },
-        runtimeRevision: 2,
-        authorityEpoch: 0,
-        status: "authorized",
-        summary: undefined,
-        userActionGrantId: undefined,
-      },
-    },
+    grantEvent(),
+    event("OperationAuthorized", 2, {
+      operation: operation({
+        id: "op-existing", toolName: "pair_read_scope", kind: "read",
+        input: { path: "packages/runtime" }, runtimeRevision: 2,
+      }),
+    }, { actor: "ai" }),
   ]);
 
-  expect(() =>
-    decide(granted, {
-      protocolVersion: 1,
-      commandId: "cmd-authorize",
-      expectedRevision: granted.revision,
-      actor: "ai",
-      type: "AuthorizeOperation",
-      operationId: "op-1",
-      toolName: "pair_run_verification",
-      kind: "check",
-      input: {
-        plan: "npx vitest run packages/runtime/test",
-      },
-      userActionGrantId: "grant-1",
-      observedAt: 22,
-    }),
-  ).toThrow("STALE_USER_ACTION_GRANT");
+  expect(() => decide(granted, authorizeVerification(granted))).toThrow("STALE_USER_ACTION_GRANT");
 });
 
 it("rejects mismatched grants during final operation authorization", () => {
-  const granted = reduce(createToolRuntime(), [
-    {
-      protocolVersion: 1,
-      eventId: "cmd-grant:0",
-      commandId: "cmd-grant",
-      actor: "human",
-      revision: 1,
-      recordedAt: 20,
-      type: "UserActionGranted",
-      grantId: "grant-1",
-      nativeToolName: "adaptive_pair_request_hint",
-      runtimeRevision: 1,
-      authorityEpoch: 0,
-    },
-  ]);
+  const granted = reduce(createToolRuntime(), [grantEvent("adaptive_pair_request_hint")]);
 
-  expect(() =>
-    decide(granted, {
-      protocolVersion: 1,
-      commandId: "cmd-authorize",
-      expectedRevision: granted.revision,
-      actor: "ai",
-      type: "AuthorizeOperation",
-      operationId: "op-1",
-      toolName: "pair_run_verification",
-      kind: "check",
-      input: {
-        plan: "npx vitest run packages/runtime/test",
-      },
-      userActionGrantId: "grant-1",
-      observedAt: 22,
-    }),
-  ).toThrow("USER_ACTION_MISMATCH");
+  expect(() => decide(granted, authorizeVerification(granted))).toThrow("USER_ACTION_MISMATCH");
 });
 
 it("cancels pending operations when the session pauses", () => {
-  const runtime = reduce(createToolRuntime(), [
-    {
-      protocolVersion: 1,
-      eventId: "cmd-authorize:0",
-      commandId: "cmd-authorize",
-      actor: "ai",
-      revision: 1,
-      recordedAt: 21,
-      type: "OperationAuthorized",
-      operation: {
-        id: "op-1",
-        workUnitId: "wu-1",
-        toolName: "pair_run_verification",
-        kind: "check",
-        input: {
-          plan: "npx vitest run packages/runtime/test",
-        },
-        runtimeRevision: 1,
-        authorityEpoch: 0,
-        status: "authorized",
-        summary: undefined,
-        userActionGrantId: undefined,
-      },
-    },
-  ]);
-
-  const decision = decide(runtime, {
-    protocolVersion: 1,
-    commandId: "cmd-pause",
-    expectedRevision: runtime.revision,
-    actor: "human",
-    type: "PauseSession",
+  const runtime = reduce(createToolRuntime(), [event("OperationAuthorized", 1, { operation: operation() }, { actor: "ai" })]);
+  const decision = decide(runtime, command("PauseSession", runtime.revision, {
     reason: "take over the verification command",
-    observedAt: 22,
-  });
+  }));
 
-  expect(decision.events.map(event => event.type)).toEqual([
-    "OperationObserved",
-    "SessionPaused",
-  ]);
+  expect(decision.events.map(event => event.type)).toEqual(["OperationObserved", "SessionPaused"]);
 
   const next = reduce(runtime, decision.events);
-
   expect(next.session?.authorityEpoch).toBe(1);
   expect(next.session?.status).toBe("paused");
   expect(next.session?.operations).toEqual([
-    {
-      id: "op-1",
-      workUnitId: "wu-1",
-      toolName: "pair_run_verification",
-      kind: "check",
-      input: {
-        plan: "npx vitest run packages/runtime/test",
-      },
-      runtimeRevision: 1,
-      authorityEpoch: 0,
-      status: "cancelled",
-      summary: "Session paused before the operation completed.",
-      userActionGrantId: undefined,
-    },
+    operation({ status: "cancelled", summary: "Session paused before the operation completed." }),
   ]);
 });
 
 it("treats duplicate observed results as idempotent", () => {
-  const runtime = reduce(createToolRuntime(), [
-    {
-      protocolVersion: 1,
-      eventId: "cmd-authorize:0",
-      commandId: "cmd-authorize",
-      actor: "ai",
-      revision: 1,
-      recordedAt: 21,
-      type: "OperationAuthorized",
-      operation: {
-        id: "op-1",
-        workUnitId: "wu-1",
-        toolName: "pair_run_verification",
-        kind: "check",
-        input: {
-          plan: "npx vitest run packages/runtime/test",
-        },
-        runtimeRevision: 1,
-        authorityEpoch: 0,
-        status: "confirmed",
-        summary: "Verification passed.",
-        userActionGrantId: undefined,
-      },
-    },
-  ]);
+  const runtime = reduce(createToolRuntime(), [event("OperationAuthorized", 1, {
+    operation: operation({ status: "confirmed", summary: "Verification passed." }),
+  }, { actor: "ai" })]);
 
-  const decision = decide(runtime, {
-    protocolVersion: 1,
-    commandId: "cmd-duplicate-observation",
-    expectedRevision: runtime.revision,
-    actor: "host",
-    type: "ObserveOperationResult",
+  expect(decide(runtime, command("ObserveOperationResult", runtime.revision, {
     operationId: "op-1",
     authorityEpoch: 0,
     status: "confirmed",
     summary: "Verification passed again.",
-    observation: {
-      duplicate: true,
-    },
-    observedAt: 22,
-  });
-
-  expect(decision.events).toEqual([]);
+    observation: { duplicate: true },
+  }, { actor: "host" })).events).toEqual([]);
 });

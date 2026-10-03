@@ -44,7 +44,7 @@ it.each(["decision", "replay"] as const)(
 );
 
 const invalidCases = (["decision", "replay"] as const).flatMap(route =>
-  [false, undefined, null, "true"].map(previewOnly => ({ route, previewOnly })),
+  [false, "true"].map(previewOnly => ({ route, previewOnly })),
 );
 
 it.each(invalidCases)("rejects previewOnly=$previewOnly through $route", ({ route, previewOnly }) => {

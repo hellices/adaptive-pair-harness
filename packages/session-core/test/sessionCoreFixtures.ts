@@ -1,18 +1,69 @@
-import type { EntrySnapshot, PairRuntimeSnapshot } from "@adaptive-pair/protocol";
-import { createRuntime, createSession, reduce } from "../src/index.js";
+import type {
+  Actor,
+  EntrySnapshot,
+  PairCommand,
+  PairEvent,
+  PairPresence,
+  PairRuntimeSnapshot,
+  PairSessionSnapshot,
+} from "@adaptive-pair/protocol";
+import { expect } from "vitest";
+import { createRuntime, createSession, decide, reduce } from "../src/index.js";
 
-const createActiveRuntime = (): PairRuntimeSnapshot => ({
+type CommandOf<Type extends PairCommand["type"]> = Extract<PairCommand, { type: Type }>;
+type EventOf<Type extends PairEvent["type"]> = Extract<PairEvent, { type: Type }>;
+type CommandFields<Type extends PairCommand["type"]> = Omit<
+  CommandOf<Type>, "protocolVersion" | "commandId" | "expectedRevision" | "actor" | "type" | "observedAt"
+>;
+type EventFields<Type extends PairEvent["type"]> = Omit<
+  EventOf<Type>, "protocolVersion" | "eventId" | "commandId" | "actor" | "revision" | "recordedAt" | "type"
+>;
+interface Envelope { readonly commandId?: string; readonly actor?: Actor; readonly at?: number }
+
+// Fixture time follows the revision a command produces: revision N is recorded at N + 9.
+const command = <Type extends PairCommand["type"]>(
+  type: Type,
+  expectedRevision: number,
+  fields: CommandFields<Type>,
+  { commandId = "cmd", actor = "human", at = expectedRevision + 10 }: Envelope = {},
+): CommandOf<Type> => ({
+  protocolVersion: 1, commandId, expectedRevision, actor, type, observedAt: at, ...fields,
+}) as unknown as CommandOf<Type>;
+
+const event = <Type extends PairEvent["type"]>(
+  type: Type,
+  revision: number,
+  fields: EventFields<Type>,
+  { commandId = "cmd", actor = "human", at = revision + 9 }: Envelope = {},
+): EventOf<Type> => ({
+  protocolVersion: 1, eventId: `${commandId}:0`, commandId, actor, revision, recordedAt: at, type, ...fields,
+}) as unknown as EventOf<Type>;
+
+const expectDecisionAndReplayRejection = (
+  runtime: PairRuntimeSnapshot,
+  rejected: PairCommand,
+  replayed: PairEvent,
+  code: string,
+): void => {
+  expect(() => decide(runtime, rejected)).toThrow(code);
+  expect(() => reduce(runtime, [replayed])).toThrow(code);
+};
+
+const createSessionRuntime = (
+  session: Partial<PairSessionSnapshot> = {},
+  presence: Partial<PairPresence> = {},
+): PairRuntimeSnapshot => ({
   ...createRuntime("workspace-1"),
   presence: {
     ...createRuntime("workspace-1").presence,
     status: "engaged",
     activeSessionId: "session-1",
+    ...presence,
   },
-  session: {
-    ...createSession("session-1"),
-    status: "active",
-  },
+  session: { ...createSession("session-1"), status: "active", ...session },
 });
+
+const createActiveRuntime = (): PairRuntimeSnapshot => createSessionRuntime();
 
 const createEntrySnapshot = (
   overrides: Partial<EntrySnapshot> = {},
@@ -100,70 +151,29 @@ const createEditOperationRequest = (
   ...overrides,
 });
 
-const createGrowthRuntime = (
-  agreement = createGrowthAgreement(),
-): PairRuntimeSnapshot =>
-  reduce(createRuntime("workspace-1"), [
-    {
-      protocolVersion: 1,
-      eventId: "cmd-start:0",
-      commandId: "cmd-start",
-      actor: "human",
-      revision: 1,
-      recordedAt: 10,
-      type: "SessionStarted",
-      sessionId: "session-1",
-    },
-    {
-      protocolVersion: 1,
-      eventId: "cmd-entry:0",
-      commandId: "cmd-entry",
-      actor: "human",
-      revision: 2,
-      recordedAt: 11,
-      type: "EntryCaptured",
-      entry: createEntrySnapshot(),
-    },
-    {
-      protocolVersion: 1,
-      eventId: "cmd-learning:0",
-      commandId: "cmd-learning",
-      actor: "human",
-      revision: 3,
-      recordedAt: 12,
-      type: "LearningConfirmed",
-      agreement,
-    },
-    {
-      protocolVersion: 1,
-      eventId: "cmd-mode:0",
-      commandId: "cmd-mode",
-      actor: "human",
-      revision: 4,
-      recordedAt: 13,
-      type: "ModeSelected",
-      mode: "growth",
-    },
-    {
-      protocolVersion: 1,
-      eventId: "cmd-propose:0",
-      commandId: "cmd-propose",
-      actor: "human",
-      revision: 5,
-      recordedAt: 14,
-      type: "WorkUnitProposed",
-      workUnit: createGrowthWorkUnit(),
-    },
-    {
-      protocolVersion: 1,
-      eventId: "cmd-agree:0",
-      commandId: "cmd-agree",
-      actor: "human",
-      revision: 6,
-      recordedAt: 15,
-      type: "WorkUnitAgreed",
-      workUnitId: "growth-wu-1",
-    },
-  ]);
+const growthSetupEvents = (agreement = createGrowthAgreement()): PairEvent[] => [
+  event("SessionStarted", 1, { sessionId: "session-1" }),
+  event("EntryCaptured", 2, { entry: createEntrySnapshot() }),
+  event("LearningConfirmed", 3, { agreement }),
+  event("ModeSelected", 4, { mode: "growth" }),
+  event("WorkUnitProposed", 5, { workUnit: createGrowthWorkUnit() }),
+  event("WorkUnitAgreed", 6, { workUnitId: "growth-wu-1" }),
+];
 
-export { createActiveRuntime,createEditOperationRequest,createEntrySnapshot,createGrowthAgreement,createGrowthRuntime,createGrowthWorkUnit,createWorkUnit };
+const createGrowthRuntime = (agreement = createGrowthAgreement()): PairRuntimeSnapshot =>
+  reduce(createRuntime("workspace-1"), growthSetupEvents(agreement));
+
+export {
+  command,
+  createActiveRuntime,
+  createEditOperationRequest,
+  createEntrySnapshot,
+  createGrowthAgreement,
+  createGrowthRuntime,
+  createGrowthWorkUnit,
+  createSessionRuntime,
+  createWorkUnit,
+  event,
+  expectDecisionAndReplayRejection,
+  growthSetupEvents,
+};

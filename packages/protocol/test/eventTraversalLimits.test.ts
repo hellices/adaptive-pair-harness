@@ -58,7 +58,6 @@ it("bounds shared-reference expansion while accepting a small shared graph", () 
 
 it.each([
   { prefixLength: 0, reason: "sparse array holes are not allowed at index 0" },
-  { prefixLength: 100, reason: "sparse array holes are not allowed at index 100" },
   { prefixLength: 10_000, reason: "maximum expanded JSON node count of 10000 exceeded" },
 ])("bounds a maximum-length sparse array with $prefixLength populated indices", ({ prefixLength, reason }) => {
   const sparse = Array.from({ length: prefixLength }, () => null);

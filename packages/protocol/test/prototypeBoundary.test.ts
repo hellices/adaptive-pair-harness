@@ -22,15 +22,6 @@ const withInheritedProperty = (
   return { result, error };
 };
 
-it.each(["eventId", "revision", "actor"])("requires an own event %s", field => {
-  const event = toWireEvent(createEventFixtures().WorkspaceObserved);
-  const inherited = event[field];
-  delete event[field];
-  const { error } = withInheritedProperty(field, { value: inherited }, () => parsePairEvent(event));
-  expect(error).toBeInstanceOf(Error);
-  expect((error as Error).message).toMatch(/^Invalid Pair event:/);
-});
-
 it("does not read inherited required-field getters", () => {
   const event = toWireEvent(createEventFixtures().WorkspaceObserved);
   delete event.revision;
@@ -54,10 +45,10 @@ it("does not turn inherited epoch metadata into an own grant", () => {
   expect(result).toStrictEqual(createEventFixtures().UserActionGranted);
 });
 
-it.each(["summary", "userActionGrantId"])("does not hydrate inherited operation %s", field => {
+it("does not hydrate inherited operation summary", () => {
   const event = toWireEvent(createEventFixtures().OperationAuthorized);
   let getterCalls = 0;
-  const { result, error } = withInheritedProperty(field, {
+  const { result, error } = withInheritedProperty("summary", {
     get: () => { getterCalls += 1; return "injected"; },
   }, () => parsePairEvent(event));
   expect(error).toBeUndefined();

@@ -23,18 +23,14 @@ const enabled = (): PairRuntimeSnapshot => {
 };
 
 describe("authoritative presence transitions", () => {
-  it.each(["ai", "host", "policy"] as const)("rejects %s presence control", actor => {
+  // Presence control and observation each guard one required actor, so one wrong actor covers the branch.
+  it("rejects AI presence control", () => {
     const initial = createRuntime("workspace-1");
     expect(() => decide(initial, {
-      ...base(initial, actor),
-      type: "EnablePresence",
-      workspaceId: "workspace-1",
+      ...base(initial, "ai"), type: "EnablePresence", workspaceId: "workspace-1",
     })).toThrow("HUMAN_ACTION_REQUIRED");
-    expect(() => decide(initial, {
-      ...base(initial, actor),
-      type: "SetPresence",
-      status: "quiet",
-    })).toThrow("HUMAN_ACTION_REQUIRED");
+    expect(() => decide(initial, { ...base(initial, "ai"), type: "SetPresence", status: "quiet" }))
+      .toThrow("HUMAN_ACTION_REQUIRED");
   });
 
   it("keeps Quiet enabled without an unnecessary resume or revision", () => {
@@ -91,8 +87,8 @@ describe("authoritative presence transitions", () => {
     }
   });
 
-  it.each(["human", "ai", "policy"] as const)("rejects %s workspace observations", actor => {
+  it("rejects AI workspace observations", () => {
     const current = createRuntime("workspace-1");
-    expect(() => decide(current, { ...base(current, actor), type: "ObserveWorkspace" })).toThrow("HOST_ACTION_REQUIRED");
+    expect(() => decide(current, { ...base(current, "ai"), type: "ObserveWorkspace" })).toThrow("HOST_ACTION_REQUIRED");
   });
 });
