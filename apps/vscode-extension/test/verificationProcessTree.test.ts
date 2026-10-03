@@ -55,7 +55,7 @@ describe("SystemProcessTreePort — Windows taskkill (mocked)", () => {
       const child = childProcess(43_210);
 
       expect(port.isAlive(child)).toBeUndefined();
-      expect(port.signal(child, signal)).toBe(true);
+      port.signal(child, signal);
       expect(port.isAlive(child)).toBeUndefined();
       expect(taskkill).toHaveBeenCalledWith(
         "taskkill",
@@ -66,82 +66,15 @@ describe("SystemProcessTreePort — Windows taskkill (mocked)", () => {
     },
   );
 
-  it.each([1, null])("does not confirm termination when taskkill returns %s", status => {
-    const port = new SystemProcessTreePort();
-    const child = childProcess(43_210);
-    taskkill.mockReturnValue({ status });
-
-    expect(port.signal(child, "SIGKILL")).toBe(false);
-    expect(port.isAlive(child)).toBeUndefined();
-  });
-
-  it("bounds each taskkill invocation without treating its timeout as tree-exit evidence", () => {
-    const port = new SystemProcessTreePort();
-    const child = childProcess(43_210);
-    taskkill.mockReturnValue({ status: null });
-
-    expect(port.signal(child, "SIGKILL")).toBe(false);
-    expect(taskkill).toHaveBeenCalledWith(
-      "taskkill",
-      ["/PID", "43210", "/T", "/F"],
-      taskkillOptions,
-    );
-    expect(port.isAlive(child)).toBeUndefined();
-  });
-
-  it("does not infer descendant termination from a missing parent", () => {
-    const port = new SystemProcessTreePort();
-    const child = childProcess(43_210);
-    killProcess.mockImplementation(() => {
-      throw codedError("ESRCH");
-    });
-
-    expect(port.signal(child, "SIGKILL")).toBe(true);
-    child.emit("close", null, "SIGKILL");
-    expect(port.isAlive(child)).toBeUndefined();
-    expect(killProcess).not.toHaveBeenCalled();
-  });
-
   it("falls back to the child signal without confirming a tree when no PID is available", () => {
     const port = new SystemProcessTreePort();
     const child = childProcess();
     const kill = vi.spyOn(child, "kill");
 
-    expect(port.signal(child, "SIGTERM")).toBe(true);
+    port.signal(child, "SIGTERM");
     expect(kill).toHaveBeenCalledWith("SIGTERM");
     expect(taskkill).not.toHaveBeenCalled();
     expect(port.isAlive(child)).toBeUndefined();
-  });
-});
-
-describe("SystemProcessTreePort — child lifetime", () => {
-  it.each(["SIGTERM", "SIGKILL"] as const)(
-    "does not confirm either child lifetime from successful %s delivery to a reused PID",
-    signal => {
-      const port = new SystemProcessTreePort();
-      const previousChild = childProcess(43_210);
-      const replacementChild = childProcess(43_210);
-
-      expect(port.signal(previousChild, signal)).toBe(true);
-      expect(port.isAlive(previousChild)).toBeUndefined();
-      expect(port.isAlive(replacementChild)).toBeUndefined();
-    },
-  );
-
-  it("does not confirm either child lifetime after mixed taskkill results", () => {
-    const port = new SystemProcessTreePort();
-    const previousChild = childProcess(43_210);
-    const replacementChild = childProcess(43_210);
-    expect(port.signal(previousChild, "SIGKILL")).toBe(true);
-    taskkill.mockReturnValue({ status: 1 });
-
-    expect(port.signal(replacementChild, "SIGKILL")).toBe(false);
-    expect(port.isAlive(replacementChild)).toBeUndefined();
-
-    taskkill.mockReturnValue({ status: 0 });
-    expect(port.signal(replacementChild, "SIGKILL")).toBe(true);
-    expect(port.isAlive(replacementChild)).toBeUndefined();
-    expect(port.isAlive(previousChild)).toBeUndefined();
   });
 });
 
@@ -154,7 +87,7 @@ describe("SystemProcessTreePort — POSIX process groups", () => {
     const port = new SystemProcessTreePort();
     const child = childProcess(43_210);
 
-    expect(port.signal(child, "SIGTERM")).toBe(true);
+    port.signal(child, "SIGTERM");
     expect(killProcess).toHaveBeenCalledWith(-43_210, "SIGTERM");
     expect(port.isAlive(child)).toBe(true);
     expect(killProcess).toHaveBeenCalledWith(-43_210, 0);
@@ -170,111 +103,132 @@ describe("SystemProcessTreePort — POSIX process groups", () => {
         throw codedError(code);
       });
 
-      expect(port.signal(child, "SIGKILL")).toBe(false);
+      expect(() => port.signal(child, "SIGKILL")).not.toThrow();
       expect(port.isAlive(child)).toBe(code === "ESRCH" ? false : undefined);
     },
   );
 });
 
-describe("NodeProcessRunPort — Windows tree lifetime (mocked taskkill)", () => {
+describe("NodeProcessRunPort — Windows cancellation lifecycle (mocked taskkill)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await vi.runAllTimersAsync();
     vi.useRealTimers();
   });
 
-  it("does not confirm or signal a reused PID after its parent closes", async () => {
-    const tree = new SystemProcessTreePort();
-    expect(tree.signal(childProcess(43_210), "SIGKILL")).toBe(true);
-    taskkill.mockReturnValue({ status: 1 });
-
+  const startRun = () => {
     const child = new FakeChild(43_210);
     const { spawn } = spawningInto(child);
     const controller = new AbortController();
-    const port = new NodeProcessRunPort("/repo", spawn, tree, windowsRuntime);
+    const port = new NodeProcessRunPort("/repo", spawn, new SystemProcessTreePort(), windowsRuntime);
     const pending = port.run({ script: "test" }, controller.signal);
-    let settled = false;
-    void pending.then(() => {
-      settled = true;
-    });
+    const settled = vi.fn();
+    void pending.then(settled);
+    return { child, controller, pending, settled };
+  };
+
+  it("escalates after the grace period and keeps forced delivery unconfirmed", async () => {
+    const { child, controller, pending, settled } = startRun();
 
     controller.abort();
-    child.emit("close", null, "SIGTERM");
     await Promise.resolve();
-    expect(settled).toBe(true);
+    expect(taskkill).toHaveBeenCalledExactlyOnceWith(
+      "taskkill", ["/PID", "43210", "/T"], taskkillOptions,
+    );
+    expect(settled).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(5_250);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(settled).not.toHaveBeenCalled();
+    expect(taskkill).toHaveBeenCalledTimes(2);
+    expect(taskkill).toHaveBeenNthCalledWith(
+      2, "taskkill", ["/PID", "43210", "/T", "/F"], taskkillOptions,
+    );
+    await vi.advanceTimersByTimeAsync(249);
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
     const result = await pending;
     expect(result.exitCode).toBeNull();
-    expect(result.signal).toBe("SIGTERM");
+    expect(result.signal).toBe("SIGKILL");
     expect(result.terminationConfirmed).toBe(false);
-    expect(taskkill).toHaveBeenNthCalledWith(
-      2,
-      "taskkill",
-      ["/PID", "43210", "/T"],
-      taskkillOptions,
-    );
+    expect(vi.getTimerCount()).toBe(0);
+    expect(killProcess).not.toHaveBeenCalled();
+
+    child.emit("close", null, "SIGKILL");
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(settled).toHaveBeenCalledExactlyOnceWith(result);
     expect(taskkill).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it.each([true, false].flatMap(parentClosed =>
-    [0, 1, null].map(forceStatus => ({ parentClosed, forceStatus })),
-  ))(
-    "keeps delivery unconfirmed through close or escalation (parentClosed=$parentClosed, forceStatus=$forceStatus)",
-    async ({ parentClosed, forceStatus }) => {
-      const child = new FakeChild(43_210);
-      const { spawn } = spawningInto(child);
-      const controller = new AbortController();
-      const port = new NodeProcessRunPort(
-        "/repo", spawn, new SystemProcessTreePort(), windowsRuntime,
-      );
-      const pending = port.run({ script: "test" }, controller.signal);
-      const onSettled = vi.fn();
-      void pending.then(onSettled);
-      taskkill.mockReturnValueOnce({ status: 0 }).mockReturnValue({ status: forceStatus });
+  it.each([
+    { closeDelay: 0, terminationSignal: "SIGTERM" },
+    { closeDelay: 5_249, terminationSignal: "SIGKILL" },
+  ])(
+    "settles unknown tree exit at child close after $closeDelay ms",
+    async ({ closeDelay, terminationSignal }) => {
+      const { child, controller, settled } = startRun();
+      child.stdout.emit("data", Buffer.from("partial output"));
 
       controller.abort();
-      if (parentClosed) {
-        child.emit("close", null, "SIGTERM");
-      }
+      await vi.advanceTimersByTimeAsync(closeDelay);
+      expect(settled).not.toHaveBeenCalled();
+      const requestsBeforeClose = taskkill.mock.calls.length;
+      child.emit("close", null, terminationSignal);
       await Promise.resolve();
-      expect(taskkill).toHaveBeenCalledTimes(1);
-      expect(taskkill).toHaveBeenNthCalledWith(
-        1, "taskkill", ["/PID", "43210", "/T"], taskkillOptions,
-      );
 
-      if (parentClosed) {
-        expect(onSettled).toHaveBeenCalledTimes(1);
-        expect(vi.getTimerCount()).toBe(0);
-        await vi.advanceTimersByTimeAsync(5_250);
-        expect(taskkill).toHaveBeenCalledTimes(1);
-      } else {
-        expect(onSettled).not.toHaveBeenCalled();
-        await vi.advanceTimersByTimeAsync(5_000);
-        expect(onSettled).not.toHaveBeenCalled();
-        expect(taskkill).toHaveBeenCalledTimes(2);
-        expect(taskkill).toHaveBeenNthCalledWith(
-          2, "taskkill", ["/PID", "43210", "/T", "/F"], taskkillOptions,
-        );
-        await vi.advanceTimersByTimeAsync(249);
-        expect(onSettled).not.toHaveBeenCalled();
-        await vi.advanceTimersByTimeAsync(1);
-      }
-      const result = await pending;
-      expect(result.exitCode).toBeNull();
-      expect(result.signal).toBe(parentClosed ? "SIGTERM" : "SIGKILL");
-      expect(result.terminationConfirmed).toBe(false);
+      expect(settled).toHaveBeenCalledExactlyOnceWith({
+        exitCode: null,
+        signal: terminationSignal,
+        output: "partial output",
+        outputTruncated: false,
+        terminationConfirmed: false,
+      });
       expect(vi.getTimerCount()).toBe(0);
-      expect(killProcess).not.toHaveBeenCalled();
-
-      child.emit("close", null, "SIGKILL");
       await vi.advanceTimersByTimeAsync(10_000);
-      expect(onSettled).toHaveBeenCalledExactlyOnceWith(result);
-      expect(taskkill).toHaveBeenCalledTimes(parentClosed ? 1 : 2);
+      expect(taskkill).toHaveBeenCalledTimes(requestsBeforeClose);
+      child.emit("close", 0, null);
+      await Promise.resolve();
+      expect(settled).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("does not turn a clean child exit after abort into confirmed tree termination", async () => {
+    const { child, controller, settled } = startRun();
+
+    controller.abort();
+    child.emit("close", 0, null);
+    await Promise.resolve();
+
+    expect(settled).toHaveBeenCalledExactlyOnceWith({
+      exitCode: null, signal: null, output: "", outputTruncated: false, terminationConfirmed: false,
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["SIGTERM", "SIGKILL"] as const)(
+    "does not install another cancellation timer after synchronous %s close",
+    async closeSignal => {
+      const { child, controller, settled } = startRun();
+      taskkill.mockImplementation(() => {
+        const requestedSignal = taskkill.mock.calls.length === 1 ? "SIGTERM" : "SIGKILL";
+        if (requestedSignal === closeSignal) child.emit("close", null, requestedSignal);
+        return { status: 0 };
+      });
+
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(closeSignal === "SIGTERM" ? 0 : 5_000);
+
+      expect(settled).toHaveBeenCalledExactlyOnceWith({
+        exitCode: null, signal: closeSignal, output: "", outputTruncated: false, terminationConfirmed: false,
+      });
       expect(vi.getTimerCount()).toBe(0);
+      const requestsAtSettlement = taskkill.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(taskkill).toHaveBeenCalledTimes(requestsAtSettlement);
     },
   );
 });

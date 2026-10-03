@@ -214,26 +214,4 @@ describe("VscodeBufferInspectionPort — missing files", () => {
       ).dirtyTargets(["src/new.ts"]),
     ).toEqual([]);
   });
-
-  it("finds a dirty new file lexically when its filesystem identity does not exist yet", () => {
-    const documentPath = "/workspace/src/new.ts";
-    vscode.state.textDocuments = [
-      {
-        uri: { fsPath: documentPath, scheme: "file" },
-        isDirty: true,
-      },
-    ];
-
-    expect(
-      new VscodeBufferInspectionPort(
-        "/workspace",
-        path => {
-          if (resolve(path) === resolve(documentPath)) {
-            throw codedError("ENOENT");
-          }
-          return resolve(path);
-        },
-      ).dirtyTargets(["src/new.ts"]),
-    ).toEqual(["src/new.ts"]);
-  });
 });

@@ -1,17 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { FakeChild, spawningInto } from "./verificationPortFixtures.js";
 
 const { NodeProcessRunPort, MAX_OUTPUT_BYTES } = await import("../src/verificationAdapter.js");
 import type { RunOutcome } from "../src/verificationAdapter.js";
 
 describe("NodeProcessRunPort — output and completion", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   it("resolves with the exit code and combined stdout/stderr on close", async () => {
     const child = new FakeChild();
     const { spawn, state } = spawningInto(child);
