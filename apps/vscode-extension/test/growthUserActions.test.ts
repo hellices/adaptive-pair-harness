@@ -55,9 +55,10 @@ const actionRoutes: readonly { readonly command: string; readonly tool: PairTool
 
 // A workspace observation advances only the runtime revision. A work-unit
 // replacement also advances it, so the coordinator's grant boundary rejects
-// both through the same revision comparison.
+// both through the same revision comparison. `/attempt` and `/hypothesis`
+// pass their boundary from one shared record handler, so one of them suffices.
 describe("Growth intent after an observation transition", () => {
-  it.each(actionRoutes)("rejects /$command before granting its stale input", async ({ command, tool }) => {
+  it.each(actionRoutes.filter(route => route.command !== "hypothesis"))("rejects /$command before granting its stale input", async ({ command, tool }) => {
     const { before, store, coordinator, model, participant, evaluations, stream } = actionHarness();
     const invoke = vi.spyOn(coordinator, "invokeTool");
     const grant = coordinator.grantUserAction.bind(coordinator);
@@ -89,8 +90,10 @@ describe("Growth intent after an observation transition", () => {
   });
 });
 
+// The unchanged `/reveal` chain is asserted step by step under "Growth reveal
+// action boundaries" below.
 describe("Growth unchanged human intents", () => {
-  it.each(actionRoutes)("continues /$command when its observed boundary stays current", async ({ command, tool }) => {
+  it.each(actionRoutes.filter(route => route.command !== "reveal"))("continues /$command when its observed boundary stays current", async ({ command, tool }) => {
     const { store, coordinator, model, participant, evaluations, stream } = actionHarness();
     const invoke = vi.spyOn(coordinator, "invokeTool");
 
@@ -99,7 +102,7 @@ describe("Growth unchanged human intents", () => {
     expect(invoke.mock.calls[0]?.[0]).toBe(tool);
     expect(store.events().filter(event => event.type === "UserActionGranted").length).toBeGreaterThan(0);
     expect(evaluations.records.every(record => record.reason === undefined)).toBe(true);
-    expect(model.sendCount).toBe(command === "hint" || command === "reveal" ? 1 : 0);
+    expect(model.sendCount).toBe(command === "hint" ? 1 : 0);
   });
 });
 

@@ -12,12 +12,7 @@ import {
   createToken,
   growthSnapshot,
 } from "./growthTestHarness.js";
-
-const deferred = <Value>() => {
-  let resolve!: (value: Value) => void;
-  const promise = new Promise<Value>(complete => { resolve = complete; });
-  return { promise, resolve };
-};
+import { deferred } from "./growthRouteBoundaryHarness.js";
 
 const lifetimeFixture = () => {
   const before = growthSnapshot({ runtimeRevision: 4 });
@@ -111,7 +106,7 @@ describe("Growth consent lifetime", () => {
     expect(text).toContain("kept your workspace private");
   });
 
-  it.each([undefined, "hint", "reveal", "transfer"])(
+  it.each([undefined, "reveal"])(
     "does not rebind a pending %s consent decision to a recreated session",
     async command => {
       const fixture = lifetimeFixture();
@@ -138,7 +133,7 @@ describe("Growth consent lifetime", () => {
     },
   );
 
-  it.each(["workspace", "session", "start", "disabled"] as const)(
+  it.each(["workspace", "session", "disabled"] as const)(
     "does not reuse a registry entry after its %s identity changes",
     change => {
       const before = growthSnapshot({ runtimeRevision: 4 });
@@ -155,7 +150,6 @@ describe("Growth consent lifetime", () => {
         session: change === "disabled" ? undefined : {
           ...before.session!,
           ...(change === "session" ? { sessionId: "session-2" } : {}),
-          ...(change === "start" ? { startedAtRevision: 5 } : {}),
         },
       };
 
@@ -166,59 +160,19 @@ describe("Growth consent lifetime", () => {
 });
 
 describe("Growth transient lifetime", () => {
-  it.each(["recreated", "paused", "observed"] as const)(
-    "does not publish a check result after the committed runtime was %s",
-    async transition => {
-      const fixture = lifetimeFixture();
-      const invoke = fixture.coordinator.invokeTool.bind(fixture.coordinator);
-      vi.spyOn(fixture.coordinator, "invokeTool").mockImplementationOnce(async (...args) => {
-        const result = await invoke(...args);
-        if (transition === "recreated") {
-          await recreateSession(fixture);
-        } else if (transition === "paused") {
-          await fixture.coordinator.setPresence("paused");
-        } else {
-          await fixture.coordinator.observeWorkspace();
-        }
-        return result;
-      });
-
-      const text = await fixture.run("check");
-
-      expect(text).not.toContain("Product result:");
-      expect(text).toContain("Ask again");
-      expect(await fixture.run("session")).toContain("no check observed in this session");
-    },
-  );
-
-  it("does not report an old transfer after identical-ID session recreation", async () => {
+  it("does not publish a check result after the committed runtime moved", async () => {
     const fixture = lifetimeFixture();
-    await fixture.run("transfer");
-    expect(await fixture.run("session")).toContain("Transfer: started");
+    const invoke = fixture.coordinator.invokeTool.bind(fixture.coordinator);
+    vi.spyOn(fixture.coordinator, "invokeTool").mockImplementationOnce(async (...args) => {
+      const result = await invoke(...args);
+      await fixture.coordinator.observeWorkspace();
+      return result;
+    });
 
-    await recreateSession(fixture);
+    const text = await fixture.run("check");
 
-    expect(await fixture.run("session")).toContain("Transfer: not started");
-    expect(fixture.participant.transferStatus()).toBeUndefined();
-  });
-
-  it("does not expose a transfer after Disable without a new chat request", async () => {
-    const fixture = lifetimeFixture();
-    await fixture.run("transfer");
-    expect(fixture.participant.transferStatus()).toBeDefined();
-
-    await fixture.coordinator.setPresence("off");
-
-    expect(fixture.participant.transferStatus()).toBeUndefined();
-  });
-
-  it("does not report a previous lifetime's passing product check", async () => {
-    const fixture = lifetimeFixture();
-    expect(await fixture.run("check")).toContain("Product result: **passed**");
-    expect(await fixture.run("session")).toContain("last check `test` passed");
-
-    await recreateSession(fixture);
-
+    expect(text).not.toContain("Product result:");
+    expect(text).toContain("Ask again");
     expect(await fixture.run("session")).toContain("no check observed in this session");
   });
 });

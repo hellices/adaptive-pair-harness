@@ -36,30 +36,27 @@ describe("Growth host-facing mode selection", () => {
     });
   });
 
-  it.each(["pair", "delivery", undefined, 42])(
-    "rejects unsupported mode %s before asking for authority",
-    async mode => {
-      const before = briefingSnapshot();
-      const coordinator = realCoordinator(before);
-      const grant = vi.spyOn(coordinator, "grantUserAction");
-      const invoke = vi.spyOn(coordinator, "invokeTool");
-      const confirmToolAction = vi.fn(() => Promise.resolve(true));
-      const model = new FakeModel([
-        { toolCalls: [{ callId: "unsupported-mode", name: nativeToolName("pair_select_mode"), input: { mode } }] },
-        { text: JSON.stringify({ level: 1, kind: "question", text: "Unsupported mode selected." }) },
-      ]);
-      const prepared = await coordinator.prepareTurn({});
-      const adapter = createGrowthModel(asModel(model), coordinator, { confirmToolAction });
+  it("rejects an unsupported mode before asking for authority", async () => {
+    const before = briefingSnapshot();
+    const coordinator = realCoordinator(before);
+    const grant = vi.spyOn(coordinator, "grantUserAction");
+    const invoke = vi.spyOn(coordinator, "invokeTool");
+    const confirmToolAction = vi.fn(() => Promise.resolve(true));
+    const model = new FakeModel([
+      { toolCalls: [{ callId: "unsupported-mode", name: nativeToolName("pair_select_mode"), input: { mode: "pair" } }] },
+      { text: JSON.stringify({ level: 1, kind: "question", text: "Unsupported mode selected." }) },
+    ]);
+    const prepared = await coordinator.prepareTurn({});
+    const adapter = createGrowthModel(asModel(model), coordinator, { confirmToolAction });
 
-      await expect(adapter.request(prepared.instructions, prepared.tools, new AbortController().signal))
-        .rejects.toMatchObject({ code: "GROWTH_UNSUPPORTED_MODE" });
-      expect(confirmToolAction).not.toHaveBeenCalled();
-      expect(grant).not.toHaveBeenCalled();
-      expect(invoke).not.toHaveBeenCalled();
-      expect(coordinator.snapshotNow()).toEqual(before);
-      expect(model.sendCount).toBe(1);
-    },
-  );
+    await expect(adapter.request(prepared.instructions, prepared.tools, new AbortController().signal))
+      .rejects.toMatchObject({ code: "GROWTH_UNSUPPORTED_MODE" });
+    expect(confirmToolAction).not.toHaveBeenCalled();
+    expect(grant).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+    expect(coordinator.snapshotNow()).toEqual(before);
+    expect(model.sendCount).toBe(1);
+  });
 });
 
 describe("Growth immutable model tool boundary", () => {

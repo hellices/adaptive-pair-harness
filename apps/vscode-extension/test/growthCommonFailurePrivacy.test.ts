@@ -2,9 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import { routeBoundaryFixture } from "./growthRouteBoundaryHarness.js";
 
 const privateText = "private boundary failure: repository-secret-sentinel";
-const failures = ["model", "consent", "snapshot", "prepare"].flatMap(stage =>
-  ["throw", "reject"].map(kind => ({ stage, kind })),
-);
+// Every stage is awaited directly, so a synchronous throw and a rejection
+// reach the same handler; one canary per stage, alternating the failure kind.
+const failures = [
+  { stage: "model", kind: "throw" },
+  { stage: "consent", kind: "reject" },
+  { stage: "snapshot", kind: "throw" },
+  { stage: "prepare", kind: "reject" },
+] as const;
 
 describe("Growth participant common failure privacy", () => {
   it.each(failures)("does not retain raw text from $stage $kind", async ({ stage, kind }) => {

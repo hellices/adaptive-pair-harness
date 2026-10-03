@@ -94,32 +94,3 @@ describe("GrowthParticipant transfer validation", () => {
     expect(participant.transferStatus()).toBeUndefined();
   });
 });
-
-describe("GrowthParticipant transfer status", () => {
-  it("reports a started transfer as not demonstrated in /session", async () => {
-    const coordinator = new FakeCoordinator(growthSnapshot({ runtimeRevision: 4 }));
-    const model = new FakeModel([
-      { text: JSON.stringify({ level: 1, kind: "question", text: variation }) },
-    ]);
-    const { participant } = buildParticipant(coordinator);
-
-    await participant.handle(
-      createRequest(model, { command: "transfer", prompt: "" }),
-      createContext(),
-      createResponseStream().stream,
-      createToken(),
-    );
-
-    const { stream, collected } = createResponseStream();
-    await participant.handle(
-      createRequest(new FakeModel([]), { command: "session", prompt: "" }),
-      createContext(),
-      stream,
-      createToken(),
-    );
-
-    const text = collected.markdown.join("\n").toLowerCase();
-    expect(text).toContain("transfer: started");
-    expect(text).toContain("not demonstrated");
-  });
-});

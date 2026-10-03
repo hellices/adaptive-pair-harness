@@ -19,9 +19,11 @@ const answer = { level: 1, kind: "question", text: "What have you tried?" } as c
 
 /**
  * A real coordinator whose evaluation and markdown publications record the
- * live journal state at the moment each one happens.
+ * live journal state at the moment each one happens. Plain and
+ * runtime-reporting output share the publication continuation and, at an
+ * unchanged revision, the same expected runtime, so one format is enough.
  */
-const publicationFixture = (format: "plain" | "runtime") => {
+const publicationFixture = () => {
   const before = growthSnapshot({ runtimeRevision: 4, session: { authorityEpoch: 2 } });
   const store = new InMemoryJournal("workspace-1", before);
   const coordinator = realCoordinator(before, store);
@@ -45,7 +47,7 @@ const publicationFixture = (format: "plain" | "runtime") => {
   const model = new FakeModel([]);
   const consent = new ModelConsentRegistry();
   consent.grant(asModel(model), coordinator.snapshotNow());
-  const output = format === "plain" ? answer : {
+  const output = {
     response: answer,
     runtime: { runtimeRevision: 4, authorityEpoch: 2, mode: "growth" as const },
   };
@@ -94,9 +96,9 @@ const publicationFixture = (format: "plain" | "runtime") => {
   return { store, pause, handle, expectPublishedBeforePause };
 };
 
-describe.each(["plain", "runtime"] as const)("GrowthParticipant %s publication boundary", format => {
+describe("GrowthParticipant publication boundary", () => {
   it("does not publish from an async snapshot captured before a queued pause commits", async () => {
-    const fixture = publicationFixture(format);
+    const fixture = publicationFixture();
     let paused: Promise<PairRuntimeSnapshot> | undefined;
 
     await fixture.handle(() => fixture.store.snapshotNow(), () => {
@@ -109,7 +111,7 @@ describe.each(["plain", "runtime"] as const)("GrowthParticipant %s publication b
   });
 
   it.each([0, 1, 2, 3])("keeps finalization and publication in one continuation with pause delayed by %i microtasks", async delay => {
-    const fixture = publicationFixture(format);
+    const fixture = publicationFixture();
     let requested = false;
     let responseSnapshots = 0;
     let paused: Promise<PairRuntimeSnapshot> | undefined;

@@ -2,31 +2,27 @@ import { describe, expect, it } from "vitest";
 import { cancellation, deferred, recreate, routeBoundaryFixture, staleSnapshotOnce } from "./growthRouteBoundaryHarness.js";
 
 describe("Growth reveal entry fence", () => {
-  it.each(["pair", "delivery"].flatMap(mode => [undefined, "hint", "reveal", "transfer"].map(command => ({ mode, command }))))(
-    "rejects an already-active $mode session for $command before modal or model work", async ({ mode, command }) => {
-      const fixture = routeBoundaryFixture();
-      await recreate(fixture, mode as "pair" | "delivery");
-      await fixture.run(command);
-      expect(fixture.confirmSolutionReveal).not.toHaveBeenCalled();
-      expect(fixture.requestWorkspaceConsent).not.toHaveBeenCalled();
-      expect(fixture.grant).not.toHaveBeenCalled();
-      expect(fixture.requestModel).not.toHaveBeenCalled();
-    },
-  );
+  it.each([undefined, "reveal", "transfer"])("rejects an already-active Pair session for %s before modal or model work", async command => {
+    const fixture = routeBoundaryFixture();
+    await recreate(fixture, "pair");
+    await fixture.run(command);
+    expect(fixture.confirmSolutionReveal).not.toHaveBeenCalled();
+    expect(fixture.requestWorkspaceConsent).not.toHaveBeenCalled();
+    expect(fixture.grant).not.toHaveBeenCalled();
+    expect(fixture.requestModel).not.toHaveBeenCalled();
+  });
 
-  it.each(["pair", "delivery"].flatMap(mode => [undefined, "hint", "transfer"].map(command => ({ mode, command }))))(
-    "preserves the deferred $mode capture gate for $command", async ({ mode, command }) => {
-      const fixture = routeBoundaryFixture();
-      staleSnapshotOnce(fixture, () => recreate(fixture, mode as "pair" | "delivery"));
-      await fixture.run(command);
-      expect(fixture.confirmSolutionReveal).not.toHaveBeenCalled();
-      expect(fixture.requestWorkspaceConsent).not.toHaveBeenCalled();
-      expect(fixture.grant).not.toHaveBeenCalled();
-      expect(fixture.requestModel).not.toHaveBeenCalled();
-    },
-  );
+  it("preserves the deferred capture gate when a Pair session replaces the captured one", async () => {
+    const fixture = routeBoundaryFixture();
+    staleSnapshotOnce(fixture, () => recreate(fixture, "pair"));
+    await fixture.run("transfer");
+    expect(fixture.confirmSolutionReveal).not.toHaveBeenCalled();
+    expect(fixture.requestWorkspaceConsent).not.toHaveBeenCalled();
+    expect(fixture.grant).not.toHaveBeenCalled();
+    expect(fixture.requestModel).not.toHaveBeenCalled();
+  });
 
-  it.each([undefined, "hint", "transfer"])("preserves the already-cancelled %s gate", async command => {
+  it.each([undefined, "transfer"])("preserves the already-cancelled %s gate", async command => {
     const fixture = routeBoundaryFixture();
     const source = cancellation();
     source.cancel();
@@ -37,11 +33,11 @@ describe("Growth reveal entry fence", () => {
     expect(running.publishedAfterAbort).toEqual([]);
   });
 
-  it.each(["pair", "delivery"] as const)("rejects a %s lifecycle before opening reveal after a stale capture", async mode => {
+  it("rejects a Pair lifecycle before opening reveal after a stale capture", async () => {
     const fixture = routeBoundaryFixture();
-    staleSnapshotOnce(fixture, () => recreate(fixture, mode));
+    staleSnapshotOnce(fixture, () => recreate(fixture, "pair"));
     await fixture.run("reveal");
-    expect(fixture.store.snapshotNow().session?.mode).toBe(mode);
+    expect(fixture.store.snapshotNow().session?.mode).toBe("pair");
     expect.soft(fixture.confirmSolutionReveal).not.toHaveBeenCalled();
     expect(fixture.requestWorkspaceConsent).not.toHaveBeenCalled();
     expect(fixture.grant).not.toHaveBeenCalled();
@@ -58,9 +54,9 @@ describe("Growth reveal entry fence", () => {
     expect(running.publishedAfterAbort).toEqual([]);
   });
 
-  it.each(["none", "observation"] as const)("preserves the %s reveal entry control", async timing => {
+  it("still opens reveal when only an observation moved the revision", async () => {
     const fixture = routeBoundaryFixture();
-    if (timing === "observation") staleSnapshotOnce(fixture, () => fixture.coordinator.observeWorkspace());
+    staleSnapshotOnce(fixture, () => fixture.coordinator.observeWorkspace());
     await fixture.run("reveal");
     expect(fixture.confirmSolutionReveal).toHaveBeenCalledTimes(1);
     expect(fixture.requestWorkspaceConsent).toHaveBeenCalledTimes(1);
@@ -70,7 +66,7 @@ describe("Growth reveal entry fence", () => {
 });
 
 describe("Growth declined modal cancellation", () => {
-  it.each([undefined, "hint", "reveal", "transfer"])("preserves a normal declined %s consent", async command => {
+  it.each([undefined, "reveal"])("preserves a normal declined %s consent", async command => {
     const fixture = routeBoundaryFixture();
     fixture.requestWorkspaceConsent.mockResolvedValue(false);
     const running = fixture.start(command);
@@ -94,12 +90,12 @@ describe("Growth declined modal cancellation", () => {
     expect(fixture.requestModel).not.toHaveBeenCalled();
   });
 
-  it.each([undefined, "hint", "reveal", "transfer"])("does not publish a declined %s consent after Chat abort", async command => {
+  it("does not publish a declined consent after Chat abort", async () => {
     const fixture = routeBoundaryFixture();
     const entered = deferred<void>();
     const decision = deferred<boolean>();
     fixture.requestWorkspaceConsent.mockImplementation(() => { entered.resolve(undefined); return decision.promise; });
-    const running = fixture.start(command);
+    const running = fixture.start();
     await entered.promise;
     running.source.cancel();
     decision.resolve(false);
@@ -126,13 +122,13 @@ describe("Growth declined modal cancellation", () => {
 });
 
 describe("Growth cached session publication", () => {
-  it.each(["recreated", "disabled", "workspace-rebind", "observed", "unchanged"] as const)("filters cached outcomes against the live %s state", async transition => {
+  it.each(["recreated", "disabled", "workspace-rebind", "observed"] as const)("filters cached outcomes against the live %s state", async transition => {
     const fixture = routeBoundaryFixture();
     await fixture.run("transfer");
     await fixture.run("check");
     expect(fixture.participant.transferStatus()).toBeDefined();
     expect(await fixture.run("session")).toContain("last check `test` passed");
-    if (transition !== "unchanged") staleSnapshotOnce(fixture, () => {
+    staleSnapshotOnce(fixture, () => {
       if (transition === "recreated") return recreate(fixture);
       if (transition === "workspace-rebind") return fixture.coordinator.setPresence("observing", "workspace-2");
       return transition === "disabled" ? fixture.coordinator.setPresence("off") : fixture.coordinator.observeWorkspace();

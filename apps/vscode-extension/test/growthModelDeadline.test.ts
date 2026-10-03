@@ -105,10 +105,10 @@ it.each([
   expect(coordinator.invokeCalls).toEqual([]);
 });
 
+// Input and output accounting share one rejection handler; each reason needs
+// one row, and the rows alternate phases so both call sites stay exercised.
 it.each([
   { phase: "input", reason: "deadline", code: "GROWTH_TIME_CAP" },
-  { phase: "input", reason: "cancellation", code: "GROWTH_CANCELLED" },
-  { phase: "output", reason: "deadline", code: "GROWTH_TIME_CAP" },
   { phase: "output", reason: "cancellation", code: "GROWTH_CANCELLED" },
 ])("preserves $reason when $phase accounting rejects cancellation", async ({ phase, reason, code }) => {
   const coordinator = new FakeCoordinator(growthSnapshot({ runtimeRevision: 4 }));

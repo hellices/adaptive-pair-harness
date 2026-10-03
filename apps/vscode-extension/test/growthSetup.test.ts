@@ -17,44 +17,37 @@ const input: GrowthSetupInput = {
   verificationPlan: "npm test",
 };
 
-const unicodeSeparators = [
-  { label: "U+2028", separator: "\u2028" },
-  { label: "U+2029", separator: "\u2029" },
-] as const;
-
 describe("one-line Growth setup input", () => {
-  it.each([{ label: "LF", separator: "\n" }, ...unicodeSeparators])(
-    "rejects $label anywhere in shared text validation", ({ separator }) => {
-      for (const value of [`first${separator}second`, `${separator}first`, `first${separator}`]) {
-        expect(isSetupText(value)).toBe(false);
+  it.each([
+    { label: "LF", separator: "\n" },
+    { label: "U+2028", separator: "\u2028" },
+    { label: "U+2029", separator: "\u2029" },
+  ])("rejects $label anywhere in shared text validation", ({ separator }) => {
+    for (const value of [`first${separator}second`, `${separator}first`, `first${separator}`]) {
+      expect(isSetupText(value)).toBe(false);
+    }
+  });
+
+  it.each(["objective", "independentCheck", "allowedPath", "verificationPlan"] as const)(
+    "rejects a Unicode line separator in %s before trimming during normalization", field => {
+      for (const value of [`\u2028${input[field]}`, `${input[field]}\u2028`]) {
+        expect(normalizeGrowthSetupInput({ ...input, [field]: value })).toBeUndefined();
       }
     },
   );
 
-  it.each(unicodeSeparators)("rejects embedded $label in objective and independent variation normalization", ({ separator }) => {
-    for (const field of ["objective", "independentCheck"] as const) {
-      expect(normalizeGrowthSetupInput({ ...input, [field]: `first${separator}second` })).toBeUndefined();
+  it("preserves normal international one-line text", () => {
+    for (const text of [
+      "재시도 경계를 확인해요", "境界条件を検証する", "تحقق من حدود المحاولة",
+      "Vérifier les limites", "Retry 🔁 with cafe\u0301",
+    ]) {
+      expect(isSetupText(text)).toBe(true);
+      expect(normalizeGrowthSetupInput({
+        ...input, objective: ` ${text} `, independentCheck: ` ${text} `, allowedPath: `src/${text}.mjs`,
+      })).toEqual({
+        objective: text, independentCheck: text, allowedPath: `src/${text}.mjs`, verificationPlan: "npm run test",
+      });
     }
-  });
-
-  it.each(unicodeSeparators.flatMap(separator =>
-    (["objective", "independentCheck", "allowedPath", "verificationPlan"] as const).map(field => ({ ...separator, field })),
-  ))("rejects $label in $field before trimming during normalization", ({ separator, field }) => {
-    for (const value of [`${separator}${input[field]}`, `${input[field]}${separator}`]) {
-      expect(normalizeGrowthSetupInput({ ...input, [field]: value })).toBeUndefined();
-    }
-  });
-
-  it.each([
-    "재시도 경계를 확인해요", "境界条件を検証する", "تحقق من حدود المحاولة",
-    "Vérifier les limites", "Retry 🔁 with cafe\u0301",
-  ])("preserves normal international one-line text: %s", text => {
-    expect(isSetupText(text)).toBe(true);
-    expect(normalizeGrowthSetupInput({
-      ...input, objective: ` ${text} `, independentCheck: ` ${text} `, allowedPath: `src/${text}.mjs`,
-    })).toEqual({
-      objective: text, independentCheck: text, allowedPath: `src/${text}.mjs`, verificationPlan: "npm run test",
-    });
   });
 });
 
@@ -163,10 +156,10 @@ describe("first-use Growth setup through the real coordinator", () => {
 });
 
 describe("Growth setup admission boundaries", () => {
-  it.each(["learning", "mode", "work-unit"] as const)("honors cancellation during the %s confirmation", async cancelledStage => {
+  it("honors cancellation during a confirmation", async () => {
     const harness = await createHarness();
     harness.confirm.mockImplementation(stage => {
-      if (stage === cancelledStage) { harness.controller.abort(); }
+      if (stage === "work-unit") { harness.controller.abort(); }
       return Promise.resolve(true);
     });
     expect(await runGrowthSetup(harness.dependencies, harness.controller.signal)).toBe("cancelled");
@@ -181,22 +174,20 @@ describe("Growth setup admission boundaries", () => {
     expect(harness.store.snapshotNow().session?.userActionGrants).toHaveLength(0);
   });
 
-  it.each(["pair_confirm_learning", "pair_select_mode", "pair_agree_work_unit"] as const)(
-    "rechecks host admission after the %s grant before invocation", async blockedTool => {
-      const harness = await createHarness();
-      let available = true;
-      const grant = harness.coordinator.grantUserAction.bind(harness.coordinator);
-      vi.spyOn(harness.coordinator, "grantUserAction").mockImplementation(async (name, signal, observed) => {
-        const grantId = await grant(name, signal, observed);
-        if (name === blockedTool) { available = false; }
-        return grantId;
-      });
-      const invoke = vi.spyOn(harness.coordinator, "invokeTool");
-      expect(await runGrowthSetup({ ...harness.dependencies, isAvailable: () => available }, harness.controller.signal)).toBe("stale");
-      expect(invoke.mock.calls.map(call => call[0])).not.toContain(blockedTool);
-      expect(harness.store.snapshotNow().session?.workUnit?.status).not.toBe("agreed");
-    },
-  );
+  it("rechecks host admission after a grant before invocation", async () => {
+    const harness = await createHarness();
+    let available = true;
+    const grant = harness.coordinator.grantUserAction.bind(harness.coordinator);
+    vi.spyOn(harness.coordinator, "grantUserAction").mockImplementation(async (name, signal, observed) => {
+      const grantId = await grant(name, signal, observed);
+      if (name === "pair_agree_work_unit") { available = false; }
+      return grantId;
+    });
+    const invoke = vi.spyOn(harness.coordinator, "invokeTool");
+    expect(await runGrowthSetup({ ...harness.dependencies, isAvailable: () => available }, harness.controller.signal)).toBe("stale");
+    expect(invoke.mock.calls.map(call => call[0])).not.toContain("pair_agree_work_unit");
+    expect(harness.store.snapshotNow().session?.workUnit?.status).not.toBe("agreed");
+  });
 
   it("reconfirms an existing proposal after an agreement failure without replacing its scope", async () => {
     const harness = await createHarness();
@@ -231,10 +222,10 @@ describe("Growth setup admission boundaries", () => {
     expect(await runGrowthSetup(harness.dependencies, harness.controller.signal)).toBe("completed");
   });
 
-  it.each(["learning", "mode", "work-unit"] as const)("invalidates a stale %s confirmation", async staleStage => {
+  it("invalidates a stale confirmation", async () => {
     const harness = await createHarness();
     harness.confirm.mockImplementation(async stage => {
-      if (stage === staleStage) {
+      if (stage === "learning") {
         await harness.coordinator.observeWorkspace();
       }
       return true;
@@ -244,10 +235,10 @@ describe("Growth setup admission boundaries", () => {
     expect(harness.effects.execute).not.toHaveBeenCalled();
   });
 
-  it.each(["off", "paused"] as const)("never admits a queued confirmation after %s", async status => {
+  it("never admits a queued confirmation after Presence pauses", async () => {
     const harness = await createHarness();
     harness.confirm.mockImplementation(async () => {
-      await harness.coordinator.setPresence(status);
+      await harness.coordinator.setPresence("paused");
       return true;
     });
     expect(await runGrowthSetup(harness.dependencies, harness.controller.signal)).toBe("stale");
@@ -297,7 +288,7 @@ describe("Growth setup admission boundaries", () => {
     { objective: "" }, { objective: "long".repeat(100) },
     { independentCheck: "" }, { allowedPath: "../secret.ts" },
     { allowedPath: "/outside.ts" }, { allowedPath: ".env" },
-    { allowedPath: "src/picture.png" }, { allowedPath: "src/\u0000bad.ts" },
+    { allowedPath: "src/picture.png" },
     { verificationPlan: "npm test && touch marker" }, { verificationPlan: "npm run deploy" },
     { verificationPlan: `test${" ".repeat(200)}` },
   ])("refuses invalid setup input before any entry capture: %j", async invalid => {

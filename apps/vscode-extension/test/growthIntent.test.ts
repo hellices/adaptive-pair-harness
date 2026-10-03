@@ -52,9 +52,9 @@ describe("interpretGrowthIntent deterministic routes", () => {
     expect(declared.map(command => command.name).sort()).toEqual(
       Object.keys(GROWTH_COMMAND_INTENTS).sort(),
     );
-    // Every advertised command routes to a deterministic implemented intent.
+    // The key equality above already proves every advertised command routes
+    // to an implemented intent; each one must also describe itself.
     for (const command of declared) {
-      expect(GROWTH_COMMAND_INTENTS[command.name]).toBeDefined();
       expect(command.description.length).toBeGreaterThan(0);
     }
   });

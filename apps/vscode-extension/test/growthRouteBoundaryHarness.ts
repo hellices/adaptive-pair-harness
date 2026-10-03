@@ -7,7 +7,7 @@ import {
   createContext, createRequest, createResponseStream, growthSnapshot,
 } from "./growthTestHarness.js";
 
-export const answer = "Independent variation: design a bounded queue and prove its capacity.";
+const answer = "Independent variation: design a bounded queue and prove its capacity.";
 
 export const deferred = <Value>() => {
   let resolve!: (value: Value) => void;
@@ -36,7 +36,7 @@ export const cancellation = () => {
   };
 };
 
-export const destination = (overrides: Partial<Record<"vendor" | "family" | "id" | "version", string>> = {}) =>
+const destination = (overrides: Partial<Record<"vendor" | "family" | "id" | "version", string>> = {}) =>
   asModel(Object.assign(new FakeModel([]), overrides));
 
 export const routeBoundaryFixture = () => {
@@ -96,7 +96,7 @@ export const routeBoundaryFixture = () => {
   };
 };
 
-export type RouteBoundaryFixture = ReturnType<typeof routeBoundaryFixture>;
+type RouteBoundaryFixture = ReturnType<typeof routeBoundaryFixture>;
 
 export const recreate = async (
   fixture: RouteBoundaryFixture,

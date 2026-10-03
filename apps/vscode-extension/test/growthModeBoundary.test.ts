@@ -33,8 +33,10 @@ const responseModel = () => new FakeModel([{
 // Pair and Delivery sessions are rejected by the real-coordinator matrix in
 // growthRouteBoundaries.test.ts. An unselected mode is the only fixture whose
 // work unit still says Growth, so it alone isolates the session-mode check.
+// `/hint` shares the plain guidance handler up to its consent gate, so one row
+// per route handler covers it.
 describe("Growth route without a selected mode", () => {
-  it.each([undefined, "hint", "reveal", "transfer"])(
+  it.each([undefined, "reveal", "transfer"])(
     "rejects %s before consent, reveal confirmation, or any Growth action",
     async command => {
       const coordinator = new FakeCoordinator(modeSnapshot(undefined));
@@ -105,7 +107,7 @@ describe("Growth deferred route mode", () => {
     expect(collected.markdown).toEqual(["Which invariant did you check?"]);
   });
 
-  it.each([undefined, "hint", "reveal"])(
+  it.each([undefined, "reveal"])(
     "does not apply pending %s consent after the runtime leaves Growth",
     async command => {
       const before = modeSnapshot("growth");

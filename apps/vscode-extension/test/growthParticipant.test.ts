@@ -155,7 +155,7 @@ describe("GrowthParticipant consented guidance", () => {
 });
 
 describe("GrowthParticipant response restraint", () => {
-  it("withholds a level-3 hint response that contains a target patch", async () => {
+  it("withholds a response one level above the authorized hint without recording its text", async () => {
     const coordinator = new FakeCoordinator(withAssistance({ hint: { level: 2, recordedAt: 0 } }));
     const model = new FakeModel([
       {
@@ -170,30 +170,11 @@ describe("GrowthParticipant response restraint", () => {
     const { evaluations, text } = await handle(coordinator, model, { prompt: "give me a hint" });
 
     expect(text).toContain(WITHHELD_RESPONSE_MESSAGE);
-    const record = evaluations.records.at(-1);
-    expect(record?.outcome).toBe("withheld");
-    expect(JSON.stringify(evaluations.records)).not.toContain("export function retry");
-  });
-
-  it("withholds a response one level above the currently authorized hint", async () => {
-    const coordinator = new FakeCoordinator(withAssistance({ hint: { level: 2, recordedAt: 0 } }));
-    const model = new FakeModel([
-      {
-        text: JSON.stringify({
-          level: 3,
-          kind: "hint",
-          text: "Consider the ordering between the counter update and retry condition.",
-        }),
-      },
-    ]);
-
-    const { evaluations, text } = await handle(coordinator, model, { prompt: "keep the hint at the current level" });
-
-    expect(text).toContain(WITHHELD_RESPONSE_MESSAGE);
     expect(evaluations.records.at(-1)).toMatchObject({
       outcome: "withheld",
       reason: "HINT_LEVEL_EXCEEDED",
     });
+    expect(JSON.stringify(evaluations.records)).not.toContain("export function retry");
   });
 
   it("surfaces invalid JSON as a restraint failure without raw text", async () => {

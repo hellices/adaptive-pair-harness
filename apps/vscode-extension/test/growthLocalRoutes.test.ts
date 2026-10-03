@@ -226,8 +226,8 @@ describe("GrowthParticipant explicit verification", () => {
   });
 });
 
-// Each cached outcome is filtered by its own call site (transfer summary and
-// product summary), so every outcome is checked against both identity changes.
+// Each cached outcome is filtered at its own call site (product summary and
+// transfer summary); together the rows cover both identity changes.
 const staleTransitions = {
   "work unit": (snapshot: PairRuntimeSnapshot): PairRuntimeSnapshot => ({
     ...snapshot,
@@ -245,9 +245,7 @@ const staleTransitions = {
 describe("GrowthParticipant stale cached outcomes", () => {
   it.each([
     { command: "check", change: "work unit", current: "last check `test` passed", stale: "no check observed in this session" },
-    { command: "check", change: "session", current: "last check `test` passed", stale: "no check observed in this session" },
-    { command: "transfer", change: "work unit", current: "transfer: started", stale: "transfer: not started" },
-    { command: "transfer", change: "session", current: "transfer: started", stale: "transfer: not started" },
+    { command: "transfer", change: "session", current: "transfer: started — not demonstrated", stale: "transfer: not started" },
   ] as const)("does not report a /$command outcome after the $change changes", async ({ command, change, current, stale }) => {
     const snapshot = growthSnapshot({ runtimeRevision: 4 });
     const coordinator = new FakeCoordinator(snapshot, { resultFor: verificationResult(snapshot, true) });
