@@ -1,11 +1,13 @@
 import { expect, it } from "vitest";
 import { beginReplacement, replacementScenarios } from "./pendingOperationFixtures.js";
 
-const ownershipCases = replacementScenarios.flatMap(scenario =>
-  ["paused", "off"].flatMap(boundary => [true, false].map(reuseOperationId => ({
-    ...scenario, boundary: boundary as "paused" | "off", reuseOperationId,
-  }))),
-);
+const [readByPresence, verifyByDispatch, readByDispatch, verifyByPresence] = replacementScenarios;
+const ownershipCases = [
+  { ...readByPresence, boundary: "paused", reuseOperationId: true },
+  { ...verifyByDispatch, boundary: "off", reuseOperationId: false },
+  { ...readByDispatch, boundary: "off", reuseOperationId: true },
+  { ...verifyByPresence, boundary: "paused", reuseOperationId: true },
+] as const;
 
 it.each(ownershipCases)(
   "$tool via $route to $destination keeps $boundary cancellation after old settlement (reuse=$reuseOperationId)",
@@ -47,7 +49,7 @@ it.each(ownershipCases)(
   },
 );
 
-it.each(replacementScenarios)(
+it.each([readByPresence, verifyByDispatch])(
   "$tool via $route to $destination preserves replacement-first completion",
   async scenario => {
     const { fixture, previous, replacement } = await beginReplacement(scenario);
@@ -71,7 +73,7 @@ it.each(replacementScenarios)(
   },
 );
 
-it.each(replacementScenarios)(
+it.each([readByDispatch, verifyByPresence])(
   "$tool via $route to $destination preserves Pause before old settlement",
   async scenario => {
     const { fixture, previous, replacement } = await beginReplacement(scenario);

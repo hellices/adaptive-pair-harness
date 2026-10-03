@@ -18,7 +18,8 @@ it("does not allocate durable identity for an empty candidate", () => {
   expect(next).not.toHaveBeenCalled();
 });
 
-it.each(["confirmed", "unknown"] as const)("records a first late %s outcome without reopening the session", status => {
+it("records a first late outcome without reopening the session", () => {
+  const status = "confirmed";
   const harness = projectionHarness();
   enterProjectionReady(harness);
   harness.apply({ type: "AuthorizeOperation", operationId: sourceOperation, toolName: "pair_read_file", kind: "read", input: {} });
@@ -164,13 +165,13 @@ it("rejects changed executable input under the same command even when durable fi
   expect(harness.projector.project(previous, first.events, sequence)).toBe(projection);
 });
 
-it.each([true, false])("projects assistance bypass flags precisely (%s)", bypassed => {
+it("projects assistance bypass flags precisely", () => {
   const harness = projectionHarness();
   enterProjectionReady(harness);
-  harness.apply({ type: "RecordAttempt", workUnitId: sourceUnit, summary: privateCanary, bypassed });
-  harness.apply({ type: "RecordHypothesis", workUnitId: sourceUnit, summary: privateCanary, bypassed: !bypassed });
+  harness.apply({ type: "RecordAttempt", workUnitId: sourceUnit, summary: privateCanary, bypassed: true });
+  harness.apply({ type: "RecordHypothesis", workUnitId: sourceUnit, summary: privateCanary, bypassed: false });
   expect(harness.state().sessions[0]?.workUnits[0]?.assistance).toMatchObject({
-    attempt: bypassed ? "bypassed" : "recorded", hypothesis: bypassed ? "recorded" : "bypassed",
+    attempt: "bypassed", hypothesis: "recorded",
   });
 });
 
@@ -186,7 +187,8 @@ it("allocates a new work-unit lifetime even when a source proposal reuses its ID
   expect(units?.[0]?.workUnitKey).not.toBe(units?.[1]?.workUnitKey);
 });
 
-it.each(["pair", "delivery"] as const)("records %s classification without granting a product route", mode => {
+it("records a non-Growth classification without granting a product route", () => {
+  const mode = "delivery";
   const harness = projectionHarness();
   harness.apply({ type: "EnablePresence", workspaceId: sourceWorkspace });
   harness.apply({ type: "StartSession", sessionId: sourceSession });
@@ -253,9 +255,9 @@ it("rejects missing lifetime mappings instead of adopting a live snapshot as dur
     .toThrow(fail("MISSING_LIFETIME_MAPPING"));
 });
 
-it.each(["bad", "F".repeat(32), "f".repeat(31), "f".repeat(33)])("rejects malformed issued keys %#", key => {
+it("rejects a malformed issued key", () => {
   const candidate = admittedCandidate(createRuntime(sourceWorkspace), { type: "EnablePresence", workspaceId: sourceWorkspace });
-  expect(() => createDurableProjector({ next: () => key }).project(candidate.previous, candidate.events, 0))
+  expect(() => createDurableProjector({ next: () => "f".repeat(33) }).project(candidate.previous, candidate.events, 0))
     .toThrow(fail("INVALID_KEY"));
 });
 

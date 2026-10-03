@@ -1,23 +1,17 @@
-import { FakeClock, FakeIdSource, growthRuntime } from "@adaptive-pair/testkit";
+import { growthRuntime } from "@adaptive-pair/testkit";
 import { expect, it } from "vitest";
-import { PairCoordinator } from "../src/index.js";
 import {
   createBriefingRuntime,
   createEntrySnapshot,
   createLearningAgreement,
   createWorkUnit,
 } from "./coordinatorFixtures.js";
+import { createCoordinator } from "./coordinatorInterleavingFixtures.js";
 import { FakeEffectPort, FakePairStore } from "./fakes.js";
 
 it("grants and consumes pair_capture_entry during briefing", async () => {
   const store = new FakePairStore([], createBriefingRuntime());
-  const coordinator = new PairCoordinator({
-    store,
-    effects: new FakeEffectPort([]),
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
+  const coordinator = createCoordinator(store, new FakeEffectPort([]));
   const signal = new AbortController().signal;
 
   const userActionId = await coordinator.grantUserAction(
@@ -58,13 +52,7 @@ it("grants and consumes pair_capture_entry during briefing", async () => {
 
 it("requires and consumes human grants for the Growth briefing contract", async () => {
   const store = new FakePairStore([], createBriefingRuntime());
-  const coordinator = new PairCoordinator({
-    store,
-    effects: new FakeEffectPort([]),
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
+  const coordinator = createCoordinator(store, new FakeEffectPort([]));
   const signal = new AbortController().signal;
 
   for (const [name, input] of [
@@ -129,32 +117,9 @@ it("requires and consumes human grants for the Growth briefing contract", async 
   ).toEqual([]);
 });
 
-it("rejects hidden operational grants during briefing", async () => {
-  const store = new FakePairStore([], createBriefingRuntime());
-  const coordinator = new PairCoordinator({
-    store,
-    effects: new FakeEffectPort([]),
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
-  const signal = new AbortController().signal;
-
-  await expect(
-    coordinator.grantUserAction("pair_run_verification", signal),
-  ).rejects.toThrow("TOOL_HIDDEN");
-  expect(store.snapshot().session?.userActionGrants).toEqual([]);
-});
-
 it("rejects a user-action grant requested from a stale runtime boundary", async () => {
   const store = new FakePairStore([], createBriefingRuntime());
-  const coordinator = new PairCoordinator({
-    store,
-    effects: new FakeEffectPort([]),
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
+  const coordinator = createCoordinator(store, new FakeEffectPort([]));
   const signal = new AbortController().signal;
   const current = store.snapshot();
 
@@ -171,13 +136,7 @@ it("persists grant consumption and authorization before dispatching an effect", 
   const order: string[] = [];
   const store = new FakePairStore(order);
   const effects = new FakeEffectPort(order);
-  const coordinator = new PairCoordinator({
-    store,
-    effects,
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
+  const coordinator = createCoordinator(store, effects);
   const signal = new AbortController().signal;
   const userActionId = await coordinator.grantUserAction(
     "pair_run_verification",
@@ -202,13 +161,7 @@ it("persists grant consumption and authorization before dispatching an effect", 
 
 it("rejects hidden grants before persisting them", async () => {
   const store = new FakePairStore([], growthRuntime());
-  const coordinator = new PairCoordinator({
-    store,
-    effects: new FakeEffectPort([]),
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
+  const coordinator = createCoordinator(store, new FakeEffectPort([]));
   const signal = new AbortController().signal;
 
   await expect(

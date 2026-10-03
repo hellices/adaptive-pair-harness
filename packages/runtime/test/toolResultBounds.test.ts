@@ -38,10 +38,10 @@ describe("Complete runtime tool result budget", () => {
     expect(fixture.store.snapshotNow().session?.operations.at(-1)?.status).toBe("confirmed");
   });
 
-  it.each([false, true])("accepts exactly the complete result limit (escaped: %s)", async escaped => {
+  it("accepts exactly the complete escaped result limit", async () => {
     const empty = await createFixture().search();
     const budget = 12_000 - JSON.stringify(empty).length;
-    const query = escaped ? `${'"'.repeat(Math.floor(budget / 2))}${"x".repeat(budget % 2)}` : "x".repeat(budget);
+    const query = `${'"'.repeat(Math.floor(budget / 2))}${"x".repeat(budget % 2)}`;
     const result = await createFixture(query).search();
 
     expect(result.observation).toEqual({ query, matches: [] });

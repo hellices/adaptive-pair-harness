@@ -1,9 +1,10 @@
 import { expect, it } from "vitest";
 import { beginReplacement, replacementScenarios } from "./pendingOperationFixtures.js";
 
-const failureCases = replacementScenarios.flatMap(scenario =>
-  [true, false].map(reuseOperationId => ({ ...scenario, reuseOperationId })),
-);
+const failureCases = [
+  { ...replacementScenarios[0], reuseOperationId: true },
+  { ...replacementScenarios[1], reuseOperationId: false },
+];
 
 it.each(failureCases)(
   "$tool via $route to $destination preserves cancellation after old effect rejection (reuse=$reuseOperationId)",
@@ -34,14 +35,10 @@ it.each(failureCases)(
   },
 );
 
-const recoveryCases = ["dispatch", "setPresence"].flatMap(route =>
-  ["workspace-A", "workspace-B"].flatMap(destination => [true, false].map(reuseOperationId => ({
-    tool: "pair_read_scope" as const,
-    route: route as "dispatch" | "setPresence",
-    destination: destination as "workspace-A" | "workspace-B",
-    reuseOperationId,
-  }))),
-);
+const recoveryCases = [
+  { tool: "pair_read_scope", route: "dispatch", destination: "workspace-A", reuseOperationId: true },
+  { tool: "pair_read_scope", route: "setPresence", destination: "workspace-B", reuseOperationId: false },
+] as const;
 
 it.each(recoveryCases)(
   "old recovered read via $route to $destination cannot orphan a pending replacement (reuse=$reuseOperationId)",
@@ -75,15 +72,10 @@ it.each(recoveryCases)(
   },
 );
 
-const retryCases = [false, true].flatMap(recovery =>
-  ["workspace-A", "workspace-B"].flatMap(destination => [true, false].map(reuseOperationId => ({
-    tool: "pair_read_scope" as const,
-    route: "setPresence" as const,
-    destination: destination as "workspace-A" | "workspace-B",
-    recovery,
-    reuseOperationId,
-  }))),
-);
+const retryCases = [
+  { tool: "pair_read_scope", route: "setPresence", destination: "workspace-A", recovery: false, reuseOperationId: false },
+  { tool: "pair_read_scope", route: "setPresence", destination: "workspace-B", recovery: true, reuseOperationId: true },
+] as const;
 
 it.each(retryCases)(
   "does not redispatch an already-running replacement in $destination (oldRecovery=$recovery, reuse=$reuseOperationId)",

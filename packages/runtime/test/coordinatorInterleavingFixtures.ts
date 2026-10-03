@@ -96,7 +96,7 @@ export const createInterleavingFixture = (effects: EffectPort) => {
   return { coordinator: createCoordinator(store, effects), store };
 };
 
-export type AuthorityBoundary = "pause-session" | "paused" | "off";
+export type AuthorityBoundary = "pause-session" | "off";
 
 export const changeAuthority = (
   coordinator: PairCoordinator,

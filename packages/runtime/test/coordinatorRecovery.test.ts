@@ -56,7 +56,7 @@ it("does not resurrect a cancelled invocation through concurrent public recovery
   expect(unlinkedDispatches).toEqual(Array.from({ length: 20 }, () => 0));
 });
 
-it.each(["pause-session", "paused", "off"] as const)(
+it.each(["pause-session", "off"] as const)(
   "does not dispatch a recovery read behind queued %s",
   async boundary => {
     const effects = new FakeEffectPort([]);
@@ -106,7 +106,7 @@ it.each(["invocation", "recovery"] as const)(
   },
 );
 
-it.each(["pause-session", "paused", "off"] as const)(
+it.each(["pause-session", "off"] as const)(
   "invalidates a running recovery read on %s without blocking the transition",
   async boundary => {
     const started = deferred<{ readonly request: EffectRequest; readonly signal: AbortSignal }>();

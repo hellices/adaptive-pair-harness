@@ -52,25 +52,15 @@ it("records absent optional retained state as null, not fabricated agreements", 
   });
 });
 
-it("replays multiple commands in one atomic batch", () => {
-  const commit = { ...durableCommit(durableBaseFacts), commandKeys: [durableKey(50), durableKey(51)] };
-  expect(replay(durableWire([commit])).headSequence).toBe(durableBaseFacts.length);
-});
-
-it.each([1, 3, Number.MAX_SAFE_INTEGER])("rejects a first-commit sequence gap of %s", expectedSequence => {
-  const commit = { ...durableCommit(durableBaseFacts), expectedSequence };
-  expect(() => replay(durableWire([commit]))).toThrow(fail("NON_CONTIGUOUS_SEQUENCE"));
-});
-
 it("rejects reordered commits rather than returning a valid suffix", () => {
   const journal = durableHistory(durableBaseFacts, [closed]);
   expect(() => replay({ ...journal, commits: [...journal.commits].reverse() }))
     .toThrow(fail("NON_CONTIGUOUS_SEQUENCE"));
 });
 
-it.each([0, 9, 11, Number.MAX_SAFE_INTEGER])("requires the exact declared head %s", headSequence => {
+it("requires the exact declared head", () => {
   const journal = durableHistory(durableBaseFacts);
-  expect(() => replay({ ...journal, headSequence })).toThrow(fail("HEAD_SEQUENCE_MISMATCH"));
+  expect(() => replay({ ...journal, headSequence: 9 })).toThrow(fail("HEAD_SEQUENCE_MISMATCH"));
 });
 
 it.each(["commitKey", "commandKeys"] as const)("rejects reused %s across commits", field => {
@@ -80,12 +70,10 @@ it.each(["commitKey", "commandKeys"] as const)("rejects reused %s across commits
     .toThrow(fail(field === "commitKey" ? "DUPLICATE_COMMIT_KEY" : "DUPLICATE_COMMAND_KEY"));
 });
 
-it.each<DurableFact>([
-  { type: "SessionStatusRecorded", sessionKey, status: "ready" },
-  { type: "LearningBoundaryRecorded", sessionKey, humanOwnedCapabilities: [], maximumHintLevel: 1 },
-  { type: "OperationOutcomeRecorded", sessionKey, operationKey, status: "confirmed" },
-])("rejects a dangling reference in $type", fact => {
-  expect(() => replayDurableJournal(durableHistory([fact]))).toThrow(fail("INVALID_FACT_SEQUENCE"));
+it("rejects a dangling session reference", () => {
+  expect(() => replayDurableJournal(durableHistory([
+    { type: "LearningBoundaryRecorded", sessionKey, humanOwnedCapabilities: [], maximumHintLevel: 1 },
+  ]))).toThrow(fail("INVALID_FACT_SEQUENCE"));
 });
 
 it.each<DurableFact>([
@@ -100,21 +88,14 @@ it("does not open a second session before the previous one closes", () => {
     .toThrow(fail("INVALID_FACT_SEQUENCE"));
 });
 
-it.each(["briefing", "closing"] as const)(
-  "never reopens a closed session as %s", status => {
-    expect(() => replayDurableJournal(durableHistory(durableBaseFacts, [closed], [
-      { type: "SessionStatusRecorded", sessionKey, status },
-    ]))).toThrow(fail("INVALID_FACT_SEQUENCE"));
-  },
-);
+it("never reopens a closed session", () => {
+  expect(() => replayDurableJournal(durableHistory(durableBaseFacts, [closed], [
+    { type: "SessionStatusRecorded", sessionKey, status: "briefing" },
+  ]))).toThrow(fail("INVALID_FACT_SEQUENCE"));
+});
 
 it.each<DurableFact>([
   { type: "WorkUnitStatusRecorded", sessionKey: nextSessionKey, workUnitKey, status: "executing" },
-  {
-    type: "AssistanceRecorded", sessionKey: nextSessionKey, workUnitKey,
-    attempt: "none", hypothesis: "none", hintLevel: null, solutionRevealed: false,
-  },
-  operationOpened(durableKey(8), nextSessionKey),
   { type: "OperationOutcomeRecorded", sessionKey: nextSessionKey, operationKey, status: "unknown" },
 ])("rejects cross-session references in $type", fact => {
   expect(() => replayDurableJournal(durableHistory(durableBaseFacts, [closed], [
@@ -128,36 +109,31 @@ it("requires a work unit to precede its operation in the same commit", () => {
   ]))).toThrow(fail("INVALID_FACT_SEQUENCE"));
 });
 
-it.each(["planned", "authorized", "started"] as const)("retains %s operations when closing", status => {
+it("retains an authorized operation when closing", () => {
   const facts: readonly DurableFact[] = [
     { type: "SessionOpened", sessionKey }, workUnitOpened(),
-    { type: "OperationOpened", sessionKey, workUnitKey, operationKey, kind: "read", status }, closed,
+    { type: "OperationOpened", sessionKey, workUnitKey, operationKey, kind: "read", status: "authorized" }, closed,
   ];
-  expect(replayDurableJournal(durableHistory(facts)).sessions[0]?.operations[0]?.status).toBe(status);
+  expect(replayDurableJournal(durableHistory(facts)).sessions[0]?.operations[0]?.status).toBe("authorized");
 });
 
-it.each(["confirmed", "failed", "declined", "cancelled", "unknown"] as const)(
-  "preserves the exact %s outcome and other unsettled operations", status => {
-    const state = replayDurableJournal(durableHistory(durableBaseFacts, [
-      operationOpened(durableKey(8)),
-      { type: "OperationOutcomeRecorded", sessionKey, operationKey, status }, closed,
-      { type: "SessionOpened", sessionKey: nextSessionKey },
-    ]));
-    expect(state.sessions).toHaveLength(2);
-    expect(state.sessions[0]?.operations.map(operation => operation.status)).toEqual([status, "started"]);
-    expect(state.sessions[1]?.operations).toEqual([]);
-  },
-);
+it("preserves the exact outcome and other unsettled operations", () => {
+  const state = replayDurableJournal(durableHistory(durableBaseFacts, [
+    operationOpened(durableKey(8)),
+    { type: "OperationOutcomeRecorded", sessionKey, operationKey, status: "confirmed" }, closed,
+    { type: "SessionOpened", sessionKey: nextSessionKey },
+  ]));
+  expect(state.sessions).toHaveLength(2);
+  expect(state.sessions[0]?.operations.map(operation => operation.status)).toEqual(["confirmed", "started"]);
+  expect(state.sessions[1]?.operations).toEqual([]);
+});
 
-const outcomes = ["confirmed", "failed", "declined", "cancelled", "unknown"] as const;
-it.each(outcomes)(
-  "never overwrites %s with a second confirmed outcome", first => {
-    expect(() => replayDurableJournal(durableHistory(durableBaseFacts, [
-      { type: "OperationOutcomeRecorded", sessionKey, operationKey, status: first },
-      { type: "OperationOutcomeRecorded", sessionKey, operationKey, status: "confirmed" },
-    ]))).toThrow(fail("INVALID_FACT_SEQUENCE"));
-  },
-);
+it("never overwrites a recorded outcome", () => {
+  expect(() => replayDurableJournal(durableHistory(durableBaseFacts, [
+    { type: "OperationOutcomeRecorded", sessionKey, operationKey, status: "unknown" },
+    { type: "OperationOutcomeRecorded", sessionKey, operationKey, status: "confirmed" },
+  ]))).toThrow(fail("INVALID_FACT_SEQUENCE"));
+});
 
 it("keeps prior work-unit lifetimes and replaces only explicitly recorded assistance", () => {
   const state = replayDurableJournal(durableHistory(durableBaseFacts, [

@@ -1,16 +1,12 @@
 import { createRuntime, reduce } from "@adaptive-pair/session-core";
-import { FakeClock, FakeIdSource } from "@adaptive-pair/testkit";
 import { expect, it } from "vitest";
-import { PairCoordinator } from "../src/coordinator.js";
 import { InMemoryJournal } from "../src/journal.js";
+import { createCoordinator } from "./coordinatorInterleavingFixtures.js";
 import { FakeEffectPort } from "./fakes.js";
 
 const fixture = () => {
   const store = new InMemoryJournal("workspace-1");
-  const coordinator = new PairCoordinator({
-    store, effects: new FakeEffectPort([]), clock: new FakeClock(),
-    ids: new FakeIdSource(), streamId: "workspace-1",
-  });
+  const coordinator = createCoordinator(store, new FakeEffectPort([]));
   const start = (commandId: string) => coordinator.dispatch({
     protocolVersion: 1, commandId, expectedRevision: store.snapshotNow().revision,
     actor: "human", type: "StartSession", sessionId: "reused-session", observedAt: 1,

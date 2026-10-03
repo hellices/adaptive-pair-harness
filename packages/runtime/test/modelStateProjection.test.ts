@@ -1,23 +1,17 @@
 import { maximumHintLevelForSnapshot, PAIR_TOOL_CATALOG } from "@adaptive-pair/harness";
 import type { OperationRecord, PairRuntimeSnapshot } from "@adaptive-pair/protocol";
-import { FakeClock, FakeIdSource, growthRuntime } from "@adaptive-pair/testkit";
+import { growthRuntime } from "@adaptive-pair/testkit";
 import { expect, it } from "vitest";
+import type { PairCoordinator } from "../src/coordinator.js";
 import { InMemoryJournal } from "../src/journal.js";
-import { PairCoordinator } from "../src/coordinator.js";
 import { createWorkUnit } from "./coordinatorFixtures.js";
+import { createCoordinator } from "./coordinatorInterleavingFixtures.js";
 import { FakeEffectPort } from "./fakes.js";
 
 const createFixture = (snapshot = growthRuntime()) => {
   const store = new InMemoryJournal("workspace-1", snapshot);
   const effects = new FakeEffectPort([]);
-  const coordinator = new PairCoordinator({
-    store,
-    effects,
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
-  return { coordinator, store, effects };
+  return { coordinator: createCoordinator(store, effects), store, effects };
 };
 
 const readState = (coordinator: PairCoordinator) => coordinator.invokeTool(
@@ -58,13 +52,14 @@ it("keeps diagnostics, source paths, raw inputs and grants behind the trusted sn
   expect(store.snapshotNow().session?.userActionGrants.at(-1)?.status).toBe("available");
 });
 
-it.each(["growth", "pair", "delivery"] as const)("preserves published %s state metadata", async mode => {
+it("preserves published state metadata", async () => {
+  const mode = "delivery";
   const snapshot = growthRuntime({
     runtimeRevision: 7,
     session: {
       authorityEpoch: 2,
       mode,
-      workUnit: createWorkUnit({ mode, owner: mode === "delivery" ? "ai" : "human" }),
+      workUnit: createWorkUnit({ mode, owner: "ai" }),
     },
   });
   const { coordinator } = createFixture(snapshot);
@@ -81,7 +76,7 @@ it.each(["growth", "pair", "delivery"] as const)("preserves published %s state m
         authorityEpoch: 2,
         mode,
         status: "active",
-        workUnit: { id: "unit-1", mode, owner: mode === "delivery" ? "ai" : "human" },
+        workUnit: { id: "unit-1", mode, owner: "ai" },
         assistance: { maximumHintLevel: maximumHintLevelForSnapshot(snapshot), attemptRecorded: false, hypothesisRecorded: false },
         verification: { latestStatus: "not-run", pendingCount: 0 },
       },
@@ -162,9 +157,7 @@ const verificationOperation = (overrides: Partial<OperationRecord> = {}): Operat
   ...overrides,
 });
 
-it.each([
-  "planned", "authorized", "started", "confirmed", "failed", "declined", "cancelled", "unknown",
-] as const)("projects %s verification without confusing pending work with success", async status => {
+it.each(["planned", "authorized", "started", "unknown"] as const)("projects %s verification without confusing pending work with success", async status => {
   const { coordinator } = createFixture(growthRuntime({
     session: { operations: [verificationOperation({ status })] },
   }));

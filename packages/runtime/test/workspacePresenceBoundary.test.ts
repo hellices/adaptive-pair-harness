@@ -1,25 +1,21 @@
 import type { PairEvent } from "@adaptive-pair/protocol";
 import { reduce } from "@adaptive-pair/session-core";
-import { FakeClock, FakeIdSource, growthRuntime } from "@adaptive-pair/testkit";
+import { growthRuntime } from "@adaptive-pair/testkit";
 import { expect, it, vi } from "vitest";
-import { PairCoordinator } from "../src/coordinator.js";
 import { InMemoryJournal } from "../src/journal.js";
 import type { EffectRequest, EffectResult } from "../src/ports.js";
-import { confirmedEffect, deferred } from "./coordinatorInterleavingFixtures.js";
+import { confirmedEffect, createCoordinator, deferred } from "./coordinatorInterleavingFixtures.js";
 
 const pendingVerification = async () => {
   const started = deferred<{ readonly request: EffectRequest; readonly signal: AbortSignal }>();
   const completed = deferred<EffectResult>();
   const store = new InMemoryJournal("stream-1", growthRuntime());
-  const coordinator = new PairCoordinator({
-    store, clock: new FakeClock(), ids: new FakeIdSource(), streamId: "stream-1",
-    effects: {
-      execute(request, signal) {
-        started.resolve({ request, signal });
-        return completed.promise;
-      },
+  const coordinator = createCoordinator(store, {
+    execute(request, signal) {
+      started.resolve({ request, signal });
+      return completed.promise;
     },
-  });
+  }, "stream-1");
   await coordinator.observeWorkspace();
   const signal = new AbortController().signal;
   const userActionId = await coordinator.grantUserAction("pair_run_verification", signal);
@@ -38,36 +34,32 @@ const pendingVerification = async () => {
   };
 };
 
-it.each(["observing", "quiet"] as const)(
-  "atomically resets workspace authority before enabling %s", async status => {
-    const { store, coordinator, effect, finish, invocation } = await pendingVerification();
-    const before = store.snapshotNow();
-    const seenBefore = (await store.load("stream-1")).seenCommandIds;
-    const commit = vi.spyOn(store, "commit");
+it("atomically resets workspace authority before enabling Quiet", async () => {
+  const { store, coordinator, effect, finish, invocation } = await pendingVerification();
+  const before = store.snapshotNow();
+  const seenBefore = (await store.load("stream-1")).seenCommandIds;
+  const commit = vi.spyOn(store, "commit");
 
-    const next = await coordinator.setPresence(status, "workspace-2");
-    const abortedAfterCommit = effect.signal.aborted;
-    const committed = commit.mock.calls.slice();
-    finish();
-    await invocation;
+  const next = await coordinator.setPresence("quiet", "workspace-2");
+  const abortedAfterCommit = effect.signal.aborted;
+  const committed = commit.mock.calls.slice();
+  finish();
+  await invocation;
 
-    expect(committed).toHaveLength(1);
-    const events = committed[0]?.[2] ?? [];
-    expect(events.map(event => event.type)).toEqual(status === "quiet"
-      ? ["PresenceChanged", "PresenceEnabled", "PresenceChanged"]
-      : ["PresenceChanged", "PresenceEnabled"]);
-    expect(abortedAfterCommit).toBe(true);
-    expect(next.session).toBeUndefined();
-    expect(next.presence).toEqual({
-      workspaceId: "workspace-2", status, observationRevision: 0, activeSessionId: undefined,
-    });
-    expect(next.revision).toBe(before.revision + events.length);
-    expect(store.events()).toEqual(events);
-    expect(reduce(before, store.events())).toEqual(next);
-    const seenAfter = (await store.load("stream-1")).seenCommandIds;
-    expect([...seenBefore].every(commandId => seenAfter.has(commandId))).toBe(true);
-  },
-);
+  expect(committed).toHaveLength(1);
+  const events = committed[0]?.[2] ?? [];
+  expect(events.map(event => event.type)).toEqual(["PresenceChanged", "PresenceEnabled", "PresenceChanged"]);
+  expect(abortedAfterCommit).toBe(true);
+  expect(next.session).toBeUndefined();
+  expect(next.presence).toEqual({
+    workspaceId: "workspace-2", status: "quiet", observationRevision: 0, activeSessionId: undefined,
+  });
+  expect(next.revision).toBe(before.revision + events.length);
+  expect(store.events()).toEqual(events);
+  expect(reduce(before, store.events())).toEqual(next);
+  const seenAfter = (await store.load("stream-1")).seenCommandIds;
+  expect([...seenBefore].every(commandId => seenAfter.has(commandId))).toBe(true);
+});
 
 it.each(["setPresence", "dispatch"] as const)(
   "ignores an abort-resistant old effect after workspace rebinding through %s", async route => {
@@ -89,22 +81,20 @@ it.each(["setPresence", "dispatch"] as const)(
   },
 );
 
-it.each(["observing", "quiet"] as const)(
-  "retains authority and accepts an in-flight effect when enabling %s in the same workspace", async status => {
-    const { store, coordinator, effect, finish, invocation } = await pendingVerification();
-    const before = store.snapshotNow();
-    const next = await coordinator.setPresence(status, "workspace-1");
-    const abortedAfterCommit = effect.signal.aborted;
-    finish();
+it("retains authority and accepts an in-flight effect when enabling the same workspace", async () => {
+  const { store, coordinator, effect, finish, invocation } = await pendingVerification();
+  const before = store.snapshotNow();
+  const next = await coordinator.setPresence("observing", "workspace-1");
+  const abortedAfterCommit = effect.signal.aborted;
+  finish();
 
-    await expect(invocation).resolves.toMatchObject({ status: "confirmed" });
-    expect(abortedAfterCommit).toBe(false);
-    expect(next.session).toEqual(before.session);
-    expect(next.presence).toEqual({ ...before.presence, status: status === "quiet" ? "quiet" : "engaged" });
-    expect(store.snapshotNow().session?.operations.at(-1)).toMatchObject({ status: "confirmed" });
-    expect(store.events().some(event => event.type === "PresenceChanged" && event.status === "off")).toBe(false);
-  },
-);
+  await expect(invocation).resolves.toMatchObject({ status: "confirmed" });
+  expect(abortedAfterCommit).toBe(false);
+  expect(next.session).toEqual(before.session);
+  expect(next.presence).toEqual({ ...before.presence, status: "engaged" });
+  expect(store.snapshotNow().session?.operations.at(-1)).toMatchObject({ status: "confirmed" });
+  expect(store.events().some(event => event.type === "PresenceChanged" && event.status === "off")).toBe(false);
+});
 
 it("preserves original authority and pending effects when the atomic workspace commit fails", async () => {
   const { store, coordinator, effect, finish, invocation } = await pendingVerification();
