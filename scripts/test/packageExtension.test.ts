@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   PackagingError,
+  RELEASE_VSIX_PATH,
   packageExtension,
   prepareExtensionPackage,
 } from "../package-extension.mjs";
@@ -95,6 +96,12 @@ describe("prepareExtensionPackage", () => {
 });
 
 describe("packageExtension", () => {
+  it("names the Stable artifact for the native Growth trial release", () => {
+    expect(RELEASE_VSIX_PATH).toBe(
+      resolve(repoRoot, "adaptive-pair-0.2.0-preview.2-stable.vsix"),
+    );
+  });
+
   const prepared = {
     build: () => Promise.resolve(),
     inspect: () => Promise.resolve([]),

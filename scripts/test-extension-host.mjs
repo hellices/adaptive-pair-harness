@@ -15,6 +15,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { downloadAndUnzipVSCode, runTests } from "@vscode/test-electron";
 import { parseJsonObject, stringField } from "./json.mjs";
+import { runNativeHistorySmoke } from "./native-history-smoke.mjs";
 import {
   buildHostTestExtension,
   PRODUCTION_MANIFEST_PATH,
@@ -44,7 +45,7 @@ const SEEDED_SETTINGS = {
   "editor.tabSize": 3,
   "editor.defaultFormatter": null,
   "editor.suggestSelection": "recentlyUsed",
-  "workbench.colorTheme": "Default Dark Modern",
+  "workbench.colorTheme": "Dark Modern",
   "workbench.editorAssociations": { "*.apfixture": "default" },
   "git.enabled": true,
   "chat.commandCenter.enabled": false,
@@ -277,6 +278,7 @@ const main = async () => {
         ADAPTIVE_PAIR_PRODUCTION_MANIFEST: PRODUCTION_MANIFEST_PATH,
       },
     });
+    await runNativeHistorySmoke(executable, runDir);
   } catch (error) {
     console.error("[host-test] Smoke tests failed.");
     console.error(`[host-test] Preserved artifacts at: ${runDir}`);

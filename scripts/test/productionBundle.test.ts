@@ -6,6 +6,12 @@ import {
 } from "../build-extension.mjs";
 
 describe("production bundle", () => {
+  it.each(["ADAPTIVE_PAIR_NATIVE_HISTORY_TEST", "adaptive-pair-native-history-fixture", "sessionResource", "--enable-smoke-test-driver"])(
+    "guards against native history driver leakage: %s", marker => {
+      expect(findForbiddenTokens(marker)).toEqual([marker]);
+    },
+  );
+
   it("contains no host-test entry point, API, or flag", async () => {
     const { code } = await buildProductionBundle({ write: false });
 

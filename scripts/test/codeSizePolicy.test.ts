@@ -15,6 +15,8 @@ const limits = [
   ["packages/runtime/src/coordinator.ts", 400, 100],
   ["apps/vscode-extension/src/presenceController.ts", 400, 100],
   ["scripts/verify-vsix.mjs", 400, 100],
+  ["examples/growth-trial/src/retry.mjs", 400, 100],
+  ["examples/growth-trial/test/retry.test.mjs", 600, 200],
   ["poc/session-target/src/extension.ts", 400, 100],
   ["packages/runtime/test/coordinator.test.ts", 600, 200],
   ["apps/vscode-extension/test/host/smoke.ts", 600, 200],
@@ -74,7 +76,7 @@ describe("enforced code size policy", () => {
     };
 
     expect(manifest.scripts.lint).toBe(
-      "eslint packages apps scripts eslint.config.mjs vitest.config.ts poc/session-target/src poc/session-target/test poc/session-target/vitest.config.mts poc/native-session-continuity poc/copilot-runtime-reuse/test --max-warnings=0",
+      "eslint packages apps scripts examples eslint.config.mjs vitest.config.ts poc/session-target/src poc/session-target/test poc/session-target/vitest.config.mts poc/native-session-continuity poc/copilot-runtime-reuse/test --max-warnings=0",
     );
   });
 });

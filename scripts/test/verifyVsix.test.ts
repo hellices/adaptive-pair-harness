@@ -433,6 +433,12 @@ describe("inspectManifest", () => {
 });
 
 describe("inspectEntryContent", () => {
+  it.each(["ADAPTIVE_PAIR_NATIVE_HISTORY_TEST", "adaptive-pair-native-history-fixture", "sessionResource", "--enable-smoke-test-driver"])(
+    "rejects native history driver material: %s", marker => {
+      expect(inspectEntryContent("extension/dist/extension.cjs", marker).join("\n")).toContain(marker);
+    },
+  );
+
   it("sanitizes hostile entry names in content violations", () => {
     expect(
       inspectEntryContent(

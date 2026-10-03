@@ -2408,6 +2408,218 @@ from it. An independent adapter remains deferred rather than presumed
 necessary; any remaining storage requirement needs its own reviewed evidence
 and implementation plan. No production behavior changes in this investigation.
 
+### 13.4 Native Growth hands-on milestone
+
+**Status: approved contract implemented and independently reviewed on the
+native-trial branch; owner acceptance remains pending. The owner conditionally
+authorized merging PR #14 after fresh checks and review on October 3, 2026.** On
+September 22, 2026, the owner selected a native `@pair` trial rather than an
+SDK-first adapter and then approved this written contract for implementation,
+testing, packaging, and PR review. The branch implements the contract below
+originally from main at `ba20468`; this is not a claim that the trial has merged
+or that authenticated model inference has been observed. The October 2, 2026 UTC
+follow-up observed native checkpoint history across separate application
+launches on VS Code 1.136.2, 1.140.0, and 1.141.0-insider on macOS and Linux,
+plus the 1.138.0 Linux regression fixture, without restoring live authority.
+The earlier 1.139.0-insider run remains historical evidence, not the current
+follow-up host set. See the measured boundaries in
+[the research record](research.md#native-growth-trial-implementation-evidence).
+The native-reuse research PR #13 merged on October 3, 2026 at `d0b4a0d`, and
+the owner requested rebasing this trial onto that baseline. Its isolated probes
+remain research evidence, not production dependencies or a new runtime adapter.
+
+#### Outcome and integration boundary
+
+The deliverable is an installable Stable VSIX and a small local exercise that
+the owner can open, configure, attempt, request hints for, and verify. The
+existing participant uses the model selected in VS Code through
+`ChatRequest.model`; there is no new Copilot SDK, credential reader, login
+flow, proposed API, Session Target, or replacement chat UI. Real account/model
+availability remains a user prerequisite, not a result inferred from fixture
+models. Deterministic setup, state, checkpoint, and history routes require no
+model call.
+
+Inactive-zero and every existing effect-side permission check remain release
+gates. No installation, setup, or history operation changes another extension,
+participant, session, setting, keybinding, or default selection. Growth never
+applies an AI-authored workspace edit. Verification still needs its separate
+process confirmation and reports only an observed result.
+
+#### Reachable first-use setup
+
+The current guidance route requires an agreed work unit before it creates a
+model request. Starting a session only enters briefing; therefore a claim that
+an unconstrained first prompt will always create that agreement is not an
+adequate first-use contract. Add a deterministic `@pair /setup` route using
+native input, file-selection, and confirmation surfaces, rather than weakening
+the Growth guidance gate to run a model before agreement.
+
+- Require a trusted workspace, explicit Presence enablement, and a started
+  session before reading workspace information or collecting setup input.
+- Collect a bounded objective, one explicitly chosen eligible workspace file,
+  an independent variation, and an allowlisted verification-plan expression.
+  The trial uses Growth mode, human edit ownership, and a disclosed hint ceiling
+  of four. The user can cancel every input. A syntactically allowed script is
+  not evidence that the script exists or passes; the existing effect adapter
+  still verifies that when `/check` is requested.
+- Capture the current bounded entry through the existing controller. Use the
+  real coordinator for learning confirmation, mode selection, work-unit
+  proposal, and agreement. Learning, mode, and final scope/verification each
+  need a separate explicit native confirmation; the model grants none of them.
+- Bind each accepted action to the current runtime revision and authority
+  epoch. Recheck cancellation, workspace, Presence, and session identity after
+  every asynchronous boundary. Disable, pause, replacement, or a conflicting
+  turn invalidates pending setup. No queued dialog may silently grant authority
+  to a different session.
+- Do not overwrite an operational work unit. A cancelled partial setup is not
+  described as complete; a subsequent setup may finish a still-briefing
+  session only after fresh confirmations. Disable and start again is the
+  explicit full-reset path. Show actionable local failure messages without
+  publishing raw exception text.
+
+#### Explicit, minimized native checkpoint
+
+`@pair /checkpoint` is an explicit save request, not an automatic listener or
+background persistence service. With Presence enabled and a live Growth work
+unit, show a confirmation that the minimized record will be attached to the
+response and retained under VS Code's native chat-history controls. Revalidate
+the original live-state identity after confirmation and synchronously after
+the public handler's final await, before emitting the acknowledgement and
+returning `ChatResult.metadata` synchronously with no intervening await.
+Cancellation, a stale revision, a paused/disabled session, or a declined prompt
+returns no checkpoint. No disk adapter is added.
+
+The metadata namespace is `adaptivePairCheckpoint`. Its v1 value is a closed
+object, containing only:
+
+| Field | Allowed value |
+| --- | --- |
+| `format` | `adaptive-pair-native-checkpoint` |
+| `version` | `1` |
+| `mode` | `growth` |
+| `workUnitStatus` | An existing work-unit status enum |
+| `maximumHintLevel` | Integer 0–5 |
+| `attempt` | `none`, `recorded`, or `bypassed` |
+| `hypothesis` | `none`, `recorded`, or `bypassed` |
+| `hintLevel` | `null` or integer 0–5 |
+| `solutionRevealed` | Boolean recording historical reveal authorization, not proof of solution delivery |
+
+There are no paths, file contents, objectives, summaries, diagnostic text,
+timestamps, hashes, runtime/session/work-unit IDs, SDK IDs, grants, baselines,
+verification results, or learning-outcome claims. Construct the record by
+allowlisting live fields, never by serializing a snapshot. Reject additional
+keys, accessors, malformed values, unsupported versions, and oversized shapes.
+The fixed v1 object must fit within 512 UTF-8 bytes.
+
+The field name is retained for v1 compatibility. A reveal authorization may
+exist even when the agreed hint ceiling prevents delivery; historical display
+must not claim that a solution was shown. Neither boolean value restores live
+permission or establishes an assistance or learning outcome.
+
+#### Historical display, never live admission
+
+`@pair /history` examines only the most recent 32 public history turns, accepting
+only this participant's responses after explicit Presence enablement. Use only response metadata,
+not prompt text or another participant's data. If the newest owned checkpoint
+is invalid or unsupported, report that it is unavailable rather than silently
+falling back to an older record. An absent record is a normal empty state.
+
+Render a bounded, deterministic **historical report, not live state or verified
+evidence**. It may show the old attempt/hypothesis flags and hint level, but it
+cannot seed the coordinator, satisfy an attempt gate, restore a grant or scope,
+invoke a tool/model, or report a previous check as current verification. Ignore
+checkpoint metadata in model-context construction. Starting again requires
+the ordinary explicit start and fresh `/setup` confirmations.
+
+VS Code owns native reopening, copying/forking, retention, and deletion. A fork
+can carry the same historical report but never creates or identifies live Pair
+authority. The existing live Pair session remains workspace-window scoped;
+this milestone does not promise a distinct live runtime per native chat or
+fork. `/history` and `/session` must clearly distinguish selected-chat history
+from the current window's live Pair state.
+
+Disabling Pair clears its owned local observation journal and live state, not
+VS Code chat history. Explain this in the disable confirmation and trial
+instructions. To remove a native checkpoint, the user manages/deletes that
+chat through native UI; independently retained forks and backups are outside
+Pair's erasure claim. Returning metadata acknowledges attachment to a response,
+not atomic disk publication or power-loss durability. P2b's storage/restart
+admission contract remains unimplemented by this feature. Minimizing checkpoint
+fields does not minimize the ordinary prompts and responses retained in the
+host's native transcript; that transcript remains subject to native controls.
+
+#### Acceptance and delivery
+
+- A dependency-free Node exercise supplies a small failing task and an existing
+  `npm test` script. It is not installed into or written into another workspace.
+  Document the deliberate initial failure and keep a withheld solution out of
+  the normal walkthrough.
+- Prove the public first-use sequence from an empty real coordinator, rather
+  than seeding a ready snapshot: enable, start, setup, brief, attempt, hint,
+  check, checkpoint. Cover cancelled inputs/confirmations, invalid scope,
+  stale setup/checkpoint, and a missing model without weakening restraints.
+- Test checkpoint construction/parsing, foreign metadata, malformed newest
+  metadata, history bounds, fork-shaped copies, no restoration, and inactive
+  zero. A restarted host must see historical flags without a live work unit or
+  restored permission. Test actual public participant wiring as well as pure
+  helpers; distinguish an injected fixture model from authenticated inference.
+- Run affected unit/property tests, typecheck, lint, Stable Extension Host and
+  package checks. Audit all active manifests/lockfiles, including isolated
+  prototypes, and inspect the VSIX for unintended dependencies/probes.
+- Commit, push, open a PR against main, address concrete review findings, and
+  recheck the final revision's CI. Provide the local VSIX, exact trial steps,
+  and remaining account/manual checks. Do not merge without owner direction.
+
+### 13.5 Codespaces trial configuration
+
+**Owner-authorized scope:** prepare this repository so the owner can create a
+Codespace and try the existing native Growth preview. This is environment and
+onboarding work, not another Pair mode, a browser-only port, or permission to
+create a billable Codespace on the owner's behalf.
+
+- Run the existing Node extension in the workspace extension host. Declare
+  `extensionKind: ["workspace"]` explicitly so desktop clients connected to a
+  Codespace do not run filesystem access or verification on the client machine.
+  Ordinary local VS Code still uses its local Node extension host.
+  Keep the native setup adapter's `file` URI gates: the checked remote host
+  transforms workbench-side `vscode-remote` workspace/dialog URIs to `file`
+  before extension API delivery. This is not an independent authority check or
+  proof of a completed Codespaces trial; see the
+  [upstream URI review evidence](research.md#remote-uri-review-disposition).
+- Use the official `node:24-bookworm` image and its non-root `node` user. Node 24
+  matches the supported LTS toolchain; the image has no Dev Container extension
+  recommendations that silently install another extension. Keep the VS Code
+  engine floor unchanged and let native VSIX installation enforce compatibility.
+- The creation hook installs the root lockfile, typechecks, builds and verifies
+  the Stable VSIX, then prepares a sibling `<repository>-growth-trial` directory
+  from the dependency-free fixture's package, source, and tests. Wait for this
+  hook before declaring container preparation finished. The isolated Session
+  Target prototype is not required or installed for this trial.
+- Never overwrite an existing exercise. Reject symlink/non-directory targets
+  and incomplete copies with an actionable error; preserve completed human edits
+  across hook reruns and container rebuilds. Do not repair the tracked fixture.
+- Installation is a separate owner-invoked command from the Codespace terminal.
+  It installs only the generated Adaptive Pair VSIX, without forcing replacement
+  or installing/configuring Copilot or any other extension. It must not run on
+  creation, attachment, or restart. Opening the exercise, trusting it, enabling
+  Presence, starting a session, selecting Chat/Ask/model, authentication, and all
+  Pair confirmations remain explicit owner actions.
+- Do not add editor settings, port forwarding, secrets, automatic model calls,
+  proposed APIs, or persistent Pair state. Provisioning commands are repository
+  development tooling, not extension activation or workspace observation.
+- Test hook ordering/failure propagation, safe copy/retry behavior, explicit
+  installation arguments, configuration, and workspace-host placement. Exercise
+  real provisioning in the selected Linux image in CI. Native Codespaces UI,
+  authenticated inference, remote verification, and reconnect/history remain
+  owner checks until observed in an actual Codespace; a Linux container test is
+  not that evidence.
+
+The chosen route automates preparation but not installation/activation. An
+attach-time installer would repeat side effects on reconnection; a web-extension
+rewrite would replace working Node filesystem/process capabilities unnecessarily.
+Neither is part of this change. Continue on the dedicated native-trial PR based
+on the current main baseline; do not merge it without separate owner direction.
+
 ## 14. Privacy and security
 
 Adaptive Pair separates four data planes:

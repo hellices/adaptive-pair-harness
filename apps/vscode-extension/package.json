@@ -2,7 +2,7 @@
   "name": "adaptive-pair",
   "displayName": "Adaptive Pair",
   "description": "Protect direct development capability while working with AI.",
-  "version": "0.2.0-preview.1",
+  "version": "0.2.0-preview.2",
   "publisher": "adaptive-pair",
   "license": "Apache-2.0",
   "repository": {
@@ -26,6 +26,9 @@
     "onChatParticipant:adaptivePair.chat"
   ],
   "main": "./dist/extension.cjs",
+  "extensionKind": [
+    "workspace"
+  ],
   "files": [
     "dist/extension.cjs",
     "LICENSE",
@@ -158,6 +161,18 @@
         "isSticky": true,
         "commands": [
           {
+            "name": "setup",
+            "description": "Agree a scoped Growth task through explicit native confirmations"
+          },
+          {
+            "name": "checkpoint",
+            "description": "Explicitly save a minimized historical checkpoint in this chat"
+          },
+          {
+            "name": "history",
+            "description": "Inspect historical progress without restoring live state or permissions"
+          },
+          {
             "name": "brief",
             "description": "Report the agreed brief from current state"
           },
@@ -215,6 +230,6 @@
     "@types/vscode": "1.136.0",
     "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "4.0.0",
-    "mocha": "^12.0.1"
+    "mocha": "^12.0.2"
   }
 }

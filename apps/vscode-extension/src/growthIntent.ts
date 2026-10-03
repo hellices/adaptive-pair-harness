@@ -2,6 +2,9 @@ import type * as vscode from "vscode";
 import type { HintLevel } from "@adaptive-pair/protocol";
 
 export type GrowthIntent =
+  | "setup"
+  | "checkpoint"
+  | "history"
   | "brief"
   | "join"
   | "attempt"
@@ -26,6 +29,9 @@ export interface GrowthIntentResult {
  */
 export const GROWTH_COMMAND_INTENTS: Readonly<Record<string, GrowthIntent>> =
   Object.freeze({
+    setup: "setup",
+    checkpoint: "checkpoint",
+    history: "history",
     brief: "brief",
     attempt: "attempt",
     hypothesis: "hypothesis",
@@ -46,6 +52,10 @@ const parseExplicitLevel = (prompt: string): HintLevel | undefined => {
 
 const naturalIntent = (prompt: string): GrowthIntent => {
   const text = prompt.toLowerCase();
+
+  if (/^\s*set up my (task|work)[.!]?\s*$/u.test(text)) { return "setup"; }
+  if (/^\s*save (a )?checkpoint[.!]?\s*$/u.test(text)) { return "checkpoint"; }
+  if (/^\s*show (my )?history[.!]?\s*$/u.test(text)) { return "history"; }
 
   if (/\b(stay|be|keep)\s+quiet\b/u.test(text) || /\bquiet\s+mode\b/u.test(text)) {
     return "quiet";

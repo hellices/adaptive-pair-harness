@@ -47,7 +47,7 @@ describe("CI clean-checkout ordering", () => {
 
     expect(installIndex).toBeGreaterThanOrEqual(0);
     expect(steps[installIndex + 1]?.trim()).toBe(
-      "name: Audit all dependencies\n        run: npm audit --audit-level=low",
+      "name: Audit all dependencies\n        run: npm audit --package-lock-only --audit-level=low",
     );
   });
 
@@ -61,17 +61,23 @@ describe("CI clean-checkout ordering", () => {
 
     expect(installIndex).toBeGreaterThanOrEqual(0);
     expect(steps[installIndex + 1]?.trim()).toBe(
-      "name: Audit Session Target POC dependencies\n        run: npm --prefix poc/session-target audit --audit-level=low",
+      "name: Audit Session Target POC dependencies\n        run: npm --prefix poc/session-target audit --package-lock-only --audit-level=low",
     );
     expectOrdered(steps.slice(installIndex).join("\n"), [
       "run: npm --prefix poc/session-target ci",
-      "run: npm --prefix poc/session-target audit --audit-level=low",
+      "run: npm --prefix poc/session-target audit --package-lock-only --audit-level=low",
       "run: npm --prefix poc/session-target run check",
       "run: npm --prefix poc/session-target run package",
     ]);
   });
 
-  it("builds workspace exports before both stable host smoke jobs", () => {
+  it("retains the tested minimum and previous host alongside current Stable", () => {
+    expect(job("  host-smoke:", "  host-insiders:")).toContain(
+      'vscode: ["1.136.2", "1.138.0", "1.140.0"]',
+    );
+  });
+
+  it("builds workspace exports before every Stable host smoke job", () => {
     expectOrdered(job("  host-smoke:", "  host-insiders:"), [
       "run: npm ci",
       "name: Build workspace package exports",
@@ -106,5 +112,22 @@ describe("CI clean-checkout ordering", () => {
       "run: npm run typecheck",
       "name: Run isolated Extension Host smoke on Insiders",
     ]);
+  });
+
+  it.each([
+    { name: "Stable", start: "  host-smoke:", end: "  host-insiders:" },
+    { name: "Insiders", start: "  host-insiders:", end: undefined },
+  ])("preserves only owned native diagnostics after $name host failures", ({ start, end }) => {
+    const steps = job(start, end).split(/^ {6}-(?=\s)/mu).slice(1);
+    const diagnostic = steps.find(step => step.includes("name: Upload native host failure logs")) ?? "";
+    expect(diagnostic).toContain("if: failure()");
+    expect(diagnostic).toContain("uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
+    expect(diagnostic).toContain("~/.ap-host/run-*/native-history/*.log");
+    expect(diagnostic).toContain("~/.ap-host/run-*/native-history/*.json");
+    expect(diagnostic).toContain("~/.ap-host/run-*/native-history/*-logs/**/*.log");
+    expect(diagnostic).toContain("include-hidden-files: true");
+    expect(diagnostic).toContain("retention-days: 3");
+    expect(diagnostic).not.toContain("profile/");
+    expect(diagnostic).not.toContain("home/");
   });
 });

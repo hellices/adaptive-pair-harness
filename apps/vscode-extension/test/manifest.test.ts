@@ -3,6 +3,40 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("VS Code manifest", () => {
+  it("aligns the native Growth trial release with the lockfile", () => {
+    const version = "0.2.0-preview.2";
+    for (const manifestPath of ["package.json", "apps/vscode-extension/package.json"]) {
+      const manifest = JSON.parse(readFileSync(resolve(manifestPath), "utf8")) as {
+        version: string;
+      };
+      expect(manifest.version, manifestPath).toBe(version);
+    }
+    const lockfile = JSON.parse(readFileSync(resolve("package-lock.json"), "utf8")) as {
+      version: string;
+      packages: Record<string, { version: string }>;
+    };
+    expect(lockfile.version).toBe(version);
+    expect(lockfile.packages[""]?.version).toBe(version);
+    expect(lockfile.packages["apps/vscode-extension"]?.version).toBe(version);
+  });
+
+  it("keeps filesystem and process work in the workspace Node host at the current engine floor", () => {
+    const manifest = JSON.parse(readFileSync(
+      resolve("apps/vscode-extension/package.json"),
+      "utf8",
+    )) as {
+      extensionKind?: string[];
+      main: string;
+      browser?: unknown;
+      engines: { vscode: string; node: string };
+    };
+
+    expect(manifest.extensionKind).toEqual(["workspace"]);
+    expect(manifest.main).toBe("./dist/extension.cjs");
+    expect(manifest.browser).toBeUndefined();
+    expect(manifest.engines).toEqual({ vscode: "^1.136.0", node: ">=24" });
+  });
+
   it("contributes every Pair Presence command", () => {
     const manifest = JSON.parse(readFileSync(
       resolve("apps/vscode-extension/package.json"),

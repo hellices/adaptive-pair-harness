@@ -17,43 +17,104 @@ not just a narrow calculation. Learning to prompt, review, and select AI output
 is valuable, but it does not automatically replace the ability to create and
 debug software directly.
 
-## Growth Mode preview (0.2.0-preview.1)
+## Native Growth trial (0.2.0-preview.2)
 
-This branch ships an installable **Stable Growth** preview: an opt-in Pair
-Presence layer and a `@pair` Growth Mode chat participant. It is additive and
-changes no existing VS Code or GitHub Copilot Chat behavior. It makes **no claim
-that it improves learning or productivity**.
+The trial adds opt-in Pair Presence and a native `@pair` Growth participant to
+VS Code Stable. It changes no existing VS Code or GitHub Copilot Chat behavior,
+never edits your files, and makes **no learning or productivity claim**. Native
+`/setup` establishes the task without a model-generated bootstrap. Explicit
+`/checkpoint` and `/history` report historical progress, never restored authority.
 
-Controls (Command Palette, all namespaced under `Adaptive Pair:`):
+**Measured compatibility evidence (October 2, 2026 UTC):** VS Code **1.136.2,
+1.140.0, and 1.141.0-insider** each passed 17 isolated host smokes and a
+two-launch native checkpoint/reopen check on macOS and Linux using production
+wiring; Linux also passed **1.138.0** as a regression fixture. Historical
+metadata returned without restoring live authority. Those runs made zero model
+and token-count calls, loaded no Copilot extension, and used no proposed API.
+The Codespaces-preparation baseline (`b8c5a58`) passed the 3,065-test root check,
+both dependency audits, Stable packaging, and all six CI jobs, including the
+selected-container preparation test. Earlier 1.139.0-insider results remain
+historical evidence. PR #14 tracks subsequent review and final-revision checks.
+Authenticated selected-model inference remains an explicit owner trial check.
+See the [trial walkthrough](docs/growth-preview.md#observed-host-evidence)
+for the evidence boundaries and remaining manual checks.
 
-- **Enable Presence** — turn on the ambient presence layer in a trusted workspace.
-- **Stay Quiet** — keep Presence on but silence proactive nudges.
-- **Pause Presence** — suspend observation and any in-flight work unit.
-- **Join Work in Progress** — capture a bounded local entry snapshot.
-- **Start a Session** — begin a Pair session for fresh work.
-- **Disable Presence and Clear Continuity** — disable and delete the local journal.
+### Codespaces (owner-run)
 
-Growth guidance is requested through `@pair` and its slash commands, each of
-which has an implemented route and a natural-language equivalent: `/brief` and
-`/session` report current core state without any model call, `/attempt` and
-`/hypothesis` record your work, `/hint` and `/reveal` return bounded guidance,
-`/check` runs the agreed verification plan and reports only the observed product
-result, and `/transfer` requests one independent variation distinct from the
-current work unit. The AI never edits your files in Growth Mode.
+Use the single [Codespaces walkthrough](docs/growth-preview.md#codespaces-owner-run-trial)
+to create the trial under your own account and quota/billing arrangement.
+**Until PR #14 is merged:** select `agents/native-growth-trial`, not `main`,
+before creating the Codespace; after merge, use the updated `main` branch.
+Preparation builds the VSIX and a separate
+exercise; installation, opening that folder, sign-in, and Pair enablement stay
+explicit. Codespaces UI, authenticated inference, and reconnect/history checks
+remain owner acceptance work, not results established by the desktop host tests.
 
-Product verification is reported separately from Growth. Growth itself is
-reported as five independent fields — similar generation, varied debugging,
-explanation, meaningful authorship, and the next-assistance proposal — and each
-stays "not assessed" until its own demonstration is recorded. Starting a
-transfer task demonstrates none of them.
+### Local quickstart
 
-See **[docs/growth-preview.md](docs/growth-preview.md)** for the greenfield and
-join-in-progress walkthroughs, hint and reveal behavior, product verification
-and the five Growth fields, local storage/deletion and the export limitation,
-supported languages and host versions, the experimental Session Target and its
-Insiders proposed-API limitation, and the exact known limitations. The Stable VSIX
-(`adaptive-pair-0.2.0-preview.1-stable.vsix`) contains no `enabledApiProposals`
-and no `contributes.chatSessions`.
+Use VS Code Stable compatible with `^1.136.0`, Node.js **24 or later**, and npm.
+Install the trial VSIX through **Extensions: Install from VSIX...**; the target
+artifact is `adaptive-pair-0.2.0-preview.2-stable.vsix`. See
+[installation](docs/growth-preview.md#install-and-prerequisites) to build it.
+Model guidance additionally needs access to the selected model and its provider
+in native Chat. Selecting a Copilot-hosted model requires the corresponding
+Copilot sign-in and entitlement; other providers have their own access
+requirements. Pair adds no authentication flow. Availability and provider
+consent are separate from Pair's permissions; installing Pair grants none of them.
+
+For this trial, open **ordinary built-in VS Code Chat**, choose **Ask** mode, and
+invoke `@pair` there, not in Copilot CLI, another Session Target, or your current
+Agents-provider conversation. These are your opt-in UI choices: Pair never
+switches your model, session, mode, or defaults automatically. Here, "local Chat"
+means that ordinary chat surface, not a requirement for files to reside on your
+computer. The observed desktop host evidence covers Chat/Ask, not those other
+agent surfaces or Codespaces UI.
+
+From the repository root, make a fresh temporary copy of the exercise and open
+that copy as its own workspace. Do not repair the repository fixture:
+
+```sh
+trial_root="$(mktemp -d "${TMPDIR:-/tmp}/adaptive-pair-growth.XXXXXX")"
+cp examples/growth-trial/package.json "$trial_root/"
+cp -R examples/growth-trial/src examples/growth-trial/test "$trial_root/"
+code --new-window "$trial_root"
+```
+
+The exercise has **zero dependencies and needs no install**. The repository-only
+typed-lint project configuration is not needed in this copy. In its terminal,
+`npm test` initially reports **2 passing and 4 failing tests** by design.
+
+1. Trust only the copied exercise workspace. Run **Adaptive Pair: Enable
+   Presence**, then **Adaptive Pair: Start a Session** from the Command Palette.
+2. In that Ask chat, send `@pair /setup`. Enter your repair objective,
+   select `src/retry.mjs`, describe an independent variation, and choose
+   `npm test` as verification.
+3. Review three separate **Continue once** confirmations: the learning
+   agreement (hint ceiling **4**), Growth mode (you own edits), and the final
+   work-unit scope and verification plan. Starting a session alone is not setup.
+4. Use `@pair /brief`, make your own attempt, and record what you actually did
+   with `@pair /attempt`. Record your diagnosis with `@pair /hypothesis` and ask
+   `@pair /hint` if needed; review selected-model disclosure and action prompts.
+5. Repair the copied source yourself, save it, and send `@pair /check`. This
+   explicit request supplies the action grant; review the runner's one separate
+   process-confirmation modal for that run. The intended repair yields
+   **6 passing tests**; a passing product check proves no learning outcome.
+6. Send `@pair /checkpoint`, review its separate native-history confirmation,
+   then inspect `@pair /history`. VS Code owns retention and deletion. A save
+   response is not a disk-durability acknowledgement.
+7. To try reopening, reload the window or close and reopen the workspace, then
+   reopen the chat using VS Code history. Enable Presence before `/history`.
+   Any recovered metadata is historical only; `/session` describes the fresh
+   window runtime. Start again and repeat `/setup` with fresh confirmations
+   before working. A chat switch or fork alone does not create a new Pair runtime.
+
+Cancel any input or confirmation to stop that action. For a full Pair reset,
+run **Adaptive Pair: Disable Presence and Clear Continuity**, then enable,
+start, and set up again. Disable clears Pair's local journal and live state,
+**not native chat history or your edits**. Use VS Code's native controls to
+delete chats. The [walkthrough](docs/growth-preview.md) covers partial setup,
+pause/quiet controls, verification failures, observed host evidence, and pending
+authenticated account/model inference.
 
 ## Why it exists
 
@@ -180,6 +241,10 @@ to Human Driver / AI Navigator instead of claiming unsupported AI edit control.
 
 ## VS Code entry
 
+The current trial uses the native `@pair` quickstart above. The broader Agent
+and Session Target integration described here is design direction, not a
+requirement or a completed feature of this Growth trial.
+
 The `Copilot / Claude / Codex / Local` **Session Target** control chooses the
 execution harness. On the stable integration path, Adaptive Pair does not
 replace that choice.
@@ -214,16 +279,17 @@ for the prototype criteria and current evidence.
 The POC source and reproduction steps are under
 [poc/session-target](poc/session-target/).
 
-The same extension codebase produces two channel packages:
+The planned channel split is:
 
 | Artifact | Use |
 |---|---|
 | `adaptive-pair-<version>-stable.vsix` | Stable APIs, Pair Presence, Pair tools, and `@pair`; Marketplace candidate |
 | `adaptive-pair-<version>-insiders.vsix` | The same product plus the proposed Adaptive Pair Session Target |
 
-They share one extension ID and are alternatives, not two required
-installations. An Agent Plugin may optionally expose Adaptive Pair under the
-Agent control on compatible Stable targets, but it is not required.
+Only the Stable product package is part of this trial; the isolated Session
+Target POC is not an installable second product channel. The proposed channels
+would share one extension ID and be alternatives, not two required installations.
+An Agent Plugin remains future integration work, not a trial prerequisite.
 
 ## Additive, not a replacement
 
@@ -297,7 +363,8 @@ unproven; neither experiment wires a new product adapter.
 
 Use Node.js 24 or later. Install all three maintained dependency graphs before
 running the complete checks; both isolated dependency-bearing POCs are
-deliberately outside npm workspace globs:
+deliberately outside npm workspace globs. The separate Growth exercise is
+dependency-free and needs no install or lockfile:
 
 ```sh
 npm ci
@@ -314,11 +381,15 @@ Run its isolated desktop experiment explicitly with
 `npm run probe:native-continuity`; it is not part of GUI CI.
 The Copilot runtime suite uses synthetic loopback responses, requires no login
 or paid model, and runs in CI on POSIX. It does not exercise the native Agent UI.
-`npm run lint` also covers both dependency-bearing POCs' authored source/tests,
-host fixtures, and root/POC lint and test configurations. Production and regular
-tests use typed linting; standalone configurations and intentionally incomplete
-host fixtures use syntactic rules with the same size limits. Only fixture
-function parameters may be unused, preserving the bug the host scenarios repair.
+`npm run lint` also includes `examples`, both dependency-bearing POCs' authored
+source/tests, the native continuity probe, host fixtures, and root/POC lint and
+test configurations. Production,
+regular tests, and the Growth exercise require typed linting; standalone
+configurations and intentionally incomplete host fixtures use syntactic rules
+with the same size limits. Only host-fixture function parameters may be unused,
+preserving the bug the host scenarios repair. The root exercise acceptance test
+expects its deliberate failures, verifies a repair only in a disposable copy,
+and checks that the shipped fixture remains unchanged.
 Dependency-boundary tests compare actual imports, manifests, and TypeScript
 project references, including declaration and direction checks for reference-only
 edges.
@@ -357,6 +428,18 @@ Presence shell, the versioned harness kernel, the in-memory authoritative runtim
 restraint, join-in-progress capture, observed verification, and a clean-profile
 Extension Host smoke plus packaging and CI. Pair Mode AI edits, Delivery Mode
 commands, and the native Agent Plugin remain out of scope for this preview.
+
+The `0.2.0-preview.2` native Growth trial adds deterministic `/setup`, an
+independent retry exercise, and explicit minimized `/checkpoint` and `/history`
+routes. The October 2, 2026 UTC follow-up passed native checkpoint/reopen checks
+on VS Code 1.136.2, 1.140.0, and 1.141.0-insider on macOS and Linux, plus the
+1.138.0 Linux regression fixture. The earlier 1.139.0-insider run is historical,
+not the follow-up host set. The Codespaces-preparation baseline (`b8c5a58`)
+passed local checks, refreshed audits, Stable packaging, and all six CI jobs;
+PR #14 records later review and final-revision checks.
+Authenticated account/model inference remains a manual trial check. Earlier
+host results below remain historical evidence. The [walkthrough](docs/growth-preview.md) separates
+the implemented route contract, observed host behavior, and outstanding checks.
 
 P1 adds tested, side-effect-free Pair work-unit admission, related human
 follow-up, and handoff-preflight contracts to `@adaptive-pair/modes`. These
@@ -401,8 +484,10 @@ clears the old session authority and requires a fresh session agreement.
 Windows cancellation never
 treats successful `taskkill` delivery as proof that the process tree exited;
 without that evidence it reports termination as unconfirmed.
-Only edit-episode continuity is persisted today;
-durable authoritative session/ownership recovery remains future work.
+Pair's local journal persists only edit-episode continuity. Explicit minimized
+checkpoint metadata may be retained by VS Code's native chat history; it never
+restores a live session, work unit, grant, or observed verification result.
+Durable authoritative session/ownership recovery remains future work.
 
 The completed Foundation and Growth implementation plan remains available in
 Git history at `ae1f095:docs/implementation-plan.md`, the completed P1 plan

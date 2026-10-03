@@ -131,6 +131,30 @@ export class SessionController implements vscode.Disposable {
     return this.coordinatorPort.observeWorkspace();
   }
 
+  public async prepareGrowthEntry(signal: AbortSignal): Promise<PairRuntimeSnapshot> {
+    this.ensureUsable();
+    const lifetime = AbortSignal.any([signal, this.captureLifetime.signal]);
+    lifetime.throwIfAborted();
+    const observed = this.snapshotNow();
+    await this.snapshot();
+    const assertCurrent = (): void => {
+      lifetime.throwIfAborted();
+      const current = this.snapshotNow();
+      if (
+        current.revision !== observed.revision || current.presence.status === "off" ||
+        current.presence.status === "paused" || current.session?.status !== "briefing" ||
+        !vscode.workspace.isTrusted ||
+        vscode.workspace.workspaceFolders?.[0]?.uri.toString() !== observed.presence.workspaceId
+      ) {
+        throw new Error("GROWTH_SETUP_UNAVAILABLE");
+      }
+    };
+    assertCurrent();
+    const entry = await this.workspaceContext.capture(lifetime);
+    assertCurrent();
+    return this.dispatch({ type: "CaptureEntry", entry }, observed);
+  }
+
   public disablePresence(): Promise<PairRuntimeSnapshot> {
     this.invalidateCapture();
     return this.coordinatorPort.setPresence("off");

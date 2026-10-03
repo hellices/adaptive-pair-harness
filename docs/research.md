@@ -2017,6 +2017,535 @@ The existing Vite
 native-config-loader warning remains visible. Final-head remote CI and PR
 review remain separate delivery gates; local results do not imply either.
 
+### Native Growth trial implementation evidence
+
+The owner approved the native-first hands-on contract on September 22, 2026.
+The implementation started from `ba20468` on a dedicated trial branch. At that
+checkpoint, native/SDK feasibility PR #13 was unmerged and not required to run
+the product. It merged on October 3, 2026; the
+[rebase record](#october-3-2026-upstream-rebase) distinguishes that later baseline.
+The approved boundary is [design section 13.4](design.md#134-native-growth-hands-on-milestone).
+This record concerns an installable Growth trial, not an implementation of the
+P2b durable-store adapter, a Copilot SDK bridge, or demonstrated learning gains.
+
+The prior first-use instructions could not bootstrap themselves: model
+guidance needs an agreed work unit, but a fresh session has only briefing
+state. A deterministic `@pair /setup` now gathers bounded inputs and uses the
+real coordinator, three explicit confirmations, and current revision/epoch
+checks to agree human-owned Growth work. It does not bypass the model guard.
+Independent setup review reproduced and resolved three boundary problems:
+host admission changing between grant and invocation, a later filesystem read
+after disable during file validation, and retry of a compatible pending
+proposal. Entry capture also binds its observation before the first await.
+Public-route review then reproduced a final completion-message race: a real
+disable could commit after the adapter's state check but before the response
+was rendered. The adapter now retains the setup transaction's last validated
+snapshot and provides a synchronous freshness predicate, checked by the route
+immediately before publishing completion. The registered-runtime regression
+samples actual state inside the response callback and rejects the old false
+completion. No snapshot, predicate, or authority is stored in chat metadata.
+
+`/checkpoint` returns only the approved nine-field v1 object under
+`ChatResult.metadata.adaptivePairCheckpoint`, after a separate confirmation.
+`/history` inspects at most 32 public context turns and never hydrates the live
+runtime. The initial pure-contract suite covered 131 unit/property cases; an independent bounded
+enumeration of 6,804 valid combinations found a largest payload of 215 UTF-8
+bytes, below the 512-byte contract. These records contain no source, paths,
+objectives, identifiers, grants, verification results, or learning claims.
+Ordinary native transcripts are separate data retained by VS Code, not made
+private or deleted by the minimized checkpoint format.
+
+#### Actual native restart measurement
+
+The extended isolated host runner passed on VS Code **1.136.2**,
+**1.138.0**, and **1.139.0-insider**, using Node **24.21.0** for the runner.
+These complete macOS runs were repeated after the final publication-boundary
+corrections and the Vitest 5.0.1 refresh; the same three versions also passed
+the Linux delivery workflow described below. Each version passed the
+existing **17** inactive-zero/coexistence/Growth smoke cases and then launched
+two separate VS Code application processes with the same disposable profile.
+The restart scenario drives the actual registered production participant
+through native chat submission, rather than constructing a fake history array:
+
+1. Start from off with zero recorded product activity; explicitly enable and
+   start a briefing session. Decline one setup confirmation, retry, and observe
+   fresh learning, mode, and work-unit confirmations before agreement.
+2. Run `/check` against the deliberately faulty exercise and observe failure.
+   Record an attempt and hypothesis, simulate a human edit in the disposable
+   fixture through VS Code's editing API, save, and observe a passing `/check`.
+   Each process run receives its own verification confirmation.
+3. Decline one checkpoint request and verify no metadata is returned. Accept
+   the next request and compare its actual returned metadata with the live
+   minimized projection. Saving changes no live runtime state.
+4. Quit the application and launch it again with a distinct extension-process
+   identity. The runtime starts off. Explicitly enable Presence, reopen the
+   original native chat, and call `/history` without starting a Pair session.
+   The actual public history contains the saved attempt/hypothesis flags;
+   live work units, agreements, assistance, and grants remain absent. The
+   history turn leaves both the live snapshot and activity counters unchanged.
+5. Open a new native chat and observe an empty checkpoint history, not a
+   workspace-wide leak of the previously selected chat's metadata.
+
+The fixture uses a registered offline model identity with **zero model and
+token-count requests** and no Copilot extension loaded. Fixed input and confirmation ports
+replace human dialog interaction only in the gated development-host entry;
+production continues to use native dialogs. Setup UI unit tests additionally
+exercise real filesystem eligibility and cancellation boundaries. Neither
+callback fixtures nor zero-model history turns prove authenticated inference,
+account entitlement, a human completing the UI walkthrough, or learning.
+
+The driver uses private workbench open/submit commands and reads the diagnostic
+`ChatRequest.sessionResource` only to locate its synthetic native chat. No API
+proposal is enabled, but those driver details are **not public product API
+dependencies**. The fixture entry, offline provider, diagnostic access, test
+auto-confirmations, and runner stay outside the production bundle/VSIX. The
+runner uses POSIX process-group isolation. Both macOS and Linux are measured;
+Windows explicitly skips only this optional phase without failing the existing
+baseline host tests. Windows restart-driver coverage is not claimed.
+
+The first native run exposed a test-observer defect: VS Code freezes response
+stream properties, so a proxy cannot substitute a different `markdown` value.
+The fixture now delegates from a separate stream object without changing the
+native object. Subsequent complete runs on all three versions passed. This was a
+test instrumentation correction, not a production API workaround.
+
+#### Whole-branch corrections and Linux delivery proof
+
+Whole-branch review found a second publication race, this time on checkpoint
+metadata: a real coordinator disable, pause, or revision commit could settle
+after the inner route's check but before the public handler returned. The
+route now carries its original identity-bound freshness predicate separately
+from the public result; the handler checks it synchronously after its final
+await. Regressions observe that handler promise's actual settlement, including
+real coordinator commits, cancellation, and equal-revision identity changes.
+Only the closed checkpoint projection is serialized.
+
+The nine-field v1 schema is unchanged. Its `solutionRevealed` flag comes from
+reveal authorization, not necessarily delivered content: fresh setup's ceiling
+of four can reject a level-five response before a model is created. Historical
+rendering now states authorization and explicitly declines delivery evidence.
+A real setup/reveal/checkpoint/history regression verifies that distinction
+without relaxing the ceiling or restoring authority. Shared setup validation
+also rejects Unicode line/paragraph separators before trimming, while retaining
+ordinary international text.
+
+Host-review corrections preserve the Windows baseline through an explicit
+optional-phase skip and gate the POSIX signal tests accordingly. The native
+runner no longer inherits ordinary D-Bus, XDG runtime, or Wayland endpoints.
+It creates an owned mode-0700 runtime directory and supplies one escaped
+nonexistent socket address inside it, with no D-Bus autolaunch fallback; only
+intentional graphical transport is inherited. Address escaping follows the
+[D-Bus address grammar](https://dbus.freedesktop.org/doc/dbus-specification.html#addresses).
+Both the driver and report verifier require explicit zero model **and**
+token-count metrics in both phases, and reject missing/nonzero evidence.
+
+Linux delivery initially failed before the fixture ran: Chromium reported an
+incorrectly configured downloaded SUID sandbox helper and exited with SIGTRAP.
+The native launch now matches test-electron's existing Linux sandbox arguments.
+After that correction, the seed scenario passed but application exit timed
+out: the native chat lifecycle veto opened an in-progress-session confirmation
+dialog. The captured seed report and renderer log separated a passing product
+scenario from blocked teardown; extending the timeout would not resolve it.
+The runner now passes `--enable-smoke-test-driver` only to disposable native
+test launches, matching the explicit automation exit branch in
+[VS Code 1.138.0's chat lifecycle contribution](https://github.com/microsoft/vscode/blob/1.138.0/src/vs/workbench/contrib/chat/electron-browser/chat.contribution.ts).
+It does not pass an extension-test entry point or replace real disk-backed
+history with in-memory test storage. This measures a controlled automation
+quit/reopen, not interactive confirmation behavior or crash durability. The
+flag is forbidden in production bundles and every shipped text entry. Failure
+uploads retain only synthetic-driver reports/logs, not profile or HOME trees.
+
+[CI run 35757672754](https://github.com/hellices/adaptive-pair-harness/actions/runs/35757672754),
+at `d9f222e`, passes the full build/package job and all three Linux host jobs.
+Each host log records 17 passing baseline cases and **both** native phases:
+restored historical metadata, no restored authority, empty fresh-chat history,
+failed-to-passed verification, and zero model/token calls. The Insiders smoke
+step itself passed; its allowed-failure job status is not used as a substitute
+for evidence. Local macOS runs also pass all three versions after these fixes.
+The local Insiders download resolver briefly timed out; the repeated test used
+the existing binary after checking its actual `1.139.0-insider` manifest, not
+an assumed latest version. PR #14 tracks the final revision's follow-up checks.
+
+#### September 22, 2026 dependency and tooling evidence
+
+The September 22, 2026 UTC trial audit inventoried **17 source manifests** and
+one generated host-staging manifest, not just workspace globs or an outdated
+report. That checkout had **two active lockfiles**: the root/workspace graph and the
+isolated Session Target POC. The source manifests declare 25 internal and 24
+external dependencies, covering **16 distinct direct external packages**.
+The private, dependency-free exercise adds no lockfile. The SDK prototype in
+the then-unmerged research branch was not part of that checkout or either graph.
+
+Exact registry requests now make **Vitest 5.0.1** and its matching coverage
+package available. Both graphs were updated with normal strict-peer npm
+installation, retaining all unrelated package resolutions. Only Vitest,
+`@vitest/mocker`, and `@vitest/spy` change in both locks; root
+`@vitest/coverage-v8` changes with them. No package locations were added or
+removed, and no overrides or temporary dependency constraints remain. This
+supersedes earlier dated 5.0.1-unavailability observations; it is maintenance,
+not a newly discovered security advisory.
+
+The refreshed direct-package decisions are:
+
+| Package | Selected version | Current evidence and retention boundary |
+| --- | --- | --- |
+| `@eslint/js` | 10.0.1 | Matches registry metadata and the component manifest in [ESLint 10.11.0](https://github.com/eslint/eslint/tree/v10.11.0/packages/js). |
+| `@types/mocha` | 10.0.10 | Matches the observed published registry version; [DefinitelyTyped](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/mocha) is the publishing source, not an independently versioned package release record. |
+| `@types/node` | 24.13.4 | Highest observed stable Node 24 declarations; retain the Node 24 baseline rather than admit APIs from the newer 26.5.1 declarations. |
+| `@types/vscode` | 1.136.0 | Matches the [public API floor](https://github.com/microsoft/vscode/blob/1.136.0/src/vscode-dts/vscode.d.ts). Newer declarations could permit APIs absent from the minimum host. |
+| `@vitest/coverage-v8` | 5.0.1 | Updated with its exact Vitest peer; [upstream 5.0.1](https://github.com/vitest-dev/vitest/releases/tag/v5.0.1) and registry metadata agree. |
+| `@vscode/dts` | 0.4.1 | Matches registry metadata and [upstream 0.4.1](https://github.com/microsoft/vscode-dts/releases/tag/v0.4.1); isolated POC only. |
+| `@vscode/test-electron` | 3.1.0 | Registry selection and declared Node compatibility are confirmed. Matching release/tag provenance in the [official repository](https://github.com/microsoft/vscode-test) could not be independently confirmed; retain this existing pin provisionally, not as a fully verified upstream release. |
+| `@vscode/vsce` | 4.0.0 | Matches registry metadata and [upstream 4.0.0](https://github.com/microsoft/vscode-vsce/releases/tag/v4.0.0); 4.0.1-0 is a prerelease, not a stable update. |
+| `ajv` | 8.20.0 | Matches registry metadata and [upstream 8.20.0](https://github.com/ajv-validator/ajv/releases/tag/v8.20.0); workspace-local resolution was included. |
+| `esbuild` | 0.28.2 | Matches registry metadata and [upstream 0.28.2](https://github.com/evanw/esbuild/releases/tag/v0.28.2). |
+| `eslint` | 10.10.0 | [Upstream 10.11.0](https://github.com/eslint/eslint/releases/tag/v10.11.0) is newer; its exact metadata request returns E404 at the tested mirror. Retain for measured availability, not because 10.10.0 is upstream-current. |
+| `fast-check` | 4.10.0 | [Upstream 4.10.2](https://github.com/dubzzz/fast-check/releases/tag/v4.10.2) is newer; exact 4.10.1 and 4.10.2 mirror requests return E404. |
+| `mocha` | 12.0.1 | [Upstream 12.0.2](https://github.com/mochajs/mocha/releases/tag/v12.0.2) is newer; its exact mirror request returns E404. |
+| `typescript` | 6.0.3 | Retain for the `>=4.8.4 <6.1.0` peer contract of typescript-eslint 8.70.0. Available [TypeScript 7.0.2](https://github.com/microsoft/TypeScript/releases/tag/v7.0.2) does not meet that contract; root lint also covers the POC. |
+| `typescript-eslint` | 8.70.0 | Stable [upstream 8.70.1](https://github.com/typescript-eslint/typescript-eslint/releases/tag/v8.70.1) exists but its exact mirror request returns E404. The mirror's `latest` tag is 8.70.1-alpha.15; do not replace a stable toolchain with that prerelease. |
+| `vitest` | 5.0.1 | Updated in both graphs; the declared engine accepts the tested Node 24.21.0 baseline. |
+
+Both post-update **full-lockfile** audits include development, optional, and
+peer dependencies and exit zero: **407 root** and **257 POC** audit entries,
+with **zero findings at every severity**. Complete installed-tree checks also
+pass. The unfiltered outdated reports still list four root and two POC entries
+for the compatibility/prerelease reasons above. Direct public npmjs requests
+failed with `ENOTCONN`; successful metadata and advisory results came from the
+configured anonymous mirror. An exact mirror E404 is not global package
+unavailability, and zero reported findings are not a vulnerability-free
+guarantee. These access/provenance gaps remain explicit.
+
+Local validation uses **Node 24.21.0 / npm 10.9.4**. Node 24 is the retained LTS
+baseline; newer Current Node 26 is not silently substituted. npm is an ambient
+tool, not a repository dependency pin: available npm 12.0.2 was checked against
+its upstream release and engine metadata, but no global npm migration is
+claimed. Workflow action pins match the checked stable releases of
+[checkout 7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1),
+[setup-node 7.0.0](https://github.com/actions/setup-node/releases/tag/v7.0.0), and
+[upload-artifact 7.0.1](https://github.com/actions/upload-artifact/releases/tag/v7.0.1).
+The recorded Linux run uses Node **24.20.0 / npm 11.19.0** for build/package
+and Insiders, and Node **24.21.0 / npm 11.19.0** for both Stable host jobs.
+These are separate runner observations, not a manifest pin or a global npm
+upgrade. The POC's
+vendored proposed-API provenance was not refreshed by this maintenance and
+does not establish a Stable product dependency.
+
+#### Combined local verification
+
+After the whole-branch fixes and dependency update, `npm run check`
+passes typecheck, full lint, and **3,040 tests in 142 files**. The separate
+coverage run passes the same suite with the matched 5.0.1 provider: statements
+**91.11%**, branches **86.04%**, functions **93.35%**, and lines **91.48%**. The
+expanded coverage graph includes the native process runner; these percentages
+are not directly comparable to the earlier graph that omitted that module. The
+existing Vite native-config advisory remains visible; no warning suppression
+or relaxed timeout/test gate was added. The isolated POC passes compilation,
+**21 tests in five files**, and packaging. POC results are not added to the
+root case count and its VSIX is not part of the Stable trial.
+
+All four implementation tasks passed independent spec and quality review,
+including re-review of the final setup-response correction. The subsequent
+whole-branch review's five Important and one Minor findings were corrected;
+targeted independent re-review approves source `d9f222e` with no remaining
+findings. Each of the four original Copilot review threads received a fix and
+verification reply and was resolved. Final documentation and latest-revision
+checks remain separately reviewable in PR #14. The three-host restart results
+above were freshly repeated on macOS and Linux. Stable
+build, packaging, and archive verification pass with exactly **seven entries**:
+the two VSIX envelope files, license, public README, manifest, Growth walkthrough,
+and production bundle. No SDK, isolated POC, host fixture, test-only offline
+provider, auto-confirmation, or private session diagnostic is packaged.
+Whole-branch review and final-revision PR checks are tracked in the
+[current implementation plan](implementation-plan.md). Authenticated
+selected-model hints remain an explicit owner trial check.
+
+### Codespaces trial preparation and dependency follow-up
+
+The owner authorized a repository configuration for an owner-created Codespace;
+no cloud workspace or paid resource was created during this work. The contract
+is [design section 13.5](design.md#135-codespaces-trial-configuration), with one
+[Codespaces walkthrough](growth-preview.md#codespaces-owner-run-trial) shared by the README.
+
+#### Platform choice and implementation
+
+The public [extension-host documentation](https://code.visualstudio.com/api/advanced-topics/extension-host)
+describes the remote Node host available behind both browser and desktop
+Codespaces clients. This supports trying the existing Node extension; it is not
+proof that its UI, permissions, verification, or history work in a Codespace.
+The manifest now explicitly requests the workspace host so filesystem and
+process operations stay beside the remote repository rather than the desktop
+client. The public VS Code engine floor and explicit activation events do not
+change, and no web-only entry point or proposed production API is introduced.
+
+The configuration uses the official `node:24-bookworm` image with `remoteUser`
+`node`, a blocking `postCreateCommand`, and no attach/start hook, port, editor
+setting, or extension recommendation. The Node image's
+[Dockerfile](https://github.com/nodejs/docker-node/blob/main/24/bookworm/Dockerfile)
+provides Node and the non-root account. This avoids the unrelated ESLint
+recommendation in the [Dev Container JavaScript image customization](https://github.com/devcontainers/images/blob/main/src/javascript-node/.devcontainer/devcontainer.json).
+The [Dev Container lifecycle contract](https://containers.dev/implementors/json_reference/#lifecycle-scripts)
+defines when provisioning runs; it does not grant Pair permission to activate.
+
+Preparation runs strict root-lockfile installation, typechecking, and the
+existing verified Stable packaging pipeline. It then copies only the package,
+source, and tests into a persistent sibling exercise, preserving completed
+copies on retry and rejecting unsafe or incomplete paths without deletion.
+Installation is a separate owner-invoked Codespaces-terminal command. It only
+installs our generated VSIX, does not force a replacement, and propagates native
+installer errors. Login, model selection, opening/trusting the exercise,
+Presence, setup, and every permission remain explicit owner actions.
+
+Initial targeted tests observed RED before implementation, then passed 27
+configuration, lifecycle, and manifest cases. A real fresh macOS checkout with
+spaces in its path ran the unmodified preparation hook twice: both runs built
+and verified the seven-entry VSIX; the copied exercise initially reported
+exactly two passes and four deliberate failures; source edits and an extra note
+survived the second run, and the source fixture was unchanged. No actual editor
+installation or provider inference was performed in that check. Windows skips
+only the Bash execution cases; pure configuration assertions remain portable.
+
+An independent task review found no actionable configuration/lifecycle defects.
+The selected-image CI job additionally provisions a disposable repository as
+non-root `node`, verifies the archive and exact initial test totals, and repeats
+preparation to prove preservation. It does not launch VS Code or a Codespace.
+Local Docker was unavailable. [CI run 37028398049](https://github.com/hellices/adaptive-pair-harness/actions/runs/37028398049)
+at `b8c5a58` passes all six jobs, including actual non-root provisioning in the
+selected image. The container logs show both verified builds, the deliberate
+two-pass/four-fail result, and preserved owner edits; the shell's fixture and
+copy comparisons also pass. Final-revision checks and review remain tracked in
+PR #14 rather than inferred from this earlier run.
+
+#### October 2, 2026 UTC inventory and remediation
+
+The follow-up inspected all **17 tracked source manifests**, generated host
+staging, **two active lockfiles**, and the same **16 distinct direct external
+packages**. The dependency-free exercise and scripts add no separate graph;
+the isolated Session Target POC remains outside root workspaces and is not
+installed by Codespaces preparation. That follow-up introduced no SDK graph.
+
+The initial full audits reported three affected root packages and two POC
+packages, including a high-severity finding. These were not dismissed as
+pre-existing. Normal compatible lockfile resolution updates both graphs to
+`brace-expansion` **5.0.12** and `serialize-javascript` **7.1.2**, and the root
+graph to `fast-uri` **3.1.8**, addressing the reported
+[brace rewriting](https://github.com/advisories/GHSA-q2hr-2g5m-vwhr),
+[nested-brace recursion](https://github.com/advisories/GHSA-qhr7-859c-m2p7),
+[comma-part recursion](https://github.com/advisories/GHSA-6j4f-fj2g-mc7p),
+[URI normalization](https://github.com/advisories/GHSA-hrr3-gc8f-f4qj), and
+[serialization](https://github.com/advisories/GHSA-gfhx-hw2g-v5hg) advisories.
+There are no overrides, forced peer resolutions, or audit suppressions.
+
+Direct-package checks now support these selections:
+
+| Package | Selected version | Current evidence and retention boundary |
+| --- | --- | --- |
+| `@eslint/js` | 10.0.1 | Available registry version and ESLint component release agree. |
+| `@types/mocha` | 10.0.10 | Available published declarations; DefinitelyTyped remains the publishing source. |
+| `@types/node` | 24.13.6 | Updated to the highest available stable Node 24 declarations; 26.6.2 describes a different runtime baseline. |
+| `@types/vscode` | 1.136.0 | Retained to prevent compiling against APIs above the supported floor; newer host releases do not raise that floor automatically. |
+| `@vitest/coverage-v8` | 5.0.2 | Updated with its exact Vitest peer; upstream 5.0.3 is not available from the configured feed. |
+| `@vscode/dts` | 0.4.1 | Registry metadata and upstream release agree; isolated POC only. |
+| `@vscode/test-electron` | 3.1.0 | Available existing compatible pin; the official repository's latest-release endpoint returned 404, so independent matching-release provenance remains unconfirmed. |
+| `@vscode/vsce` | 4.0.0 | Registry metadata and upstream release agree; the observed engine supports Node 24. |
+| `ajv` | 8.20.0 | Registry metadata and upstream release agree; its root `fast-uri` resolution is remediated. |
+| `esbuild` | 0.28.2 | Registry metadata and upstream release agree. |
+| `eslint` | 10.11.0 | Now available and updated to the checked upstream stable release. |
+| `fast-check` | 4.10.2 | Now available and updated to the checked upstream stable release. |
+| `mocha` | 12.0.2 | Updated in both graphs; upstream 12.0.3 returns an exact-version E404 from the configured feed. |
+| `typescript` | 6.0.3 | TypeScript 7.0.2 is outside typescript-eslint 8.70.1's confirmed `>=4.8.4 <6.1.0` peer contract. |
+| `typescript-eslint` | 8.70.1 | Highest available stable release; do not choose the feed's 8.70.2-alpha.7 `latest` tag. Upstream 8.71.0 returns an exact-version feed E404. |
+| `vitest` | 5.0.2 | Updated in both graphs with matching root coverage; upstream 5.0.3 returns an exact-version feed E404. |
+
+The relevant newer upstream records are [Vitest 5.0.3](https://github.com/vitest-dev/vitest/releases/tag/v5.0.3),
+[Mocha 12.0.3](https://github.com/mochajs/mocha/releases/tag/v12.0.3), and
+[typescript-eslint 8.71.0](https://github.com/typescript-eslint/typescript-eslint/releases/tag/v8.71.0).
+These availability observations supersede the September 22 table for this
+follow-up, without rewriting that historical evidence. Direct public npmjs
+metadata access again failed with `ENOTCONN`; the successful registry/advisory
+queries used the configured mirror. An exact feed E404 is not global
+unavailability, and a feed's `latest` tag is not evidence of the latest stable
+upstream release.
+
+Fresh full-lockfile audits using `--package-lock-only` report **400 root** and
+**250 POC** entries, with zero findings at every severity. Complete installed
+tree checks also pass. CI now explicitly audits the lockfiles rather than
+depending on a platform's installed optional subset. Both locks retain their
+platform-specific optional binaries; the smaller graph replaces obsolete
+Vitest/Mocha support packages, not Linux dependencies. Clean `npm ci` succeeds
+for both graphs without approving additional install scripts or changing global
+npm configuration. npm's unapproved-install-script warnings for esbuild and the
+VSIX signing helper remain visible; packaging is checked rather than assuming
+those warnings establish success or failure.
+
+The checked [official VS Code update service](https://update.code.visualstudio.com/api/update/darwin-arm64/stable/latest)
+reports **1.140.0 Stable** and **1.141.0-insider**. CI adds 1.140.0 alongside the existing 1.136.2 floor fixture
+and 1.138.0 regression fixture; the Insiders job remains explicit. This is host
+compatibility coverage, not evidence of the version deployed to an owner's
+Codespace. Browser/desktop Codespaces UI, selected-provider authentication and
+inference, remote `/check`, and reconnect/history without restored authority
+remain unobserved owner acceptance checks.
+
+The refreshed local check passes typechecking, lint, and **3,065 tests in 144
+files**. Coverage with matched Vitest/provider **5.0.2** remains **91.11%
+statements, 86.04% branches, 93.35% functions, and 91.48% lines**; this Node
+coverage report does not instrument the Bash hooks, which have subprocess tests
+and separate real provisioning checks. The isolated POC passes compilation,
+**21 tests in five files**, and packaging. Stable packaging verifies exactly
+seven archive entries. The existing Vite native-config advisory is still visible.
+
+Fresh macOS desktop host runs pass on **1.136.2, 1.140.0, and
+1.141.0-insider**. Each passes **17 baseline cases** and separate native
+seed/resume application launches: historical metadata returns, live authority
+does not, fresh-chat history is empty, and both model and token-count calls are
+zero. These are isolated Electron fixtures with controlled shutdown, not
+authenticated inference, browser/remote-host integration, or crash-durability
+proof. The same Linux run also passes **1.136.2, 1.138.0, 1.140.0, and
+1.141.0-insider**, each with 17 baseline cases and both native phases. The
+actual Insiders smoke step passes, not just its allowed-failure job status.
+The final-revision Linux CI remains a separate delivery gate in PR #14.
+
+#### Remote URI review disposition
+
+A follow-up review proposed accepting raw `vscode-remote` URIs in the native
+setup adapter. Upstream source does not support its premise for the selected
+**remote Node workspace host**. The checked VS Code **1.136.0, 1.136.1, 1.136.2,
+and 1.140.0** implementations use the same incoming mapping: workbench-side
+`vscode-remote` becomes host-side `file`, while client-side `file` becomes
+`vscode-local`. Outgoing host files acquire the connected remote authority.
+See the immutable [1.136.2 transformer](https://github.com/microsoft/vscode/blob/88e44fa0e00b08f7758b4f6d05632e4fd5e4df6f/src/vs/base/common/uriTransformer.ts)
+and [1.140.0 transformer](https://github.com/microsoft/vscode/blob/07f806f999227108933c2e30515b26eecc1fda74/src/vs/base/common/uriTransformer.ts).
+
+The remote host [installs this transformer on its RPC protocol](https://github.com/microsoft/vscode/blob/07f806f999227108933c2e30515b26eecc1fda74/src/vs/workbench/api/common/extensionHostMain.ts).
+The [RPC implementation](https://github.com/microsoft/vscode/blob/07f806f999227108933c2e30515b26eecc1fda74/src/vs/workbench/services/extensions/common/rpcProtocol.ts)
+transforms both incoming call arguments and replies. This covers initial
+`$initializeWorkspace` folder data as well as `showOpenDialog` selections before
+the extension revives their URIs. An isolated check executes the exact upstream
+transformer function, with TypeScript types stripped, across all four versions:
+**32 cases pass**, including both directions, client files, virtual schemes,
+and foreign-authority behavior. These checks are not part of the root test count.
+
+Retain the setup adapter's `file` gates and canonical path/symlink checks rather
+than interpreting a raw remote descriptor with native `fsPath`, `realpath`, and
+`stat`. The transformer itself does **not** compare incoming authorities, so
+the file gate must not be described as independent remote-authority
+authentication. No production scheme broadening is needed for this finding.
+This source and isolated-function evidence does not replace actual Codespaces
+file selection or verification, which remain owner acceptance checks.
+
+#### Checkpoint acknowledgement follow-up
+
+The follow-up review identified a real publication race: the helper emitted its
+checkpoint acknowledgement before the public handler's final freshness guard.
+That guard correctly withheld stale metadata but could leave misleading success
+text. The helper now returns the buffered message; the public handler checks
+the original identity and cancellation, then emits the acknowledgement and
+returns metadata synchronously without another await. No authority, grant,
+model call, or persistence mechanism is added.
+
+All **nine publication-boundary cases** failed before this source correction and
+pass afterward. They cover real coordinator disable, pause, and revision commits;
+cancellation after the inner guard; equal-revision workspace, session, start,
+and epoch replacement; and successful publication before a later cancellation.
+The tests observe the public promise's actual settlement, not a caller's later
+continuation. Independent focused review found no remaining source or test-timing
+defects. The five targeted suites pass **189 cases**. Fresh typecheck/lint
+and the complete root suite pass **3,066 cases in 144 files**; coverage remains
+**91.11% statements, 86.04% branches, 93.35% functions, and 91.48% lines**.
+Both full-lockfile audits again report zero findings (400 root/250 POC entries).
+
+The corrected source freshly passes all 17 baseline host cases and both native
+launches on macOS **1.136.2, 1.140.0, and 1.141.0-insider**. Historical metadata
+returns without live authority, fresh-chat history is empty, and model/token
+calls remain zero. The README, design, and walkthrough now distinguish the
+earlier 1.139.0-insider measurements from the October follow-up host set.
+Original review replies and final-revision Linux checks remain recorded in
+PR #14; the `b8c5a58` container run is not presented as testing this later fix.
+
+#### Reviewed implementation delivery checkpoint
+
+Implementation `89505d2` passes all six jobs in
+[CI run 37032213466](https://github.com/hellices/adaptive-pair-harness/actions/runs/37032213466):
+the 3,066-case root check, both audits and POC checks, Stable packaging,
+selected-image non-root preparation/rerun, and Linux 1.136.2, 1.138.0, 1.140.0,
+and 1.141.0-insider host fixtures. Every actual smoke step passes, including
+Insiders, and all four logs record both native restart phases with no restored
+authority or model/token calls.
+
+A later documentation-only local replay of the default `npm run check` hit
+three five-second timeouts in the production-bundle and Codespaces lifecycle
+suites, without assertion failures. High system load and unrelated concurrent
+validation processes were observed; that context does not establish causation.
+Without changing assertions, deadlines, or repository configuration, the two
+affected suites pass **23 cases** with `--maxWorkers=1`. Fresh typecheck and lint
+then pass, and `npm test -- --maxWorkers=2` passes all **3,066 cases in 144
+files**. Stable packaging and independent seven-entry VSIX verification also
+pass. No unrelated process was stopped, and no earlier failed run is relabeled
+successful. Default-concurrency Linux CI remains the separate final-head gate.
+
+All eight original Copilot threads have replies and resolved dispositions.
+The subsequent review at `89505d2` reports **no new findings** and acknowledges
+the four follow-up dispositions; its broader human-review recommendation is
+not an approval. Its overview also repeats the earlier native-launch timeout
+concern. That historical teardown failure was corrected at `d9f222e`, and both
+phases pass on the four current Linux hosts. Fresh process-diagnostic tests
+pass all three cases; an additional missing-executable check rejects in
+**25 ms** with `ENOENT`, rather than waiting for the runner's retained 180-second
+unresponsive-host deadline. No new launch failure was reproduced.
+
+The implementation is committed and pushed for owner review. The documentation
+follow-up must also pass final-revision checks before a readiness report;
+PR #14 records that head and outcome. The PR stays open without auto-merge.
+Actual Codespaces UI, authenticated guidance, remote verification, and cloud
+history acceptance remain unobserved, and no paid Codespace was created.
+
+### October 3, 2026 upstream rebase
+
+The owner merged native-reuse feasibility PR #13 at `d0b4a0d` on October 3,
+2026, then requested rebasing the existing native Growth/Codespaces PR #14.
+All 21 trial commits were replayed without dropping or squashing a commit.
+The upstream native-continuity and Copilot-runtime probes remain unchanged;
+their checks and the trial's exercise checks are both retained. Design section
+13.3 keeps the upstream measured reuse boundary; the trial and Codespaces
+contracts move to sections 13.4 and 13.5 with corresponding link updates.
+The completed upstream P2b plan remains available at
+`d0b4a0d:docs/implementation-plan.md` rather than becoming a second active plan.
+
+The inventory now contains **19 tracked source manifests and three lockfiles**:
+the root workspaces, isolated Session Target POC, and isolated Copilot-runtime
+probe are the three dependency graphs.
+The native-continuity probe and Growth exercise add no dependency graph.
+The SDK remains restricted to its upstream research prototype; neither the
+production extension nor Codespaces setup installs that isolated graph.
+Earlier trial counts, audits, host observations, and CI run IDs remain evidence
+for their original pre-rebase revisions, not for the combined revision.
+Rebasing alone was not merge authorization. The owner subsequently authorized
+merging PR #14 only after fresh checks and review show no unresolved blockers.
+Owner-authenticated Codespaces acceptance remains unobserved.
+
+Fresh local validation on Node **24.21.0** / npm **11.19.0** passes typechecking,
+full lint, and **3,085 root tests in 148 files** with two workers. The isolated
+Session Target POC passes compilation, **21 tests**, and packaging. The SDK
+probe passes its **nine scenarios / ten runner-reported tests** using runtime
+**1.0.85**, protocol **3**, and **15 loopback model requests**, without
+authenticated inference. All three full-lockfile audits, including development,
+optional, and peer dependencies, report zero findings. Stable packaging and
+archive verification pass with exactly **seven allowlisted entries**.
+
+The first fresh Stable host run exposed an existing fixture race: VS Code
+normalizes the obsolete `Default Dark Modern` theme ID to `Dark Modern` after
+the coexistence baseline is captured. Reverting only that value in the failed
+settings file exactly restores the baseline hash; the installed workbench
+contains that explicit migration. The runner now seeds the canonical ID
+declared by every tested host. No product code, baseline assertion, timeout, or
+comparison was relaxed. After this fixture-only correction, macOS **1.136.2**,
+**1.140.0**, and **1.141.0-insider** each pass all **17** baseline cases plus
+separate native seed/resume application launches: historical checkpoints return,
+live authority does not, fresh chat has no checkpoint, and model/token calls
+remain zero. The complete root check was repeated after this correction.
+Final-revision CI and follow-up review belong to the rebased PR #14 head,
+not the earlier delivery run IDs.
+
 ## 7. Evaluation hypotheses
 
 The first studies test separate hypotheses:

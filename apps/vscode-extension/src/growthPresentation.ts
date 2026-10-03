@@ -26,7 +26,7 @@ export const NO_SESSION_MESSAGE =
   "No Adaptive Pair session is active. Run \"Adaptive Pair: Start a Session\" or \"Adaptive Pair: Join Work in Progress\" first; nothing is observed until you do.";
 
 export const NO_WORK_UNIT_MESSAGE =
-  "No Growth work unit is agreed yet. Confirm the learning agreement and agree a work unit before asking for this.";
+  "No Growth work unit is agreed yet. After starting a session, use @pair /setup to confirm the learning agreement, Growth mode, and work scope before asking for this.";
 
 export const TRANSFER_NOT_DISTINCT_MESSAGE = [
   "Adaptive Pair withheld this transfer task because it restated your current",

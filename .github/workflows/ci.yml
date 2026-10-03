@@ -15,6 +15,68 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  codespaces-setup:
+    name: Codespaces container preparation (no UI)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: node:24-bookworm
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Prepare and verify as the workspace user
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -o node -g node /workspaces
+          runuser -u node -- bash -se <<'PREPARE'
+          set -euo pipefail
+          test "$(id -un)" = node
+          test "$(id -u)" -ne 0
+          unset CODESPACES
+          repository=/workspaces/adaptive-pair-harness
+          trial="${repository}-growth-trial"
+          mkdir "$repository"
+          tar --exclude=.git -cf /workspaces/repository.tar -C "$GITHUB_WORKSPACE" .
+          tar -xf /workspaces/repository.tar -C "$repository"
+          rm /workspaces/repository.tar
+          test ! -e "$repository/.git"
+          cd "$repository"
+          cp -R examples/growth-trial /workspaces/fixture-before
+          mkdir /workspaces/expected-trial
+          for entry in package.json src test; do
+            cp -R "/workspaces/fixture-before/$entry" /workspaces/expected-trial/
+          done
+
+          bash .devcontainer/setup.sh
+          node scripts/verify-vsix.mjs
+          diff -r /workspaces/fixture-before examples/growth-trial
+          diff -r /workspaces/expected-trial "$trial"
+
+          trial_status=0
+          (cd "$trial" && npm test -- --test-reporter=tap) > /workspaces/growth-trial.tap 2>&1 || trial_status=$?
+          cat /workspaces/growth-trial.tap
+          test "$trial_status" -eq 1
+          grep -Fxq '# tests 6' /workspaces/growth-trial.tap
+          grep -Fxq '# pass 2' /workspaces/growth-trial.tap
+          grep -Fxq '# fail 4' /workspaces/growth-trial.tap
+          grep -Fxq '# cancelled 0' /workspaces/growth-trial.tap
+          grep -Fxq '# skipped 0' /workspaces/growth-trial.tap
+          grep -Fxq '# todo 0' /workspaces/growth-trial.tap
+
+          printf '\n' >> "$trial/src/retry.mjs"
+          printf '%s\n' 'Keep this owner edit.' > "$trial/owner-edit.txt"
+          cp -R "$trial" /workspaces/trial-before-rerun
+          bash .devcontainer/setup.sh
+          node scripts/verify-vsix.mjs
+          diff -r /workspaces/trial-before-rerun "$trial"
+          diff -r /workspaces/fixture-before examples/growth-trial
+          diff -r /workspaces/fixture-before "$GITHUB_WORKSPACE/examples/growth-trial"
+          PREPARE
+
   build-and-package:
     name: Check, build, and package
     runs-on: ubuntu-latest
@@ -33,13 +95,13 @@ jobs:
         run: npm ci
 
       - name: Audit all dependencies
-        run: npm audit --audit-level=low
+        run: npm audit --package-lock-only --audit-level=low
 
       - name: Install Session Target POC dependencies
         run: npm --prefix poc/session-target ci
 
       - name: Audit Session Target POC dependencies
-        run: npm --prefix poc/session-target audit --audit-level=low
+        run: npm --prefix poc/session-target audit --package-lock-only --audit-level=low
 
       - name: Check Session Target POC
         run: npm --prefix poc/session-target run check
@@ -81,7 +143,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: adaptive-pair-stable-vsix
-          path: adaptive-pair-0.2.0-preview.1-stable.vsix
+          path: adaptive-pair-0.2.0-preview.2-stable.vsix
           if-no-files-found: error
 
   host-smoke:
@@ -91,7 +153,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        vscode: ["1.136.2", "1.137.0"]
+        vscode: ["1.136.2", "1.138.0", "1.140.0"]
     env:
       # Clean-profile coexistence (scenario 2) and idle zero-activity
       # (scenario 3) are asserted inside this isolated Extension Host smoke.
@@ -114,6 +176,19 @@ jobs:
 
       - name: Run isolated Extension Host smoke
         run: xvfb-run -a npm run test:host
+
+      - name: Upload native host failure logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-host-failure-${{ matrix.vscode }}
+          path: |
+            ~/.ap-host/run-*/native-history/*.log
+            ~/.ap-host/run-*/native-history/*.json
+            ~/.ap-host/run-*/native-history/*-logs/**/*.log
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 3
 
   host-insiders:
     name: Host smoke (Insiders, allowed failure)
@@ -140,3 +215,16 @@ jobs:
 
       - name: Run isolated Extension Host smoke on Insiders
         run: xvfb-run -a npm run test:host
+
+      - name: Upload native host failure logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-host-failure-insiders
+          path: |
+            ~/.ap-host/run-*/native-history/*.log
+            ~/.ap-host/run-*/native-history/*.json
+            ~/.ap-host/run-*/native-history/*-logs/**/*.log
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 3

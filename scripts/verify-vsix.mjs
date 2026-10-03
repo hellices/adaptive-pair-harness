@@ -17,7 +17,7 @@ import { isMainModule } from "./mainModule.mjs";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** The Stable release artifact name, shared with the packaging orchestrator. */
-export const RELEASE_VSIX_NAME = "adaptive-pair-0.2.0-preview.1-stable.vsix";
+export const RELEASE_VSIX_NAME = "adaptive-pair-0.2.0-preview.2-stable.vsix";
 
 const DEFAULT_VSIX = resolve(repoRoot, RELEASE_VSIX_NAME);
 

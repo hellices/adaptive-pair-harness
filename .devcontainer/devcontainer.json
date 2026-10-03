@@ -1,0 +1,7 @@
+{
+  "name": "Adaptive Pair Growth trial",
+  "image": "node:24-bookworm",
+  "remoteUser": "node",
+  "waitFor": "postCreateCommand",
+  "postCreateCommand": "bash .devcontainer/setup.sh"
+}

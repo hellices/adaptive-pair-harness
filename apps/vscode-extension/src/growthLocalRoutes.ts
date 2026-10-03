@@ -82,7 +82,7 @@ export class GrowthLocalRoutes {
     const assistance = session.assistance;
     const ceiling = session.learningAgreement?.maximumHintLevel ?? 0;
     const lines: string[] = [
-      "**Adaptive Pair session state**",
+      "**Adaptive Pair session state — current window**",
       `- Mode: ${session.mode ?? "not selected"}`,
       `- Work unit: ${bounded(session.workUnit?.objective) ?? "none agreed"}${
         session.workUnit === undefined ? "" : ` (${session.workUnit.status})`

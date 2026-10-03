@@ -27,6 +27,9 @@ import {
   type ConfirmationPort,
 } from "./verificationAdapter.js";
 import { VscodeScopeAccess } from "./workspaceContextAccess.js";
+import { runGrowthSetup, type GrowthSetupUi } from "./growthSetup.js";
+import { VscodeGrowthSetupUi } from "./growthSetupUi.js";
+import type { GrowthSetupResult } from "./growthHostState.js";
 
 export const GROWTH_PARTICIPANT_ID = "adaptivePair.chat";
 
@@ -51,7 +54,58 @@ export interface ExtensionRuntimeOptions {
    * real modal {@link VscodeConfirmationPort}.
    */
   readonly confirmation?: ConfirmationPort;
+  readonly growthSetupUi?: GrowthSetupUi;
+  readonly confirmCheckpoint?: (signal: AbortSignal) => Promise<boolean>;
 }
+
+const workspaceAvailable = (sessionController: SessionController): boolean =>
+  vscode.workspace.isTrusted && vscode.workspace.workspaceFolders?.[0]?.uri.toString() ===
+    sessionController.snapshotNow().presence.workspaceId;
+
+const setupGrowthWork = async (
+  sessionController: SessionController,
+  toolContext: PairToolContext,
+  ui: GrowthSetupUi,
+  signal: AbortSignal,
+): Promise<GrowthSetupResult> => {
+  let validated = sessionController.snapshotNow();
+  const outcome = await runGrowthSetup({
+    coordinator: sessionController.coordinator(),
+    snapshotNow: () => {
+      validated = sessionController.snapshotNow();
+      return validated;
+    },
+    prepareEntry: currentSignal => sessionController.prepareGrowthEntry(currentSignal),
+    isAvailable: () => workspaceAvailable(sessionController), ui,
+  }, signal);
+  const completion = validated;
+  const isCurrent = (): boolean => {
+    const current = sessionController.snapshotNow();
+    return !signal.aborted && workspaceAvailable(sessionController) && current.revision === completion.revision &&
+      current.presence.status !== "off" && current.presence.status !== "paused" &&
+      current.presence.workspaceId === completion.presence.workspaceId &&
+      current.session?.sessionId === completion.session?.sessionId &&
+      current.session?.startedAtRevision === completion.session?.startedAtRevision &&
+      current.session?.authorityEpoch === completion.session?.authorityEpoch;
+  };
+  await toolContext.accept(sessionController.snapshotNow());
+  return {
+    outcome: signal.aborted ? "cancelled" : outcome === "completed" && !isCurrent() ? "stale" : outcome,
+    isCurrent,
+  };
+};
+
+const requestNativeCheckpoint = async (
+  sessionController: SessionController,
+  signal: AbortSignal,
+): Promise<boolean> => {
+  if (signal.aborted || !workspaceAvailable(sessionController)) { return false; }
+  const selected = await vscode.window.showWarningMessage(
+    "Attach a minimized Growth checkpoint to this VS Code chat response? It stores only work-unit status, attempt/hypothesis flags, and hint/reveal levels, not code, paths, or permissions. VS Code retains the ordinary chat transcript separately. Disabling Pair does not delete native chat history; manage it with VS Code's chat controls.",
+    { modal: true }, "Save checkpoint",
+  );
+  return !signal.aborted && workspaceAvailable(sessionController) && selected === "Save checkpoint";
+};
 
 const requestWorkspaceConsent = async (
   model: vscode.LanguageModelChat,
@@ -161,6 +215,12 @@ export const createExtensionRuntime = (
     requestWorkspaceConsent,
     confirmSolutionReveal,
     stayQuiet: () => sessionController.stayQuiet(),
+    setup: signal => setupGrowthWork(
+      sessionController, toolContext,
+      options.growthSetupUi ?? new VscodeGrowthSetupUi(() => sessionController.snapshotNow(), ledger),
+      signal,
+    ),
+    confirmCheckpoint: options.confirmCheckpoint ?? (signal => requestNativeCheckpoint(sessionController, signal)),
   });
 
   context.subscriptions.push(

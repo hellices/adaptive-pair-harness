@@ -3,6 +3,7 @@ import { growthFailureReason as failureReason } from "@adaptive-pair/runtime";
 import { isGrowthWorkUnitCurrent, type GrowthParticipantDependencies, type GrowthTransferState, type GrowthTransientState } from "./growthHostState.js";
 import { GrowthLocalRoutes } from "./growthLocalRoutes.js";
 import { GrowthGuidanceRoutes } from "./growthGuidanceRoutes.js";
+import { GrowthCheckpointRoutes } from "./growthCheckpointRoutes.js";
 import { interpretGrowthIntent } from "./growthIntent.js";
 import { RESTRAINT_FAILURE_MESSAGE } from "./growthPresentation.js";
 
@@ -36,10 +37,12 @@ export class GrowthParticipant {
   private readonly state: GrowthTransientState = { transfer: undefined, lastCheck: undefined };
   private readonly local: GrowthLocalRoutes;
   private readonly guidance: GrowthGuidanceRoutes;
+  private readonly native: GrowthCheckpointRoutes;
 
   public constructor(private readonly deps: GrowthParticipantDependencies) {
     this.local = new GrowthLocalRoutes(deps, this.state);
     this.guidance = new GrowthGuidanceRoutes(deps, this.state);
+    this.native = new GrowthCheckpointRoutes(deps);
   }
 
   /** The current independent transfer state, or `undefined` when none started. */
@@ -59,13 +62,26 @@ export class GrowthParticipant {
     context: vscode.ChatContext,
     response: vscode.ChatResponseStream,
     token: vscode.CancellationToken,
-  ): Promise<void> {
+  ): Promise<vscode.ChatResult | void> {
     const signal = abortSignalFromToken(token);
-    const model = request.model;
     const { intent, level } = interpretGrowthIntent(request);
 
     try {
       switch (intent) {
+        case "setup":
+          await this.native.setup(response, signal);
+          return;
+        case "checkpoint": {
+          const checkpoint = await this.native.checkpoint(response, signal);
+          if (!signal.aborted && checkpoint?.isCurrent()) {
+            response.markdown(checkpoint.message);
+            return checkpoint.result;
+          }
+          return;
+        }
+        case "history":
+          this.native.history(context, response, signal);
+          return;
         case "quiet":
           await this.local.handleQuiet(response);
           return;
@@ -88,19 +104,19 @@ export class GrowthParticipant {
           await this.local.handleCheck(response, signal);
           return;
         case "transfer":
-          await this.guidance.handleTransfer(request, context, model, response, signal);
+          await this.guidance.handleTransfer(request, context, request.model, response, signal);
           return;
         case "reveal":
-          await this.guidance.handleReveal(request, context, model, response, signal);
+          await this.guidance.handleReveal(request, context, request.model, response, signal);
           return;
         case "hint":
-          await this.guidance.handleGuidance(request, context, model, response, signal, {
+          await this.guidance.handleGuidance(request, context, request.model, response, signal, {
             escalate: true,
             level,
           });
           return;
         default:
-          await this.guidance.handleGuidance(request, context, model, response, signal, {
+          await this.guidance.handleGuidance(request, context, request.model, response, signal, {
             escalate: false,
             level: undefined,
           });
