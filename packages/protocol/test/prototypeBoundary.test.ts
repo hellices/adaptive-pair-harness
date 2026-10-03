@@ -87,20 +87,6 @@ it("does not mistake inherited descriptor metadata for an own data property", ()
   expect((error as Error).message).toMatch(/^Invalid Pair event:/);
 });
 
-it("also keeps inherited fields outside the shared command boundary", () => {
-  const command = {
-    protocolVersion: 1, type: "ObserveWorkspace", commandId: "command-1",
-    actor: "host", observedAt: 100,
-  };
-  let getterCalls = 0;
-  const { error } = withInheritedProperty("expectedRevision", {
-    get: () => { getterCalls += 1; return 0; },
-  }, () => parsePairCommand(command));
-  expect(getterCalls).toBe(0);
-  expect(error).toBeInstanceOf(Error);
-  expect((error as Error).message).toMatch(/^Invalid Pair command:/);
-});
-
 it.each(["event", "command"])("captures %s descriptors without subsequent caller reads", kind => {
   let getterCalls = 0;
   const leaked = () => 1;

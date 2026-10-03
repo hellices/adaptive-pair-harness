@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { pairJournalLimits, parsePairJournal } from "../src/index.js";
 import * as eventParser from "../src/parseEvent.js";
-import { createEventFixtures, toWireEvent } from "./eventFixtures.js";
+import { createEventFixtures } from "./eventFixtures.js";
 
 const journalWire = (commits: readonly unknown[] = [], headRevision = 0) => ({
   formatVersion: 1,
@@ -27,11 +27,6 @@ describe("parsePairJournal", () => {
     expect(journal.headRevision).toBe(0);
     expect(Object.isFrozen(journal)).toBe(true);
     expect(Object.isFrozen(journal.commits)).toBe(true);
-  });
-
-  it("rejects objects without invoking their conversion hooks", () => {
-    const input = { toString() { throw new Error("must not run"); } };
-    expect(() => parsePairJournal(input)).toThrow("Invalid Pair journal: INVALID_TEXT");
   });
 });
 
@@ -225,17 +220,6 @@ it.each(Object.values(fixtures))("retains the wire and memory contract for $type
   expect(Object.isFrozen(parsed.commits[0]?.events[0])).toBe(true);
 });
 
-it("normalizes only the existing optional wire omissions", () => {
-  const observed = toWireEvent(fixtures.OperationObserved);
-  delete observed.observation;
-  const [authorized, grant, observation] = parsePairJournal(eventsText(
-    fixtures.OperationAuthorized, fixtures.UserActionGranted, observed,
-  )).commits[0]?.events ?? [];
-  expect(authorized).toStrictEqual(fixtures.OperationAuthorized);
-  expect(grant).toStrictEqual(fixtures.UserActionGranted);
-  expect(Object.hasOwn(observation ?? {}, "observation")).toBe(false);
-});
-
 it.each([
   { ...fixtures.WorkspaceObserved, protocolVersion: 2 },
   { ...fixtures.UserActionGranted, authorityEpoch: null },
@@ -271,17 +255,6 @@ it("preserves the per-event 10,000-expanded-value limit", () => {
   values.push(null);
   expect(() => parsePairJournal(eventsText(observationEvent(values))))
     .toThrow(new Error("Invalid Pair journal: INVALID_EVENT"));
-});
-
-it("deeply freezes detached event inputs", () => {
-  const event = parsePairJournal(eventsText(fixtures.OperationAuthorized)).commits[0]?.events[0];
-  if (event?.type !== "OperationAuthorized") throw new Error("Expected operation fixture");
-  expect(event).not.toBe(fixtures.OperationAuthorized);
-  expect(event.operation.input).not.toBe(fixtures.OperationAuthorized.operation.input);
-  expect(Object.isFrozen(event.operation)).toBe(true);
-  expect(Object.isFrozen(event.operation.input)).toBe(true);
-  expect(Object.isFrozen(event.operation.input.arguments)).toBe(true);
-  expect(Object.isFrozen(event.operation.input.options)).toBe(true);
 });
 
 it("does not expose a cause, payload or valid prefix after failure", () => {

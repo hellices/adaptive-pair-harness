@@ -1,7 +1,7 @@
-import type { OperationRecord, PairEvent, PairRuntimeSnapshot } from "@adaptive-pair/protocol";
+import type { OperationRecord, PairEvent } from "@adaptive-pair/protocol";
 import { expect, it } from "vitest";
 import { createPresence, createRuntime, createSession, decide, reduce } from "../src/index.js";
-import { createActiveRuntime } from "./sessionCoreFixtures.js";
+import { createActiveRuntime, createEntrySnapshot, createGrowthAgreement, createWorkUnit } from "./sessionCoreFixtures.js";
 
 it("creates frozen initial snapshots", () => {
   const presence = createPresence("workspace-1");
@@ -187,167 +187,43 @@ it("rejects unsupported commands and events", () => {
 });
 
 it("deep-clones nested session data in reduced output", () => {
-  const dirtyPaths = ["src/a.ts"];
-  const criteria = ["criterion-1"];
-  const operations: OperationRecord[] = [
-    {
-      id: "op-1",
-      workUnitId: "wu-1",
-      toolName: "pair_read_scope",
-      kind: "read",
-      input: {
-        path: "src/a.ts",
-      },
-      runtimeRevision: 0,
-      authorityEpoch: 0,
-      status: "planned",
-      summary: undefined,
-      userActionGrantId: undefined,
-    },
-  ];
-  const learningGoals = ["goal-1"];
-  const allowedPaths = ["src"];
-  const entrySnapshot = {
-    workspaceId: "workspace-1",
-    dirtyPaths,
-    openPaths: ["src/a.ts"],
-    diagnostics: ["src/a.ts:1:1 warning"],
-    protectedPaths: ["src/a.ts"],
-    capturedAt: 12,
+  const operation: OperationRecord = {
+    id: "op-1", workUnitId: "wu-1", toolName: "pair_read_scope", kind: "read", input: { path: "src/a.ts" },
+    runtimeRevision: 0, authorityEpoch: 0, status: "planned", summary: undefined, userActionGrantId: undefined,
   };
-  const runtime: PairRuntimeSnapshot = {
-    ...createRuntime("workspace-1"),
-    presence: {
-      workspaceId: "workspace-1",
-      observationRevision: 0,
-      status: "engaged",
-      activeSessionId: "session-1",
-    },
-    session: {
-      ...createSession("session-1"),
-      status: "active",
-      criteria,
-      entrySnapshot,
-      learningAgreement: {
-        learningGoals,
-        familiarAreas: ["area-1"],
-        humanOwnedCapabilities: ["verification"],
-        delegatableWork: ["work-1"],
-        maximumHintLevel: 2,
-        independentCheck: "check-1",
-      },
-      workUnit: {
-        id: "wu-1",
-        objective: "objective-1",
-        mode: "pair",
-        learningValue: "mixed",
-        capability: "implementation",
-        owner: "human",
-        allowedPaths,
-        acceptanceChecks: ["npm test"],
-        verificationPlan: "verify",
-        stoppingCondition: "stop",
-        baseline: { "src/a.ts": "abc" },
-        status: "agreed",
-      },
-      assistance: {
-        attempt: {
-          summary: "Tried editing the guard",
-          bypassed: false,
-          recordedAt: 11,
-        },
-        hypothesis: {
-          summary: "The return happens too early",
-          bypassed: false,
-          recordedAt: 12,
-        },
-        hint: {
-          level: 2,
-          recordedAt: 13,
-        },
-        solutionReveal: {
-          previewOnly: true,
-          recordedAt: 14,
-        },
-      },
-      operations,
-    },
+  const assistance = {
+    attempt: { summary: "Tried editing the guard", bypassed: false, recordedAt: 11 },
+    hypothesis: { summary: "The return happens too early", bypassed: false, recordedAt: 12 },
+    hint: { level: 2 as const, recordedAt: 13 },
+    solutionReveal: { previewOnly: true as const, recordedAt: 14 },
   };
+  const active = createActiveRuntime();
+  const session = {
+    ...active.session!, criteria: ["criterion-1"], entrySnapshot: createEntrySnapshot(),
+    learningAgreement: createGrowthAgreement(), workUnit: createWorkUnit(), assistance, operations: [operation],
+  };
+  const next = reduce({ ...active, session }, [{
+    protocolVersion: 1, eventId: "cmd-close:0", commandId: "cmd-close", actor: "human",
+    revision: 1, recordedAt: 13, type: "SessionClosed",
+  }]);
 
-  const next = reduce(runtime, [
-    {
-      protocolVersion: 1,
-      eventId: "cmd-close:0",
-      commandId: "cmd-close",
-      actor: "human",
-      revision: 1,
-      recordedAt: 13,
-      type: "SessionClosed",
-    },
-  ]);
-
-  dirtyPaths.push("src/b.ts");
-  criteria.push("criterion-2");
-  operations.push({
-    id: "op-2",
-    workUnitId: "wu-1",
-    toolName: "pair_apply_edit",
-    kind: "edit",
-    input: {
-      targetPath: "src/a.ts",
-    },
-    runtimeRevision: 0,
-    authorityEpoch: 0,
-    status: "authorized",
-    summary: undefined,
-    userActionGrantId: undefined,
-  });
-  learningGoals.push("goal-2");
-  allowedPaths.push("test");
-
-  expect(next.session?.criteria).toEqual(["criterion-1"]);
-  expect(next.session?.entrySnapshot?.dirtyPaths).toEqual(["src/a.ts"]);
-  expect(next.session?.operations).toEqual([
-    {
-      id: "op-1",
-      workUnitId: "wu-1",
-      toolName: "pair_read_scope",
-      kind: "read",
-      input: {
-        path: "src/a.ts",
-      },
-      runtimeRevision: 0,
-      authorityEpoch: 0,
-      status: "planned",
-      summary: undefined,
-      userActionGrantId: undefined,
-    },
-  ]);
-  expect(next.session?.learningAgreement?.learningGoals).toEqual(["goal-1"]);
-  expect(next.session?.workUnit?.allowedPaths).toEqual(["src"]);
-  expect(next.session?.assistance).toEqual({
-    attempt: {
-      summary: "Tried editing the guard",
-      bypassed: false,
-      recordedAt: 11,
-    },
-    hypothesis: {
-      summary: "The return happens too early",
-      bypassed: false,
-      recordedAt: 12,
-    },
-    hint: {
-      level: 2,
-      recordedAt: 13,
-    },
-    solutionReveal: {
-      previewOnly: true,
-      recordedAt: 14,
-    },
-  });
-  expect(Object.isFrozen(next.session?.entrySnapshot)).toBe(true);
-  expect(Object.isFrozen(next.session?.learningAgreement)).toBe(true);
-  expect(Object.isFrozen(next.session?.workUnit)).toBe(true);
-  expect(Object.isFrozen(next.session?.assistance)).toBe(true);
-  expect(Object.isFrozen(next.session?.operations[0])).toBe(true);
+  const routes = [
+    [session.criteria, next.session?.criteria],
+    [session.entrySnapshot.dirtyPaths, next.session?.entrySnapshot?.dirtyPaths],
+    [session.operations, next.session?.operations],
+    [session.learningAgreement.learningGoals, next.session?.learningAgreement?.learningGoals],
+    [session.workUnit.allowedPaths, next.session?.workUnit?.allowedPaths],
+  ] as const;
+  for (const [input, output] of routes) {
+    const expected = [...input];
+    (input as unknown[]).push("caller mutation");
+    expect(output).toEqual(expected);
+  }
+  expect(next.session?.assistance).toEqual(assistance);
+  for (const value of [
+    next.session?.entrySnapshot, next.session?.learningAgreement, next.session?.workUnit,
+    next.session?.assistance, next.session?.operations[0],
+  ]) {
+    expect(value !== undefined && Object.isFrozen(value)).toBe(true);
+  }
 });

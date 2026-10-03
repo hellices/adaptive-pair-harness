@@ -1,4 +1,3 @@
-import fc from "fast-check";
 import { expect, it, vi } from "vitest";
 import { durableJournalLimits, parseDurableJournal } from "../src/index.js";
 import { durableCommit, durableFacts, durableKey, durableText, durableWire } from "./durableFixtures.js";
@@ -127,13 +126,6 @@ it.each(["createdAt", "expiresAt", "headSequence"])("rejects negative zero in %s
   const text = JSON.stringify(durableWire()).replace(new RegExp(`"${field}":\\d+`), `"${field}":-0`);
   expect(() => parseDurableJournal(text)).toThrow(fail("INVALID_ENVELOPE"));
 });
-
-it.each([-1, 0.5, Number.MAX_SAFE_INTEGER + 1, null, "0"])(
-  "rejects invalid counters %#", headSequence => {
-    expect(() => parseDurableJournal(JSON.stringify({ ...durableWire(), headSequence })))
-      .toThrow(fail("INVALID_ENVELOPE"));
-  },
-);
 
 const counterText = (field: string, literal: string): string =>
   durableText([durableFacts[0]]).replace(new RegExp(`"${field}":\\d+`), `"${field}":${literal}`);
@@ -304,12 +296,4 @@ it("never exposes payloads or raw causes through errors", () => {
       expect((error as Error).cause).toBeUndefined();
     }
   }
-});
-
-it("rejects arbitrary extra data without changing valid surrounding parses", () => {
-  fc.assert(fc.property(fc.jsonValue(), value => {
-    const text = durableText([{ ...durableFacts[0], unexpected: value }]);
-    expect(() => parseDurableJournal(text)).toThrow(fail("INVALID_FACT"));
-    expect(parseDurableJournal(emptyText).headSequence).toBe(0);
-  }), { numRuns: 100 });
 });

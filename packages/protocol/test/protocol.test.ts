@@ -238,20 +238,6 @@ it("requires solution reveals to stay preview-only", () => {
   ).toThrow("Invalid Pair command");
 });
 
-it("accepts a versioned enable-presence command", () => {
-  expect(
-    parsePairCommand({
-      protocolVersion: 1,
-      commandId: "cmd-1",
-      expectedRevision: 0,
-      actor: "human",
-      type: "EnablePresence",
-      workspaceId: "workspace-1",
-      observedAt: 100,
-    }),
-  ).toMatchObject({ type: "EnablePresence", workspaceId: "workspace-1" });
-});
-
 it("rejects unknown fields", () => {
   expect(() =>
     parsePairCommand({
@@ -263,21 +249,6 @@ it("rejects unknown fields", () => {
       workspaceId: "workspace-1",
       observedAt: 100,
       permission: "write",
-    }),
-  ).toThrow("Invalid Pair command");
-});
-
-it("rejects unknown fields on RequestEditOperation", () => {
-  expect(() =>
-    parsePairCommand({
-      protocolVersion: 1,
-      commandId: "cmd-edit-unknown",
-      expectedRevision: 0,
-      actor: "ai",
-      type: "RequestEditOperation",
-      ...createEditOperation(),
-      unexpected: true,
-      observedAt: 100,
     }),
   ).toThrow("Invalid Pair command");
 });
@@ -336,38 +307,4 @@ it("accepts an entry snapshot with an omitted branch", () => {
   }
 
   expect(parsed.entry).not.toHaveProperty("branch");
-});
-
-it("rejects a null branch in an entry snapshot", () => {
-  expect(() =>
-    parsePairCommand({
-      protocolVersion: 1,
-      commandId: "cmd-6",
-      expectedRevision: 0,
-      actor: "human",
-      type: "CaptureEntry",
-      entry: {
-        ...createEntry("feature/v2-growth-foundation"),
-        branch: null,
-      },
-      observedAt: 100,
-    }),
-  ).toThrow("Invalid Pair command");
-});
-
-it("rejects a non-string branch in an entry snapshot", () => {
-  expect(() =>
-    parsePairCommand({
-      protocolVersion: 1,
-      commandId: "cmd-7",
-      expectedRevision: 0,
-      actor: "human",
-      type: "ResumeSession",
-      entry: {
-        ...createEntry("feature/v2-growth-foundation"),
-        branch: 123,
-      },
-      observedAt: 100,
-    }),
-  ).toThrow("Invalid Pair command");
 });

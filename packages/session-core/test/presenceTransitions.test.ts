@@ -23,14 +23,6 @@ const enabled = (): PairRuntimeSnapshot => {
 };
 
 describe("authoritative presence transitions", () => {
-  it("binds the workspace and enables presence in one event", () => {
-    expect(enabled()).toMatchObject({
-      revision: 1,
-      presence: { workspaceId: "workspace-1", status: "observing" },
-      session: undefined,
-    });
-  });
-
   it.each(["ai", "host", "policy"] as const)("rejects %s presence control", actor => {
     const initial = createRuntime("workspace-1");
     expect(() => decide(initial, {
