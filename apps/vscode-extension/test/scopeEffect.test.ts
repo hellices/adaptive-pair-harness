@@ -87,7 +87,7 @@ it("declines a line range that starts after end of file", async () => {
 });
 
 it("searches eligible scoped files with bounded structured matches", async () => {
-  const { access } = fakeAccess({
+  const { access, reads } = fakeAccess({
     paths: ["src/a.ts", "src/b.ts", "docs/private.md"],
     text: path =>
       path === "src/a.ts" ? "const retry = true;\nretry();" : "nothing here",
@@ -107,6 +107,8 @@ it("searches eligible scoped files with bounded structured matches", async () =>
       { path: "src/a.ts", line: 2, text: "retry();" },
     ],
   });
+  // A listed file outside the agreed scope is never read, even without a match.
+  expect(reads).toEqual(["src/a.ts", "src/b.ts"]);
 });
 
 it("filters to trusted scope before applying the search file cap", async () => {
