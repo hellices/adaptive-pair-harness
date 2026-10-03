@@ -82,6 +82,7 @@ it.each(["commitKey", "commandKeys"] as const)("rejects reused %s across commits
 
 it.each<DurableFact>([
   { type: "SessionStatusRecorded", sessionKey, status: "ready" },
+  { type: "LearningBoundaryRecorded", sessionKey, humanOwnedCapabilities: [], maximumHintLevel: 1 },
   { type: "OperationOutcomeRecorded", sessionKey, operationKey, status: "confirmed" },
 ])("rejects a dangling reference in $type", fact => {
   expect(() => replayDurableJournal(durableHistory([fact]))).toThrow(fail("INVALID_FACT_SEQUENCE"));

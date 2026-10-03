@@ -155,3 +155,32 @@ it("aborts old effects only after the workspace reset batch commits", async () =
   expect(store.snapshotNow()).toEqual(next);
   expect(next.session).toBeUndefined();
 });
+
+it("rolls back a replay batch whose enable event fails after the reset event", async () => {
+  const { store, coordinator, effect, finish, invocation } = await pendingVerification();
+  const before = await store.load("stream-1");
+  const eventsBefore = store.events();
+  const events: readonly PairEvent[] = [
+    {
+      protocolVersion: 1, eventId: "bad-switch:0", commandId: "bad-switch",
+      actor: "human", recordedAt: 1, revision: before.snapshot.revision + 1,
+      type: "PresenceChanged", status: "off",
+    },
+    {
+      protocolVersion: 1, eventId: "bad-switch:1", commandId: "bad-switch",
+      actor: "ai", recordedAt: 1, revision: before.snapshot.revision + 2,
+      type: "PresenceEnabled", workspaceId: "workspace-2",
+    },
+  ];
+  await expect(store.commit("stream-1", before.snapshot.revision, events)).rejects.toThrow("HUMAN_ACTION_REQUIRED");
+  const afterFailure = await store.load("stream-1");
+  const eventsAfterFailure = store.events();
+  const abortedAfterFailure = effect.signal.aborted;
+  finish();
+
+  await expect(invocation).resolves.toMatchObject({ status: "confirmed" });
+  expect(afterFailure).toEqual(before);
+  expect(eventsAfterFailure).toEqual(eventsBefore);
+  expect(abortedAfterFailure).toBe(false);
+  expect((await coordinator.snapshot()).presence.workspaceId).toBe("workspace-1");
+});

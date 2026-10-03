@@ -208,11 +208,11 @@ const createVscodeModule = (state: FakeHostState) => ({
     },
     createStatusBarItem: (): FakeStatusBarItem => createStatusBarItem(state),
     showWarningMessage: (message: string, ...items: unknown[]): Promise<string | undefined> => {
-      state.warnings.push({
-        message,
-        items: items.filter((item): item is string => typeof item === "string"),
-      });
-      return Promise.resolve(state.warningResponses.shift());
+      const actionItems = items.filter((item): item is string => typeof item === "string");
+      state.warnings.push({ message, items: actionItems });
+      // Like VS Code, a modal can only resolve to one of its offered actions.
+      const response = state.warningResponses.shift();
+      return Promise.resolve(response !== undefined && actionItems.includes(response) ? response : undefined);
     },
     showInformationMessage: (message: string): Promise<string | undefined> => {
       state.infoMessages.push(message);

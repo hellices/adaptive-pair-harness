@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { codedError } from "./verificationPortFixtures.js";
+import { codedError, lexicalIdentity, vscode } from "./verificationPortFixtures.js";
 
 const {
   createVerificationAdapter,
@@ -9,6 +9,46 @@ const {
 import type { ConfirmationPort, ReadTextFile, TestingRunPort } from "../src/verificationAdapter.js";
 
 describe("Verification port composition", () => {
+  it("does not cancel first-root verification for a dirty duplicate path in the second root", async () => {
+    vscode.state.textDocuments = [
+      {
+        uri: { fsPath: "/other-workspace/src/shared.ts" },
+        isDirty: true,
+      },
+    ];
+    const testing: TestingRunPort = {
+      available: () => true,
+      run: () =>
+        Promise.resolve({
+          exitCode: 0,
+          signal: null,
+          output: "passed",
+          outputTruncated: false,
+          terminationConfirmed: true,
+        }),
+    };
+    const confirmation: ConfirmationPort = {
+      confirm: () => Promise.resolve(true),
+    };
+
+    const result = await createVerificationAdapter(
+      "/workspace",
+      testing,
+      confirmation,
+      lexicalIdentity,
+    ).run(
+      {
+        kind: "vscode-test",
+        operationId: "op-multi-root",
+        testIds: ["suite/case"],
+        targetPaths: ["src/shared.ts"],
+      },
+      new AbortController().signal,
+    );
+
+    expect(result.status).toBe("confirmed");
+  });
+
   it("cancels verification when an agreed target has no filesystem identity", async () => {
     const testing: TestingRunPort = {
       available: () => true,
