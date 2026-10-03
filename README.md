@@ -268,8 +268,8 @@ compatibility, and version updates follow the
 must pass the affected regression checks.
 The [sequential roadmap](docs/design.md#sequential-delivery-roadmap) covers the
 remaining work through v2.0. The current
-[P2b persistence and restart contract plan](docs/implementation-plan.md) follows
-the merged P2a implementation (PR #11). P2a supplies bounded journal parsing and
+[P2b persistence and restart contract plan](docs/implementation-plan.md) is
+complete and merged (PR #12), following P2a (PR #11). P2a supplies bounded journal parsing and
 read-only inspection, not a durable store or working resume feature. P2b adds a
 separate closed, minimized journal format, exact historical replay, trusted
 candidate projection with explicit commit resolution, and a non-authorizing
@@ -279,21 +279,42 @@ journal is serialized wholesale, and no recovered record grants live authority.
 Disk storage, live restoration, Pair ownership/handoff, and P3 editing/UI retain
 their separate design, review, verification, and merge gates.
 
+Before choosing another store, the
+[native continuity feasibility probe](docs/spikes/native-session-continuity-spike.md)
+passes seven restart/fork/isolation/deletion phases on two Stable VS Code hosts.
+This supports native-first historical checkpoints for a controlled participant;
+it does **not** prove authenticated Copilot Agent integration, durable Pair
+authority, or automatic resume. No production persistence behavior changes.
+
+The [two-layer reuse investigation](docs/spikes/api-copilot-runtime-reuse-spike.md)
+also verifies the real Copilot SDK runtime with a deterministic local model:
+tool restrictions, effect denial, restart, fresh permissions, and cooperative
+cancellation. SDK/CLI sessions are not VS Code Local sessions, and failed hooks
+are not an authority boundary. Authenticated native Agent integration remains
+unproven; neither experiment wires a new product adapter.
+
 ## Development checks
 
-Use Node.js 24 or later. Install both maintained dependency graphs before
-running the complete checks; the Session Target POC is deliberately not an npm
-workspace:
+Use Node.js 24 or later. Install all three maintained dependency graphs before
+running the complete checks; both isolated dependency-bearing POCs are
+deliberately outside npm workspace globs:
 
 ```sh
 npm ci
 npm --prefix poc/session-target ci
+npm --prefix poc/copilot-runtime-reuse ci
 npm run check
 npm --prefix poc/session-target run check
+npm --prefix poc/copilot-runtime-reuse run check
 ```
 
-`npm run check` runs workspace typechecking, ESLint, and the workspace test
-suite. `npm run lint` also covers the isolated POC's authored source/tests,
+`npm run check` runs workspace typechecking, ESLint, and the test suite,
+including the dependency-free native continuity probe's non-GUI regressions.
+Run its isolated desktop experiment explicitly with
+`npm run probe:native-continuity`; it is not part of GUI CI.
+The Copilot runtime suite uses synthetic loopback responses, requires no login
+or paid model, and runs in CI on POSIX. It does not exercise the native Agent UI.
+`npm run lint` also covers both dependency-bearing POCs' authored source/tests,
 host fixtures, and root/POC lint and test configurations. Production and regular
 tests use typed linting; standalone configurations and intentionally incomplete
 host fixtures use syntactic rules with the same size limits. Only fixture
@@ -360,7 +381,7 @@ milestone at a time; there is no committed calendar release date.
 The merged P1 baseline passed typecheck, lint, 673
 tests across 43 files, Stable VSIX verification, and all 17 isolated Extension
 Host smoke tests on VS Code 1.137.0. The modes suite contains 75 new Pair cases
-and four unchanged Growth cases. Both active dependency graphs pass full audits;
+and four unchanged Growth cases. Its two dependency graphs passed full audits;
 the isolated POC's six unit cases and one host case are counted separately.
 See the [P1 validation evidence](docs/research.md#p1-post-maintenance-integration)
 and the separate [stabilization evidence](docs/research.md#runtime-boundary-stabilization).

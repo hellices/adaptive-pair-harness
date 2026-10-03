@@ -1,6 +1,6 @@
 # P2b Minimized Persistence and Restart Contract Implementation Plan
 
-> **Status: pure P2b implementation and correction review complete.**
+> **Status: pure P2b implementation and correction review complete; PR #12 merged.**
 > On September 19, 2026, the owner selected the minimized durable-state design,
 > reviewed its written boundaries, and then explicitly requested implementation
 > and continued progress toward a usable product. This is no longer a
@@ -8,6 +8,10 @@
 > contract below; a disk adapter, live admission, and editing are not smuggled
 > into it. Product development continues through reviewed increments, with
 > merge decisions still belonging to the owner.
+> On September 20, the owner authorized a bounded native-session feasibility
+> check before selecting the next implementation. Its
+> [spike](spikes/native-session-continuity-spike.md) does not replace this
+> completed plan or authorize a production storage/checkpoint adapter.
 >
 > **For contributors and agents:** execute one checklist task at a time after
 > independent contract review. Observe RED, implement that task, observe GREEN,
@@ -532,8 +536,11 @@ operation metadata. It is always review-required, including an empty log.
 
 ## Explicitly deferred product work
 
-The next product increment must choose and measure a concrete storage provider,
-then implement an adapter against the port's fault suite. Local/remote/web and
+Native session reuse must be evaluated before choosing a separate provider;
+the [bounded continuity probe](spikes/native-session-continuity-spike.md) is the
+first evidence, not a storage-port implementation. If a later reviewed
+increment requires such a provider, it must measure that provider and test an
+adapter against the port's fault suite. Local/remote/web and
 multiwindow capability support must be explicit; Node flush/rename APIs are
 not proof of the required durability guarantees. No backend is selected here.
 Actual filesystem and crash evidence must precede durable-save claims.
@@ -584,5 +591,8 @@ privacy, correctness, coexistence, or explicit-merge gates.
   concrete inline case. Focused cold-reconstruction probes found no actionable
   violation, and a reasoned no-change response requests the missing case rather
   than claiming reviewer approval or adding an unapproved stronger policy.
-  The PR's current revision must still satisfy its checks before readiness is
-  reported. No merge or auto-merge is authorized.
+  These were the pre-merge checkpoints, not a standing merge authorization.
+- [x] The owner separately authorized merging PR #12. It merged at `ba20468`;
+  post-merge CI `35481373400` passes all four jobs and all 47 actual steps.
+  The merged baseline also passes 2,745 root tests. The next feasibility PR
+  requires its own validation, review, and explicit merge decision.

@@ -80,6 +80,25 @@ describe("CI clean-checkout ordering", () => {
     ]);
   });
 
+  it("audits and checks the isolated Copilot runtime probe", () => {
+    const steps = job("  build-and-package:", "  host-smoke:")
+      .split(/^ {6}-(?=\s)/mu)
+      .slice(1);
+    const installIndex = steps.findIndex((step) =>
+      /^ {8}run: npm --prefix poc\/copilot-runtime-reuse ci$/mu.test(step),
+    );
+
+    expect(installIndex).toBeGreaterThanOrEqual(0);
+    expect(steps[installIndex + 1]?.trim()).toBe(
+      "name: Audit Copilot runtime probe dependencies\n        run: npm --prefix poc/copilot-runtime-reuse audit --audit-level=low",
+    );
+    expectOrdered(steps.slice(installIndex).join("\n"), [
+      "run: npm --prefix poc/copilot-runtime-reuse ci",
+      "run: npm --prefix poc/copilot-runtime-reuse audit --audit-level=low",
+      "run: npm --prefix poc/copilot-runtime-reuse run check",
+    ]);
+  });
+
   it("builds workspace exports before the Insiders host smoke job", () => {
     expectOrdered(job("  host-insiders:"), [
       "run: npm ci",

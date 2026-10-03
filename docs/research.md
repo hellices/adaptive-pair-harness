@@ -1846,6 +1846,177 @@ their checked stable releases: checkout 7.0.1, setup-node 7.0.0, and
 upload-artifact 7.0.1; no workflow action update is required. The Microsoft
 release-API SAML restrictions remain unchanged and were not bypassed.
 
+### Native session continuity feasibility
+
+On **September 20, 2026**, the owner required an actual native-session
+feasibility check before choosing the next persistence implementation. P2b
+PR #12 had merged at **`ba20468`**; post-merge CI **35481373400** passed all
+four jobs and all **47 actual steps**. That baseline is not evidence for the
+new probe or for a production storage adapter.
+
+The [bounded spike](spikes/native-session-continuity-spike.md) uses a private,
+typed [Local-participant fixture](../poc/native-session-continuity/) in normal
+development hosts. Seven separate full application launches establish seed,
+explicit reopen, fork, participant isolation, confirmed deletion, reopened
+fork after deletion, and fresh-chat behavior. Both **Stable 1.136.2** and
+**installed Stable 1.138.0** pass on macOS arm64. Each run has seven distinct
+extension boot keys, zero fixture model calls, no Copilot extension, and no
+enabled API proposals. A native payload containing the seed is witnessed
+before deletion; afterward the original is absent and the fork remains.
+This is selected-session historical continuity, not automatic resumption.
+
+The supported evidence producers are `ChatResult.metadata` and
+`ChatContext.history`, consistent with the official
+[participant guide](https://code.visualstudio.com/api/extension-guides/ai/chat)
+and [API reference](https://code.visualstudio.com/api/references/vscode-api#ChatResult).
+Native resource fields, workbench commands, CDP selectors, and private payload
+inspection are diagnostic-only. In particular, `ChatRequest.sessionResource`
+is not in the maintained public declarations, and accessing
+`onDidDisposeChatSession` throws the `chatParticipantPrivate` proposal guard.
+The [native session UI documentation](https://code.visualstudio.com/docs/agents/run/sessions/manage-sessions)
+does not establish third-party transactional storage or authority guarantees.
+
+The experiment corrected two misleading starting assumptions: extension-test
+mode in these hosts uses in-memory storage, and opening generic Chat after a
+restart need not reopen the old session. The final driver avoids
+`--extensionTestsPath`, isolates shared-data as well as user-data, explicitly
+reopens the synthetic session, and verifies actual native fork/delete effects.
+The spike records these corrections and reproducible commands without
+publishing raw local logs or machine-specific paths.
+
+Independent review also reproduced false peer-isolation evidence when the two
+requests were routed to different sessions, profile redirection through
+inherited VS Code bootstrap variables, and logging/termination error escapes.
+The final probe requires matching participant identities and the original
+session resource, allowlists the child environment, opens the log before
+spawning, and handles owned-group termination and log completion. Eleven
+non-GUI regression cases cover these review findings; their initial failures
+were observed before the fixes. They are automated safeguards for the probe,
+not substitutes for the two-host native continuity measurement.
+Focused independent re-review closes all four findings without an additional
+blocker; both real-host seven-phase runs were repeated after those corrections.
+
+Repository review then identified a debug-port allocation/startup race and the
+need to await a bounded child-close result after a termination signal fails.
+The corrected driver checks a fresh per-run token in both the discovered
+workbench title and the actual document before acting; it rejects an unrelated
+endpoint rather than relying on a free-port check. Failed signaling retains a
+five-second close wait and reports unconfirmed cleanup on expiry. Additional
+regressions cover those counterexamples. Model-response attempts and local
+token-count callbacks are now recorded separately, and the proposal flag is
+derived from per-phase manifest evidence plus the runtime guard rather than
+hardcoded. The probe has **18 non-GUI regression cases** in total.
+Focused independent review finds no remaining blocker in these corrections;
+both native seven-phase runs were repeated again with the final identity and
+evidence checks, and both response and token-count totals are zero.
+
+At the September 20 checkpoint, local verification on Node.js **24.21.0** passed typechecking,
+full ESLint, and **2,763 root tests in 136 files**, including the 18 new probe
+regressions. The isolated Session Target POC still passes its 21 unit cases,
+compile, and packaging. The product build and seven-entry Stable VSIX
+verification pass; the **539,516-byte** production bundle and its packaged
+entry-point scope remain unchanged. Documentation-relative links were checked
+separately. The existing Vite native-config-loader warning remains visible;
+no warning suppression or lint exemption was introduced. Final-head remote
+checks and review remain delivery gates, not implied by these local results.
+
+**September 20 decision:** native-first historical checkpoint design is feasible for the
+controlled participant route. Authenticated GitHub Copilot Agent/CLI/SDK integration,
+native Pair-tool routing, public session binding/lifecycle, context boundaries,
+permission and cancellation behavior were unmeasured by that Local-participant
+probe. The September 21 SDK follow-up below adds separate runtime evidence.
+No claim is made for
+P2b atomic publication, power-loss survival, restored authority, automatic
+replay, or global erasure. A separate disk store is deferred, not selected by
+default. Neither this evidence nor a documentation merge authorizes a product
+implementation of the proposed checkpoint.
+
+The September 20 dependency inventory contained **17 manifests**: the private fixture
+adds no dependency declarations or lockfile, so the same two graphs remain.
+Both full audits have **zero vulnerabilities** (root: 407 dependencies;
+isolated Session Target POC: 257). The maintained `@types/vscode@1.136.0`
+compiles the probe; the exact `@types/vscode@1.138.0` registry request returned
+**E404**, so runtime-visible additions are not assumed public or used to force
+an unavailable upgrade. Authenticated Microsoft release/source API requests
+returned SAML **403** and were not bypassed. Installed build manifests and
+public API documentation support the scoped host report, not a “latest
+upstream verified” claim. Root typechecking/lint/tests include the probe; the GUI
+continuity test remains an explicit manual measurement, not a CI result.
+
+### Native UI and Copilot engine reuse boundaries
+
+On **September 21, 2026 UTC**, the owner authorized examining both reuse layers.
+The [follow-up spike](spikes/api-copilot-runtime-reuse-spike.md) distinguishes
+documented extension contributions from measured execution and from unapproved
+product designs. The [SDK README at v1.0.14](https://github.com/github/copilot-sdk/blob/v1.0.14/README.md)
+describes a generally available interface to the Copilot CLI engine. The pinned
+SDK starts its own bundled **1.0.85 / protocol 3** runtime in this experiment;
+that is not the installed VS Code Copilot Agent or the standalone CLI.
+
+The [reproducible test-only fixture](../poc/copilot-runtime-reuse/) passes nine
+scenarios, reported as ten Node test entries, on macOS arm64 / Node.js 24.21.0.
+Fifteen authenticated-to-the-fixture loopback requests drive the actual runtime
+through tool selection/execution/results, excluded-tool rejection, explicit
+denial, hook failure, an independent synthetic effect guard, restart/resume,
+fresh permission denial, built-in shell denial, cooperative cancellation, and
+API-visible deletion. The synthetic bearer token is endpoint ownership evidence,
+not GitHub authentication: the runtime explicitly reports unauthenticated.
+No account, actual model inference, user workspace, or prior session is supplied.
+This is not an application-wide egress audit or a production Pair-tool test.
+
+A material negative result is now executable: a throwing pre-tool hook does
+not block an otherwise approved tool. The tagged SDK
+[dispatcher source](https://github.com/github/copilot-sdk/blob/v1.0.14/nodejs/src/session.ts)
+and the independent effect-guard scenario support retaining authorization at
+the effect boundary. Permission and cancellation callbacks are useful adapter
+mechanisms, not restored Pair authority or proof of uncooperative cancellation.
+
+Stable custom agents and extension tools remain a documented native-engine
+route, with authenticated end-to-end proof still open. The latest published
+VS Code declarations inspected, **1.137.0**, do not supply the private session
+identity/lifecycle or proposed Session Target APIs needed to remove the current
+gates. SDK session IDs must not silently bridge native forks: history copying
+does not create a fresh live identity or prevent concurrent SDK resumes.
+
+The new inventory contains **18 manifests and three lockfile graphs**. Full
+online audits report zero vulnerabilities in root **407**, Session Target
+**257**, and SDK probe **33** dependency entries. The SDK remains isolated and
+does not enter the Stable VSIX. Direct-package registry metadata and relevant
+upstream releases were rechecked; older releases are retained for explicit
+compatibility reasons, not treated as frozen:
+
+- Node typings **24.13.4** match the Node 24 baseline rather than the Node 26
+  typings line (**26.5.1**).
+- TypeScript **6.0.3** remains within typescript-eslint **8.70.0**'s declared
+  `>=4.8.4 <6.1.0` peer range; current TypeScript **7.0.2** requires a separate
+  compatible toolchain migration rather than an unsafe isolated bump.
+- Product VS Code typings **1.136.0** preserve the tested minimum Stable API
+  surface. The inspected **1.137.0** declarations add no required session
+  contract, so the new probe does not require raising the product floor.
+- SDK **1.0.14** matches both npm's stable tag and its upstream release. The
+  SDK-bundled runtime is measured independently; standalone CLI release **1.0.87**
+  and npm tag **1.0.86** are not substituted for it or installed globally.
+
+The P2b implementation plan remains completed and unchanged. An SDK adapter,
+native-UI binding, authenticated Agent experiment, and any production checkpoint
+still need their own reviewed design and authorization. The SDK result narrows
+the unknowns; it does not authorize the next implementation milestone.
+
+Local follow-up validation passes **2,764 root tests / 136 files**, full
+typechecking and lint, the SDK's ten Node test entries, and the Session Target
+POC's **21 tests / 5 files** plus compilation and packaging. The Stable VSIX
+still has seven entries and a **539,516-byte** production bundle, with no SDK
+or POC entry. Initial focused independent review found no issue in this follow-up's
+isolation, evidence, cleanup, or documentation boundaries. Subsequent repository
+review prompted direct hook-invocation witnesses in three scenarios. A no-op
+mutation of both throwing-hook paths reproduced false positives before those
+witnesses, and fails both affected scenarios afterward; restoring the callbacks
+passes the suite. Separate exception witnesses reject a second mutation that
+logs invocation but returns instead of throwing. Neither mutation is retained.
+The existing Vite
+native-config-loader warning remains visible. Final-head remote CI and PR
+review remain separate delivery gates; local results do not imply either.
+
 ## 7. Evaluation hypotheses
 
 The first studies test separate hypotheses:
