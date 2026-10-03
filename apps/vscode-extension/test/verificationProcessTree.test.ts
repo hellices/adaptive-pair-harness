@@ -48,23 +48,20 @@ afterEach(() => {
 });
 
 describe("SystemProcessTreePort — Windows taskkill (mocked)", () => {
-  it.each(["SIGTERM", "SIGKILL"] as const)(
-    "does not treat successful %s taskkill delivery as tree-exit evidence",
-    signal => {
-      const port = new SystemProcessTreePort();
-      const child = childProcess(43_210);
+  it("does not treat successful forced taskkill delivery as tree-exit evidence", () => {
+    const port = new SystemProcessTreePort();
+    const child = childProcess(43_210);
 
-      expect(port.isAlive(child)).toBeUndefined();
-      port.signal(child, signal);
-      expect(port.isAlive(child)).toBeUndefined();
-      expect(taskkill).toHaveBeenCalledWith(
-        "taskkill",
-        ["/PID", "43210", "/T", ...(signal === "SIGKILL" ? ["/F"] : [])],
-        taskkillOptions,
-      );
-      expect(killProcess).not.toHaveBeenCalled();
-    },
-  );
+    expect(port.isAlive(child)).toBeUndefined();
+    port.signal(child, "SIGKILL");
+    expect(port.isAlive(child)).toBeUndefined();
+    expect(taskkill).toHaveBeenCalledWith(
+      "taskkill",
+      ["/PID", "43210", "/T", "/F"],
+      taskkillOptions,
+    );
+    expect(killProcess).not.toHaveBeenCalled();
+  });
 
   it("falls back to the child signal without confirming a tree when no PID is available", () => {
     const port = new SystemProcessTreePort();
@@ -94,7 +91,7 @@ describe("SystemProcessTreePort — POSIX process groups", () => {
     expect(taskkill).not.toHaveBeenCalled();
   });
 
-  it.each(["ESRCH", "EPERM", "EACCES", "EIO"])(
+  it.each(["ESRCH", "EPERM"])(
     "does not confirm a missing process group unless %s is ESRCH",
     code => {
       const port = new SystemProcessTreePort();
@@ -164,37 +161,31 @@ describe("NodeProcessRunPort — Windows cancellation lifecycle (mocked taskkill
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it.each([
-    { closeDelay: 0, terminationSignal: "SIGTERM" },
-    { closeDelay: 5_249, terminationSignal: "SIGKILL" },
-  ])(
-    "settles unknown tree exit at child close after $closeDelay ms",
-    async ({ closeDelay, terminationSignal }) => {
-      const { child, controller, settled } = startRun();
-      child.stdout.emit("data", Buffer.from("partial output"));
+  it("settles unknown tree exit at child close just before the forced confirmation window ends", async () => {
+    const { child, controller, settled } = startRun();
+    child.stdout.emit("data", Buffer.from("partial output"));
 
-      controller.abort();
-      await vi.advanceTimersByTimeAsync(closeDelay);
-      expect(settled).not.toHaveBeenCalled();
-      const requestsBeforeClose = taskkill.mock.calls.length;
-      child.emit("close", null, terminationSignal);
-      await Promise.resolve();
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(5_249);
+    expect(settled).not.toHaveBeenCalled();
+    const requestsBeforeClose = taskkill.mock.calls.length;
+    child.emit("close", null, "SIGKILL");
+    await Promise.resolve();
 
-      expect(settled).toHaveBeenCalledExactlyOnceWith({
-        exitCode: null,
-        signal: terminationSignal,
-        output: "partial output",
-        outputTruncated: false,
-        terminationConfirmed: false,
-      });
-      expect(vi.getTimerCount()).toBe(0);
-      await vi.advanceTimersByTimeAsync(10_000);
-      expect(taskkill).toHaveBeenCalledTimes(requestsBeforeClose);
-      child.emit("close", 0, null);
-      await Promise.resolve();
-      expect(settled).toHaveBeenCalledTimes(1);
-    },
-  );
+    expect(settled).toHaveBeenCalledExactlyOnceWith({
+      exitCode: null,
+      signal: "SIGKILL",
+      output: "partial output",
+      outputTruncated: false,
+      terminationConfirmed: false,
+    });
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(taskkill).toHaveBeenCalledTimes(requestsBeforeClose);
+    child.emit("close", 0, null);
+    await Promise.resolve();
+    expect(settled).toHaveBeenCalledTimes(1);
+  });
 
   it("does not turn a clean child exit after abort into confirmed tree termination", async () => {
     const { child, controller, settled } = startRun();

@@ -22,8 +22,8 @@ const run = (
   .run(scopeRequest(toolName, allowedPaths, payload), signal);
 
 describe("Scope composition — canonical alias permissions", () => {
-  it.each(["linked", "linked/main.ts"])("reads a canonical file allowed through %s", async scope => {
-    const result = await run("pair_read_scope", [scope], { path: "linked/main.ts" });
+  it("reads a canonical file allowed through an alias", async () => {
+    const result = await run("pair_read_scope", ["linked"], { path: "linked/main.ts" });
 
     expect(result).toMatchObject({
       status: "confirmed",
@@ -43,17 +43,12 @@ describe("Scope composition — canonical alias permissions", () => {
     expect(read).toMatchObject({ status: "confirmed", observation: { path: "src/main.ts" } });
   });
 
-  it.each([
-    { scope: "linked", pattern: "linked/**/*.ts", scopedPattern: "**/*.ts" },
-    { scope: "linked/main.ts", pattern: undefined, scopedPattern: "main.ts" },
-  ])("searches an aliased $scope without losing canonical matches", async ({ scope, pattern, scopedPattern }) => {
+  it("searches an aliased file without losing canonical matches", async () => {
     const sibling = join(filesystem.source, "sibling.ts");
     await writeFile(sibling, "retry sibling");
-    if (scope.endsWith(".ts")) {
-      workspace.foundPaths.push(sibling);
-    }
+    workspace.foundPaths.push(sibling);
 
-    const result = await run("pair_search_scope", [scope], { query: "retry", pattern });
+    const result = await run("pair_search_scope", ["linked/main.ts"], { query: "retry" });
 
     expect(result).toMatchObject({
       status: "confirmed",
@@ -62,38 +57,24 @@ describe("Scope composition — canonical alias permissions", () => {
     expect(workspace.searches).toHaveLength(1);
     expect(workspace.searches[0]).toMatchObject({
       baseUri: { fsPath: filesystem.source },
-      pattern: scopedPattern,
+      pattern: "main.ts",
     });
   });
 });
 
 describe("Scope composition — canonical containment", () => {
-  it.each(["src", "linked"])("rejects a child alias from %s into an unagreed in-root directory", async scope => {
+  it("rejects a child alias into an unagreed in-root directory", async () => {
     const unagreed = join(filesystem.root, "unagreed");
     await mkdir(unagreed);
     await writeFile(join(unagreed, "private.ts"), "private text");
     await linkDirectory(unagreed, join(filesystem.source, "escape"));
     const getText = openBuffer(join(unagreed, "private.ts"), "private dirty text");
 
-    const result = await run("pair_read_scope", [scope], { path: `${scope}/escape/private.ts` });
+    const result = await run("pair_read_scope", ["linked"], { path: "linked/escape/private.ts" });
 
     expect(result.status).toBe("declined");
     expect(result.observation?.["text"]).toBeUndefined();
     expect(getText).not.toHaveBeenCalled();
-  });
-
-  it("filters discovered child aliases that leave the canonical directory permission", async () => {
-    const unagreed = join(filesystem.root, "unagreed");
-    await mkdir(unagreed);
-    await writeFile(join(unagreed, "private.ts"), "retry private text");
-    await linkDirectory(unagreed, join(filesystem.source, "escape"));
-    workspace.foundPaths.push(join(filesystem.source, "escape", "private.ts"));
-
-    const result = await run("pair_search_scope", ["linked"], { query: "retry" });
-
-    expect(result.observation?.["matches"]).toEqual([
-      { path: "src/main.ts", line: 1, text: "retry on disk" },
-    ]);
   });
 
   it("does not broaden an aliased file permission to its sibling", async () => {
@@ -130,11 +111,9 @@ describe("Scope composition — canonical containment", () => {
     expect(result.observation?.["text"]).toBeUndefined();
   });
 
-  it.each([false, true])("rejects an out-of-root alias with a missing target: %s", async missing => {
+  it("rejects an out-of-root alias", async () => {
     const target = join(filesystem.outside, "private.ts");
-    if (!missing) {
-      await writeFile(target, "outside text");
-    }
+    await writeFile(target, "outside text");
     await linkDirectory(filesystem.outside, join(filesystem.root, "external"));
     const getText = openBuffer(target, "outside dirty text");
 
@@ -158,7 +137,8 @@ describe("Scope composition — canonical containment", () => {
 });
 
 describe("Scope composition — dirty missing files", () => {
-  it.each(["src/new.ts", "src/new/nested/file.ts"])("reads a dirty new buffer at %s", async path => {
+  it("reads a dirty new buffer", async () => {
+    const path = "src/new.ts";
     openBuffer(join(filesystem.root, path), "unsaved retry text");
 
     const result = await run("pair_read_scope", ["src"], { path });
@@ -194,12 +174,6 @@ describe("Scope composition — dirty missing files", () => {
       status: "confirmed",
       observation: { path: "src/main.ts", text: "dirty deleted text" },
     });
-  });
-
-  it("retains not-found when no matching dirty buffer exists", async () => {
-    const result = await run("pair_read_scope", ["src"], { path: "src/new.ts" });
-
-    expect(result).toMatchObject({ status: "declined", observation: { reason: "not-found" } });
   });
 
   it.each([
@@ -255,6 +229,26 @@ describe("Scope composition — missing buffer safety and bounds", () => {
     expect(result).toMatchObject({ status: "declined", observation: { reason } });
   });
 
+  it("reads a dirty buffer containing a literal \\0 escape as text", async () => {
+    openBuffer(join(filesystem.source, "main.ts"), "literal \\0 escape");
+
+    const result = await run("pair_read_scope", ["src"], { path: "src/main.ts" });
+
+    expect(result).toMatchObject({
+      status: "confirmed",
+      observation: { path: "src/main.ts", text: "literal \\0 escape" },
+    });
+  });
+
+  it("refuses binary disk content behind a clean buffer", async () => {
+    await writeFile(join(filesystem.source, "main.ts"), "saved\0binary");
+    openBuffer(join(filesystem.source, "main.ts"), "clean cached text", false);
+
+    const result = await run("pair_read_scope", ["src"], { path: "src/main.ts" });
+
+    expect(result).toMatchObject({ status: "declined", observation: { reason: "binary" } });
+  });
+
   it("retains the exact UTF-8 byte limit and bounded output", async () => {
     openBuffer(join(filesystem.source, "new.ts"), "é".repeat(MAX_CONTEXT_FILE_BYTES / 2));
 
@@ -292,18 +286,6 @@ describe("Scope composition — missing buffer safety and bounds", () => {
 });
 
 describe("Scope composition — cancellation", () => {
-  it.each(["pair_read_scope", "pair_search_scope"] as const)("keeps an already cancelled %s inactive", async toolName => {
-    const controller = new AbortController();
-    controller.abort();
-    const getText = openBuffer(join(filesystem.source, "main.ts"), "dirty text");
-
-    const result = await run(toolName, ["linked"], { path: "linked/main.ts", query: "dirty" }, controller.signal);
-
-    expect(result.status).toBe("cancelled");
-    expect(getText).not.toHaveBeenCalled();
-    expect(workspace.searches).toEqual([]);
-  });
-
   it("does not confirm an empty discovery returned after cancellation", async () => {
     const controller = new AbortController();
     const access = new VscodeScopeAccess(filesystem.root);

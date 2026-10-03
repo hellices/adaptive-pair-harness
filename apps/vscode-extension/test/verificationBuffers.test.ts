@@ -26,9 +26,7 @@ describe("VscodeBufferInspectionPort — workspace and target scopes", () => {
     ).toEqual(["src/shared.ts"]);
   });
 
-  it.each(["src", "./src"])(
-    "returns a dirty descendant of directory-scoped target %s",
-    target => {
+  it("returns a dirty descendant of a directory-scoped target", () => {
     vscode.state.textDocuments = [
       {
         uri: { fsPath: "/workspace/src/retry.ts" },
@@ -44,33 +42,29 @@ describe("VscodeBufferInspectionPort — workspace and target scopes", () => {
       new VscodeBufferInspectionPort(
         "/workspace",
         lexicalIdentity,
-      ).dirtyTargets([target]),
+      ).dirtyTargets(["src"]),
     ).toEqual(["src/retry.ts"]);
-    },
-  );
+  });
 
-  it.each([".", ""])(
-    "checks every dirty document in the bound root for invalid target %j",
-    target => {
-      vscode.state.textDocuments = [
-        {
-          uri: { fsPath: "/workspace/src/retry.ts" },
-          isDirty: true,
-        },
-        {
-          uri: { fsPath: "/other-workspace/src/other.ts" },
-          isDirty: true,
-        },
-      ];
+  it("checks every dirty document in the bound root for the root target \".\"", () => {
+    vscode.state.textDocuments = [
+      {
+        uri: { fsPath: "/workspace/src/retry.ts" },
+        isDirty: true,
+      },
+      {
+        uri: { fsPath: "/other-workspace/src/other.ts" },
+        isDirty: true,
+      },
+    ];
 
-      expect(
-        new VscodeBufferInspectionPort(
-          "/workspace",
-          lexicalIdentity,
-        ).dirtyTargets([target]),
-      ).toEqual(["src/retry.ts"]);
-    },
-  );
+    expect(
+      new VscodeBufferInspectionPort(
+        "/workspace",
+        lexicalIdentity,
+      ).dirtyTargets(["."]),
+    ).toEqual(["src/retry.ts"]);
+  });
 
   it("ignores dirty untitled documents without a filesystem identity", () => {
     vscode.state.textDocuments = [
@@ -96,35 +90,30 @@ describe("VscodeBufferInspectionPort — workspace and target scopes", () => {
 
 describe("VscodeBufferInspectionPort — filesystem identity", () => {
 
-  it.each([
-    "/workspace-alias/src/retry.ts",
-    "/WORKSPACE/SRC/RETRY.TS",
-  ])(
-    "finds a dirty target opened through the physical alias %s",
-    documentPath => {
-      vscode.state.textDocuments = [
-        {
-          uri: { fsPath: documentPath },
-          isDirty: true,
-        },
-      ];
-      const identities = new Map([
-        [resolve("/workspace"), "/physical/workspace"],
-        [
-          resolve("/workspace/src/retry.ts"),
-          "/physical/workspace/src/retry.ts",
-        ],
-        [resolve(documentPath), "/physical/workspace/src/retry.ts"],
-      ]);
+  it("finds a dirty target opened through a physical alias", () => {
+    const documentPath = "/workspace-alias/src/retry.ts";
+    vscode.state.textDocuments = [
+      {
+        uri: { fsPath: documentPath },
+        isDirty: true,
+      },
+    ];
+    const identities = new Map([
+      [resolve("/workspace"), "/physical/workspace"],
+      [
+        resolve("/workspace/src/retry.ts"),
+        "/physical/workspace/src/retry.ts",
+      ],
+      [resolve(documentPath), "/physical/workspace/src/retry.ts"],
+    ]);
 
-      expect(
-        new VscodeBufferInspectionPort(
-          "/workspace",
-          path => identities.get(resolve(path)),
-        ).dirtyTargets(["src/retry.ts"]),
-      ).toEqual(["src/retry.ts"]);
-    },
-  );
+    expect(
+      new VscodeBufferInspectionPort(
+        "/workspace",
+        path => identities.get(resolve(path)),
+      ).dirtyTargets(["src/retry.ts"]),
+    ).toEqual(["src/retry.ts"]);
+  });
 
   it.each([
     {

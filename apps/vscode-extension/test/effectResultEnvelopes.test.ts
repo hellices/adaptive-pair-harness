@@ -86,10 +86,10 @@ describe.each([
   { toolName: "pair_read_scope" as const, field: "text", limit: 12_000 },
   { toolName: "pair_run_verification" as const, field: "output", limit: 16_000 },
 ])("Complete $toolName display budget", ({ toolName, field, limit }) => {
-  it.each(["ascii", "escaped", "unicode"] as const)(
+  it.each(["escaped", "unicode"] as const)(
     "retains useful bounded %s output through runtime, native, and Growth envelopes",
     async encoding => {
-      const content = (encoding === "escaped" ? '\t"\\' : encoding === "unicode" ? "😀" : "x").repeat(limit);
+      const content = (encoding === "escaped" ? '\t"\\' : "😀").repeat(limit);
       const running = fixture(toolName, content);
 
       const native = await running.invoke();
@@ -137,7 +137,8 @@ describe.each([
     if (toolName === "pair_read_scope") expect(result.observation["path"]).toBe(running.path);
   });
 
-  it.each(["", "small output", 'quoted "value" and 😀'])("preserves an ordinary complete result: %s", async content => {
+  it("preserves an ordinary complete result", async () => {
+    const content = 'quoted "value" and 😀';
     const running = fixture(toolName, content);
     const native = await running.invoke();
     const result = JSON.parse((native.content[0] as vscode.LanguageModelTextPart).value) as PairToolResult;

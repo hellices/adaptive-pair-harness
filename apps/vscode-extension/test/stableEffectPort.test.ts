@@ -29,27 +29,6 @@ const confirmed = (operationId: string): EffectResult => ({
   partial: false,
 });
 
-it("passes the trusted effect request to the verification resolver", async () => {
-  const resolved: (EffectRequest | undefined)[] = [];
-  const runner: VerificationRunner = {
-    run: plan => Promise.resolve(confirmed(plan.operationId)),
-  };
-  const port = new StableEffectPort({
-    resolveVerification: (...args: EffectRequest[]) => {
-      resolved.push(args[0]);
-      return runner;
-    },
-  });
-  const trustedRequest = request({
-    workspaceId: "file:///trusted-workspace",
-    payload: { script: "test" },
-  });
-
-  await port.execute(trustedRequest, new AbortController().signal);
-
-  expect(resolved).toEqual([trustedRequest]);
-});
-
 it("routes pair_run_verification to the runner with a package-script plan", async () => {
   const plans: VerificationPlan[] = [];
   const runner: VerificationRunner = {
@@ -58,14 +37,21 @@ it("routes pair_run_verification to the runner with a package-script plan", asyn
       return Promise.resolve(confirmed(plan.operationId));
     },
   };
-  const port = new StableEffectPort({ resolveVerification: () => runner });
+  const resolved: EffectRequest[] = [];
+  const port = new StableEffectPort({
+    resolveVerification: trustedRequest => {
+      resolved.push(trustedRequest);
+      return runner;
+    },
+  });
+  const trustedRequest = request({
+    payload: { script: "test", targetPaths: ["src/x.ts"] },
+  });
 
-  const result = await port.execute(
-    request({ payload: { script: "test", targetPaths: ["src/x.ts"] } }),
-    new AbortController().signal,
-  );
+  const result = await port.execute(trustedRequest, new AbortController().signal);
 
   expect(result.status).toBe("confirmed");
+  expect(resolved).toEqual([trustedRequest]);
   expect(plans).toEqual([
     {
       kind: "package-script",

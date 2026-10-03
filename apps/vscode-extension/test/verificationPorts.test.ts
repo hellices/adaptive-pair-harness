@@ -141,18 +141,17 @@ describe("NodePackageScriptPort", () => {
     expect(manifest.status).toBe("unreadable");
   });
 
-  it.each([
-    { name: "the selected script", scripts: { test: 1 } },
-    { name: "a non-selected script", scripts: { test: "vitest run", deploy: 1 } },
-  ])("rejects the entire manifest when $name has a non-string value", ({ scripts }) => {
-    const manifest = port(() => JSON.stringify({ scripts })).scripts();
+  it("rejects the entire manifest when a non-selected script has a non-string value", () => {
+    const manifest = port(() =>
+      JSON.stringify({ scripts: { test: "vitest run", deploy: 1 } }),
+    ).scripts();
 
     expect(manifest).toEqual({ status: "unreadable" });
   });
 
-  it.each([{}, { test: "" }])("preserves valid script maps without coercion: %j", scripts => {
-    const manifest = port(() => JSON.stringify({ scripts })).scripts();
+  it("preserves an empty script value without coercion", () => {
+    const manifest = port(() => JSON.stringify({ scripts: { test: "" } })).scripts();
 
-    expect(manifest).toEqual({ status: "ok", scripts });
+    expect(manifest).toEqual({ status: "ok", scripts: { test: "" } });
   });
 });

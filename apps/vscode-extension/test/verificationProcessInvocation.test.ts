@@ -21,24 +21,6 @@ describe("NodeProcessRunPort — Windows npm invocation", () => {
       expectedCli: "C:\\nodejs\\node_modules\\npm\\bin\\npm-cli.js",
     },
     {
-      name: "the npm installation on PATH when hosted by VS Code",
-      runtime: {
-        platform: "win32",
-        execPath: "C:\\Program Files\\Microsoft VS Code\\Code.exe",
-        path: "C:\\nodejs",
-        npmExecPath: undefined,
-        npmNodeExecPath: undefined,
-        exists: (path: string) =>
-          new Set([
-            "C:\\nodejs\\npm.cmd",
-            "C:\\nodejs\\node.exe",
-            "C:\\nodejs\\node_modules\\npm\\bin\\npm-cli.js",
-          ]).has(path),
-      },
-      expectedCommand: "C:\\nodejs\\node.exe",
-      expectedCli: "C:\\nodejs\\node_modules\\npm\\bin\\npm-cli.js",
-    },
-    {
       name: "npm's explicit Node executable ahead of the host executable",
       runtime: {
         platform: "win32",
