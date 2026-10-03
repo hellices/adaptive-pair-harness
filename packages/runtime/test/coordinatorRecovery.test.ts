@@ -1,22 +1,14 @@
-import type { PairRuntimeSnapshot } from "@adaptive-pair/protocol";
-import { FakeClock, FakeIdSource, growthRuntime } from "@adaptive-pair/testkit";
+import { growthRuntime } from "@adaptive-pair/testkit";
 import { expect, it } from "vitest";
-import { PairCoordinator } from "../src/coordinator.js";
+import type { PairCoordinator } from "../src/coordinator.js";
 import { InMemoryJournal } from "../src/journal.js";
 import type { EffectPort, EffectRequest, EffectResult } from "../src/ports.js";
-import { confirmedEffect, deferred } from "./coordinatorInterleavingFixtures.js";
+import { changeAuthority, confirmedEffect, createCoordinator, deferred } from "./coordinatorInterleavingFixtures.js";
 import { FakeEffectPort } from "./fakes.js";
 
 const createRecoveryFixture = (effects: EffectPort) => {
   const store = new InMemoryJournal("workspace-1", growthRuntime());
-  const coordinator = new PairCoordinator({
-    store,
-    effects,
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
-  return { coordinator, store };
+  return { coordinator: createCoordinator(store, effects), store };
 };
 
 const authorizeRead = async (coordinator: PairCoordinator, operationId = "orphan-read") => {
@@ -34,22 +26,6 @@ const authorizeRead = async (coordinator: PairCoordinator, operationId = "orphan
     observedAt: 1,
   });
 };
-
-const changeAuthority = (
-  coordinator: PairCoordinator,
-  snapshot: PairRuntimeSnapshot,
-  boundary: "pause-session" | "paused" | "off",
-): Promise<PairRuntimeSnapshot> => boundary === "pause-session"
-  ? coordinator.dispatch({
-      protocolVersion: 1,
-      commandId: "pause-during-recovery",
-      expectedRevision: snapshot.revision,
-      actor: "human",
-      type: "PauseSession",
-      reason: "Developer paused recovery.",
-      observedAt: 2,
-    })
-  : coordinator.setPresence(boundary);
 
 it("does not resurrect a cancelled invocation through concurrent public recovery", async () => {
   const unlinkedDispatches: number[] = [];

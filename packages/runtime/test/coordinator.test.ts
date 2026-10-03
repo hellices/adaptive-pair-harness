@@ -3,39 +3,13 @@ import { FakeClock, FakeIdSource, growthRuntime } from "@adaptive-pair/testkit";
 import { expect, it } from "vitest";
 import { PairCoordinator } from "../src/index.js";
 import {
-  createActiveDeliveryAiRuntime,
-  createActivePairAiRuntime,
-  createBriefingGrowthRuntime,
-  createBriefingPairRuntime,
-  createBriefingProposedRuntime,
-  createBriefingRuntime,
-  createBriefingUninitializedRuntime,
-  createClosedRuntime,
-  createClosingRuntime,
-  createInactiveRuntime,
-  createPausedRuntime,
-  createReadyGrowthRuntime,
-  createReconcilingRuntime,
   inputForTool,
+  lifecycleRuntimes,
 } from "./coordinatorFixtures.js";
 import { FakeEffectPort, FakePairStore } from "./fakes.js";
 
 it("only exposes visible tools that the coordinator can execute", async () => {
-  const snapshots = [
-    createInactiveRuntime(),
-    createBriefingUninitializedRuntime(),
-    createBriefingRuntime(),
-    createBriefingPairRuntime(),
-    createBriefingGrowthRuntime(),
-    createBriefingProposedRuntime(),
-    createReadyGrowthRuntime(),
-    createActivePairAiRuntime(),
-    createActiveDeliveryAiRuntime(),
-    createPausedRuntime(),
-    createReconcilingRuntime(),
-    createClosingRuntime(),
-    createClosedRuntime(),
-  ];
+  const snapshots = lifecycleRuntimes();
 
   for (const snapshot of snapshots) {
     for (const descriptor of toolsFor(snapshot).tools) {

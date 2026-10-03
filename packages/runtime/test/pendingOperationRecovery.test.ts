@@ -108,25 +108,12 @@ it.each(retryCases)(
 
       expect(pendingBeforeReconcile).toBe("authorized");
       expect(replacementStillRunning).toBe(true);
-      expect({
-        effectCalls: fixture.calls.length,
-        recoveryAdmission: outcome.status,
-        requests: fixture.calls.map(call => ({
-          workspaceId: call.request.workspaceId,
-          operationId: call.request.operationId,
-          runtimeRevision: call.request.runtimeRevision,
-          paths: call.request.allowedPaths,
-        })),
-      }).toEqual({
-        effectCalls: 2,
-        recoveryAdmission: "skipped",
-        requests: [previous, replacement].map(({ call }) => ({
-          workspaceId: call.request.workspaceId,
-          operationId: call.request.operationId,
-          runtimeRevision: call.request.runtimeRevision,
-          paths: call.request.allowedPaths,
-        })),
-      });
+      expect(fixture.calls).toHaveLength(2);
+      expect(outcome.status).toBe("skipped");
+      expect(fixture.calls.map(call => call.request.workspaceId)).toEqual(["workspace-A", scenario.destination]);
+      expect(fixture.calls.map(call => call.request.allowedPaths)).toEqual([["src/original.ts"], ["src/replacement.ts"]]);
+      expect(replacement.call.request.operationId === previous.call.request.operationId).toBe(scenario.reuseOperationId);
+      expect(replacement.call.request.runtimeRevision).toBeGreaterThan(previous.call.request.runtimeRevision);
       expect(newResult).toMatchObject({ status: "fulfilled", value: { status: "confirmed" } });
     } finally {
       await fixture.finishAll();

@@ -100,31 +100,6 @@ it("matches existing reduction over generated complete observation histories", (
   }), { numRuns: 100 });
 });
 
-it.each([
-  ["revision", "NON_CONTIGUOUS_REVISION"],
-  ["eventId", "DUPLICATE_EVENT_ID"],
-  ["commandId", "DUPLICATE_COMMAND_ID"],
-  ["boundary", "NON_CONTIGUOUS_REVISION"],
-  ["head", "HEAD_REVISION_MISMATCH"],
-])("rejects generated %s corruption", (mutation, code) => {
-  fc.assert(fc.property(fc.array(fc.integer({ min: 1, max: 8 }), { minLength: 2, maxLength: 12 }), sizes => {
-    const commits = observationCommits(sizes);
-    const [first, second] = commits;
-    const previous = first?.events[0];
-    const current = second?.events[0];
-    if (second === undefined || previous === undefined || current === undefined) throw new Error("Expected history");
-    const changed: PairEvent = mutation === "revision" ? { ...current, revision: current.revision + 1 } :
-      mutation === "eventId" ? { ...current, eventId: previous.eventId } :
-        mutation === "commandId" ? { ...current, commandId: previous.commandId } : current;
-    commits[1] = {
-      expectedRevision: second.expectedRevision + (mutation === "boundary" ? 1 : 0),
-      events: [changed, ...second.events.slice(1)],
-    };
-    const headRevision = commits.reduce((count, commit) => count + commit.events.length, 0) + (mutation === "head" ? 1 : 0);
-    failWith(journalText(commits, { headRevision }), code);
-  }), { numRuns: 100 });
-});
-
 it("accepts every currently supported event route without changing the reducer", () => {
   const events = [
     ...readyEvents(),

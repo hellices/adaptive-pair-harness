@@ -1,32 +1,13 @@
 import { getEventListeners } from "node:events";
-import type { PairRuntimeSnapshot } from "@adaptive-pair/protocol";
 import { expect, it } from "vitest";
-import type { PairCoordinator } from "../src/coordinator.js";
 import type { EffectPort, EffectRequest, EffectResult } from "../src/ports.js";
 import {
+  changeAuthority,
   confirmedEffect,
   createInterleavingFixture,
   deferred,
 } from "./coordinatorInterleavingFixtures.js";
 import { FakeEffectPort } from "./fakes.js";
-
-type Boundary = "pause-session" | "paused" | "off";
-
-const changeAuthority = (
-  coordinator: PairCoordinator,
-  snapshot: PairRuntimeSnapshot,
-  boundary: Boundary,
-): Promise<PairRuntimeSnapshot> => boundary === "pause-session"
-  ? coordinator.dispatch({
-      protocolVersion: 1,
-      commandId: "pause-at-authorization",
-      expectedRevision: snapshot.revision,
-      actor: "human",
-      type: "PauseSession",
-      reason: "Developer paused the session.",
-      observedAt: 1,
-    })
-  : coordinator.setPresence(boundary);
 
 it.each(["pause-session", "paused", "off"] as const)(
   "registers an authorized operation before queued %s can invalidate it",

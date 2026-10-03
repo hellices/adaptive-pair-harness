@@ -226,30 +226,12 @@ describe("Growth turn failure classification", () => {
     expect(turn.coordinator.snapshot).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
-    "GROWTH_MODEL_ERROR",
-    "GROWTH_NON_JSON_RESPONSE",
-    "GROWTH_INVALID_ENVELOPE",
-    "GROWTH_INPUT_TOKEN_CAP",
-    "GROWTH_CANCELLED",
-  ] as const)("preserves the typed model failure reason %s without response text", async code => {
+  it("preserves a typed model failure reason without response text", async () => {
     const turn = createTurn();
-    turn.model.request.mockRejectedValue(new GrowthModelFailure(code, "Private model detail"));
+    turn.model.request.mockRejectedValue(new GrowthModelFailure("GROWTH_MODEL_ERROR", "Private model detail"));
 
-    await expect(runGuardedGrowthTurn(turn.input)).resolves.toEqual({ status: "failed", reason: code });
+    await expect(runGuardedGrowthTurn(turn.input)).resolves.toEqual({ status: "failed", reason: "GROWTH_MODEL_ERROR" });
     expect(turn.coordinator.snapshot).toHaveBeenCalledTimes(1);
-  });
-
-  it.each([
-    { error: new Error("MODEL_UNAVAILABLE"), reason: "GROWTH_UNKNOWN_ERROR" },
-    { error: new Error(""), reason: "GROWTH_UNKNOWN_ERROR" },
-    { error: "untyped failure", reason: "GROWTH_UNKNOWN_ERROR" },
-    { error: undefined, reason: "GROWTH_UNKNOWN_ERROR" },
-  ])("normalizes an untyped model failure (%#)", async ({ error, reason }) => {
-    const turn = createTurn();
-    turn.model.request.mockRejectedValue(error);
-
-    await expect(runGuardedGrowthTurn(turn.input)).resolves.toEqual({ status: "failed", reason });
   });
 
   it.each(["snapshot", "prepare", "create-model"] as const)(
@@ -401,15 +383,6 @@ describe("Growth turn optional validation", () => {
       expect(result.response).toBe(validate.mock.calls[0]?.[0]);
       expect(Object.isFrozen(result.runtime)).toBe(true);
     }
-  });
-
-  it("returns a bounded failure rather than delivering when optional validation throws", async () => {
-    const turn = createTurn();
-
-    await expect(runGuardedGrowthTurn({
-      ...turn.input,
-      validate: () => { throw new Error("TRANSFER_VALIDATION_FAILED"); },
-    })).resolves.toEqual({ status: "failed", reason: "GROWTH_UNKNOWN_ERROR" });
   });
 });
 

@@ -38,19 +38,9 @@ it.each(ownershipCases)(
       expect(previous.call.request.allowedPaths).toEqual(["src/original.ts"]);
       expect(fixture.calls).toHaveLength(2);
       expect(eventsAfterOldSettlement).toEqual(eventsBeforeOldSettlement);
-      expect({
-        operationId: replacement.call.request.operationId,
-        oldRuntimeRevision: previous.call.request.runtimeRevision,
-        replacementRuntimeRevision: replacement.call.request.runtimeRevision,
-        prematureAbort,
-        replacementAbortedByBoundary,
-      }).toEqual({
-        operationId: replacement.call.request.operationId,
-        oldRuntimeRevision: previous.call.request.runtimeRevision,
-        replacementRuntimeRevision: replacement.call.request.runtimeRevision,
-        prematureAbort: false,
-        replacementAbortedByBoundary: true,
-      });
+      expect(prematureAbort).toBe(false);
+      expect(replacementAbortedByBoundary).toBe(true);
+      expect(replacement.call.request.operationId === previous.call.request.operationId).toBe(scenario.reuseOperationId);
     } finally {
       await fixture.finishAll();
     }

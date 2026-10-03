@@ -30,18 +30,8 @@ it("never turns successful empty replay into admission", () => {
   expect(report.authorityRestored).toBe(false);
   expect(report.automaticReplayAllowed).toBe(false);
   expect(report.status).toBe("review-required");
-});
-
-it("preserves literal false types and unchanged P2a entry points", () => {
-  const report = inspectDurableJournal(emptyDurableText(), durableExpectation);
-  const authority: false = report.authorityRestored;
-  const replay: false = report.automaticReplayAllowed;
-  expect([authority, replay]).toEqual([false, false]);
-  expect(runtime.inspectPairJournal).toBeTypeOf("function");
-  expect(runtime.InMemoryJournal).toBeTypeOf("function");
-  expect(runtime.PairCoordinator).toBeTypeOf("function");
-  expect(Object.keys(runtime)).not.toContain("replayDurableJournal");
-  expect(Object.keys(runtime)).not.toContain("createDurableSnapshot");
+  expectTypeOf(report.authorityRestored).toEqualTypeOf<false>();
+  expectTypeOf(report.automaticReplayAllowed).toEqualTypeOf<false>();
 });
 
 it("exports the storage contract as types without a production store", () => {
