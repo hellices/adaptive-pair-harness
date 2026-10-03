@@ -15,30 +15,21 @@ import {
   createToken,
   growthSnapshot,
 } from "./growthTestHarness.js";
-
-type ModelFormat = "plain" | "runtime";
+import { deferred } from "./growthRouteBoundaryHarness.js";
 
 const variation = "Independent variation: design a bounded queue and prove its capacity.";
 
-const deferred = <Value>() => {
-  let resolve!: (value: Value) => void;
-  const promise = new Promise<Value>(complete => { resolve = complete; });
-  return { promise, resolve };
-};
+// Runtime-reporting output: the model claims the snapshot's revision, so only the intent fence can reject it.
+const modelOutput = (snapshot: PairRuntimeSnapshot): GrowthModelOutput => ({
+  response: { level: 1, kind: "question", text: variation },
+  runtime: {
+    runtimeRevision: snapshot.revision,
+    authorityEpoch: snapshot.session?.authorityEpoch,
+    mode: snapshot.session?.mode,
+  },
+});
 
-const modelOutput = (format: ModelFormat, snapshot: PairRuntimeSnapshot): GrowthModelOutput => {
-  const response = { level: 1, kind: "question", text: variation } as const;
-  return format === "plain" ? response : {
-    response,
-    runtime: {
-      runtimeRevision: snapshot.revision,
-      authorityEpoch: snapshot.session?.authorityEpoch,
-      mode: snapshot.session?.mode,
-    },
-  };
-};
-
-const transferHarness = (format: ModelFormat, consentDecision = Promise.resolve(true)) => {
+const transferHarness = (consentDecision = Promise.resolve(true)) => {
   const before = growthSnapshot({ runtimeRevision: 4, session: { authorityEpoch: 0 } });
   const store = new InMemoryJournal("workspace-1", before);
   const coordinator = realCoordinator(before, store);
@@ -52,7 +43,7 @@ const transferHarness = (format: ModelFormat, consentDecision = Promise.resolve(
     consentRequested.resolve(undefined);
     return consentDecision;
   });
-  const requestModel = vi.fn<GrowthModel["request"]>(() => Promise.resolve(modelOutput(format, store.snapshotNow())));
+  const requestModel = vi.fn<GrowthModel["request"]>(() => Promise.resolve(modelOutput(store.snapshotNow())));
   const growthModel: GrowthModel = {
     request: (...args) => {
       modelStarted.resolve(undefined);
@@ -81,12 +72,13 @@ const transferHarness = (format: ModelFormat, consentDecision = Promise.resolve(
 
 type TransferHarness = ReturnType<typeof transferHarness>;
 
+/** Replaces the session with a different intent, or with `sameIntent` recreates it with identical IDs and intent. */
 const replaceWorkUnit = async (
   { before, store, coordinator }: TransferHarness,
-  sessionId = "session-2",
-  workUnitId = "unit-2",
   sameIntent = false,
 ): Promise<void> => {
+  const sessionId = sameIntent ? "session-1" : "session-2";
+  const workUnitId = sameIntent ? "unit-1" : "unit-2";
   const session = before.session;
   if (session?.entrySnapshot === undefined || session.learningAgreement === undefined || session.workUnit === undefined) {
     throw new Error("Expected an agreed Growth fixture");
@@ -146,22 +138,17 @@ const expectStartedTransfer = (fixture: TransferHarness): void => {
   });
 };
 
-describe.each(["plain", "runtime"] as const)("Growth %s deferred transfer consent", format => {
-  it.each([
-    { sessionId: "session-2", workUnitId: "unit-2" },
-    { sessionId: "session-2", workUnitId: "unit-1" },
-    { sessionId: "session-1", workUnitId: "unit-2" },
-    { sessionId: "session-1", workUnitId: "unit-1" },
-  ])("rejects changed intent at $sessionId/$workUnitId without constructing a model", async ({ sessionId, workUnitId }) => {
+describe("Growth deferred transfer consent", () => {
+  it("rejects a changed intent without constructing a model", async () => {
     const consentDecision = deferred<boolean>();
-    const fixture = transferHarness(format, consentDecision.promise);
+    const fixture = transferHarness(consentDecision.promise);
     const pending = fixture.run();
     await fixture.consentRequested.promise;
     expect(fixture.requestModel).not.toHaveBeenCalled();
 
-    await replaceWorkUnit(fixture, sessionId, workUnitId);
+    await replaceWorkUnit(fixture);
     const changed = fixture.store.snapshotNow();
-    expect(changed.session).toMatchObject({ sessionId, authorityEpoch: 0, mode: "growth", workUnit: { id: workUnitId } });
+    expect(changed.session).toMatchObject({ sessionId: "session-2", authorityEpoch: 0, mode: "growth", workUnit: { id: "unit-2" } });
     consentDecision.resolve(true);
     await pending;
 
@@ -171,15 +158,13 @@ describe.each(["plain", "runtime"] as const)("Growth %s deferred transfer consen
     expect(fixture.consent.has(asModel(fixture.model), changed)).toBe(false);
   });
 
-  it.each(["unchanged", "observed"] as const)("keeps explicit consent for an %s intent", async change => {
+  it("keeps explicit consent for an intent that was only observed", async () => {
     const consentDecision = deferred<boolean>();
-    const fixture = transferHarness(format, consentDecision.promise);
+    const fixture = transferHarness(consentDecision.promise);
     const pending = fixture.run();
     await fixture.consentRequested.promise;
     expect(fixture.requestModel).not.toHaveBeenCalled();
-    if (change === "observed") {
-      await fixture.coordinator.observeWorkspace();
-    }
+    await fixture.coordinator.observeWorkspace();
     consentDecision.resolve(true);
     await pending;
 
@@ -189,7 +174,7 @@ describe.each(["plain", "runtime"] as const)("Growth %s deferred transfer consen
 
   it("keeps a decline neutral even if the session changes while consent is pending", async () => {
     const consentDecision = deferred<boolean>();
-    const fixture = transferHarness(format, consentDecision.promise);
+    const fixture = transferHarness(consentDecision.promise);
     const pending = fixture.run();
     await fixture.consentRequested.promise;
     await replaceWorkUnit(fixture);
@@ -205,9 +190,9 @@ describe.each(["plain", "runtime"] as const)("Growth %s deferred transfer consen
   });
 });
 
-describe.each(["plain", "runtime"] as const)("Growth %s transfer preparation intent", format => {
+describe("Growth transfer preparation intent", () => {
   it("does not rebind intent when the guarded request's snapshot moves to another work unit", async () => {
-    const fixture = transferHarness(format);
+    const fixture = transferHarness();
     const snapshot = fixture.coordinator.snapshot.bind(fixture.coordinator);
     let reads = 0;
     vi.spyOn(fixture.coordinator, "snapshot").mockImplementation(async () => {
@@ -224,7 +209,7 @@ describe.each(["plain", "runtime"] as const)("Growth %s transfer preparation int
   });
 
   it("retains the before/prepared revision fence during a work-unit replacement", async () => {
-    const fixture = transferHarness(format);
+    const fixture = transferHarness();
     const prepare = fixture.coordinator.prepareTurn.bind(fixture.coordinator);
     vi.spyOn(fixture.coordinator, "prepareTurn").mockImplementationOnce(async input => {
       await replaceWorkUnit(fixture);
@@ -237,16 +222,14 @@ describe.each(["plain", "runtime"] as const)("Growth %s transfer preparation int
   });
 });
 
-describe.each(["plain", "runtime"] as const)("Growth %s transfer response intent", format => {
-  it.each(["replacement", "reused IDs", "paused", "closed"] as const)("rejects a %s intent even if the model reports the new runtime", async change => {
-    const fixture = transferHarness(format);
+describe("Growth transfer response intent", () => {
+  it.each(["paused", "closed"] as const)("rejects a %s intent even if the model reports the new runtime", async change => {
+    const fixture = transferHarness();
     const reply = deferred<GrowthModelOutput>();
     fixture.requestModel.mockReturnValueOnce(reply.promise);
     const pending = fixture.run();
     await fixture.modelStarted.promise;
-    if (change === "replacement" || change === "reused IDs") {
-      await replaceWorkUnit(fixture, change === "reused IDs" ? "session-1" : "session-2", change === "reused IDs" ? "unit-1" : "unit-2");
-    } else if (change === "paused") {
+    if (change === "paused") {
       await fixture.coordinator.setPresence("paused");
     } else {
       await fixture.coordinator.dispatch({
@@ -255,7 +238,7 @@ describe.each(["plain", "runtime"] as const)("Growth %s transfer response intent
       });
     }
     const changed = fixture.store.snapshotNow();
-    reply.resolve(modelOutput(format, changed));
+    reply.resolve(modelOutput(changed));
     await pending;
 
     expectStaleTransfer(fixture, 1);
@@ -264,24 +247,24 @@ describe.each(["plain", "runtime"] as const)("Growth %s transfer response intent
 });
 
 it("allows a model-reported revision advance within the same transfer intent", async () => {
-  const fixture = transferHarness("runtime");
+  const fixture = transferHarness();
   const reply = deferred<GrowthModelOutput>();
   fixture.requestModel.mockReturnValueOnce(reply.promise);
   const pending = fixture.run();
   await fixture.modelStarted.promise;
   await fixture.coordinator.observeWorkspace();
-  reply.resolve(modelOutput("runtime", fixture.store.snapshotNow()));
+  reply.resolve(modelOutput(fixture.store.snapshotNow()));
   await pending;
 
   expect(fixture.store.snapshotNow().revision).toBeGreaterThan(fixture.before.revision);
   expectStartedTransfer(fixture);
 });
 
-describe.each(["plain", "runtime"] as const)("Growth %s transfer lifecycle identity", format => {
+describe("Growth transfer lifecycle identity", () => {
   it.each(["consent", "request-snapshot", "prepared-return", "model"] as const)("rejects an identically recreated session across %s", async phase => {
     const consent = deferred<boolean>();
-    const fixture = transferHarness(format, phase === "consent" ? consent.promise : Promise.resolve(true));
-    const recreate = () => replaceWorkUnit(fixture, "session-1", "unit-1", true);
+    const fixture = transferHarness(phase === "consent" ? consent.promise : Promise.resolve(true));
+    const recreate = () => replaceWorkUnit(fixture, true);
     if (phase === "request-snapshot") {
       const snapshot = fixture.coordinator.snapshot.bind(fixture.coordinator);
       let reads = 0;
@@ -311,7 +294,7 @@ describe.each(["plain", "runtime"] as const)("Growth %s transfer lifecycle ident
     } else if (phase === "model") {
       await fixture.modelStarted.promise;
       await recreate();
-      reply.resolve(modelOutput(format, fixture.store.snapshotNow()));
+      reply.resolve(modelOutput(fixture.store.snapshotNow()));
     }
     await pending;
 
@@ -326,14 +309,14 @@ describe.each(["plain", "runtime"] as const)("Growth %s transfer lifecycle ident
   });
 });
 
-describe.each(["plain", "runtime"] as const)("Growth %s transfer publication continuation", format => {
+describe("Growth transfer publication continuation", () => {
   it.each([
     { transition: "pause", timing: "before follow-up", followup: false },
     { transition: "observation", timing: "before follow-up", followup: false },
     { transition: "pause", timing: "after follow-up", followup: true },
     { transition: "observation", timing: "after follow-up", followup: true },
   ] as const)("fences a $transition committed $timing", async ({ transition, timing, followup }) => {
-    const fixture = transferHarness(format);
+    const fixture = transferHarness();
     const reply = deferred<GrowthModelOutput>();
     fixture.requestModel.mockReturnValueOnce(reply.promise);
     const pending = fixture.run();
@@ -356,7 +339,7 @@ describe.each(["plain", "runtime"] as const)("Growth %s transfer publication con
       markdownRevisions.push(fixture.store.snapshotNow().revision);
       return markdown(value);
     });
-    reply.resolve(modelOutput(format, fixture.before));
+    reply.resolve(modelOutput(fixture.before));
     if (timing === "before follow-up") {
       queueMicrotask(() => releaseCommit.resolve(undefined));
     } else {

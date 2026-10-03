@@ -26,10 +26,12 @@ const textOf = (part: ReturnType<typeof untrustedToolResult>): string =>
   (part.content[0] as { readonly value: string }).value;
 
 describe("Growth complete tool result boundary", () => {
-  it.each([false, true])("budgets the complete trust-prefixed text (escaped: %s)", escaped => {
+  // Quotes double when serialized, so the budget must hold for the escaped
+  // text rather than the raw observation; an unescaped query is a weaker case.
+  it("budgets the complete trust-prefixed escaped text", () => {
     const empty = textOf(untrustedToolResult("call-original", resultFor(), 12_000));
     const budget = 12_000 - empty.length;
-    const query = escaped ? `${'"'.repeat(Math.floor(budget / 2))}${"x".repeat(budget % 2)}` : "x".repeat(budget);
+    const query = `${'"'.repeat(Math.floor(budget / 2))}${"x".repeat(budget % 2)}`;
     const result = resultFor(query);
 
     const published = untrustedToolResult("call-original", result, 12_000);

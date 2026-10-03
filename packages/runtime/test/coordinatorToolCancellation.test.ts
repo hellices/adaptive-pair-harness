@@ -21,11 +21,9 @@ const prepareTool = async (name: PairToolName) => {
   };
 };
 
-describe.each([
-  "pair_record_attempt",
-  "pair_record_hypothesis",
-  "pair_request_hint",
-] as const)("cancelled local %s commands", name => {
+describe("cancelled local commands", () => {
+  const name = "pair_record_attempt";
+
   it.each([0, 1])("does not consume a grant or change state during read %s", async skip => {
     const { coordinator, store, effects, input, options } = await prepareTool(name);
     const before = store.journal.snapshotNow();
@@ -77,12 +75,12 @@ describe.each([
     expect(effects.calls).toEqual([]);
   });
 
-  it("retains valid uncancelled local actions", async () => {
-    const { coordinator, store, effects, input, options } = await prepareTool(name);
+  it.each(["pair_record_attempt", "pair_request_hint"] as const)("retains valid uncancelled %s actions", async tool => {
+    const { coordinator, store, effects, input, options } = await prepareTool(tool);
     const before = store.journal.snapshotNow();
 
     await expect(coordinator.invokeTool(
-      name, input, new AbortController().signal, options,
+      tool, input, new AbortController().signal, options,
     )).resolves.toMatchObject({ status: "confirmed" });
     expect(store.journal.snapshotNow().revision).toBeGreaterThan(before.revision);
     expect(store.journal.snapshotNow().session?.userActionGrants.at(-1)?.status).toBe("consumed");
@@ -90,23 +88,22 @@ describe.each([
   });
 });
 
-describe.each(["pair_read_scope", "pair_run_verification"] as const)("cancelled %s authorization", name => {
-  it.each([0, 1])("does not authorize an operation during read %s", async skip => {
-    const { coordinator, store, effects, input, options } = await prepareTool(name);
-    const before = store.journal.snapshotNow();
-    const eventsBefore = store.journal.events();
-    const reading = store.delayNextLoad(skip);
-    const controller = new AbortController();
-    const invocation = coordinator.invokeTool(name, input, controller.signal, options);
-    await reading.reached;
-    controller.abort(new Error("authorization-cancelled"));
-    reading.release();
+it("does not authorize a cancelled pair_run_verification operation", async () => {
+  const name = "pair_run_verification";
+  const { coordinator, store, effects, input, options } = await prepareTool(name);
+  const before = store.journal.snapshotNow();
+  const eventsBefore = store.journal.events();
+  const reading = store.delayNextLoad();
+  const controller = new AbortController();
+  const invocation = coordinator.invokeTool(name, input, controller.signal, options);
+  await reading.reached;
+  controller.abort(new Error("authorization-cancelled"));
+  reading.release();
 
-    await expect(invocation).rejects.toThrow("authorization-cancelled");
-    expect(store.journal.snapshotNow()).toEqual(before);
-    expect(store.journal.events()).toEqual(eventsBefore);
-    expect(effects.calls).toEqual([]);
-  });
+  await expect(invocation).rejects.toThrow("authorization-cancelled");
+  expect(store.journal.snapshotNow()).toEqual(before);
+  expect(store.journal.events()).toEqual(eventsBefore);
+  expect(effects.calls).toEqual([]);
 });
 
 it("does not return a state query cancelled while its snapshot is pending", async () => {

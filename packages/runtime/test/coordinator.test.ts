@@ -1,53 +1,18 @@
 import { toolsFor } from "@adaptive-pair/harness";
-import { FakeClock, FakeIdSource, growthRuntime } from "@adaptive-pair/testkit";
+import { growthRuntime } from "@adaptive-pair/testkit";
 import { expect, it } from "vitest";
-import { PairCoordinator } from "../src/index.js";
-import {
-  createActiveDeliveryAiRuntime,
-  createActivePairAiRuntime,
-  createBriefingGrowthRuntime,
-  createBriefingPairRuntime,
-  createBriefingProposedRuntime,
-  createBriefingRuntime,
-  createBriefingUninitializedRuntime,
-  createClosedRuntime,
-  createClosingRuntime,
-  createInactiveRuntime,
-  createPausedRuntime,
-  createReadyGrowthRuntime,
-  createReconcilingRuntime,
-  inputForTool,
-} from "./coordinatorFixtures.js";
+import { inputForTool, lifecycleRuntimes } from "./coordinatorFixtures.js";
+import { createCoordinator } from "./coordinatorInterleavingFixtures.js";
 import { FakeEffectPort, FakePairStore } from "./fakes.js";
 
 it("only exposes visible tools that the coordinator can execute", async () => {
-  const snapshots = [
-    createInactiveRuntime(),
-    createBriefingUninitializedRuntime(),
-    createBriefingRuntime(),
-    createBriefingPairRuntime(),
-    createBriefingGrowthRuntime(),
-    createBriefingProposedRuntime(),
-    createReadyGrowthRuntime(),
-    createActivePairAiRuntime(),
-    createActiveDeliveryAiRuntime(),
-    createPausedRuntime(),
-    createReconcilingRuntime(),
-    createClosingRuntime(),
-    createClosedRuntime(),
-  ];
+  const snapshots = lifecycleRuntimes();
 
   for (const snapshot of snapshots) {
     for (const descriptor of toolsFor(snapshot).tools) {
       const store = new FakePairStore([], snapshot);
       const effects = new FakeEffectPort([]);
-      const coordinator = new PairCoordinator({
-        store,
-        effects,
-        clock: new FakeClock(),
-        ids: new FakeIdSource(),
-        streamId: "workspace-1",
-      });
+      const coordinator = createCoordinator(store, effects);
       const signal = new AbortController().signal;
       const userActionId = descriptor.requiresExplicitUserAction
         ? await coordinator.grantUserAction(descriptor.name, signal)
@@ -72,37 +37,23 @@ it("only exposes visible tools that the coordinator can execute", async () => {
 });
 
 it("compiles instructions and tool visibility from one snapshot", async () => {
-  const coordinator = new PairCoordinator({
-    store: new FakePairStore([], growthRuntime({
-      runtimeRevision: 8,
-      session: { authorityEpoch: 3 },
-    })),
-    effects: new FakeEffectPort([]),
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
+  const coordinator = createCoordinator(
+    new FakePairStore([], growthRuntime({ runtimeRevision: 8, session: { authorityEpoch: 3 } })),
+    new FakeEffectPort([]),
+  );
 
   const prepared = await coordinator.prepareTurn({
     presenceSummary: "Developer is running the runtime suite.",
     userRequest: "Help me understand the latest verification result.",
   });
 
-  expect(prepared.instructions.runtimeRevision).toBe(8);
-  expect(prepared.instructions.authorityEpoch).toBe(3);
-  expect(prepared.tools.runtimeRevision).toBe(8);
-  expect(prepared.tools.authorityEpoch).toBe(3);
+  expect(prepared.instructions).toMatchObject({ runtimeRevision: 8, authorityEpoch: 3 });
+  expect(prepared.tools).toMatchObject({ runtimeRevision: 8, authorityEpoch: 3 });
 });
 
 it("passes the trusted work-unit scope to read effects", async () => {
   const effects = new FakeEffectPort([]);
-  const coordinator = new PairCoordinator({
-    store: new FakePairStore([], growthRuntime()),
-    effects,
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
+  const coordinator = createCoordinator(new FakePairStore([], growthRuntime()), effects);
 
   await coordinator.invokeTool(
     "pair_read_scope",
@@ -120,13 +71,7 @@ it("passes the trusted work-unit scope to read effects", async () => {
 
 it("uses one configured stream id for load and commit", async () => {
   const store = new FakePairStore([], growthRuntime(), "pair-stream");
-  const coordinator = new PairCoordinator({
-    store,
-    effects: new FakeEffectPort([]),
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "pair-stream",
-  });
+  const coordinator = createCoordinator(store, new FakeEffectPort([]), "pair-stream");
   const signal = new AbortController().signal;
 
   await coordinator.grantUserAction("pair_run_verification", signal);
@@ -139,13 +84,7 @@ it("rejects stale tool views before dispatching effects", async () => {
   const order: string[] = [];
   const store = new FakePairStore(order);
   const effects = new FakeEffectPort(order);
-  const coordinator = new PairCoordinator({
-    store,
-    effects,
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
+  const coordinator = createCoordinator(store, effects);
   const signal = new AbortController().signal;
   const userActionId = await coordinator.grantUserAction(
     "pair_run_verification",
@@ -167,38 +106,26 @@ it("rejects stale tool views before dispatching effects", async () => {
 });
 
 it("rejects hidden tools and missing grants before dispatch", async () => {
-  const growthCoordinator = new PairCoordinator({
-    store: new FakePairStore([], growthRuntime()),
-    effects: new FakeEffectPort([]),
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
-  const pairCoordinator = new PairCoordinator({
-    store: new FakePairStore([], growthRuntime({
-      session: {
+  const growthCoordinator = createCoordinator(new FakePairStore([], growthRuntime()), new FakeEffectPort([]));
+  const pairCoordinator = createCoordinator(new FakePairStore([], growthRuntime({
+    session: {
+      mode: "pair",
+      workUnit: {
+        id: "unit-1",
+        objective: "Let the AI navigate the fix",
         mode: "pair",
-        workUnit: {
-          id: "unit-1",
-          objective: "Let the AI navigate the fix",
-          mode: "pair",
-          learningValue: "mixed",
-          capability: "implementation",
-          owner: "ai",
-          allowedPaths: ["src/retry.ts"],
-          acceptanceChecks: ["npm test -- retry"],
-          verificationPlan: "npm test -- retry",
-          stoppingCondition: "The failing retry test is green",
-          baseline: {},
-          status: "agreed",
-        },
+        learningValue: "mixed",
+        capability: "implementation",
+        owner: "ai",
+        allowedPaths: ["src/retry.ts"],
+        acceptanceChecks: ["npm test -- retry"],
+        verificationPlan: "npm test -- retry",
+        stoppingCondition: "The failing retry test is green",
+        baseline: {},
+        status: "agreed",
       },
-    })),
-    effects: new FakeEffectPort([]),
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
+    },
+  })), new FakeEffectPort([]));
   const signal = new AbortController().signal;
 
   await expect(
@@ -226,13 +153,7 @@ it("rejects hidden tools and missing grants before dispatch", async () => {
 
 it("executes direct state tools through the core", async () => {
   const store = new FakePairStore([], growthRuntime());
-  const coordinator = new PairCoordinator({
-    store,
-    effects: new FakeEffectPort([]),
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
+  const coordinator = createCoordinator(store, new FakeEffectPort([]));
   const signal = new AbortController().signal;
   const userActionId = await coordinator.grantUserAction(
     "pair_record_attempt",

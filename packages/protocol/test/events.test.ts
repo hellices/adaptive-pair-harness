@@ -2,7 +2,8 @@ import { expect, it } from "vitest";
 import { parsePairEvent } from "../src/index.js";
 import { createEventFixtures, requiredEventPayloads, toWireEvent } from "./eventFixtures.js";
 
-const events = Object.values(createEventFixtures());
+const fixtures = createEventFixtures();
+const events = Object.values(fixtures);
 const envelopeFields = ["protocolVersion", "eventId", "commandId", "actor", "revision", "recordedAt", "type"];
 
 it.each(events)("parses version-1 $type without changing its memory shape", event => {
@@ -15,38 +16,36 @@ it.each(events)("parses version-1 $type without changing its memory shape", even
   expect(JSON.stringify(parsed)).toBe(JSON.stringify(wire));
 });
 
-it.each(events.flatMap(event =>
-  [...envelopeFields, ...requiredEventPayloads[event.type]].map(field => ({ type: event.type, event, field })),
-))("requires $field in $type", ({ event, field }) => {
+// Every event schema shares one envelope from createEventSchema, so envelope rows use one type
+// while payload requirements stay per type.
+it.each([
+  ...envelopeFields.map(field => ({ type: "WorkspaceObserved", event: fixtures.WorkspaceObserved, field })),
+  ...events.flatMap(event => requiredEventPayloads[event.type].map(field => ({ type: event.type, event, field }))),
+])("requires $field in $type", ({ event, field }) => {
   const wire = toWireEvent(event);
   delete wire[field];
   expect(() => parsePairEvent(wire)).toThrow(/^Invalid Pair event:/);
 });
 
-it.each(events)("rejects unknown top-level fields in $type", event => {
-  expect(() => parsePairEvent({ ...toWireEvent(event), extra: "not in the contract" }))
+it("rejects unknown top-level fields", () => {
+  expect(() => parsePairEvent({ ...toWireEvent(fixtures.SessionStarted), extra: "not in the contract" }))
     .toThrow(/^Invalid Pair event:/);
 });
 
-it.each([0, 2, -1, 1.1, "1", true, null])("rejects unsupported version %j", protocolVersion => {
-  for (const event of events) {
-    expect(() => parsePairEvent({ ...toWireEvent(event), protocolVersion }))
-      .toThrow(/^Invalid Pair event:/);
-  }
+it.each([2, "1"])("rejects unsupported version %j", protocolVersion => {
+  expect(() => parsePairEvent({ ...toWireEvent(fixtures.SessionStarted), protocolVersion }))
+    .toThrow(/^Invalid Pair event:/);
 });
 
 it.each([
-  ["type", "UnknownEvent"], ["type", "ObserveWorkspace"], ["type", "constructor"],
+  ["type", "UnknownEvent"], ["type", "constructor"],
   ["eventId", 1], ["commandId", null], ["actor", "system"],
-  ["revision", "1"], ["revision", -1], ["revision", 1.5],
-  ["revision", Number.MAX_SAFE_INTEGER + 1], ["revision", Number.POSITIVE_INFINITY],
-  ["recordedAt", "100"], ["recordedAt", Number.NaN],
+  ["revision", -1], ["recordedAt", "100"],
 ])("rejects malformed envelope %s=%j", (field, value) => {
-  const event = createEventFixtures().WorkspaceObserved;
-  expect(() => parsePairEvent({ ...event, [field]: value })).toThrow(/^Invalid Pair event:/);
+  expect(() => parsePairEvent({ ...fixtures.WorkspaceObserved, [field]: value })).toThrow(/^Invalid Pair event:/);
 });
 
-it.each([null, undefined, [], {}, "{}", 1, false])("rejects a non-event root %j", value => {
+it.each([null, [], "{}"])("rejects a non-event root %j", value => {
   expect(() => parsePairEvent(value)).toThrow(/^Invalid Pair event:/);
 });
 

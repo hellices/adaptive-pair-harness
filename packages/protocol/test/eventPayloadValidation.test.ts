@@ -3,9 +3,9 @@ import { parsePairEvent, type PairEvent } from "../src/index.js";
 import { createEventFixtures, requiredEventPayloads, toWireEvent } from "./eventFixtures.js";
 
 const fixtures = createEventFixtures();
+// SessionResumed.entry shares entrySnapshotSchema with EntryCaptured.entry.
 const nestedPayloads = [
   { type: "EntryCaptured", parent: "entry", optional: ["branch"] },
-  { type: "SessionResumed", parent: "entry", optional: ["branch"] },
   { type: "LearningConfirmed", parent: "agreement", optional: [] },
   { type: "WorkUnitProposed", parent: "workUnit", optional: [] },
   { type: "OperationAuthorized", parent: "operation", optional: ["summary", "userActionGrantId"] },
@@ -18,8 +18,21 @@ const withField = (type: PairEvent["type"], field: string, value: unknown, paren
   return event;
 };
 
+// Enum, const, boolean, counter, and string-array fields are rejected by the tables below, and Ajv
+// strictTypes refuses to compile an object schema without its type, so null checks remain for strings.
+const nullCoveredElsewhere = new Set([
+  "EntryCaptured.entry", "LearningConfirmed.agreement", "WorkUnitProposed.workUnit", "OperationAuthorized.operation",
+  "PresenceChanged.status", "BriefConfirmed.criteria", "ModeSelected.mode",
+  "AttemptRecorded.bypassed", "HypothesisRecorded.bypassed", "HintRequested.level",
+  "SolutionRevealAuthorized.previewOnly", "UserActionGranted.runtimeRevision",
+  "OperationObserved.authorityEpoch", "OperationObserved.status", "SessionPaused.authorityEpoch",
+  "SessionResumed.entry",
+]);
+
 it.each(Object.values(fixtures).flatMap(event =>
-  requiredEventPayloads[event.type].map(field => ({ type: event.type, field })),
+  requiredEventPayloads[event.type]
+    .filter(field => !nullCoveredElsewhere.has(`${event.type}.${field}`))
+    .map(field => ({ type: event.type, field })),
 ))("rejects null $type.$field", ({ type, field }) => {
   expect(() => parsePairEvent(withField(type, field, null))).toThrow(/^Invalid Pair event:/);
 });
@@ -92,22 +105,16 @@ it.each([
   { type: "AttemptRecorded", field: "bypassed", value: "false" },
   { type: "HypothesisRecorded", field: "bypassed", value: 0 },
   { type: "SolutionRevealAuthorized", field: "previewOnly", value: false },
-  { type: "HintRequested", field: "level", value: 6 },
-  { type: "HintRequested", field: "level", value: 0.5 },
   { type: "BriefConfirmed", field: "criteria", value: ["valid", 1] },
   { type: "EntryCaptured", parent: "entry", field: "branch", value: null },
   { type: "EntryCaptured", parent: "entry", field: "openPaths", value: [false] },
   { type: "EntryCaptured", parent: "entry", field: "capturedAt", value: "100" },
   { type: "LearningConfirmed", parent: "agreement", field: "humanOwnedCapabilities", value: ["unknown"] },
-  { type: "LearningConfirmed", parent: "agreement", field: "maximumHintLevel", value: 7 },
   { type: "LearningConfirmed", parent: "agreement", field: "delegatableWork", value: [2] },
   { type: "WorkUnitProposed", parent: "workUnit", field: "baseline", value: { path: 42 } },
   { type: "WorkUnitProposed", parent: "workUnit", field: "allowedPaths", value: "src" },
   { type: "OperationAuthorized", parent: "operation", field: "input", value: [] },
-  { type: "OperationAuthorized", parent: "operation", field: "summary", value: false },
-  { type: "OperationAuthorized", parent: "operation", field: "userActionGrantId", value: 1 },
   { type: "OperationObserved", field: "observation", value: [] },
-  { type: "OperationObserved", field: "status", value: "started" },
 ] satisfies (Omit<EnumCase, "values"> & { value: unknown })[])(
   "rejects malformed $type.$field", ({ type, parent, field, value }) => {
     expect(() => parsePairEvent(withField(type, field, value, parent)))
@@ -125,7 +132,7 @@ const counterFields = [
 ] satisfies Omit<EnumCase, "values">[];
 
 it.each(counterFields)("bounds the $type.$field counter", ({ type, field, parent }) => {
-  for (const value of [-1, 1.25, Number.MAX_SAFE_INTEGER + 1, Number.NaN, "1"]) {
+  for (const value of [-1, 1.25, Number.MAX_SAFE_INTEGER + 1, "1"]) {
     expect(() => parsePairEvent(withField(type, field, value, parent)))
       .toThrow(/^Invalid Pair event:/);
   }

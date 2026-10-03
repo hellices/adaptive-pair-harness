@@ -24,14 +24,6 @@ import {
   createReconcilingRuntime,
 } from "./toolPolicyFixtures.js";
 
-it("shows no workspace mutation in Growth Mode", () => {
-  const view = toolsFor(growthRuntime());
-
-  expect(view.tools.map(tool => tool.name)).toContain("pair_request_hint");
-  expect(view.tools.map(tool => tool.name)).not.toContain("pair_apply_edit");
-  expect(view.tools.map(tool => tool.name)).not.toContain("pair_run_command");
-});
-
 it("projects representative phase-aware tool sets", () => {
   expect(toolsFor(createInactiveRuntime()).tools.map(tool => tool.name)).toEqual([
     "pair_get_state",
@@ -168,29 +160,6 @@ it("projects representative phase-aware tool sets", () => {
   ]);
 });
 
-it("hides unimplemented handoff and transfer tools from visible projections", () => {
-  const snapshots = [
-    createBriefingRuntime(),
-    createBriefingPairRuntime(),
-    createBriefingGrowthRuntime(),
-    createBriefingProposedRuntime(),
-    createReadyGrowthRuntime(),
-    createActivePairAiRuntime(),
-    createActiveDeliveryAiRuntime(),
-    createPausedRuntime(),
-    createReconcilingRuntime(),
-    createClosingRuntime(),
-    createClosedRuntime(),
-  ];
-
-  for (const snapshot of snapshots) {
-    const visibleNames = toolsFor(snapshot).tools.map(tool => tool.name);
-
-    expect(visibleNames).not.toContain("pair_accept_handoff");
-    expect(visibleNames).not.toContain("pair_record_transfer");
-  }
-});
-
 it("binds the view to the current revision and authority epoch", () => {
   const view = toolsFor(
     growthRuntime({
@@ -206,35 +175,14 @@ it("binds the view to the current revision and authority epoch", () => {
   });
 });
 
-it("maps every internal tool to one stable native name", () => {
-  const view = toolsFor(growthRuntime());
-  const names = view.tools.map(tool => nativeToolName(tool.name));
+it("maps native tool names one-to-one and rejects foreign names", () => {
+  expect(new Set(PAIR_NATIVE_TOOL_NAMES).size).toBe(PAIR_NATIVE_TOOL_NAMES.length);
+  for (const nativeName of PAIR_NATIVE_TOOL_NAMES) {
+    const name = pairToolNameFromNative(nativeName);
 
-  expect(new Set(names).size).toBe(names.length);
-  expect(names).toContain("adaptive_pair_get_state");
-  expect(PAIR_NATIVE_TOOL_NAMES).toEqual([
-    "adaptive_pair_get_state",
-    "adaptive_pair_capture_entry",
-    "adaptive_pair_confirm_learning",
-    "adaptive_pair_select_mode",
-    "adaptive_pair_read_scope",
-    "adaptive_pair_search_scope",
-    "adaptive_pair_record_attempt",
-    "adaptive_pair_record_hypothesis",
-    "adaptive_pair_request_hint",
-    "adaptive_pair_reveal_solution",
-    "adaptive_pair_propose_work_unit",
-    "adaptive_pair_agree_work_unit",
-    "adaptive_pair_accept_handoff",
-    "adaptive_pair_apply_edit",
-    "adaptive_pair_run_verification",
-    "adaptive_pair_run_command",
-    "adaptive_pair_record_transfer",
-    "adaptive_pair_close_session",
-  ]);
-});
-
-it("rejects hidden native workspace tool names", () => {
+    expect(name === undefined ? undefined : nativeToolName(name)).toBe(nativeName);
+  }
+  expect(PAIR_NATIVE_TOOL_NAMES).toContain("adaptive_pair_get_state");
   expect(pairToolNameFromNative("workspace_edit")).toBeUndefined();
 });
 

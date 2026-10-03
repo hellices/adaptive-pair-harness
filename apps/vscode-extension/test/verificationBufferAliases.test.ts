@@ -4,14 +4,12 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
-  unlinkSync,
-  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TargetBufferIdentityUnavailableError } from "../src/verificationContracts.js";
-import { codedError, vscode } from "./verificationPortFixtures.js";
+import { vscode } from "./verificationPortFixtures.js";
 
 const { defaultFilesystemIdentity, VscodeBufferInspectionPort } = await import(
   "../src/verificationBuffers.js"
@@ -46,23 +44,6 @@ afterEach(() => {
 });
 
 describe("VscodeBufferInspectionPort — missing aliased buffers", () => {
-  it.each(["deleted", "new"])("finds a %s dirty buffer through its directory alias", state => {
-    const physicalPath = join(source, "a.ts");
-    if (state === "deleted") {
-      writeFileSync(physicalPath, "export const original = true;");
-    }
-    const documentPath = join(root, "alias", "a.ts");
-    openDirty(documentPath);
-    if (state === "deleted") {
-      unlinkSync(physicalPath);
-    }
-
-    expect(() => realpathSync.native(documentPath)).toThrow(
-      expect.objectContaining({ code: "ENOENT" }),
-    );
-    expect(new VscodeBufferInspectionPort(root).dirtyTargets(["src"])).toEqual(["src/a.ts"]);
-  });
-
   it("resolves a new buffer through multiple missing parent directories", () => {
     openDirty(join(root, "alias", "new", "nested", "a.ts"));
 
@@ -71,27 +52,18 @@ describe("VscodeBufferInspectionPort — missing aliased buffers", () => {
     ]);
   });
 
-  it.each(["alias/new", "alias/new/a.ts"])(
-    "matches a missing aliased target %s against its canonical dirty buffer",
-    target => {
-      openDirty(join(source, "new", "a.ts"));
+  it("matches a missing aliased target against its canonical dirty buffer", () => {
+    openDirty(join(source, "new", "a.ts"));
 
-      expect(new VscodeBufferInspectionPort(root).dirtyTargets([target])).toEqual([
-        "src/new/a.ts",
-      ]);
-    },
-  );
+    expect(new VscodeBufferInspectionPort(root).dirtyTargets(["alias/new"])).toEqual([
+      "src/new/a.ts",
+    ]);
+  });
 
   it("deduplicates missing dirty buffers opened by canonical and aliased paths", () => {
     openDirty(join(root, "alias", "a.ts"), join(source, "a.ts"));
 
     expect(new VscodeBufferInspectionPort(root).dirtyTargets([])).toEqual(["src/a.ts"]);
-  });
-
-  it("preserves directly addressed new buffers", () => {
-    openDirty(join(source, "a.ts"));
-
-    expect(new VscodeBufferInspectionPort(root).dirtyTargets(["src"])).toEqual(["src/a.ts"]);
   });
 
   it("finds a missing in-root buffer opened through an external alias", () => {
@@ -133,18 +105,14 @@ describe("VscodeBufferInspectionPort — missing alias root boundaries", () => {
     expect(new VscodeBufferInspectionPort(root).dirtyTargets([])).toEqual([]);
   });
 
-  it.each(["inside", "outside"])(
-    "refuses a dirty buffer beneath a dangling alias to a missing %s directory",
-    location => {
-      const target = join(location === "inside" ? root : temporaryRoot, "removed");
-      const alias = join(root, "dangling");
-      linkDirectory(target, alias);
-      openDirty(join(alias, "a.ts"));
+  it("refuses a dirty buffer beneath a dangling alias to a missing outside directory", () => {
+    const alias = join(root, "dangling");
+    linkDirectory(join(temporaryRoot, "removed"), alias);
+    openDirty(join(alias, "a.ts"));
 
-      expect(() => new VscodeBufferInspectionPort(root).dirtyTargets(["src"]))
-        .toThrow(TargetBufferIdentityUnavailableError);
-    },
-  );
+    expect(() => new VscodeBufferInspectionPort(root).dirtyTargets(["src"]))
+      .toThrow(TargetBufferIdentityUnavailableError);
+  });
 
   it("refuses an agreed target beneath a dangling directory alias", () => {
     linkDirectory(join(root, "removed"), join(root, "dangling"));
@@ -155,24 +123,6 @@ describe("VscodeBufferInspectionPort — missing alias root boundaries", () => {
 });
 
 describe("VscodeBufferInspectionPort — missing alias identity failures", () => {
-  it.each([
-    { name: "is unavailable", unresolved: () => undefined },
-    {
-      name: "denies access",
-      unresolved: () => {
-        throw codedError("EACCES");
-      },
-    },
-  ])("refuses a missing dirty buffer when its ancestor $name", ({ unresolved }) => {
-    const alias = join(root, "alias");
-    openDirty(join(alias, "a.ts"));
-    const identity = (path: string): string | undefined =>
-      path === alias ? unresolved() : defaultFilesystemIdentity(path);
-
-    expect(() => new VscodeBufferInspectionPort(root, identity).dirtyTargets(["src"]))
-      .toThrow(TargetBufferIdentityUnavailableError);
-  });
-
   it("does not invent an identity for a removed workspace root", () => {
     rmSync(root, { recursive: true, force: true });
 

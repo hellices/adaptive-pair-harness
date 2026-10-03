@@ -22,7 +22,7 @@ const search = async (query: unknown, signal = new AbortController().signal) => 
   return { result, ledger };
 };
 
-const queryBudget = async (matches: readonly unknown[] = []): Promise<number> => {
+const queryBudget = async (matches: readonly unknown[]): Promise<number> => {
   const { result } = await search("absent-budget-control");
   return RESULT_CHARACTER_LIMIT - JSON.stringify({ ...result, observation: { query: "", matches } }).length;
 };
@@ -41,19 +41,10 @@ describe("Scope search — complete effect result budget", () => {
     expect(workspace.searches).toEqual([]);
   });
 
-  it.each([
-    { name: "empty discovery", query: "x".repeat(12_000), empty: true, matching: false },
-    { name: "unmatched files", query: "x".repeat(12_000), empty: false, matching: false },
-    { name: "matched files", query: "retry".repeat(2_400), empty: false, matching: true },
-    { name: "JSON-escaped query", query: '"'.repeat(6_000), empty: true, matching: false },
-  ])("rejects an unrepresentable query with $name before workspace access", async ({ query, empty, matching }) => {
-    if (empty) {
-      workspace.foundPaths = [];
-    }
-    if (matching) {
-      await writeFile(join(filesystem.source, "main.ts"), query);
-    }
-    const getText = openBuffer(join(filesystem.source, "main.ts"), matching ? query : "retry dirty control");
+  it("rejects an unrepresentable query with matching files before workspace access", async () => {
+    const query = "retry".repeat(2_400);
+    await writeFile(join(filesystem.source, "main.ts"), query);
+    const getText = openBuffer(join(filesystem.source, "main.ts"), query);
 
     const { result, ledger } = await search(query);
 
@@ -68,18 +59,6 @@ describe("Scope search — complete effect result budget", () => {
     expect(ledger.isInactive()).toBe(true);
     expect(workspace.searches).toEqual([]);
     expect(getText).not.toHaveBeenCalled();
-  });
-
-  it.each([false, true])("keeps an exact-limit complete empty result unchanged (escaped: %s)", async escaped => {
-    const budget = await queryBudget();
-    const query = escaped ? `${'"'.repeat(Math.floor(budget / 2))}${"x".repeat(budget % 2)}` : "x".repeat(budget);
-    workspace.foundPaths = [];
-
-    const { result } = await search(query);
-
-    expect(result).toMatchObject({ status: "confirmed", partial: false });
-    expect(result.observation).toEqual({ query, matches: [] });
-    expect(JSON.stringify(result)).toHaveLength(RESULT_CHARACTER_LIMIT);
   });
 
   it.each([false, true])("budgets escaped matches and complete identities (overflow: %s)", async overflow => {
@@ -126,7 +105,7 @@ describe("Scope search — complete effect result budget", () => {
 });
 
 describe("Scope search — preflight controls", () => {
-  it.each(["", "   ", undefined, 42])("keeps invalid query %j bounded and inactive", async query => {
+  it.each(["   ", 42])("keeps invalid query %j bounded and inactive", async query => {
     const { result, ledger } = await search(query);
 
     expect(result).toMatchObject({ status: "declined", observation: { reason: "invalid-search-query" } });

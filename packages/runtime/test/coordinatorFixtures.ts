@@ -14,13 +14,6 @@ const createEntrySnapshot = (
   capturedAt,
 });
 
-const createGrowthAssistance = (): NonNullable<PairSessionSnapshot["assistance"]> => ({
-  attempt: undefined,
-  hypothesis: undefined,
-  hint: undefined,
-  solutionReveal: undefined,
-});
-
 const createLearningAgreement = (): NonNullable<PairSessionSnapshot["learningAgreement"]> => ({
   learningGoals: ["Validate the runtime tool projection"],
   familiarAreas: [],
@@ -48,213 +41,86 @@ const createWorkUnit = (
   ...overrides,
 });
 
-const createBriefingRuntime = (): PairRuntimeSnapshot =>
-  growthRuntime({
-    runtimeRevision: 4,
-    session: {
-      authorityEpoch: 2,
-      status: "briefing",
-      mode: undefined,
-      learningAgreement: undefined,
-      entrySnapshot: createEntrySnapshot(3),
-      workUnit: undefined,
-      assistance: undefined,
-      operations: [],
-      userActionGrants: [],
-    },
-  });
+const briefingRuntime = (
+  runtimeRevision: number,
+  session: Partial<PairSessionSnapshot> = {},
+): PairRuntimeSnapshot => growthRuntime({
+  runtimeRevision,
+  session: {
+    authorityEpoch: 2,
+    status: "briefing",
+    mode: undefined,
+    learningAgreement: undefined,
+    entrySnapshot: createEntrySnapshot(3),
+    workUnit: undefined,
+    assistance: undefined,
+    operations: [],
+    userActionGrants: [],
+    ...session,
+  },
+});
 
-const createBriefingPairRuntime = (): PairRuntimeSnapshot =>
-  growthRuntime({
-    runtimeRevision: 4,
-    session: {
-      authorityEpoch: 2,
-      status: "briefing",
-      mode: "pair",
-      learningAgreement: undefined,
-      entrySnapshot: createEntrySnapshot(3),
-      workUnit: undefined,
-      assistance: undefined,
-      operations: [],
-      userActionGrants: [],
-    },
-  });
+const aiRuntime = (
+  runtimeRevision: number,
+  status: PairSessionSnapshot["status"],
+  mode: "pair" | "delivery",
+  workUnit: Partial<WorkUnit> = {},
+): PairRuntimeSnapshot => growthRuntime({
+  runtimeRevision,
+  session: {
+    status,
+    mode,
+    learningAgreement: undefined,
+    assistance: undefined,
+    workUnit: createWorkUnit({
+      mode,
+      ...(mode === "delivery" ? { capability: "verification" } : {}),
+      owner: "ai",
+      ...workUnit,
+    }),
+  },
+});
 
-const createBriefingUninitializedRuntime = (): PairRuntimeSnapshot =>
-  growthRuntime({
-    runtimeRevision: 2,
-    session: {
-      authorityEpoch: 1,
-      status: "briefing",
-      mode: undefined,
-      learningAgreement: undefined,
-      entrySnapshot: undefined,
-      workUnit: undefined,
-      assistance: undefined,
-      operations: [],
-      userActionGrants: [],
-    },
-  });
+const createBriefingRuntime = (): PairRuntimeSnapshot => briefingRuntime(4);
 
-const createBriefingGrowthRuntime = (): PairRuntimeSnapshot =>
-  growthRuntime({
-    runtimeRevision: 5,
-    session: {
-      authorityEpoch: 2,
-      status: "briefing",
-      mode: "growth",
-      learningAgreement: undefined,
-      entrySnapshot: createEntrySnapshot(3),
-      workUnit: undefined,
-      assistance: undefined,
-      operations: [],
-      userActionGrants: [],
-    },
-  });
+const createReconcilingRuntime = (): PairRuntimeSnapshot =>
+  aiRuntime(13, "reconciling", "pair", { status: "needs-reconcile" });
 
-const createBriefingProposedRuntime = (): PairRuntimeSnapshot =>
-  growthRuntime({
-    runtimeRevision: 6,
-    session: {
-      authorityEpoch: 2,
-      status: "briefing",
-      mode: "growth",
-      learningAgreement: createLearningAgreement(),
-      entrySnapshot: createEntrySnapshot(3),
-      workUnit: createWorkUnit({
-        mode: "growth",
-        learningValue: "high",
-        capability: "diagnosis",
-        owner: "human",
-        status: "proposed",
-      }),
-      assistance: undefined,
-      operations: [],
-      userActionGrants: [],
-    },
-  });
+const growthWorkUnit = (status: WorkUnit["status"]): WorkUnit => createWorkUnit({
+  mode: "growth", learningValue: "high", capability: "diagnosis", owner: "human", status,
+});
 
-const createReadyGrowthRuntime = (): PairRuntimeSnapshot =>
+/** Inactive, briefing, ready, active, paused, reconciling, closing and closed runtimes. */
+const lifecycleRuntimes = (): readonly PairRuntimeSnapshot[] => [
+  {
+    protocolVersion: 1,
+    revision: 0,
+    presence: { workspaceId: "workspace-1", observationRevision: 0, status: "observing", activeSessionId: undefined },
+    session: undefined,
+  },
+  briefingRuntime(2, { authorityEpoch: 1, entrySnapshot: undefined }),
+  createBriefingRuntime(),
+  briefingRuntime(4, { mode: "pair" }),
+  briefingRuntime(5, { mode: "growth" }),
+  briefingRuntime(6, {
+    mode: "growth", learningAgreement: createLearningAgreement(), workUnit: growthWorkUnit("proposed"),
+  }),
   growthRuntime({
     runtimeRevision: 7,
     session: {
       status: "ready",
       mode: "growth",
-      assistance: createGrowthAssistance(),
-      workUnit: createWorkUnit({
-        mode: "growth",
-        learningValue: "high",
-        capability: "diagnosis",
-        owner: "human",
-      }),
+      assistance: { attempt: undefined, hypothesis: undefined, hint: undefined, solutionReveal: undefined },
+      workUnit: growthWorkUnit("agreed"),
     },
-  });
-
-const createActivePairAiRuntime = (): PairRuntimeSnapshot =>
-  growthRuntime({
-    runtimeRevision: 9,
-    session: {
-      status: "active",
-      mode: "pair",
-      learningAgreement: undefined,
-      assistance: undefined,
-      workUnit: createWorkUnit({
-        mode: "pair",
-        owner: "ai",
-      }),
-    },
-  });
-
-const createActiveDeliveryAiRuntime = (): PairRuntimeSnapshot =>
-  growthRuntime({
-    runtimeRevision: 11,
-    session: {
-      status: "active",
-      mode: "delivery",
-      learningAgreement: undefined,
-      assistance: undefined,
-      workUnit: createWorkUnit({
-        mode: "delivery",
-        capability: "verification",
-        owner: "ai",
-      }),
-    },
-  });
-
-const createPausedRuntime = (): PairRuntimeSnapshot =>
-  growthRuntime({
-    runtimeRevision: 12,
-    session: {
-      status: "paused",
-      mode: "pair",
-      learningAgreement: undefined,
-      assistance: undefined,
-      workUnit: createWorkUnit({
-        mode: "pair",
-        owner: "ai",
-      }),
-    },
-  });
-
-const createReconcilingRuntime = (): PairRuntimeSnapshot =>
-  growthRuntime({
-    runtimeRevision: 13,
-    session: {
-      status: "reconciling",
-      mode: "pair",
-      learningAgreement: undefined,
-      assistance: undefined,
-      workUnit: createWorkUnit({
-        mode: "pair",
-        owner: "ai",
-        status: "needs-reconcile",
-      }),
-    },
-  });
-
-const createClosingRuntime = (): PairRuntimeSnapshot =>
-  growthRuntime({
-    runtimeRevision: 14,
-    session: {
-      status: "closing",
-      mode: "delivery",
-      learningAgreement: undefined,
-      assistance: undefined,
-      workUnit: createWorkUnit({
-        mode: "delivery",
-        capability: "verification",
-        owner: "ai",
-      }),
-    },
-  });
-
-const createClosedRuntime = (): PairRuntimeSnapshot =>
-  growthRuntime({
-    runtimeRevision: 15,
-    session: {
-      status: "closed",
-      mode: "delivery",
-      learningAgreement: undefined,
-      assistance: undefined,
-      workUnit: createWorkUnit({
-        mode: "delivery",
-        capability: "verification",
-        owner: "ai",
-      }),
-    },
-  });
-
-const createInactiveRuntime = (): PairRuntimeSnapshot => ({
-  protocolVersion: 1,
-  revision: 0,
-  presence: {
-    workspaceId: "workspace-1",
-    observationRevision: 0,
-    status: "observing",
-    activeSessionId: undefined,
-  },
-  session: undefined,
-});
+  }),
+  aiRuntime(9, "active", "pair"),
+  aiRuntime(11, "active", "delivery"),
+  aiRuntime(12, "paused", "pair"),
+  createReconcilingRuntime(),
+  aiRuntime(14, "closing", "delivery"),
+  aiRuntime(15, "closed", "delivery"),
+];
 
 const inputForTool = (
   name: PairToolName,
@@ -335,4 +201,12 @@ const inputForTool = (
   }
 };
 
-export { createActiveDeliveryAiRuntime,createActivePairAiRuntime,createBriefingGrowthRuntime,createBriefingPairRuntime,createBriefingProposedRuntime,createBriefingRuntime,createBriefingUninitializedRuntime,createClosedRuntime,createClosingRuntime,createEntrySnapshot,createGrowthAssistance,createInactiveRuntime,createLearningAgreement,createPausedRuntime,createReadyGrowthRuntime,createReconcilingRuntime,createWorkUnit,inputForTool };
+export {
+  createBriefingRuntime,
+  createEntrySnapshot,
+  createLearningAgreement,
+  createReconcilingRuntime,
+  createWorkUnit,
+  inputForTool,
+  lifecycleRuntimes,
+};

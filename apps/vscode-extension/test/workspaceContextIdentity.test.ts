@@ -59,16 +59,9 @@ const capture = () => new WorkspaceContext(
 ).capture();
 
 describe("open document filesystem identity", () => {
-  it.each([
-    { exists: true, isDirty: true },
-    { exists: false, isDirty: true },
-    { exists: true, isDirty: false },
-  ])("rejects an escaping ancestor symlink (%j)", async ({ exists, isDirty }) => {
-    if (exists) {
-      await writeFile(join(outside, "main.ts"), "saved outside text");
-    }
+  it("rejects a missing dirty file below an escaping ancestor symlink", async () => {
     await symlink(outside, join(root, "linked"), "dir");
-    const getText = openDocument(join(root, "linked", "main.ts"), isDirty);
+    const getText = openDocument(join(root, "linked", "main.ts"));
 
     const snapshot = await capture();
 
@@ -90,17 +83,6 @@ describe("open document filesystem identity", () => {
 
     expect(snapshot.openPaths).toEqual([]);
     expect(snapshot.dirtyPaths).toEqual([]);
-    expect(snapshot.protectedPaths).toEqual([]);
-    expect(getText).not.toHaveBeenCalled();
-  });
-
-  it("rejects a new file below a dangling ancestor symlink", async () => {
-    await symlink(join(outside, "missing"), join(root, "linked"), "dir");
-    const getText = openDocument(join(root, "linked", "new.ts"));
-
-    const snapshot = await capture();
-
-    expect(snapshot.openPaths).toEqual([]);
     expect(snapshot.protectedPaths).toEqual([]);
     expect(getText).not.toHaveBeenCalled();
   });
@@ -141,11 +123,11 @@ describe("open document filesystem identity", () => {
     expect(snapshot.protectedPaths).toEqual(["linked/main.ts"]);
   });
 
-  it.each(["root", "document"])("fails closed when %s identity is unavailable", failed => {
+  it("fails closed when document identity is unavailable", () => {
     const target = join(root, "main.ts");
     const getText = openDocument(target);
     const access = new VscodeWorkspaceContextAccess({ now: () => 100 }, undefined, path => {
-      if (path === (failed === "root" ? root : target)) {
+      if (path === target) {
         throw Object.assign(new Error("identity unavailable"), { code: "EACCES" });
       }
       return path;

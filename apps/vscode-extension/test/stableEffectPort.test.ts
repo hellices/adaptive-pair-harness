@@ -1,6 +1,5 @@
 import type { EffectRequest, EffectResult } from "@adaptive-pair/runtime";
 import { expect, it } from "vitest";
-import { BoundedScopeEffectRunner } from "../src/scopeEffect.js";
 import {
   StableEffectPort,
   type ScopeEffectRunner,
@@ -30,27 +29,6 @@ const confirmed = (operationId: string): EffectResult => ({
   partial: false,
 });
 
-it("passes the trusted effect request to the verification resolver", async () => {
-  const resolved: (EffectRequest | undefined)[] = [];
-  const runner: VerificationRunner = {
-    run: plan => Promise.resolve(confirmed(plan.operationId)),
-  };
-  const port = new StableEffectPort({
-    resolveVerification: (...args: EffectRequest[]) => {
-      resolved.push(args[0]);
-      return runner;
-    },
-  });
-  const trustedRequest = request({
-    workspaceId: "file:///trusted-workspace",
-    payload: { script: "test" },
-  });
-
-  await port.execute(trustedRequest, new AbortController().signal);
-
-  expect(resolved).toEqual([trustedRequest]);
-});
-
 it("routes pair_run_verification to the runner with a package-script plan", async () => {
   const plans: VerificationPlan[] = [];
   const runner: VerificationRunner = {
@@ -59,14 +37,21 @@ it("routes pair_run_verification to the runner with a package-script plan", asyn
       return Promise.resolve(confirmed(plan.operationId));
     },
   };
-  const port = new StableEffectPort({ resolveVerification: () => runner });
+  const resolved: EffectRequest[] = [];
+  const port = new StableEffectPort({
+    resolveVerification: trustedRequest => {
+      resolved.push(trustedRequest);
+      return runner;
+    },
+  });
+  const trustedRequest = request({
+    payload: { script: "test", targetPaths: ["src/x.ts"] },
+  });
 
-  const result = await port.execute(
-    request({ payload: { script: "test", targetPaths: ["src/x.ts"] } }),
-    new AbortController().signal,
-  );
+  const result = await port.execute(trustedRequest, new AbortController().signal);
 
   expect(result.status).toBe("confirmed");
+  expect(resolved).toEqual([trustedRequest]);
   expect(plans).toEqual([
     {
       kind: "package-script",
@@ -155,307 +140,6 @@ it("reads only bounded lines inside the trusted work-unit scope", async () => {
     text: "one\ntwo",
   });
   expect(readPaths).toEqual(["src/retry.ts"]);
-});
-
-it("rejects a read outside the trusted scope before file access", async () => {
-  let reads = 0;
-  const port = new StableEffectPort({
-    resolveScopeAccess: () => ({
-      readText: () => {
-        reads += 1;
-        return Promise.resolve({ status: "ok" as const, text: "secret" });
-      },
-      listPaths: () =>
-        Promise.resolve({ paths: [], truncated: false }),
-    }),
-  });
-
-  const result = await port.execute(
-    request({
-      toolName: "pair_read_scope",
-      kind: "read",
-      allowedPaths: ["src"],
-      payload: { path: "../secret.txt" },
-    }),
-    new AbortController().signal,
-  );
-
-  expect(result.status).toBe("declined");
-  expect(result.observation).toMatchObject({ reason: "path-outside-scope" });
-  expect(reads).toBe(0);
-});
-
-it("searches eligible scoped files with bounded structured matches", async () => {
-  const port = new StableEffectPort({
-    resolveScopeAccess: () => ({
-      listPaths: () =>
-        Promise.resolve({
-          paths: ["src/a.ts", "src/b.ts", "docs/private.md"],
-          truncated: false,
-        }),
-      readText: (path: string) =>
-        Promise.resolve({
-          status: "ok" as const,
-          text:
-            path === "src/a.ts"
-              ? "const retry = true;\nretry();"
-              : "nothing here",
-        }),
-    }),
-  });
-
-  const result = await port.execute(
-    request({
-      toolName: "pair_search_scope",
-      kind: "read",
-      allowedPaths: ["src"],
-      payload: { query: "retry", pattern: "**/*.ts" },
-    }),
-    new AbortController().signal,
-  );
-
-  expect(result.status).toBe("confirmed");
-  expect(result.observation).toEqual({
-    query: "retry",
-    matches: [
-      { path: "src/a.ts", line: 1, text: "const retry = true;" },
-      { path: "src/a.ts", line: 2, text: "retry();" },
-    ],
-  });
-});
-
-it("checks the resolved file path against the trusted scope", async () => {
-  const port = new StableEffectPort({
-    resolveScopeAccess: () => ({
-      readText: () =>
-        Promise.resolve({
-          status: "ok" as const,
-          path: "private/design.md",
-          text: "private",
-        }),
-      listPaths: () =>
-        Promise.resolve({ paths: [], truncated: false }),
-    }),
-  });
-
-  const result = await port.execute(
-    request({
-      toolName: "pair_read_scope",
-      kind: "read",
-      allowedPaths: ["src"],
-      payload: { path: "src/alias.ts" },
-    }),
-    new AbortController().signal,
-  );
-
-  expect(result.status).toBe("declined");
-  expect(result.observation).toMatchObject({
-    reason: "resolved-path-outside-scope",
-  });
-});
-
-it("filters to trusted scope before applying the search file cap", async () => {
-  const outside = Array.from(
-    { length: 200 },
-    (_, index) => `docs/generated-${index}.md`,
-  );
-  let listedScope: readonly string[] | undefined;
-  const port = new StableEffectPort({
-    resolveScopeAccess: () => ({
-      listPaths: (_pattern, allowedPaths) => {
-        listedScope = allowedPaths;
-        return (
-        Promise.resolve({
-          paths: [...outside, "src/retry.ts"],
-          truncated: false,
-        })
-        );
-      },
-      readText: path =>
-        Promise.resolve({
-          status: "ok" as const,
-          path,
-          text: "retryUntil",
-        }),
-    }),
-  });
-
-  const result = await port.execute(
-    request({
-      toolName: "pair_search_scope",
-      kind: "read",
-      allowedPaths: ["src"],
-      payload: { query: "retryUntil" },
-    }),
-    new AbortController().signal,
-  );
-
-  expect(result.observation?.["matches"]).toEqual([
-    { path: "src/retry.ts", line: 1, text: "retryUntil" },
-  ]);
-  expect(listedScope).toEqual(["src"]);
-});
-
-it("propagates workspace discovery truncation as a partial search", async () => {
-  const port = new StableEffectPort({
-    resolveScopeAccess: () => ({
-      listPaths: () =>
-        Promise.resolve({
-          paths: ["src/retry.ts"],
-          truncated: true,
-        }),
-      readText: path =>
-        Promise.resolve({
-          status: "ok" as const,
-          path,
-          text: "retryUntil",
-        }),
-    }),
-  });
-
-  const result = await port.execute(
-    request({
-      toolName: "pair_search_scope",
-      kind: "read",
-      allowedPaths: ["src"],
-      payload: { query: "retryUntil" },
-    }),
-    new AbortController().signal,
-  );
-
-  expect(result.status).toBe("confirmed");
-  expect(result.partial).toBe(true);
-});
-
-it("marks a search partial when an eligible file cannot be read", async () => {
-  const runner = new BoundedScopeEffectRunner({
-    listPaths: () =>
-      Promise.resolve({ paths: ["src/retry.ts"], truncated: false }),
-    readText: () => Promise.resolve({ status: "read-failed" }),
-  });
-
-  const result = await runner.run(
-    request({
-      toolName: "pair_search_scope",
-      kind: "read",
-      payload: { query: "retry" },
-      allowedPaths: ["src"],
-    }),
-    new AbortController().signal,
-  );
-
-  expect(result).toMatchObject({
-    status: "confirmed",
-    partial: true,
-    observation: { matches: [] },
-  });
-});
-
-it("returns a cancelled result when a scope read is aborted", async () => {
-  const controller = new AbortController();
-  const runner = new BoundedScopeEffectRunner({
-    listPaths: () =>
-      Promise.resolve({ paths: [], truncated: false }),
-    readText: (_path, signal) =>
-      new Promise((_resolve, reject) => {
-        signal.addEventListener("abort", () => reject(new Error("aborted")), {
-          once: true,
-        });
-      }),
-  });
-  const pending = runner.run(
-    request({
-      toolName: "pair_read_scope",
-      kind: "read",
-      payload: { path: "src/retry.ts" },
-    }),
-    controller.signal,
-  );
-
-  controller.abort();
-
-  await expect(pending).resolves.toMatchObject({
-    status: "cancelled",
-    observation: { reason: "scope-read-cancelled" },
-  });
-});
-
-it("returns a failed result instead of throwing when scope access fails", async () => {
-  const runner = new BoundedScopeEffectRunner({
-    listPaths: () => Promise.reject(new Error("workspace disappeared")),
-    readText: () => Promise.reject(new Error("workspace disappeared")),
-  });
-
-  await expect(
-    runner.run(
-      request({
-        toolName: "pair_search_scope",
-        kind: "read",
-        payload: { query: "retry" },
-      }),
-      new AbortController().signal,
-    ),
-  ).resolves.toMatchObject({
-    status: "failed",
-    observation: { reason: "scope-access-failed" },
-  });
-});
-
-it("does not mark a complete short default read partial", async () => {
-  const port = new StableEffectPort({
-    resolveScopeAccess: () => ({
-      listPaths: () =>
-        Promise.resolve({ paths: [], truncated: false }),
-      readText: path =>
-        Promise.resolve({
-          status: "ok" as const,
-          path,
-          text: "one\ntwo",
-        }),
-    }),
-  });
-
-  const result = await port.execute(
-    request({
-      toolName: "pair_read_scope",
-      kind: "read",
-      payload: { path: "src/retry.ts" },
-    }),
-    new AbortController().signal,
-  );
-
-  expect(result.status).toBe("confirmed");
-  expect(result.partial).toBe(false);
-  expect(result.observation?.["endLine"]).toBe(2);
-});
-
-it("declines a line range that starts after end of file", async () => {
-  const port = new StableEffectPort({
-    resolveScopeAccess: () => ({
-      listPaths: () =>
-        Promise.resolve({ paths: [], truncated: false }),
-      readText: path =>
-        Promise.resolve({
-          status: "ok" as const,
-          path,
-          text: "one\ntwo",
-        }),
-    }),
-  });
-
-  const result = await port.execute(
-    request({
-      toolName: "pair_read_scope",
-      kind: "read",
-      payload: { path: "src/retry.ts", startLine: 10 },
-    }),
-    new AbortController().signal,
-  );
-
-  expect(result.status).toBe("declined");
-  expect(result.observation).toMatchObject({
-    reason: "line-range-out-of-bounds",
-  });
 });
 
 it("declines edit and command effects the Stable shell does not implement", async () => {

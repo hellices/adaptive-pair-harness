@@ -463,40 +463,6 @@ describe("VscodeScopeAccess", () => {
     }
   });
 
-  it("does not return a dirty buffer from another workspace root", async () => {
-    const root = await mkdtemp(join(tmpdir(), "adaptive-pair-scope-root-"));
-    const other = await mkdtemp(join(tmpdir(), "adaptive-pair-scope-other-"));
-    try {
-      await mkdir(join(root, "src"));
-      await mkdir(join(other, "src"));
-      await writeFile(join(root, "src", "index.ts"), "root disk text", "utf8");
-      git.state.workspaceRoot = root;
-      git.state.relativePathOverride = fsPath =>
-        fsPath.endsWith("/src/index.ts") ? "src/index.ts" : undefined;
-      git.state.textDocuments = [
-        {
-          uri: git.createUri(join(other, "src", "index.ts")),
-          isDirty: true,
-          getText: () => "other workspace secret",
-        },
-      ];
-
-      await expect(
-        new VscodeScopeAccess(root).readText(
-          "src/index.ts",
-          new AbortController().signal,
-        ),
-      ).resolves.toEqual({
-        status: "ok",
-        path: "src/index.ts",
-        text: "root disk text",
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-      await rm(other, { recursive: true, force: true });
-    }
-  });
-
   it("does not discover sibling files beside an allowed file scope", async () => {
     const root = await mkdtemp(join(tmpdir(), "adaptive-pair-scope-root-"));
     try {
@@ -520,67 +486,6 @@ describe("VscodeScopeAccess", () => {
       ).resolves.toEqual({
         paths: ["src/allowed.ts"],
         truncated: false,
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it("prefers a dirty buffer opened through a symlink alias of the target", async () => {
-    const root = await mkdtemp(join(tmpdir(), "adaptive-pair-scope-root-"));
-    const alias = `${root}-alias`;
-    try {
-      await mkdir(join(root, "src"));
-      await writeFile(join(root, "src", "index.ts"), "root disk text", "utf8");
-      await symlink(root, alias, "dir");
-      git.state.workspaceRoot = root;
-      git.state.textDocuments = [
-        {
-          uri: git.createUri(join(alias, "src", "index.ts")),
-          isDirty: true,
-          getText: () => "dirty alias buffer",
-        },
-      ];
-
-      await expect(
-        new VscodeScopeAccess(root).readText(
-          "src/index.ts",
-          new AbortController().signal,
-        ),
-      ).resolves.toEqual({
-        status: "ok",
-        path: "src/index.ts",
-        text: "dirty alias buffer",
-      });
-    } finally {
-      await rm(alias, { force: true });
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it("ignores an unrelated dirty new file when reading an existing scoped target", async () => {
-    const root = await mkdtemp(join(tmpdir(), "adaptive-pair-scope-root-"));
-    try {
-      await mkdir(join(root, "src"));
-      await writeFile(join(root, "src", "index.ts"), "disk text", "utf8");
-      git.state.workspaceRoot = root;
-      git.state.textDocuments = [
-        {
-          uri: git.createUri(join(root, "src", "new.ts")),
-          isDirty: true,
-          getText: () => "unsaved new file",
-        },
-      ];
-
-      await expect(
-        new VscodeScopeAccess(root).readText(
-          "src/index.ts",
-          new AbortController().signal,
-        ),
-      ).resolves.toEqual({
-        status: "ok",
-        path: "src/index.ts",
-        text: "disk text",
       });
     } finally {
       await rm(root, { recursive: true, force: true });

@@ -1,8 +1,7 @@
 import type { PairRuntimeSnapshot } from "@adaptive-pair/protocol";
-import { FakeClock, FakeIdSource } from "@adaptive-pair/testkit";
 import { expect, it } from "vitest";
-import { PairCoordinator } from "../src/index.js";
 import { createReconcilingRuntime } from "./coordinatorFixtures.js";
+import { createCoordinator } from "./coordinatorInterleavingFixtures.js";
 import { FakeEffectPort, FakePairStore } from "./fakes.js";
 
 it("invalidates a pending operation when the session pauses", async () => {
@@ -13,14 +12,7 @@ it("invalidates a pending operation when the session pauses", async () => {
     ignoreAbort: true,
     summary: "Verification passed too late.",
   });
-  const clock = new FakeClock();
-  const coordinator = new PairCoordinator({
-    store,
-    effects,
-    clock,
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
+  const coordinator = createCoordinator(store, effects);
   const signal = new AbortController().signal;
   const userActionId = await coordinator.grantUserAction(
     "pair_run_verification",
@@ -47,7 +39,7 @@ it("invalidates a pending operation when the session pauses", async () => {
     actor: "human",
     type: "PauseSession",
     reason: "developer took over the shell",
-    observedAt: clock.now(),
+    observedAt: 0,
   });
 
   expect(paused.session?.status).toBe("paused");
@@ -64,13 +56,7 @@ it("invalidates a pending operation when the session pauses", async () => {
 
 it("never retries an unknown state-changing operation", async () => {
   const effects = new FakeEffectPort([], { outcome: "unknown" });
-  const coordinator = new PairCoordinator({
-    store: new FakePairStore([]),
-    effects,
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
+  const coordinator = createCoordinator(new FakePairStore([]), effects);
   const signal = new AbortController().signal;
   const userActionId = await coordinator.grantUserAction(
     "pair_run_verification",
@@ -114,96 +100,40 @@ it("does not replay a read after its work unit needs reconciliation", async () =
     },
   };
   const effects = new FakeEffectPort([]);
-  const coordinator = new PairCoordinator({
-    store: new FakePairStore([], snapshot),
-    effects,
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
+  const coordinator = createCoordinator(new FakePairStore([], snapshot), effects);
 
   await coordinator.reconcile();
 
   expect(effects.calls).toHaveLength(0);
 });
 
-it("treats duplicate observed results as idempotent", async () => {
+it("does not commit an empty batch for a duplicate observed result", async () => {
   const store = new FakePairStore([]);
-  const coordinator = new PairCoordinator({
-    store,
-    effects: new FakeEffectPort([]),
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
-
-  const first = await coordinator.dispatch({
-    protocolVersion: 1,
-    commandId: "grant-1",
-    expectedRevision: 0,
-    actor: "human",
-    type: "GrantUserAction",
-    grantId: "grant-1",
-    nativeToolName: "adaptive_pair_run_verification",
-    observedAt: 1,
-  });
-
-  const authorized = await coordinator.dispatch({
-    protocolVersion: 1,
-    commandId: "authorize-1",
-    expectedRevision: first.revision,
-    actor: "ai",
-    type: "AuthorizeOperation",
-    operationId: "op-1",
-    toolName: "pair_run_verification",
-    kind: "check",
-    input: { plan: "npm test" },
-    userActionGrantId: "grant-1",
-    observedAt: 2,
-  });
-
-  const observed = await coordinator.dispatch({
-    protocolVersion: 1,
-    commandId: "observe-1",
-    expectedRevision: authorized.revision,
-    actor: "host",
-    type: "ObserveOperationResult",
-    operationId: "op-1",
-    authorityEpoch: 0,
-    status: "confirmed",
-    summary: "Verification passed.",
-    observation: { exitCode: 0 },
-    observedAt: 3,
-  });
+  const coordinator = createCoordinator(store, new FakeEffectPort([]));
+  const signal = new AbortController().signal;
+  const userActionId = await coordinator.grantUserAction("pair_run_verification", signal);
+  await coordinator.invokeTool("pair_run_verification", { plan: "npm test" }, signal, { userActionId });
+  const observed = store.snapshot();
+  const operation = observed.session?.operations.at(-1);
+  if (operation === undefined) throw new Error("Expected an observed operation.");
+  const commitsBefore = store.committedStreamIds.length;
 
   const duplicate = await coordinator.dispatch({
-    protocolVersion: 1,
-    commandId: "observe-2",
-    expectedRevision: observed.revision,
-    actor: "host",
-    type: "ObserveOperationResult",
-    operationId: "op-1",
-    authorityEpoch: 0,
-    status: "confirmed",
-    summary: "Verification passed again.",
-    observation: { duplicate: true },
-    observedAt: 4,
+    protocolVersion: 1, commandId: "observe-duplicate", expectedRevision: observed.revision, actor: "host",
+    type: "ObserveOperationResult", operationId: operation.id, authorityEpoch: operation.authorityEpoch,
+    status: "confirmed", summary: "Verification passed again.", observation: { duplicate: true }, observedAt: 4,
   });
 
+  expect(operation.status).toBe("confirmed");
   expect(duplicate).toEqual(observed);
+  expect(store.committedStreamIds).toHaveLength(commitsBefore);
 });
 
 it("fails atomically before effects and permits retry after a commit failure", async () => {
   const order: string[] = [];
   const store = new FakePairStore(order);
   const effects = new FakeEffectPort(order);
-  const coordinator = new PairCoordinator({
-    store,
-    effects,
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
+  const coordinator = createCoordinator(store, effects);
   const signal = new AbortController().signal;
   const userActionId = await coordinator.grantUserAction(
     "pair_run_verification",

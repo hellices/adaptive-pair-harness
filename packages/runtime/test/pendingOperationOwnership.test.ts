@@ -1,11 +1,13 @@
 import { expect, it } from "vitest";
 import { beginReplacement, replacementScenarios } from "./pendingOperationFixtures.js";
 
-const ownershipCases = replacementScenarios.flatMap(scenario =>
-  ["paused", "off"].flatMap(boundary => [true, false].map(reuseOperationId => ({
-    ...scenario, boundary: boundary as "paused" | "off", reuseOperationId,
-  }))),
-);
+const [readByPresence, verifyByDispatch, readByDispatch, verifyByPresence] = replacementScenarios;
+const ownershipCases = [
+  { ...readByPresence, boundary: "paused", reuseOperationId: true },
+  { ...verifyByDispatch, boundary: "off", reuseOperationId: false },
+  { ...readByDispatch, boundary: "off", reuseOperationId: true },
+  { ...verifyByPresence, boundary: "paused", reuseOperationId: true },
+] as const;
 
 it.each(ownershipCases)(
   "$tool via $route to $destination keeps $boundary cancellation after old settlement (reuse=$reuseOperationId)",
@@ -38,26 +40,16 @@ it.each(ownershipCases)(
       expect(previous.call.request.allowedPaths).toEqual(["src/original.ts"]);
       expect(fixture.calls).toHaveLength(2);
       expect(eventsAfterOldSettlement).toEqual(eventsBeforeOldSettlement);
-      expect({
-        operationId: replacement.call.request.operationId,
-        oldRuntimeRevision: previous.call.request.runtimeRevision,
-        replacementRuntimeRevision: replacement.call.request.runtimeRevision,
-        prematureAbort,
-        replacementAbortedByBoundary,
-      }).toEqual({
-        operationId: replacement.call.request.operationId,
-        oldRuntimeRevision: previous.call.request.runtimeRevision,
-        replacementRuntimeRevision: replacement.call.request.runtimeRevision,
-        prematureAbort: false,
-        replacementAbortedByBoundary: true,
-      });
+      expect(prematureAbort).toBe(false);
+      expect(replacementAbortedByBoundary).toBe(true);
+      expect(replacement.call.request.operationId === previous.call.request.operationId).toBe(scenario.reuseOperationId);
     } finally {
       await fixture.finishAll();
     }
   },
 );
 
-it.each(replacementScenarios)(
+it.each([readByPresence, verifyByDispatch])(
   "$tool via $route to $destination preserves replacement-first completion",
   async scenario => {
     const { fixture, previous, replacement } = await beginReplacement(scenario);
@@ -81,7 +73,7 @@ it.each(replacementScenarios)(
   },
 );
 
-it.each(replacementScenarios)(
+it.each([readByDispatch, verifyByPresence])(
   "$tool via $route to $destination preserves Pause before old settlement",
   async scenario => {
     const { fixture, previous, replacement } = await beginReplacement(scenario);

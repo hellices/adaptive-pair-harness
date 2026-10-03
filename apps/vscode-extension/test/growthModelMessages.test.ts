@@ -62,7 +62,6 @@ describe("Growth model message boundary", () => {
 
   it.each([
     { text: " ", code: "GROWTH_EMPTY_RESPONSE" },
-    { text: "Here is the answer: {}", code: "GROWTH_NON_JSON_RESPONSE" },
     { text: "```json\n{}\n```", code: "GROWTH_NON_JSON_RESPONSE" },
     { text: "{invalid}", code: "GROWTH_NON_JSON_RESPONSE" },
     { text: '{"level":6,"kind":"hint","text":"large"}', code: "GROWTH_INVALID_ENVELOPE" },

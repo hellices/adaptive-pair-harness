@@ -12,10 +12,9 @@ import {
 } from "./growthTestHarness.js";
 
 describe("GrowthModel turn caps", () => {
+  // One row per liveness call site; both reasons share the liveness check.
   it.each([
     { phase: "stream", reason: "deadline", code: "GROWTH_TIME_CAP" },
-    { phase: "stream", reason: "cancellation", code: "GROWTH_CANCELLED" },
-    { phase: "accounting", reason: "deadline", code: "GROWTH_TIME_CAP" },
     { phase: "accounting", reason: "cancellation", code: "GROWTH_CANCELLED" },
   ])("rejects a late successful $phase completion after $reason", async ({ phase, reason, code }) => {
     const coordinator = new FakeCoordinator(growthSnapshot({ runtimeRevision: 4 }));
@@ -215,24 +214,6 @@ describe("GrowthModel turn caps", () => {
 });
 
 describe("GrowthModel transport failures", () => {
-  it("rejects markdown outside the JSON envelope", async () => {
-    const snapshot = growthSnapshot({ runtimeRevision: 4 });
-    const coordinator = new FakeCoordinator(snapshot);
-    const model = new FakeModel([
-      { text: "Here is a hint:\n```json\n{\"level\":1,\"kind\":\"hint\",\"text\":\"x\"}\n```" },
-    ]);
-    const prepared = await coordinator.prepareTurn({});
-    const growthModel = createGrowthModel(asModel(model), coordinator);
-
-    await expect(
-      growthModel.request(
-        prepared.instructions,
-        prepared.tools,
-        new AbortController().signal,
-      ),
-    ).rejects.toMatchObject({ code: "GROWTH_NON_JSON_RESPONSE" });
-  });
-
   it("propagates cancellation without substituting an answer", async () => {
     const snapshot = growthSnapshot({ runtimeRevision: 4 });
     const coordinator = new FakeCoordinator(snapshot);

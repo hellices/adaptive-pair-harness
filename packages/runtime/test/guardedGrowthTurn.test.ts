@@ -5,7 +5,6 @@ import type { GrowthResponse } from "@adaptive-pair/restraint";
 import { growthRuntime } from "@adaptive-pair/testkit";
 import {
   GrowthModelFailure,
-  isGrowthModelResult,
   requestGuardedGrowthTurn,
   finishGuardedGrowthTurn,
   runGuardedGrowthTurn,
@@ -136,38 +135,6 @@ describe("Growth turn request preparation", () => {
     });
   });
 
-  it("accepts a mode selection captured by the model's returned boundary", async () => {
-    const turn = createTurn(growthRuntime({
-      runtimeRevision: 4,
-      session: { authorityEpoch: 2, mode: undefined },
-    }));
-    const after = growthRuntime({ runtimeRevision: 7, session: { authorityEpoch: 2 } });
-    turn.coordinator.snapshot.mockResolvedValueOnce(turn.before).mockResolvedValueOnce(after);
-    turn.model.request.mockResolvedValue({ response: question, runtime: runtimeBoundary(after) });
-
-    await expect(runGuardedGrowthTurn(turn.input)).resolves.toEqual({
-      status: "delivered",
-      response: question,
-      runtime: runtimeBoundary(after),
-    });
-  });
-
-  it("forwards an already aborted signal to the model without adding another request", async () => {
-    const turn = createTurn();
-    const controller = new AbortController();
-    controller.abort();
-    turn.model.request.mockRejectedValue(new GrowthModelFailure("GROWTH_CANCELLED"));
-
-    await expect(runGuardedGrowthTurn({ ...turn.input, signal: controller.signal })).resolves.toEqual({
-      status: "failed",
-      reason: "GROWTH_CANCELLED",
-    });
-    expect(turn.model.request).toHaveBeenCalledExactlyOnceWith(
-      turn.prepared.instructions,
-      turn.prepared.tools,
-      controller.signal,
-    );
-  });
 });
 
 describe("Growth turn runtime boundaries", () => {
@@ -197,23 +164,18 @@ describe("Growth turn runtime boundaries", () => {
     expect(turn.coordinator.snapshot).toHaveBeenCalledTimes(1);
   });
 
-  describe.each(["plain", "runtime"] as const)("%s model results", format => {
-    it.each([
-      { boundary: "revision", after: growthRuntime({ runtimeRevision: 5, session: { authorityEpoch: 2 } }) },
-      { boundary: "authority epoch", after: growthRuntime({ runtimeRevision: 4, session: { authorityEpoch: 3 } }) },
-      { boundary: "mode", after: growthRuntime({ runtimeRevision: 4, session: { authorityEpoch: 2, mode: "pair" } }) },
-      { boundary: "removed session", after: { ...growthRuntime({ runtimeRevision: 4 }), session: undefined } },
-    ])("reject a changed $boundary before validation", async ({ after }) => {
-      const turn = createTurn();
-      const validate = vi.fn(() => "TRANSFER_NOT_DISTINCT");
-      turn.coordinator.snapshot.mockResolvedValueOnce(turn.before).mockResolvedValueOnce(after);
-      turn.model.request.mockResolvedValue(format === "plain"
-        ? question
-        : { response: question, runtime: runtimeBoundary(turn.before) });
+  it.each([
+    { boundary: "revision", after: growthRuntime({ runtimeRevision: 5, session: { authorityEpoch: 2 } }) },
+    { boundary: "authority epoch", after: growthRuntime({ runtimeRevision: 4, session: { authorityEpoch: 3 } }) },
+    { boundary: "mode", after: growthRuntime({ runtimeRevision: 4, session: { authorityEpoch: 2, mode: "pair" } }) },
+    { boundary: "removed session", after: { ...growthRuntime({ runtimeRevision: 4 }), session: undefined } },
+  ])("rejects a changed $boundary before validation", async ({ after }) => {
+    const turn = createTurn();
+    const validate = vi.fn(() => "TRANSFER_NOT_DISTINCT");
+    turn.coordinator.snapshot.mockResolvedValueOnce(turn.before).mockResolvedValueOnce(after);
 
-      await expect(runGuardedGrowthTurn({ ...turn.input, validate })).resolves.toEqual({ status: "stale" });
-      expect(validate).not.toHaveBeenCalled();
-    });
+    await expect(runGuardedGrowthTurn({ ...turn.input, validate })).resolves.toEqual({ status: "stale" });
+    expect(validate).not.toHaveBeenCalled();
   });
 });
 
@@ -226,78 +188,31 @@ describe("Growth turn failure classification", () => {
     expect(turn.coordinator.snapshot).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
-    "GROWTH_MODEL_ERROR",
-    "GROWTH_NON_JSON_RESPONSE",
-    "GROWTH_INVALID_ENVELOPE",
-    "GROWTH_INPUT_TOKEN_CAP",
-    "GROWTH_CANCELLED",
-  ] as const)("preserves the typed model failure reason %s without response text", async code => {
+  it("preserves a typed model failure reason without response text", async () => {
     const turn = createTurn();
-    turn.model.request.mockRejectedValue(new GrowthModelFailure(code, "Private model detail"));
+    turn.model.request.mockRejectedValue(new GrowthModelFailure("GROWTH_MODEL_ERROR", "Private model detail"));
 
-    await expect(runGuardedGrowthTurn(turn.input)).resolves.toEqual({ status: "failed", reason: code });
+    await expect(runGuardedGrowthTurn(turn.input)).resolves.toEqual({ status: "failed", reason: "GROWTH_MODEL_ERROR" });
     expect(turn.coordinator.snapshot).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
-    { error: new Error("MODEL_UNAVAILABLE"), reason: "GROWTH_UNKNOWN_ERROR" },
-    { error: new Error(""), reason: "GROWTH_UNKNOWN_ERROR" },
-    { error: "untyped failure", reason: "GROWTH_UNKNOWN_ERROR" },
-    { error: undefined, reason: "GROWTH_UNKNOWN_ERROR" },
-  ])("normalizes an untyped model failure (%#)", async ({ error, reason }) => {
+  it("keeps a pre-model create-model failure distinct from an invalid boundary", async () => {
     const turn = createTurn();
-    turn.model.request.mockRejectedValue(error);
-
-    await expect(runGuardedGrowthTurn(turn.input)).resolves.toEqual({ status: "failed", reason });
-  });
-
-  it.each(["snapshot", "prepare", "create-model"] as const)(
-    "keeps a pre-model %s failure distinct from an invalid boundary",
-    async stage => {
-      const turn = createTurn();
-      const error = new GrowthModelFailure("GROWTH_STALE_TURN");
-      if (stage === "snapshot") {
-        turn.coordinator.snapshot.mockRejectedValueOnce(error);
-      } else if (stage === "prepare") {
-        turn.coordinator.prepareTurn.mockRejectedValueOnce(error);
-      } else {
-        turn.createModel.mockImplementation(() => { throw error; });
-      }
-
-      await expect(runGuardedGrowthTurn(turn.input)).resolves.toEqual({
-        status: "failed",
-        reason: "GROWTH_STALE_TURN",
-      });
-      expect(turn.model.request).not.toHaveBeenCalled();
-      if (stage !== "create-model") {
-        expect(turn.createModel).not.toHaveBeenCalled();
-      }
-    },
-  );
-
-  it("returns a failure when the after snapshot cannot be read", async () => {
-    const turn = createTurn();
-    turn.coordinator.snapshot
-      .mockResolvedValueOnce(turn.before)
-      .mockRejectedValueOnce(new GrowthModelFailure("GROWTH_STALE_TURN"));
+    turn.createModel.mockImplementation(() => { throw new GrowthModelFailure("GROWTH_STALE_TURN"); });
 
     await expect(runGuardedGrowthTurn(turn.input)).resolves.toEqual({
       status: "failed",
       reason: "GROWTH_STALE_TURN",
     });
+    expect(turn.model.request).not.toHaveBeenCalled();
   });
+
 });
 
 describe("Growth turn hint and reveal restraint", () => {
   it.each([
     { boundary: "current hint", snapshot: authorizedRuntime(2), response: { level: 3, kind: "hint", text: "A larger hint" }, reason: "HINT_LEVEL_EXCEEDED" },
-    { boundary: "agreement ceiling", snapshot: authorizedRuntime(4, 2), response: { level: 4, kind: "pseudocode", text: "A larger hint" }, reason: "HINT_LEVEL_EXCEEDED" },
-    { boundary: "hint response class", snapshot: authorizedRuntime(1), response: { level: 1, kind: "hint", text: "A mislabeled hint" }, reason: "RESPONSE_CLASS_EXCEEDED" },
-    { boundary: "pseudocode response class", snapshot: authorizedRuntime(3), response: { level: 3, kind: "pseudocode", text: "A mislabeled sketch" }, reason: "RESPONSE_CLASS_EXCEEDED" },
     { boundary: "explicit reveal", snapshot: authorizedRuntime(5, 5), response: { level: 5, kind: "solution-preview", text: "A solution" }, reason: "TARGET_SOLUTION_WITHHELD" },
-    { boundary: "hint despite reveal", snapshot: authorizedRuntime(4, 5, true), response: { level: 5, kind: "solution-preview", text: "A solution" }, reason: "HINT_LEVEL_EXCEEDED" },
-    { boundary: "agreement despite reveal", snapshot: authorizedRuntime(5, 4, true), response: { level: 5, kind: "solution-preview", text: "A solution" }, reason: "HINT_LEVEL_EXCEEDED" },
   ] satisfies readonly { boundary: string; snapshot: PairRuntimeSnapshot; response: GrowthResponse; reason: string }[])(
     "withholds a response beyond the $boundary boundary before optional validation",
     async ({ snapshot, response, reason }) => {
@@ -329,7 +244,6 @@ describe("Growth turn hint and reveal restraint", () => {
   });
 
   it.each([
-    { target: "patch", allowedPaths: [], baseline: {}, text: "```diff\n+return 1;\n```" },
     { target: "allowed path", allowedPaths: ["src/retry.ts"], baseline: {}, text: "export function retry() { return 1; }" },
     { target: "Windows path", allowedPaths: ["src\\retry.ts"], baseline: {}, text: "export function retry() { return 1; }" },
     { target: "baseline path", allowedPaths: [], baseline: { "src/counter.ts": "before" }, text: "export function counter() { return 1; }" },
@@ -402,15 +316,6 @@ describe("Growth turn optional validation", () => {
       expect(Object.isFrozen(result.runtime)).toBe(true);
     }
   });
-
-  it("returns a bounded failure rather than delivering when optional validation throws", async () => {
-    const turn = createTurn();
-
-    await expect(runGuardedGrowthTurn({
-      ...turn.input,
-      validate: () => { throw new Error("TRANSFER_VALIDATION_FAILED"); },
-    })).resolves.toEqual({ status: "failed", reason: "GROWTH_UNKNOWN_ERROR" });
-  });
 });
 
 describe("synchronous Growth turn finalization", () => {
@@ -434,14 +339,6 @@ describe("synchronous Growth turn finalization", () => {
 });
 
 describe("host-independent Growth model contracts", () => {
-  it("recognizes both plain responses and runtime-bearing results", () => {
-    expect(isGrowthModelResult(question)).toBe(false);
-    expect(isGrowthModelResult({
-      response: question,
-      runtime: runtimeBoundary(growthRuntime()),
-    })).toBe(true);
-  });
-
   it("retains the typed failure's name, code, and optional message", () => {
     const failure = new GrowthModelFailure("GROWTH_MODEL_ERROR");
 

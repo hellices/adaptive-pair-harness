@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PairToolName } from "@adaptive-pair/harness";
 import type { PairRuntimeSnapshot } from "@adaptive-pair/protocol";
-import { InMemoryJournal, type PairCoordinator } from "@adaptive-pair/runtime";
+import { InMemoryJournal } from "@adaptive-pair/runtime";
 import {
   FakeModel,
   asModel,
@@ -45,47 +45,6 @@ const actionHarness = () => {
   return { before, store, coordinator, model, participant, evaluations, ...createResponseStream() };
 };
 
-const replaceWorkUnit = async (
-  coordinator: PairCoordinator,
-  store: InMemoryJournal,
-  before: PairRuntimeSnapshot,
-): Promise<void> => {
-  const session = before.session;
-  if (session?.entrySnapshot === undefined || session.workUnit === undefined || session.learningAgreement === undefined) {
-    throw new Error("Expected an agreed Growth fixture");
-  }
-  await coordinator.setPresence("off");
-  await coordinator.setPresence("observing", "workspace-1");
-  const commands = [
-    { type: "StartSession", sessionId: "session-2" },
-    { type: "CaptureEntry", entry: session.entrySnapshot },
-    { type: "ConfirmLearning", agreement: session.learningAgreement },
-    { type: "SelectMode", mode: "growth" },
-    {
-      type: "ProposeWorkUnit",
-      workUnit: {
-        ...session.workUnit,
-        id: "unit-2",
-        status: "proposed",
-        allowedPaths: ["src/queue.ts"],
-        verificationPlan: "npm run lint",
-      },
-    },
-    { type: "AgreeWorkUnit", workUnitId: "unit-2" },
-    { type: "RecordAttempt", workUnitId: "unit-2", summary: "Tried the queue", bypassed: false },
-  ] as const;
-  for (const command of commands) {
-    await coordinator.dispatch({
-      ...command,
-      protocolVersion: 1,
-      commandId: `replace-${command.type}`,
-      expectedRevision: store.snapshotNow().revision,
-      actor: "human",
-      observedAt: 1_001,
-    });
-  }
-};
-
 const actionRoutes: readonly { readonly command: string; readonly tool: PairToolName }[] = [
   { command: "attempt", tool: "pair_record_attempt" },
   { command: "hypothesis", tool: "pair_record_hypothesis" },
@@ -94,18 +53,18 @@ const actionRoutes: readonly { readonly command: string; readonly tool: PairTool
   { command: "check", tool: "pair_run_verification" },
 ];
 
-describe.each(["observation", "replacement"] as const)("Growth intent after %s transition", transition => {
-  it.each(actionRoutes)("rejects /$command before granting its stale input", async ({ command, tool }) => {
+// A workspace observation advances only the runtime revision. A work-unit
+// replacement also advances it, so the coordinator's grant boundary rejects
+// both through the same revision comparison. `/attempt` and `/hypothesis`
+// pass their boundary from one shared record handler, so one of them suffices.
+describe("Growth intent after an observation transition", () => {
+  it.each(actionRoutes.filter(route => route.command !== "hypothesis"))("rejects /$command before granting its stale input", async ({ command, tool }) => {
     const { before, store, coordinator, model, participant, evaluations, stream } = actionHarness();
     const invoke = vi.spyOn(coordinator, "invokeTool");
     const grant = coordinator.grantUserAction.bind(coordinator);
     let transitioned: PairRuntimeSnapshot | undefined;
     const grantSpy = vi.spyOn(coordinator, "grantUserAction").mockImplementationOnce(async (name, signal, options) => {
-      if (transition === "observation") {
-        await coordinator.observeWorkspace();
-      } else {
-        await replaceWorkUnit(coordinator, store, before);
-      }
+      await coordinator.observeWorkspace();
       transitioned = store.snapshotNow();
       return grant(name, signal, options);
     });
@@ -119,12 +78,6 @@ describe.each(["observation", "replacement"] as const)("Growth intent after %s t
 
     expect(transitioned, evaluations.records.at(-1)?.reason).toBeDefined();
     expect(transitioned?.revision).toBeGreaterThan(before.revision);
-    if (transition === "replacement") {
-      expect(transitioned?.session).toMatchObject({ sessionId: "session-2", workUnit: { id: "unit-2" } });
-      expect(transitioned?.session?.authorityEpoch).not.toBe(before.session?.authorityEpoch);
-      expect(transitioned?.session?.workUnit?.allowedPaths).toEqual(["src/queue.ts"]);
-      expect(transitioned?.session?.workUnit?.verificationPlan).toBe("npm run lint");
-    }
     expect.soft(store.events().filter(event => event.type === "UserActionGranted")).toEqual([]);
     expect.soft(invoke).not.toHaveBeenCalled();
     expect.soft(model.sendCount).toBe(0);
@@ -137,8 +90,10 @@ describe.each(["observation", "replacement"] as const)("Growth intent after %s t
   });
 });
 
+// The unchanged `/reveal` chain is asserted step by step under "Growth reveal
+// action boundaries" below.
 describe("Growth unchanged human intents", () => {
-  it.each(actionRoutes)("continues /$command when its observed boundary stays current", async ({ command, tool }) => {
+  it.each(actionRoutes.filter(route => route.command !== "reveal"))("continues /$command when its observed boundary stays current", async ({ command, tool }) => {
     const { store, coordinator, model, participant, evaluations, stream } = actionHarness();
     const invoke = vi.spyOn(coordinator, "invokeTool");
 
@@ -147,7 +102,7 @@ describe("Growth unchanged human intents", () => {
     expect(invoke.mock.calls[0]?.[0]).toBe(tool);
     expect(store.events().filter(event => event.type === "UserActionGranted").length).toBeGreaterThan(0);
     expect(evaluations.records.every(record => record.reason === undefined)).toBe(true);
-    expect(model.sendCount).toBe(command === "hint" || command === "reveal" ? 1 : 0);
+    expect(model.sendCount).toBe(command === "hint" ? 1 : 0);
   });
 });
 

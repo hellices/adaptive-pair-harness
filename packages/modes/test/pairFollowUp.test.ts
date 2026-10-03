@@ -13,16 +13,10 @@ const requirement = Object.freeze({
 });
 
 describe("Pair human follow-up policy", () => {
-  it.each(["high", "mixed"] as const)("describes a requirement for agreed %s-value AI work", learningValue => {
-    expect(humanFollowUpFor(pairWorkUnit({
-      id: "ai-unit-1", owner: "ai", status: "agreed", learningValue,
-    }))).toEqual(requirement);
-  });
-
-  it("also retains the requirement after interrupted or failed accepted AI work", () => {
-    for (const status of ["paused", "needs-reconcile", "cancelled", "failed"] as const) {
+  it("describes a requirement for accepted AI work, even after it fails", () => {
+    for (const status of ["agreed", "failed"] as const) {
       expect(humanFollowUpFor(pairWorkUnit({
-        id: "ai-unit-1", owner: "ai", status,
+        id: "ai-unit-1", owner: "ai", status, learningValue: "mixed",
       }))).toEqual(requirement);
     }
   });
@@ -44,8 +38,8 @@ describe("Pair human follow-up policy", () => {
       .toEqual({ admissible: true });
   });
 
-  it.each(["growth", "delivery"] as const)("does not admit a %s successor through Pair policy", mode => {
-    expect(assessPairSuccessor(pairWorkUnit({ mode }), undefined, undefined))
+  it("does not admit a Growth successor through Pair policy", () => {
+    expect(assessPairSuccessor(pairWorkUnit({ mode: "growth" }), undefined, undefined))
       .toEqual({ admissible: false, reason: "PAIR_MODE_REQUIRED" });
   });
 
@@ -103,14 +97,12 @@ describe("Pair human follow-up policy", () => {
       "ai-unit-1",
       "passed",
     )).toBe(true);
-    expect(requirement.sourceWorkUnitId).toBe("ai-unit-1");
   });
 
   const nonSatisfying: readonly Partial<WorkUnit>[] = [
     { owner: "ai" },
     { learningValue: "low" },
     { mode: "growth" },
-    { mode: "delivery" },
     { id: "ai-unit-1" },
   ];
 

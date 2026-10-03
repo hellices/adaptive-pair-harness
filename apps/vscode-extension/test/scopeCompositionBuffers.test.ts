@@ -28,9 +28,19 @@ const staleBuffer = async (location: "inside" | "outside") => {
   return { path, getText };
 };
 
-describe.each(["inside", "outside"] as const)("Scope composition — %s-root stale buffers", location => {
+const failIdentityFor = (path: string): void => {
+  const originalIdentity = scopeIdentity.scopePathIdentity;
+  vi.spyOn(scopeIdentity, "scopePathIdentity").mockImplementation((absolute, signal) => {
+    if (absolute === path) {
+      return Promise.reject(Object.assign(new Error("Identity unavailable."), { code: "EACCES" }));
+    }
+    return originalIdentity(absolute, signal);
+  });
+};
+
+describe("Scope composition — stale non-directory buffers", () => {
   it("reads the valid dirty target after an unrelated non-directory buffer", async () => {
-    const stale = await staleBuffer(location);
+    const stale = await staleBuffer("inside");
     const getText = openBuffer(join(filesystem.source, "main.ts"), "retry valid dirty text");
 
     const result = await run("pair_read_scope");
@@ -44,81 +54,62 @@ describe.each(["inside", "outside"] as const)("Scope composition — %s-root sta
     expect(stale.getText).not.toHaveBeenCalled();
   });
 
-  it("searches the valid dirty target after an unrelated non-directory buffer", async () => {
+  it.each([
+    { location: "inside", reason: "read-failed" },
+    { location: "outside", reason: "scope-access-failed" },
+  ] as const)("does not skip an $location-root EACCES candidate during a read", async ({ location, reason }) => {
     const stale = await staleBuffer(location);
     const getText = openBuffer(join(filesystem.source, "main.ts"), "retry valid dirty text");
+    failIdentityFor(stale.path);
 
-    const result = await run("pair_search_scope");
+    const result = await run("pair_read_scope");
 
-    expect(result).toMatchObject({ status: "confirmed", partial: false });
-    expect(result.observation?.["matches"]).toEqual([
-      { path: "src/main.ts", line: 1, text: "retry valid dirty text" },
-    ]);
-    expect(getText).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ status: "failed", observation: { reason } });
+    expect(result.observation?.["text"]).toBeUndefined();
+    expect(getText).not.toHaveBeenCalled();
     expect(stale.getText).not.toHaveBeenCalled();
   });
 
-  it.each(["pair_read_scope", "pair_search_scope"] as const)(
-    "does not skip an EACCES candidate during %s",
-    async toolName => {
-      const stale = await staleBuffer(location);
-      const getText = openBuffer(join(filesystem.source, "main.ts"), "retry valid dirty text");
-      const originalIdentity = scopeIdentity.scopePathIdentity;
-      vi.spyOn(scopeIdentity, "scopePathIdentity").mockImplementation((absolute, signal) => {
+  it("does not skip an EACCES candidate during a search", async () => {
+    const stale = await staleBuffer("inside");
+    const getText = openBuffer(join(filesystem.source, "main.ts"), "retry valid dirty text");
+    failIdentityFor(stale.path);
+
+    const result = await run("pair_search_scope");
+
+    expect(result).toMatchObject({
+      status: "confirmed",
+      observation: { matches: [] },
+      partial: true,
+    });
+    expect(getText).not.toHaveBeenCalled();
+    expect(stale.getText).not.toHaveBeenCalled();
+  });
+
+  it("does not skip cancellation with a non-directory identity", async () => {
+    const stale = await staleBuffer("inside");
+    const getText = openBuffer(join(filesystem.source, "main.ts"), "retry valid dirty text");
+    const controller = new AbortController();
+    const originalIdentity = scopeIdentity.scopePathIdentity;
+    vi.spyOn(scopeIdentity, "scopePathIdentity").mockImplementation(async (absolute, signal) => {
+      try {
+        return await originalIdentity(absolute, signal);
+      } finally {
         if (absolute === stale.path) {
-          return Promise.reject(Object.assign(new Error("Identity unavailable."), { code: "EACCES" }));
+          controller.abort();
         }
-        return originalIdentity(absolute, signal);
-      });
-
-      const result = await run(toolName);
-
-      if (location === "inside" && toolName === "pair_search_scope") {
-        expect(result).toMatchObject({
-          status: "confirmed",
-          observation: { matches: [] },
-          partial: true,
-        });
-      } else {
-        expect(result).toMatchObject({
-          status: "failed",
-          observation: { reason: location === "inside" ? "read-failed" : "scope-access-failed" },
-        });
       }
-      expect(result.observation?.["text"]).toBeUndefined();
-      expect(getText).not.toHaveBeenCalled();
-      expect(stale.getText).not.toHaveBeenCalled();
-    },
-  );
+    });
 
-  it.each(["pair_read_scope", "pair_search_scope"] as const)(
-    "does not skip cancellation with a non-directory identity during %s",
-    async toolName => {
-      const stale = await staleBuffer(location);
-      const getText = openBuffer(join(filesystem.source, "main.ts"), "retry valid dirty text");
-      const controller = new AbortController();
-      const originalIdentity = scopeIdentity.scopePathIdentity;
-      vi.spyOn(scopeIdentity, "scopePathIdentity").mockImplementation(async (absolute, signal) => {
-        try {
-          return await originalIdentity(absolute, signal);
-        } finally {
-          if (absolute === stale.path) {
-            controller.abort();
-          }
-        }
-      });
+    const result = await run("pair_search_scope", controller.signal);
 
-      const result = await run(toolName, controller.signal);
-
-      expect(result).toMatchObject({
-        status: "cancelled",
-        observation: { reason: "scope-read-cancelled" },
-        partial: true,
-      });
-      expect(result.observation?.["text"]).toBeUndefined();
-      expect(result.observation?.["matches"]).toBeUndefined();
-      expect(getText).not.toHaveBeenCalled();
-      expect(stale.getText).not.toHaveBeenCalled();
-    },
-  );
+    expect(result).toMatchObject({
+      status: "cancelled",
+      observation: { reason: "scope-read-cancelled" },
+      partial: true,
+    });
+    expect(result.observation?.["matches"]).toBeUndefined();
+    expect(getText).not.toHaveBeenCalled();
+    expect(stale.getText).not.toHaveBeenCalled();
+  });
 });

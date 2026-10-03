@@ -88,14 +88,28 @@ export const confirmedEffect = (request: EffectRequest): EffectResult => ({
   partial: false,
 });
 
+export const createCoordinator = (store: PairStore, effects: EffectPort, streamId = "workspace-1"): PairCoordinator =>
+  new PairCoordinator({ store, effects, clock: new FakeClock(), ids: new FakeIdSource(), streamId });
+
 export const createInterleavingFixture = (effects: EffectPort) => {
   const store = new GatedJournal();
-  const coordinator = new PairCoordinator({
-    store,
-    effects,
-    clock: new FakeClock(),
-    ids: new FakeIdSource(),
-    streamId: "workspace-1",
-  });
-  return { coordinator, store };
+  return { coordinator: createCoordinator(store, effects), store };
 };
+
+export type AuthorityBoundary = "pause-session" | "off";
+
+export const changeAuthority = (
+  coordinator: PairCoordinator,
+  snapshot: PairRuntimeSnapshot,
+  boundary: AuthorityBoundary,
+): Promise<PairRuntimeSnapshot> => boundary === "pause-session"
+  ? coordinator.dispatch({
+      protocolVersion: 1,
+      commandId: "pause-session",
+      expectedRevision: snapshot.revision,
+      actor: "human",
+      type: "PauseSession",
+      reason: "Developer paused the session.",
+      observedAt: 1,
+    })
+  : coordinator.setPresence(boundary);

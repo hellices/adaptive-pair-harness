@@ -13,22 +13,23 @@ const started = (commandId = "cmd-start", revision = 1): PairEvent => ({
   sessionId: "session-1",
 });
 
+const paused = (commandId: string, revision: number, reason: string, eventId = `${commandId}:0`): PairEvent => ({
+  protocolVersion: 1,
+  eventId,
+  commandId,
+  actor: "human",
+  revision,
+  recordedAt: 11,
+  type: "SessionPaused",
+  reason,
+  authorityEpoch: 1,
+});
+
 describe("InMemoryJournal", () => {
   it("atomically commits frozen events, snapshots, and command IDs", async () => {
     const journal = new InMemoryJournal("workspace-1");
 
-    await journal.commit("workspace-1", 0, [
-      {
-        protocolVersion: 1,
-        eventId: "cmd-start:0",
-        commandId: "cmd-start",
-        actor: "human",
-        revision: 1,
-        recordedAt: 10,
-        type: "SessionStarted",
-        sessionId: "session-1",
-      },
-    ]);
+    await journal.commit("workspace-1", 0, [started()]);
 
     const stored = journal.events("workspace-1");
     expect(stored).toHaveLength(1);
@@ -44,49 +45,14 @@ describe("InMemoryJournal", () => {
   it("rejects non-contiguous revisions and duplicate command IDs", async () => {
     const journal = new InMemoryJournal("workspace-1");
 
-    await journal.commit("workspace-1", 0, [
-      {
-        protocolVersion: 1,
-        eventId: "cmd-start:0",
-        commandId: "cmd-start",
-        actor: "human",
-        revision: 1,
-        recordedAt: 10,
-        type: "SessionStarted",
-        sessionId: "session-1",
-      },
-    ]);
+    await journal.commit("workspace-1", 0, [started()]);
 
     await expect(
-      journal.commit("workspace-1", 1, [
-        {
-          protocolVersion: 1,
-          eventId: "cmd-gap:0",
-          commandId: "cmd-gap",
-          actor: "human",
-          revision: 3,
-          recordedAt: 11,
-          type: "SessionPaused",
-          reason: "gap",
-          authorityEpoch: 1,
-        },
-      ]),
+      journal.commit("workspace-1", 1, [paused("cmd-gap", 3, "gap")]),
     ).rejects.toThrow("NON_CONTIGUOUS_REVISION");
 
     await expect(
-      journal.commit("workspace-1", 1, [
-        {
-          protocolVersion: 1,
-          eventId: "cmd-start:1",
-          commandId: "cmd-start",
-          actor: "human",
-          revision: 2,
-          recordedAt: 11,
-          type: "SessionPaused",
-          reason: "duplicate",
-          authorityEpoch: 1,
-        },
-      ]),
+      journal.commit("workspace-1", 1, [paused("cmd-start", 2, "duplicate", "cmd-start:1")]),
     ).rejects.toThrow("DUPLICATE_COMMAND_ID");
   });
 
@@ -113,17 +79,7 @@ describe("InMemoryJournal", () => {
 
     await expect(journal.commit("workspace-1", 0, [
       started(),
-      {
-        protocolVersion: 1,
-        eventId: "cmd-pause:0",
-        commandId: "cmd-pause",
-        actor: "human",
-        revision: 2,
-        recordedAt: 11,
-        type: "SessionPaused",
-        reason: "Not yet pausable",
-        authorityEpoch: 1,
-      },
+      paused("cmd-pause", 2, "Not yet pausable"),
     ])).rejects.toThrow("SESSION_NOT_PAUSABLE");
 
     expect(await journal.load("workspace-1")).toEqual(before);

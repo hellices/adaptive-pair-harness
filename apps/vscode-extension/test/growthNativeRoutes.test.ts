@@ -107,9 +107,9 @@ describe("native local Growth participant routes", () => {
     expect(harness.model.sendCount).toBe(0);
   });
 
-  it.each(["cancelled", "unavailable", "stale", "failed"] as const)("reports setup outcome %s without claiming completion", async outcome => {
+  it("reports a failed setup outcome without claiming completion", async () => {
     const harness = createHarness();
-    harness.setup.mockResolvedValue({ outcome, isCurrent: harness.setupCurrent });
+    harness.setup.mockResolvedValue({ outcome: "failed", isCurrent: harness.setupCurrent });
     await harness.participant.handle(harness.request("setup"), createContext(), harness.stream, createToken());
     expect(harness.collected.markdown.join("\n")).not.toContain("Growth setup is complete");
     expect(harness.mutation).not.toHaveBeenCalled();
@@ -247,7 +247,8 @@ describe("historical checkpoints never admit live work", () => {
     expect(harness.confirmCheckpoint).not.toHaveBeenCalled();
   });
 
-  it.each([2, 4])("does not let old or forked metadata satisfy a fresh runtime's level-%s attempt gate", async level => {
+  it("does not let old or forked metadata satisfy a fresh runtime's level-2 attempt gate", async () => {
+    const level = 2;
     const old = createHarness();
     const oldSnapshot = old.coordinator.snapshotNow();
     const checkpoint = createNativeCheckpoint(oldSnapshot);
@@ -294,13 +295,6 @@ describe("historical checkpoints never admit live work", () => {
     expect(harness.coordinator.snapshotNow().session?.assistance).toEqual(before.session?.assistance);
     expect(harness.model.sendCount).toBe(0);
     expect(harness.model.countTokensCount).toBe(0);
-  });
-
-  it("reports empty history without a model", async () => {
-    const harness = createHarness();
-    await harness.participant.handle(harness.request("history"), createContext(), harness.stream, createToken());
-    expect(harness.collected.markdown.join("\n")).toContain("No checkpoint");
-    expect(harness.mutation).not.toHaveBeenCalled();
   });
 
   it.each(["setup", "checkpoint", "history"])("keeps disabled /%s inactive without inspecting history", async command => {

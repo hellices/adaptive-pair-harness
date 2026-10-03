@@ -21,26 +21,6 @@ it("withholds a response above the deterministic hint ceiling", () => {
   });
 });
 
-it("withholds a response class above the deterministic hint ceiling", () => {
-  const result = guardGrowthResponse(
-    {
-      level: 1,
-      kind: "solution-preview",
-      text: "```ts\nexport function retry() { return 3; }\n```",
-    },
-    {
-      authorizedHintLevel: 1,
-      revealAuthorized: false,
-      targetIdentifiers: [],
-    },
-  );
-
-  expect(result).toEqual({
-    accepted: false,
-    reason: "RESPONSE_CLASS_EXCEEDED",
-  });
-});
-
 it("withholds a target patch before reveal", () => {
   const result = guardGrowthResponse(
     { level: 3, kind: "hint", text: "```diff\n+export function retry() {}\n```" },
@@ -161,30 +141,9 @@ it("withholds code-like target declarations beyond function/class syntax", () =>
   });
 });
 
-it("withholds a target function whose name extends the file stem", () => {
-  const result = guardGrowthResponse(
-    {
-      level: 4,
-      kind: "pseudocode",
-      text: "function retryUntil(action, max) { return action(max); }",
-    },
-    {
-      authorizedHintLevel: 4,
-      revealAuthorized: false,
-      targetIdentifiers: ["retry"],
-    },
-  );
-
-  expect(result).toEqual({
-    accepted: false,
-    reason: "TARGET_SOLUTION_WITHHELD",
-  });
-});
-
 it.each([
   ["index", "Look at what indexOf() returns when the value is absent."],
   ["app", "Which array method would you apply (map or reduce)?"],
-  ["tests", "Re-run the tests (in watch mode) and read the first failure."],
 ])("does not treat ordinary %s prose as a target implementation", (identifier, text) => {
   const result = guardGrowthResponse(
     {

@@ -2254,33 +2254,29 @@ The fence is storage control, not retained session history, and remains until
 explicit creation of a fresh generation supersedes it. Backward clock movement
 before creation is an invalid-time block, not an extension of retention.
 
-The test-only reference model uses closed control records with
-`format: "adaptive-pair-durable"`, `version: 1`, and a generation fence made of
-the current generation key plus at most **1,024 retired generation keys**.
-These opaque anti-reuse tokens are control metadata, never session, command,
-operation, or user history. Replacement checks the prospective count and fails
-closed at capacity without evicting tokens; erasure remains available.
+The port contract is specified by a reusable, factory-parameterized
+conformance suite that asserts only on port results and on an opaque snapshot
+of retained storage, so a later production adapter can run the same cases. It
+currently runs against a small test-only reference fake. The suite covers
+atomic batch publication, sequence compare-and-swap, identical-retry receipts,
+request and fact budgets (including one exact 1 MiB request bound), serialized
+writers and generation fencing, every named fault boundary
+(`before-head-publication`, `after-publication`, `during-cleanup`,
+`after-erased-publication`) plus an erase interrupted before its fence,
+content-free erasing fences, non-resurrection after erasure, and blocking
+without fallback for corrupt, foreign, retired, or rolled-back heads. Successful
+erasure must fail while private payload survives in malformed metadata. None of
+these cases is a real filesystem crash experiment.
 
-The model retains at most one authoritative payload, one current derived cache,
-and one abandoned staged candidate. Each copy's text is bounded by **1,048,576
-UTF-16 code units and UTF-8 bytes**, independently; aggregate copy text is at
-most **3,145,728 code units and bytes**, plus separately bounded control/copy
-metadata and serialization overhead. Cold reconstruction enforces these same
-bounds. Normal reclamation requires a validated request/head and a final
-generation/head comparison under the same exclusion; a rejected request leaves
-the medium unchanged. Fenced deletion can still remove corrupt payloads or
-operate at capacity. These are finite reference-model policies, not a promised
-filesystem layout, storage-provider implementation, or physical-erasure result.
-Successful erasure additionally requires closed, content-free outer medium and
-allocator metadata; removing the copy array alone cannot justify success when
-private payload survives in malformed metadata. This check must not require
-parsing corrupt owned payloads or satisfying their exhausted capacity budgets.
-
-The model's `before-head-publication` fault is scoped to create/append heads.
-A throwing pre-publication erase hook separately covers interruption before the
-erasing fence, leaving the medium unchanged with a non-erased result. Persisted
-erasing-fence, cleanup, and completed-erased acknowledgement boundaries have
-their own fault cases; none is a real filesystem crash experiment.
+Physical layout is adapter policy, not a port-visible contract, and is no
+longer tested. The earlier reference model used closed control records with
+`format: "adaptive-pair-durable"`, `version: 1`, at most **1,024 retired
+generation keys** (failing closed at capacity without evicting tokens while
+erasure stays available), and per-copy and aggregate text bounds of
+**1,048,576** and **3,145,728** UTF-16 code units and UTF-8 bytes. These remain
+the proposed defaults for a future adapter, which must document and test its
+own bounds; they are not a promised filesystem layout, storage-provider
+implementation, or physical-erasure result.
 
 There is no inactive timer, automatic storage scan, or startup workspace read.
 Thus seven days is a logical expiry, not a promise to remove bytes while Pair is
@@ -2333,7 +2329,7 @@ operation. Rollback of an applied effect remains a separate explicit action.
 | --- | --- |
 | `parseDurableJournal` (`protocol`) | Closed, bounded, detached/frozen framing; not live replay or proof of trusted key issuance |
 | `createDurableProjector` (`runtime`) | Allowlisted candidate projection and explicit pending-commit resolution; no storage or effect dispatch |
-| `DurableStore` (`runtime`, types only) | Separate publication/erasure port, specified by a test-only fault model; no production implementation |
+| `DurableStore` (`runtime`, types only) | Separate publication/erasure port, specified by a reusable conformance suite run against a test-only reference fake; no production implementation |
 | `inspectDurableJournal` (`runtime`) | Full private minimized replay, derived cache, expiry/binding checks, and literal-false restart authority |
 
 The minimized reducer and snapshot builder remain private module helpers. No
@@ -2342,7 +2338,8 @@ coordinator, or registers a host command, participant, tool, timer, or listener.
 
 This first authorized implementation is pure: closed
 types/codec, explicit minimized projection and replay, a storage-port contract
-with an in-memory fault model, and non-authorizing restart assessment. Tests
+with a port conformance suite over an in-memory reference fake, and
+non-authorizing restart assessment. Tests
 cover privacy canaries in every excluded v1 field, identity provenance, atomic
 batch/deduplication behavior, multiwriter schedules, lost acknowledgements,
 deletion at every publication boundary, expiry, and unchanged inactive-zero.
@@ -2351,7 +2348,7 @@ Filesystem code, host wiring, real crash testing, provider support, migrations,
 live admission, new ownership transitions, P3 editing, and profile integration
 remain later increments. If a filesystem capability needs a prototype, obtain
 separate spike authorization, keep measured evidence in `docs/spikes/`, and
-integrate its decision here. A documentation PR or an in-memory fault model
+integrate its decision here. A documentation PR or an in-memory reference fake
 cannot approve or substitute for that work.
 
 ### 13.3 Native session reuse: measured boundary

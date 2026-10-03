@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 import { routeBoundaryFixture } from "./growthRouteBoundaryHarness.js";
 import { asModel, createGrowthModel, FakeModel } from "./growthTestHarness.js";
 
-const accountingCases = ["input", "output", "tool-output"].flatMap(phase =>
-  ["throw", "reject"].map(failure => ({ phase, failure })),
-);
+// Provider accounting is awaited directly, so a synchronous throw and a
+// rejection reach the same handler; one canary per accounting call site.
+const accountingCases = [
+  { phase: "input", failure: "throw" },
+  { phase: "output", failure: "reject" },
+  { phase: "tool-output", failure: "throw" },
+] as const;
 
 describe("Growth model — non-raw accounting failures", () => {
   it.each(accountingCases)("does not retain private $phase after accounting $failure", async ({ phase, failure }) => {

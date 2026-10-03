@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { PairRuntimeSnapshot } from "@adaptive-pair/protocol";
 import {
   FakeModel,
   FakeCoordinator,
@@ -104,24 +105,39 @@ describe("GrowthParticipant core-state reporting", () => {
   });
 });
 
+const variation =
+  "Independent variation: build a queue that drains at most N jobs per tick and prove the boundary yourself.";
+
+const verificationResult = (snapshot: PairRuntimeSnapshot, passed: boolean) =>
+  (call: { readonly name: string }) =>
+    call.name === "pair_run_verification"
+      ? Object.freeze({
+          operationId: "op-check",
+          runtimeRevision: snapshot.revision,
+          authorityEpoch: snapshot.session?.authorityEpoch,
+          status: "confirmed" as const,
+          summary: `npm run test exited ${passed ? 0 : 1}`,
+          observation: Object.freeze({ passed, exitCode: passed ? 0 : 1 }),
+          sensitiveData: false,
+          partial: false,
+        })
+      : undefined;
+
+const sessionText = async (participant: ReturnType<typeof buildParticipant>["participant"]) => {
+  const { stream, collected } = createResponseStream();
+  await participant.handle(
+    createRequest(new FakeModel([]), { command: "session", prompt: "" }),
+    createContext(),
+    stream,
+    createToken(),
+  );
+  return collected.markdown.join("\n").toLowerCase();
+};
+
 describe("GrowthParticipant explicit verification", () => {
   it("runs the agreed verification plan on /check with an explicit user action and no model call", async () => {
     const snapshot = growthSnapshot({ runtimeRevision: 4 });
-    const coordinator = new FakeCoordinator(snapshot, {
-      resultFor: call =>
-        call.name === "pair_run_verification"
-          ? Object.freeze({
-              operationId: "op-check",
-              runtimeRevision: snapshot.revision,
-              authorityEpoch: snapshot.session?.authorityEpoch,
-              status: "confirmed" as const,
-              summary: "npm run test exited 0",
-              observation: Object.freeze({ passed: true, exitCode: 0 }),
-              sensitiveData: false,
-              partial: false,
-            })
-          : undefined,
-    });
+    const coordinator = new FakeCoordinator(snapshot, { resultFor: verificationResult(snapshot, true) });
     const model = new FakeModel([]);
     const { participant } = buildParticipant(coordinator);
     const { stream, collected } = createResponseStream();
@@ -153,21 +169,7 @@ describe("GrowthParticipant explicit verification", () => {
 
   it("reports an observed verification failure without calling it a success", async () => {
     const snapshot = growthSnapshot({ runtimeRevision: 4 });
-    const coordinator = new FakeCoordinator(snapshot, {
-      resultFor: call =>
-        call.name === "pair_run_verification"
-          ? Object.freeze({
-              operationId: "op-check",
-              runtimeRevision: snapshot.revision,
-              authorityEpoch: snapshot.session?.authorityEpoch,
-              status: "confirmed" as const,
-              summary: "npm run test exited 1",
-              observation: Object.freeze({ passed: false, exitCode: 1 }),
-              sensitiveData: false,
-              partial: false,
-            })
-          : undefined,
-    });
+    const coordinator = new FakeCoordinator(snapshot, { resultFor: verificationResult(snapshot, false) });
     const { participant } = buildParticipant(coordinator);
     const { stream, collected } = createResponseStream();
 
@@ -224,107 +226,44 @@ describe("GrowthParticipant explicit verification", () => {
   });
 });
 
-describe("GrowthParticipant stale verification", () => {
-  it("does not report a successful check after the work unit changes", async () => {
+// Each cached outcome is filtered at its own call site (product summary and
+// transfer summary); together the rows cover both identity changes.
+const staleTransitions = {
+  "work unit": (snapshot: PairRuntimeSnapshot): PairRuntimeSnapshot => ({
+    ...snapshot,
+    revision: 5,
+    session: { ...snapshot.session!, workUnit: { ...snapshot.session!.workUnit!, id: "unit-2" } },
+  }),
+  session: (snapshot: PairRuntimeSnapshot): PairRuntimeSnapshot => ({
+    ...snapshot,
+    revision: 5,
+    presence: { ...snapshot.presence, activeSessionId: "session-2" },
+    session: { ...snapshot.session!, sessionId: "session-2" },
+  }),
+} as const;
+
+describe("GrowthParticipant stale cached outcomes", () => {
+  it.each([
+    { command: "check", change: "work unit", current: "last check `test` passed", stale: "no check observed in this session" },
+    { command: "transfer", change: "session", current: "transfer: started — not demonstrated", stale: "transfer: not started" },
+  ] as const)("does not report a /$command outcome after the $change changes", async ({ command, change, current, stale }) => {
     const snapshot = growthSnapshot({ runtimeRevision: 4 });
-    const coordinator = new FakeCoordinator(snapshot, {
-      resultFor: call =>
-        call.name === "pair_run_verification"
-          ? Object.freeze({
-              operationId: "op-check",
-              runtimeRevision: snapshot.revision,
-              authorityEpoch: snapshot.session?.authorityEpoch,
-              status: "confirmed" as const,
-              summary: "npm run test exited 0",
-              observation: Object.freeze({ passed: true, exitCode: 0 }),
-              sensitiveData: false,
-              partial: false,
-            })
-          : undefined,
-    });
+    const coordinator = new FakeCoordinator(snapshot, { resultFor: verificationResult(snapshot, true) });
+    const model = new FakeModel([
+      { text: JSON.stringify({ level: 1, kind: "question", text: variation }) },
+    ]);
     const { participant } = buildParticipant(coordinator);
 
     await participant.handle(
-      createRequest(new FakeModel([]), { command: "check", prompt: "" }),
+      createRequest(model, { command, prompt: "" }),
       createContext(),
       createResponseStream().stream,
       createToken(),
     );
+    expect(await sessionText(participant)).toContain(current);
 
-    coordinator.setSnapshot({
-      ...snapshot,
-      revision: 5,
-      session: {
-        ...snapshot.session!,
-        workUnit: {
-          ...snapshot.session!.workUnit!,
-          id: "unit-2",
-        },
-      },
-    });
+    coordinator.setSnapshot(staleTransitions[change](snapshot));
 
-    const { stream, collected } = createResponseStream();
-    await participant.handle(
-      createRequest(new FakeModel([]), { command: "session", prompt: "" }),
-      createContext(),
-      stream,
-      createToken(),
-    );
-
-    expect(collected.markdown.join("\n").toLowerCase()).toContain(
-      "no check observed in this session",
-    );
-  });
-
-  it("does not report a successful check after the session changes", async () => {
-    const snapshot = growthSnapshot({ runtimeRevision: 4 });
-    const coordinator = new FakeCoordinator(snapshot, {
-      resultFor: call =>
-        call.name === "pair_run_verification"
-          ? Object.freeze({
-              operationId: "op-check",
-              runtimeRevision: snapshot.revision,
-              authorityEpoch: snapshot.session?.authorityEpoch,
-              status: "confirmed" as const,
-              summary: "npm run test exited 0",
-              observation: Object.freeze({ passed: true, exitCode: 0 }),
-              sensitiveData: false,
-              partial: false,
-            })
-          : undefined,
-    });
-    const { participant } = buildParticipant(coordinator);
-
-    await participant.handle(
-      createRequest(new FakeModel([]), { command: "check", prompt: "" }),
-      createContext(),
-      createResponseStream().stream,
-      createToken(),
-    );
-
-    coordinator.setSnapshot({
-      ...snapshot,
-      revision: 5,
-      presence: {
-        ...snapshot.presence,
-        activeSessionId: "session-2",
-      },
-      session: {
-        ...snapshot.session!,
-        sessionId: "session-2",
-      },
-    });
-
-    const { stream, collected } = createResponseStream();
-    await participant.handle(
-      createRequest(new FakeModel([]), { command: "session", prompt: "" }),
-      createContext(),
-      stream,
-      createToken(),
-    );
-
-    expect(collected.markdown.join("\n").toLowerCase()).toContain(
-      "no check observed in this session",
-    );
+    expect(await sessionText(participant)).toContain(stale);
   });
 });

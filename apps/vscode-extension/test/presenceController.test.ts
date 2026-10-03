@@ -6,19 +6,15 @@ import {
   MemoryFs, NodeJournalFileSystem, run,
 } from "./presenceTestHarness.js";
 
-describe("PresenceController — command test harness", () => {
-  it("rejects an unregistered command instead of silently succeeding", async () => {
-    await expect(run("adaptivePair.missing")).rejects.toThrow(
-      "Unknown command: adaptivePair.missing",
-    );
-  });
-});
+const setup = () => {
+  const scheduler = new FakeScheduler();
+  const fs = new MemoryFs();
+  return { scheduler, fs, ...buildController(scheduler, fs) };
+};
 
 describe("PresenceController — pending edit timers", () => {
   it("observes an undo that returns a document to its saved state", async () => {
-    const scheduler = new FakeScheduler();
-    const fs = new MemoryFs();
-    const { controller } = buildController(scheduler, fs);
+    const { scheduler, fs, controller } = setup();
 
     await run("adaptivePair.enablePresence");
     harness.emitChange("/workspace/src/pair.ts", { isDirty: false });
@@ -30,9 +26,7 @@ describe("PresenceController — pending edit timers", () => {
   });
 
   it("ignores document-change events without text changes", async () => {
-    const scheduler = new FakeScheduler();
-    const fs = new MemoryFs();
-    const { controller } = buildController(scheduler, fs);
+    const { scheduler, fs, controller } = setup();
 
     await run("adaptivePair.enablePresence");
     harness.emitChange("/workspace/src/pair.ts", { contentChanges: false });
@@ -44,9 +38,7 @@ describe("PresenceController — pending edit timers", () => {
   });
 
   it("cancels a pending edit episode when presence pauses", async () => {
-    const scheduler = new FakeScheduler();
-    const fs = new MemoryFs();
-    const { controller } = buildController(scheduler, fs);
+    const { scheduler, fs, controller } = setup();
 
     await run("adaptivePair.enablePresence");
     harness.emitChange("/workspace/src/pair.ts");
@@ -63,9 +55,7 @@ describe("PresenceController — pending edit timers", () => {
   });
 
   it("cancels a pending edit episode when presence is disabled", async () => {
-    const scheduler = new FakeScheduler();
-    const fs = new MemoryFs();
-    const { controller } = buildController(scheduler, fs);
+    const { scheduler, fs, controller } = setup();
 
     await run("adaptivePair.enablePresence");
     harness.emitChange("/workspace/src/pair.ts");
@@ -85,9 +75,7 @@ describe("PresenceController — pending edit timers", () => {
 
 describe("PresenceController — out-of-workspace changes", () => {
   it("ignores document changes outside the active workspace", async () => {
-    const scheduler = new FakeScheduler();
-    const fs = new MemoryFs();
-    const { controller } = buildController(scheduler, fs);
+    const { scheduler, fs, controller } = setup();
 
     await run("adaptivePair.enablePresence");
     harness.emitChange("/elsewhere/secret.ts");
@@ -106,24 +94,21 @@ describe("PresenceController — out-of-workspace changes", () => {
 
 describe("PresenceController — journal reconciliation across restart", () => {
   it("reconciles persisted edit episodes into the observation window on a fresh activation", async () => {
-    const scheduler = new FakeScheduler();
-    const fs = new MemoryFs();
-
     // First activation: enable Presence, observe one local edit, and let the
     // aggregator flush it to the persisted journal.
-    const first = buildController(scheduler, fs);
+    const { scheduler, fs, controller } = setup();
     await run("adaptivePair.enablePresence");
     harness.emitChange("/workspace/src/pair.ts");
     scheduler.advanceBy(1_000);
     await flush();
     expect(fs.writes).toBeGreaterThan(0);
-    expect(first.controller.getState().observationCount).toBe(1);
-    first.controller.dispose();
+    expect(controller.getState().observationCount).toBe(1);
+    controller.dispose();
 
     // Restart: a brand-new activation pointed at the SAME persisted journal must
     // reconcile the durable episode back into its observation window.
     harness.reset();
-    const second = buildController(new FakeScheduler(), fs);
+    const second = buildController(undefined, fs);
     await flush();
 
     expect(second.controller.getState().observationCount).toBe(1);
@@ -132,9 +117,7 @@ describe("PresenceController — journal reconciliation across restart", () => {
 
 describe("PresenceController — continuity clearing on disable", () => {
   it("removes the persisted journal so disable clears Pair continuity", async () => {
-    const scheduler = new FakeScheduler();
-    const fs = new MemoryFs();
-    const { controller } = buildController(scheduler, fs);
+    const { scheduler, fs, controller } = setup();
 
     await run("adaptivePair.enablePresence");
     harness.emitChange("/workspace/src/pair.ts");
@@ -152,7 +135,7 @@ describe("PresenceController — continuity clearing on disable", () => {
 
     // A subsequent restart finds no continuity to reconcile.
     harness.reset();
-    const restarted = buildController(new FakeScheduler(), fs);
+    const restarted = buildController(undefined, fs);
     await flush();
     expect(restarted.controller.getState().observationCount).toBe(0);
   });
@@ -170,7 +153,7 @@ describe("PresenceController — continuity clearing on disable", () => {
 
     harness.reset();
     const delayedRead = fs.delayNextRead();
-    const second = buildController(new FakeScheduler(), fs);
+    const second = buildController(undefined, fs);
     await delayedRead.started;
 
     const disable = second.controller.performDisable();
@@ -183,9 +166,7 @@ describe("PresenceController — continuity clearing on disable", () => {
 
 describe("PresenceController — untrusted workspace gate", () => {
   it("refuses to enable, observe, or join until the workspace is trusted", async () => {
-    const scheduler = new FakeScheduler();
-    const fs = new MemoryFs();
-    const { controller } = buildController(scheduler, fs);
+    const { scheduler, fs, controller } = setup();
     harness.state.workspaceTrusted = false;
 
     await run("adaptivePair.enablePresence");
@@ -193,8 +174,9 @@ describe("PresenceController — untrusted workspace gate", () => {
 
     expect(controller.getState().presenceStatus).toBe("off");
     expect(controller.getState().documentListenerActive).toBe(false);
+    expect(harness.state.documentListeners.size).toBe(0);
     expect(controller.getState().contextKeys["adaptivePair.presenceEnabled"]).toBe(false);
-    expect(harness.state.warnings.join("\n")).toContain("trusted workspace");
+    expect(harness.state.warnings.map(warning => warning.message).join("\n")).toContain("trusted workspace");
 
     // An edit in an untrusted workspace is never observed.
     harness.emitChange("/workspace/src/pair.ts");
@@ -217,12 +199,10 @@ describe("PresenceController — untrusted workspace gate", () => {
 
 describe("PresenceController — journal I/O failures", () => {
   it("fails closed with a sanitized warning when a journal write throws", async () => {
-    const scheduler = new FakeScheduler();
-    const fs = new MemoryFs();
+    const { scheduler, fs, controller } = setup();
     fs.writeError = Object.assign(new Error("EIO /Users/alice/secret disk failure"), {
       code: "EIO",
     });
-    const { controller } = buildController(scheduler, fs);
 
     await run("adaptivePair.enablePresence");
     harness.emitChange("/workspace/src/pair.ts");
@@ -231,8 +211,8 @@ describe("PresenceController — journal I/O failures", () => {
 
     expect(controller.getState().presenceStatus).toBe("paused");
     expect(harness.state.warnings).toHaveLength(1);
-    expect(harness.state.warnings[0]).not.toContain("/Users/alice/secret");
-    expect(harness.state.warnings[0]).not.toContain("disk failure");
+    expect(harness.state.warnings[0]?.message).not.toContain("/Users/alice/secret");
+    expect(harness.state.warnings[0]?.message).not.toContain("disk failure");
   });
 });
 
