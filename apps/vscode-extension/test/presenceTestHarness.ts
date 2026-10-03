@@ -103,8 +103,8 @@ const createContext = (): FakeContext => ({
 });
 
 export const buildController = (
-  scheduler: Scheduler,
-  fs: JournalFileSystem,
+  scheduler: Scheduler = new FakeScheduler(),
+  fs: JournalFileSystem = new MemoryFs(),
 ): {
   readonly controller: InstanceType<typeof PresenceController>;
   readonly context: FakeContext;

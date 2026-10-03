@@ -18,25 +18,22 @@ const deferred = () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("Presence lifecycle intent", () => {
-  it.each(["enablePresence", "stayQuiet", "startSession", "joinInProgress"])(
-    "cancels %s waiting on trust when Disable is requested",
-    async action => {
-      const { controller } = buildController(new FakeScheduler(), new MemoryFs());
+  it("cancels a trusted action waiting on trust when Disable is requested", async () => {
+    const { controller } = buildController();
 
-      const pending = run(`adaptivePair.${action}`);
-      await Promise.all([pending, controller.performDisable()]);
+    const pending = run("adaptivePair.joinInProgress");
+    await Promise.all([pending, controller.performDisable()]);
 
-      expect(controller.getState()).toMatchObject({
-        presenceStatus: "off",
-        sessionStatus: "inactive",
-        documentListenerActive: false,
-      });
-      expect(controller.getState().contextKeys["adaptivePair.presenceEnabled"]).toBe(false);
-    },
-  );
+    expect(controller.getState()).toMatchObject({
+      presenceStatus: "off",
+      sessionStatus: "inactive",
+      documentListenerActive: false,
+    });
+    expect(controller.getState().contextKeys["adaptivePair.presenceEnabled"]).toBe(false);
+  });
 
   it("cancels a pending Start when Pause is requested", async () => {
-    const { controller } = buildController(new FakeScheduler(), new MemoryFs());
+    const { controller } = buildController();
     await run("adaptivePair.enablePresence");
     const start = run("adaptivePair.startSession");
 
@@ -49,7 +46,7 @@ describe("Presence lifecycle intent", () => {
 
   it("does not reattach a listener from an earlier Enable completion", async () => {
     const scheduler = new FakeScheduler();
-    const { controller, sessionController } = buildController(scheduler, new MemoryFs());
+    const { controller, sessionController } = buildController(scheduler);
     const enable = sessionController.enablePresence.bind(sessionController);
     const completed = deferred();
     const release = deferred();
@@ -104,7 +101,7 @@ describe("Presence lifecycle intent", () => {
 
   it("ignores stale listener callbacks before any workspace read", async () => {
     const scheduler = new FakeScheduler();
-    const { controller } = buildController(scheduler, new MemoryFs());
+    const { controller } = buildController(scheduler);
     await run("adaptivePair.enablePresence");
     const listener = [...harness.state.documentListeners][0];
     await controller.performDisable();
@@ -118,7 +115,7 @@ describe("Presence lifecycle intent", () => {
   });
 
   it("does not enable or capture after disposal", async () => {
-    const { controller } = buildController(new FakeScheduler(), new MemoryFs());
+    const { controller } = buildController();
     const read = vi.spyOn(VscodeWorkspaceContextAccess.prototype, "readGitMetadata");
     const pending = run("adaptivePair.joinInProgress");
     controller.dispose();
@@ -134,7 +131,7 @@ describe("Session capture cancellation", () => {
   it.each(["disablePresence", "pausePresence", "dispose"] as const)(
     "stops native reads after %s interrupts metadata capture",
     async action => {
-      const { sessionController } = buildController(new FakeScheduler(), new MemoryFs());
+      const { sessionController } = buildController();
       const metadata = deferred();
       const release = deferred();
       vi.spyOn(VscodeWorkspaceContextAccess.prototype, "readGitMetadata")

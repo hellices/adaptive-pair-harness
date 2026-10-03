@@ -1,3 +1,4 @@
+import { PAIR_TOOL_CATALOG, nativeToolName } from "@adaptive-pair/harness";
 import type { PairRuntimeSnapshot } from "@adaptive-pair/protocol";
 import {
   InMemoryJournal,
@@ -49,6 +50,15 @@ class EffectPortDouble implements EffectPort {
     return Promise.resolve(this.responder(request));
   }
 }
+
+const confirmedEffect = (request: EffectRequest): EffectResult => ({
+  operationId: request.operationId,
+  status: "confirmed",
+  summary: "confirmed",
+  observation: {},
+  sensitiveData: false,
+  partial: false,
+});
 
 const createPairRuntime = (): PairRuntimeSnapshot =>
   growthRuntime({
@@ -127,6 +137,16 @@ const createCoordinator = (
   return { coordinator, store };
 };
 
+// Imported per call because each test resets the module graph.
+const createCatalogTool = async (name: string, coordinator: PairCoordinatorPort) => {
+  const { PairLanguageModelTool } = await import("../src/tools/pairTool.js");
+  const descriptor = PAIR_TOOL_CATALOG.find(tool => tool.name === name);
+  if (descriptor === undefined) {
+    throw new Error(`Missing ${name} descriptor.`);
+  }
+  return new PairLanguageModelTool(nativeToolName(descriptor.name), descriptor, coordinator);
+};
+
 const createContext = (): {
   readonly subscriptions: { dispose(): void }[];
 } => ({
@@ -176,6 +196,8 @@ export {
   EffectPortDouble,
   asExtensionContext,
   confirmationText,
+  confirmedEffect,
+  createCatalogTool,
   createContext,
   createCoordinator,
   createGrowthRuntime,

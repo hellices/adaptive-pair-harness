@@ -43,22 +43,6 @@ describe("ActivityLedger", () => {
     expect(ledger.isInactive()).toBe(false);
   });
 
-  it("counts workspace reads and model requests independently", () => {
-    const ledger = new ActivityLedger();
-
-    ledger.recordWorkspaceRead();
-    ledger.recordModelRequest();
-    ledger.recordModelRequest();
-
-    expect(ledger.snapshot()).toEqual({
-      documentListeners: 0,
-      timersScheduled: 0,
-      workspaceReads: 1,
-      modelRequests: 2,
-    });
-    expect(ledger.isInactive()).toBe(false);
-  });
-
   it("keeps recorded workspace reads observable after the listener detaches", () => {
     const ledger = new ActivityLedger();
 

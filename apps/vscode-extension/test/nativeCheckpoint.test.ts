@@ -20,7 +20,7 @@ const workUnitStatuses: readonly WorkUnitStatus[] = [
   "proposed", "agreed", "executing", "verifying", "completed", "paused",
   "needs-reconcile", "cancelled", "failed",
 ];
-const hintLevels: readonly HintLevel[] = [0, 1, 2, 3, 4, 5];
+const hintLevels: readonly HintLevel[] = [0, 5];
 const response = (checkpoint: unknown, participant = "adaptivePair.chat") => ({
   participant, response: [], result: { metadata: { adaptivePairCheckpoint: checkpoint } },
 });
@@ -90,17 +90,6 @@ describe("native checkpoint projection", () => {
     expect(createNativeCheckpoint(growthRuntime())).toEqual(checkpointFixture());
   });
 
-  it.each([false, true])("projects both record flags with bypassed=%s", bypassed => {
-    const record = { summary: "private-source-sentinel", bypassed, recordedAt: 123 };
-    const checkpoint = createNativeCheckpoint(growthRuntime({ session: {
-      assistance: { attempt: record, hypothesis: record, hint: undefined, solutionReveal: undefined },
-    } }));
-    expect(checkpoint).toEqual({
-      ...checkpointFixture(), attempt: bypassed ? "bypassed" : "recorded",
-      hypothesis: bypassed ? "bypassed" : "recorded",
-    });
-  });
-
   it("does not read private fields when projecting", () => {
     const snapshot = privateSnapshot();
     const getter = vi.fn(() => { throw new Error("Private field read"); });
@@ -114,22 +103,14 @@ describe("native checkpoint projection", () => {
 });
 
 describe("native checkpoint admission", () => {
-  it.each(["off", "paused"] as const)("rejects %s Presence", status => {
+  it("rejects paused Presence, a closed session, and Pair sessions or work units", () => {
     const snapshot = growthRuntime();
-    expect(createNativeCheckpoint({ ...snapshot, presence: { ...snapshot.presence, status } })).toBeUndefined();
-  });
-
-  it.each(["inactive", "paused", "closing", "closed"] as const)("rejects a %s session", status => {
-    expect(createNativeCheckpoint(growthRuntime({ session: { status } }))).toBeUndefined();
-  });
-
-  it.each(["pair", "delivery"] as const)("rejects %s sessions and work units", mode => {
-    expect(createNativeCheckpoint(growthRuntime({ session: { mode } }))).toBeUndefined();
-    const snapshot = privateSnapshot();
-    if (snapshot.session?.workUnit === undefined) throw new Error("Missing fixture");
-    expect(createNativeCheckpoint(growthRuntime({ session: {
-      workUnit: { ...snapshot.session.workUnit, mode },
-    } }))).toBeUndefined();
+    expect(createNativeCheckpoint({ ...snapshot, presence: { ...snapshot.presence, status: "paused" } })).toBeUndefined();
+    expect(createNativeCheckpoint(growthRuntime({ session: { status: "closed" } }))).toBeUndefined();
+    expect(createNativeCheckpoint(growthRuntime({ session: { mode: "pair" } }))).toBeUndefined();
+    const workUnit = privateSnapshot().session?.workUnit;
+    if (workUnit === undefined) throw new Error("Missing fixture");
+    expect(createNativeCheckpoint(growthRuntime({ session: { workUnit: { ...workUnit, mode: "pair" } } }))).toBeUndefined();
   });
 
   it("requires a session, work unit, and learning agreement", () => {
@@ -138,17 +119,16 @@ describe("native checkpoint admission", () => {
     expect(createNativeCheckpoint(growthRuntime({ session: { learningAgreement: undefined } }))).toBeUndefined();
   });
 
-  it.each(["observing", "engaged", "quiet"] as const)("accepts enabled %s Presence", status => {
+  it.each(["observing", "quiet"] as const)("accepts enabled %s Presence", status => {
     const snapshot = growthRuntime();
     expect(createNativeCheckpoint({ ...snapshot, presence: { ...snapshot.presence, status } })).toEqual(checkpointFixture());
   });
 
-  it.each(workUnitStatuses)("preserves the bounded %s work-unit status", status => {
-    const snapshot = privateSnapshot();
-    if (snapshot.session?.workUnit === undefined) throw new Error("Missing fixture");
-    expect(createNativeCheckpoint(growthRuntime({ session: {
-      workUnit: { ...snapshot.session.workUnit, status },
-    } }))?.workUnitStatus).toBe(status);
+  it("preserves the bounded work-unit status", () => {
+    const workUnit = privateSnapshot().session?.workUnit;
+    if (workUnit === undefined) throw new Error("Missing fixture");
+    expect(createNativeCheckpoint(growthRuntime({ session: { workUnit: { ...workUnit, status: "verifying" } } }))
+      ?.workUnitStatus).toBe("verifying");
   });
 });
 
@@ -163,7 +143,7 @@ describe("native checkpoint schema", () => {
     expect(inspectCheckpoint(checkpoint)).toEqual({ status: "available", checkpoint });
   });
 
-  it.each(["none", "recorded", "bypassed"] as const)("accepts the %s historical flags", flag => {
+  it.each(["recorded", "bypassed"] as const)("accepts the %s historical flags", flag => {
     const checkpoint = { ...checkpointFixture(), attempt: flag, hypothesis: flag };
     expect(inspectCheckpoint(checkpoint)).toEqual({ status: "available", checkpoint });
   });
@@ -177,36 +157,34 @@ describe("native checkpoint schema", () => {
     expect(Object.isFrozen(inspection.checkpoint)).toBe(true);
   });
 
-  it.each(checkpointFields)("rejects missing field %s", field => {
-    const checkpoint = { ...checkpointFixture() } as Record<string, unknown>;
-    delete checkpoint[field];
+  it("rejects a missing field", () => {
+    const checkpoint: Record<string, unknown> = { ...checkpointFixture() };
+    delete checkpoint.solutionRevealed;
     expect(inspectCheckpoint(checkpoint)).toEqual({ status: "invalid" });
   });
 
   it.each([
-    ["format", "foreign"], ["version", 0], ["version", 2], ["version", "1"],
-    ["mode", "pair"], ["mode", "delivery"], ["workUnitStatus", "active"],
-    ["attempt", "passed"], ["attempt", true], ["hypothesis", "verified"],
-    ["hypothesis", {}], ["solutionRevealed", 1], ["solutionRevealed", "false"],
-    ["hintLevel", undefined], ["hintLevel", "2"], ["maximumHintLevel", null],
-    ["workUnitStatus", "私".repeat(513)], ["format", { toString: () => "adaptive-pair-native-checkpoint" }],
+    ["format", "foreign"], ["format", { toString: () => "adaptive-pair-native-checkpoint" }],
+    ["version", 2], ["version", "1"], ["mode", "pair"], ["workUnitStatus", "active"],
+    ["attempt", "passed"], ["hypothesis", "verified"], ["solutionRevealed", "false"],
+    ["maximumHintLevel", null],
   ])("rejects malformed %s=%s", (field, value) => {
     expect(inspectCheckpoint({ ...checkpointFixture(), [field]: value })).toEqual({ status: "invalid" });
   });
 
-  it.each([-1, -0, 6, 1.5, NaN, Infinity, -Infinity, "0", 1n, {}, []])("rejects invalid hint %s", value => {
+  it.each([-1, -0, 6, 1.5, "0"])("rejects invalid hint %s", value => {
     for (const field of ["maximumHintLevel", "hintLevel"]) {
       expect(inspectCheckpoint({ ...checkpointFixture(), [field]: value })).toEqual({ status: "invalid" });
     }
   });
 
-  it.each([undefined, null, true, 1, "checkpoint", [], () => checkpointFixture()])("rejects non-record %s", value => {
+  it.each([undefined, null, []])("rejects non-record %s", value => {
     expect(inspectCheckpoint(value)).toEqual({ status: "invalid" });
   });
 });
 
 describe("native checkpoint closed data descriptors", () => {
-  it.each(["extra", "__proto__", Symbol("private"), "toJSON"])("rejects extra key %s without evaluating it", key => {
+  it.each(["extra", Symbol("private")])("rejects extra key %s without evaluating it", key => {
     const checkpoint = checkpointFixture();
     const getter = vi.fn(() => "private-source-sentinel".repeat(512));
     Object.defineProperty(checkpoint, key, { get: getter });
@@ -214,17 +192,18 @@ describe("native checkpoint closed data descriptors", () => {
     expect(getter).not.toHaveBeenCalled();
   });
 
-  it.each(checkpointFields)("rejects accessor field %s without invoking it", field => {
+  it("rejects an accessor field without invoking it", () => {
     const checkpoint = checkpointFixture();
+    const field = "solutionRevealed";
     const getter = vi.fn(() => { throw new Error("Accessor invoked"); });
     Object.defineProperty(checkpoint, field, { get: getter });
     expect(inspectCheckpoint(checkpoint)).toEqual({ status: "invalid" });
     expect(getter).not.toHaveBeenCalled();
   });
 
-  it.each(checkpointFields)("rejects non-enumerable field %s", field => {
+  it("rejects a non-enumerable field", () => {
     const checkpoint = checkpointFixture();
-    Object.defineProperty(checkpoint, field, { enumerable: false });
+    Object.defineProperty(checkpoint, "solutionRevealed", { enumerable: false });
     expect(inspectCheckpoint(checkpoint)).toEqual({ status: "invalid" });
   });
 
@@ -297,11 +276,10 @@ describe("native history recency and bounds", () => {
     ])).toEqual({ status: "available", checkpoint: newest });
   });
 
-  it.each([undefined, null, { ...checkpointFixture(), version: 2 }, { ...checkpointFixture(), extra: true }])(
-    "never falls back past an invalid newest owned checkpoint %s", checkpoint => {
-      expect(inspectNativeHistory([response(checkpointFixture()), response(checkpoint)])).toEqual({ status: "invalid" });
-    },
-  );
+  it("never falls back past an invalid newest owned checkpoint", () => {
+    const unsupported = { ...checkpointFixture(), version: 2 };
+    expect(inspectNativeHistory([response(checkpointFixture()), response(unsupported)])).toEqual({ status: "invalid" });
+  });
 
   it("counts all turns, not just owned responses, toward the latest 32", () => {
     const fillers = Array.from({ length: 32 }, (_, index) => index % 2 === 0

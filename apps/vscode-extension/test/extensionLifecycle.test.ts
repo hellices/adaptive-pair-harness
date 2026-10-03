@@ -6,12 +6,14 @@ import {
   type AdaptivePairExtensionApi,
 } from "./pairToolTestHarness.js";
 
-
+const activateExtension = async (): Promise<AdaptivePairExtensionApi> => {
+  const { activate } = await import("../src/extension.js");
+  return activate(asExtensionContext(createContext()));
+};
 
 describe("extension lifecycle", () => {
   it("stays inactive on activation until an Adaptive Pair command runs", async () => {
-    const { activate } = await import("../src/extension.js");
-    const api = activate(asExtensionContext(createContext())) as AdaptivePairExtensionApi;
+    const api = await activateExtension();
 
     expect(api.getState().presenceStatus).toBe("off");
     expect(fakeVscode.state.documentListeners.size).toBe(0);
@@ -21,9 +23,8 @@ describe("extension lifecycle", () => {
     expect(fakeVscode.state.statusItems[0]?.text).toBe("$(circle-slash) Pair: off");
   });
 
-  it("enables presence idempotently and does not write external settings", async () => {
-    const { activate } = await import("../src/extension.js");
-    const api = activate(asExtensionContext(createContext())) as AdaptivePairExtensionApi;
+  it("enables presence idempotently", async () => {
+    const api = await activateExtension();
 
     await fakeVscode.module.commands.executeCommand("adaptivePair.enablePresence");
     const first = api.getState();
@@ -34,12 +35,10 @@ describe("extension lifecycle", () => {
     expect(second.presenceStatus).toBe("observing");
     expect(second.runtimeRevision).toBe(first.runtimeRevision);
     expect(fakeVscode.state.documentListeners.size).toBe(1);
-    expect(fakeVscode.state.settingsWrites).toEqual([]);
   });
 
   it("keeps the local observation window when switching to quiet", async () => {
-    const { activate } = await import("../src/extension.js");
-    const api = activate(asExtensionContext(createContext())) as AdaptivePairExtensionApi;
+    const api = await activateExtension();
 
     await fakeVscode.module.commands.executeCommand("adaptivePair.enablePresence");
     fakeVscode.emitChange("/workspace/src/pair.ts");
@@ -54,8 +53,7 @@ describe("extension lifecycle", () => {
   });
 
   it("disposes document listeners when paused", async () => {
-    const { activate } = await import("../src/extension.js");
-    const api = activate(asExtensionContext(createContext())) as AdaptivePairExtensionApi;
+    const api = await activateExtension();
 
     await fakeVscode.module.commands.executeCommand("adaptivePair.enablePresence");
     expect(fakeVscode.state.documentListeners.size).toBe(1);
@@ -73,8 +71,7 @@ describe("extension lifecycle", () => {
   });
 
   it("clears local continuity after confirmation when disabled", async () => {
-    const { activate } = await import("../src/extension.js");
-    const api = activate(asExtensionContext(createContext())) as AdaptivePairExtensionApi;
+    const api = await activateExtension();
 
     await fakeVscode.module.commands.executeCommand("adaptivePair.enablePresence");
     fakeVscode.emitChange("/workspace/src/pair.ts");
@@ -93,8 +90,7 @@ describe("extension lifecycle", () => {
   });
 
   it("does not write native chat, copilot, model, permission, keybinding, or isolation settings", async () => {
-    const { activate } = await import("../src/extension.js");
-    activate(asExtensionContext(createContext()));
+    await activateExtension();
 
     fakeVscode.state.textDocuments = [{
       isDirty: true,

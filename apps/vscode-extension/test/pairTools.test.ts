@@ -1,4 +1,3 @@
-import { PAIR_TOOL_CATALOG, nativeToolName } from "@adaptive-pair/harness";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -6,6 +5,8 @@ import {
   EffectPortDouble,
   asExtensionContext,
   confirmationText,
+  confirmedEffect,
+  createCatalogTool,
   createContext,
   createCoordinator,
   createGrowthRuntime,
@@ -28,14 +29,7 @@ describe("registerPairTools", () => {
     const { registerPairTools } = await import("../src/tools/registerPairTools.js");
     const { coordinator } = createCoordinator(
       createPairRuntime(),
-      new EffectPortDouble(request => ({
-        operationId: request.operationId,
-        status: "confirmed",
-        summary: "confirmed",
-        observation: {},
-        sensitiveData: false,
-        partial: false,
-      })),
+      new EffectPortDouble(confirmedEffect),
     );
 
     const context = asExtensionContext(createContext());
@@ -49,29 +43,10 @@ describe("registerPairTools", () => {
 
 
 it("derives verification script and scope from the agreed work unit", async () => {
-  const { adaptPublicToolInput, PairLanguageModelTool } = await import(
-    "../src/tools/pairTool.js"
-  );
-  const effects = new EffectPortDouble(request => ({
-    operationId: request.operationId,
-    status: "confirmed",
-    summary: "confirmed",
-    observation: {},
-    sensitiveData: false,
-    partial: false,
-  }));
+  const { adaptPublicToolInput } = await import("../src/tools/pairTool.js");
+  const effects = new EffectPortDouble(confirmedEffect);
   const { coordinator } = createCoordinator(createGrowthRuntime(), effects);
-  const descriptor = PAIR_TOOL_CATALOG.find(
-    tool => tool.name === "pair_run_verification",
-  );
-  if (descriptor === undefined) {
-    throw new Error("Missing pair_run_verification descriptor.");
-  }
-  const tool = new PairLanguageModelTool(
-    nativeToolName(descriptor.name),
-    descriptor,
-    coordinator,
-  );
+  const tool = await createCatalogTool("pair_run_verification", coordinator);
   expect(
     adaptPublicToolInput(
       "pair_run_verification",
@@ -99,31 +74,11 @@ it("derives verification script and scope from the agreed work unit", async () =
 });
 
 it("shows mode, owner, scope, and operation class during preparation", async () => {
-  const { PairLanguageModelTool } = await import("../src/tools/pairTool.js");
   const { coordinator } = createCoordinator(
     createPairRuntime(),
-    new EffectPortDouble(request => ({
-      operationId: request.operationId,
-      status: "confirmed",
-      summary: "confirmed",
-      observation: {},
-      sensitiveData: false,
-      partial: false,
-    })),
+    new EffectPortDouble(confirmedEffect),
   );
-  const descriptor = PAIR_TOOL_CATALOG.find(
-    tool => tool.name === "pair_run_verification",
-  );
-
-  if (descriptor === undefined) {
-    throw new Error("Missing pair_run_verification descriptor.");
-  }
-
-  const tool = new PairLanguageModelTool(
-    nativeToolName(descriptor.name),
-    descriptor,
-    coordinator,
-  );
+  const tool = await createCatalogTool("pair_run_verification", coordinator);
   const prepared = await tool.prepareInvocation(
     { input: { plan: "npm test" } },
     createToken() as never,
@@ -153,23 +108,8 @@ it.each([
     pauseFirst: false,
   },
 ])("denies a hidden edit tool without running an effect in $title", async ({ runtime, pauseFirst }) => {
-  const { PairLanguageModelTool } = await import("../src/tools/pairTool.js");
-  const effectPort = new EffectPortDouble(request => ({
-    operationId: request.operationId,
-    status: "confirmed",
-    summary: "confirmed",
-    observation: {},
-    sensitiveData: false,
-    partial: false,
-  }));
+  const effectPort = new EffectPortDouble(confirmedEffect);
   const { coordinator, store } = createCoordinator(runtime(), effectPort);
-  const descriptor = PAIR_TOOL_CATALOG.find(
-    tool => tool.name === "pair_apply_edit",
-  );
-
-  if (descriptor === undefined) {
-    throw new Error("Missing pair_apply_edit descriptor.");
-  }
 
   if (pauseFirst) {
     await coordinator.dispatch({
@@ -182,11 +122,7 @@ it.each([
       reason: "The developer paused after seeing the tool.",
     });
   }
-  const tool = new PairLanguageModelTool(
-    nativeToolName(descriptor.name),
-    descriptor,
-    coordinator,
-  );
+  const tool = await createCatalogTool("pair_apply_edit", coordinator);
   const result = await tool.invoke(
     {
       input: {
@@ -206,31 +142,11 @@ it.each([
 });
 
 it("returns structured stale revision and authority denials", async () => {
-  const { PairLanguageModelTool } = await import("../src/tools/pairTool.js");
-  const descriptor = PAIR_TOOL_CATALOG.find(
-    tool => tool.name === "pair_read_scope",
-  );
-
-  if (descriptor === undefined) {
-    throw new Error("Missing pair_read_scope descriptor.");
-  }
-
   const { coordinator } = createCoordinator(
     createPairRuntime(),
-    new EffectPortDouble(request => ({
-      operationId: request.operationId,
-      status: "confirmed",
-      summary: "confirmed",
-      observation: {},
-      sensitiveData: false,
-      partial: false,
-    })),
+    new EffectPortDouble(confirmedEffect),
   );
-  const tool = new PairLanguageModelTool(
-    nativeToolName(descriptor.name),
-    descriptor,
-    coordinator,
-  );
+  const tool = await createCatalogTool("pair_read_scope", coordinator);
   const result = await tool.invoke(
     {
       input: {
@@ -249,26 +165,13 @@ it("returns structured stale revision and authority denials", async () => {
 });
 
 it("sanitizes private host failures out of tool results", async () => {
-  const { PairLanguageModelTool } = await import("../src/tools/pairTool.js");
-  const descriptor = PAIR_TOOL_CATALOG.find(
-    tool => tool.name === "pair_read_scope",
-  );
-
-  if (descriptor === undefined) {
-    throw new Error("Missing pair_read_scope descriptor.");
-  }
-
   const { coordinator } = createCoordinator(
     createPairRuntime(),
     new EffectPortDouble(() => {
       throw new Error("HOST_SECRET:/workspace/private.log");
     }),
   );
-  const tool = new PairLanguageModelTool(
-    nativeToolName(descriptor.name),
-    descriptor,
-    coordinator,
-  );
+  const tool = await createCatalogTool("pair_read_scope", coordinator);
   const result = await tool.invoke(
     {
       input: {

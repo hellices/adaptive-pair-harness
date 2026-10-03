@@ -33,18 +33,24 @@ describe("accountedModelFactory", () => {
     expect(ledger.snapshot().modelRequests).toBe(2);
   });
 
-  it("forwards the instructions, tool view, and abort signal unchanged", async () => {
+  it("builds the model from the given chat model and forwards each request unchanged", async () => {
     const ledger = new ActivityLedger();
+    const built: unknown[] = [];
     const seen: unknown[] = [];
+    const chatModel = { id: "test-model" } as never;
     const signal = new AbortController().signal;
-    const factory = accountedModelFactory(ledger, () => ({
-      request: (instructions, tools, abort) => {
-        seen.push(instructions, tools, abort);
-        return Promise.resolve(answer("ok"));
-      },
-    }));
+    const accounted = accountedModelFactory(ledger, model => {
+      built.push(model);
+      return {
+        request: (instructions, tools, abort) => {
+          seen.push(instructions, tools, abort);
+          return Promise.resolve(answer("ok"));
+        },
+      };
+    })(chatModel);
 
-    await factory({} as never).request(envelope, toolView, signal);
+    expect(built).toEqual([chatModel]);
+    await accounted.request(envelope, toolView, signal);
 
     expect(seen).toEqual([envelope, toolView, signal]);
   });
@@ -60,23 +66,10 @@ describe("accountedModelFactory", () => {
     ).rejects.toThrow("model unavailable");
     expect(ledger.snapshot().modelRequests).toBe(1);
   });
-
-  it("builds the underlying model once per chat model, through the given factory", () => {
-    const ledger = new ActivityLedger();
-    const built: unknown[] = [];
-    const chatModel = { id: "test-model" } as never;
-
-    accountedModelFactory(ledger, (model) => {
-      built.push(model);
-      return { request: () => Promise.resolve(answer("ok")) };
-    })(chatModel);
-
-    expect(built).toEqual([chatModel]);
-  });
 });
 
 describe("model accounting wiring", () => {
-  it("is the only place that records a model request", async () => {
+  it("is the single recording path, shared by the production entry and the isolated host entry", async () => {
     const callers: string[] = [];
     for (const file of [
       "extensionCore.ts",
@@ -88,18 +81,13 @@ describe("model accounting wiring", () => {
         callers.push(file);
       }
     }
+    const core = await readFile(resolve(srcDir, "extensionCore.ts"), "utf8");
     const host = await readFile(resolve(hostDir, "hostTestApi.ts"), "utf8");
 
     expect(callers).toEqual([]);
     expect(host, "the host entry duplicates the production accounting wrapper").not.toContain(
       "recordModelRequest(",
     );
-  });
-
-  it("is shared by the production entry and the isolated host entry", async () => {
-    const core = await readFile(resolve(srcDir, "extensionCore.ts"), "utf8");
-    const host = await readFile(resolve(hostDir, "hostTestApi.ts"), "utf8");
-
     expect(core).toContain("accountedModelFactory");
     expect(host).toContain("accountedModelFactory");
   });

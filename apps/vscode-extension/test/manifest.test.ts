@@ -2,35 +2,41 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
+const readJson = <T>(path: string): T => JSON.parse(readFileSync(resolve(path), "utf8")) as T;
+
+interface ExtensionManifest {
+  version: string;
+  extensionKind?: string[];
+  main: string;
+  browser?: unknown;
+  engines: { vscode: string; node: string };
+  files: string[];
+  enabledApiProposals?: unknown;
+  contributes: {
+    commands: { command: string }[];
+    languageModelTools: { name: string; toolReferenceName?: string }[];
+    chatParticipants: { id: string }[];
+  };
+  activationEvents: string[];
+}
+
+const manifest = readJson<ExtensionManifest>("apps/vscode-extension/package.json");
+
 describe("VS Code manifest", () => {
   it("aligns the native Growth trial release with the lockfile", () => {
     const version = "0.2.0-preview.2";
-    for (const manifestPath of ["package.json", "apps/vscode-extension/package.json"]) {
-      const manifest = JSON.parse(readFileSync(resolve(manifestPath), "utf8")) as {
-        version: string;
-      };
-      expect(manifest.version, manifestPath).toBe(version);
-    }
-    const lockfile = JSON.parse(readFileSync(resolve("package-lock.json"), "utf8")) as {
+    expect(readJson<{ version: string }>("package.json").version).toBe(version);
+    expect(manifest.version).toBe(version);
+    const lockfile = readJson<{
       version: string;
       packages: Record<string, { version: string }>;
-    };
+    }>("package-lock.json");
     expect(lockfile.version).toBe(version);
     expect(lockfile.packages[""]?.version).toBe(version);
     expect(lockfile.packages["apps/vscode-extension"]?.version).toBe(version);
   });
 
   it("keeps filesystem and process work in the workspace Node host at the current engine floor", () => {
-    const manifest = JSON.parse(readFileSync(
-      resolve("apps/vscode-extension/package.json"),
-      "utf8",
-    )) as {
-      extensionKind?: string[];
-      main: string;
-      browser?: unknown;
-      engines: { vscode: string; node: string };
-    };
-
     expect(manifest.extensionKind).toEqual(["workspace"]);
     expect(manifest.main).toBe("./dist/extension.cjs");
     expect(manifest.browser).toBeUndefined();
@@ -38,16 +44,6 @@ describe("VS Code manifest", () => {
   });
 
   it("contributes every Pair Presence command", () => {
-    const manifest = JSON.parse(readFileSync(
-      resolve("apps/vscode-extension/package.json"),
-      "utf8",
-    )) as {
-      contributes: {
-        commands: { command: string }[];
-        languageModelTools: { name: string }[];
-      };
-    };
-
     expect(manifest.contributes.commands.map(item => item.command)).toEqual([
       "adaptivePair.enablePresence",
       "adaptivePair.stayQuiet",
@@ -66,18 +62,6 @@ describe("VS Code manifest", () => {
   });
 
   it("packages a deny-by-default allowlist with no proposed API or chat session", () => {
-    const manifest = JSON.parse(
-      readFileSync(resolve("apps/vscode-extension/package.json"), "utf8"),
-    ) as {
-      files: string[];
-      enabledApiProposals?: unknown;
-      contributes: {
-        languageModelTools: { name: string; toolReferenceName?: string }[];
-        chatParticipants: { id: string }[];
-      };
-      activationEvents: string[];
-    };
-
     // vsce refuses to combine a .vscodeignore with "files", so this allowlist is
     // the single packaging gate: only these paths can ever reach the VSIX.
     expect(manifest.files).toEqual([
