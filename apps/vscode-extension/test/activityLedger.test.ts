@@ -59,22 +59,7 @@ describe("ActivityLedger", () => {
     expect(ledger.isInactive()).toBe(false);
   });
 
-  it("exposes no network counter, because no production network boundary exists", () => {
-    const ledger = new ActivityLedger();
-
-    // A counter nothing can increment proves nothing. Outbound network absence
-    // is proved at runtime by the Extension Host network probe
-    // (test/host/networkProbe.ts) instead.
-    expect(Object.keys(ledger.snapshot())).toEqual([
-      "documentListeners",
-      "timersScheduled",
-      "workspaceReads",
-      "modelRequests",
-    ]);
-    expect("recordNetworkRequest" in ledger).toBe(false);
-  });
-
-  it("treats a lingering active listener as active even when only detaches remain balanced", () => {
+  it("keeps recorded workspace reads observable after the listener detaches", () => {
     const ledger = new ActivityLedger();
 
     ledger.recordListenerAttached();

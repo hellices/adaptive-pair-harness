@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import type { CancellationToken } from "vscode";
 import type { GrowthModel, GrowthModelOutput } from "@adaptive-pair/runtime";
 import { TRANSFER_NOT_DEMONSTRATED_NOTE } from "../src/growthPresentation.js";
 import {
@@ -14,36 +13,17 @@ import {
   createContext,
   growthSnapshot,
 } from "./growthTestHarness.js";
+import { cancellation, deferred } from "./growthRouteBoundaryHarness.js";
 
-const cancellableToken = (): { readonly token: CancellationToken; readonly cancel: () => void } => {
-  let cancelled = false;
-  const listeners = new Set<() => void>();
-  const token: CancellationToken = {
-    get isCancellationRequested() { return cancelled; },
-    onCancellationRequested: listener => {
-      const notify = (): void => { listener(undefined); };
-      listeners.add(notify);
-      return { dispose: () => { listeners.delete(notify); } };
-    },
-  };
-  return {
-    token,
-    cancel: () => {
-      cancelled = true;
-      for (const listener of listeners) {
-        listener();
-      }
-    },
-  };
-};
+// Model output carries its runtime boundary, as the production adapter does.
+// The plain-output branch is exercised by growthPublication, growthTransferIntent
+// and runtime guardedGrowthTurn; cancellation is independent of the format.
+const runtimeResult = <Response>(response: Response, revision: number) => ({
+  response,
+  runtime: { runtimeRevision: revision, authorityEpoch: 2, mode: "growth" as const },
+});
 
-const deferred = <Value>() => {
-  let resolve!: (value: Value) => void;
-  const promise = new Promise<Value>(complete => { resolve = complete; });
-  return { promise, resolve };
-};
-
-describe.each(["plain", "runtime"] as const)("Growth %s response cancellation", format => {
+describe("Growth response cancellation", () => {
   it.each([
     { route: "guidance", command: undefined, timing: "during request" },
     { route: "guidance", command: undefined, timing: "after response" },
@@ -57,7 +37,7 @@ describe.each(["plain", "runtime"] as const)("Growth %s response cancellation", 
     consent.grant(asModel(model), coordinator.snapshotNow());
     const evaluations = new GrowthEvaluationLog();
     const { stream, collected } = createResponseStream();
-    const { token, cancel } = cancellableToken();
+    const { token, cancel } = cancellation();
     let modelSignal: AbortSignal | undefined;
     const answer = {
       level: 1,
@@ -73,10 +53,7 @@ describe.each(["plain", "runtime"] as const)("Growth %s response cancellation", 
       } else {
         queueMicrotask(() => queueMicrotask(cancel));
       }
-      return Promise.resolve(format === "plain" ? answer : {
-        response: answer,
-        runtime: { runtimeRevision: before.revision, authorityEpoch: 2, mode: "growth" },
-      });
+      return Promise.resolve(runtimeResult(answer, before.revision));
     });
     const participant = new GrowthParticipant({
       coordinator,
@@ -106,7 +83,7 @@ describe.each(["plain", "runtime"] as const)("Growth %s response cancellation", 
   });
 });
 
-describe.each(["plain", "runtime"] as const)("Growth %s transfer continuation cancellation", format => {
+describe("Growth transfer continuation cancellation", () => {
   it.each([
     { timing: "response+2", followup: false },
     { timing: "snapshot-return", followup: false },
@@ -120,7 +97,7 @@ describe.each(["plain", "runtime"] as const)("Growth %s transfer continuation ca
     consent.grant(asModel(model), coordinator.snapshotNow());
     const evaluations = new GrowthEvaluationLog();
     const { stream, collected } = createResponseStream();
-    const { token, cancel } = cancellableToken();
+    const { token, cancel } = cancellation();
     const requestStarted = deferred<AbortSignal>();
     const reply = deferred<GrowthModelOutput>();
     let publicationProbeArmed = false;
@@ -171,10 +148,7 @@ describe.each(["plain", "runtime"] as const)("Growth %s transfer continuation ca
     const pending = participant.handle(createRequest(model, { command: "transfer" }), createContext(), stream, token);
     const signal = await requestStarted.promise;
     publicationProbeArmed = true;
-    reply.resolve(format === "plain" ? answer : {
-      response: answer,
-      runtime: { runtimeRevision: before.revision, authorityEpoch: 2, mode: "growth" },
-    });
+    reply.resolve(runtimeResult(answer, before.revision));
     if (timing === "response+2") {
       queueMicrotask(() => queueMicrotask(cancelChat));
     } else if (timing === "response+3") {

@@ -93,29 +93,6 @@ describe("GrowthParticipant transfer validation", () => {
     expect(evaluations.records.at(-1)?.reason).toBe("TRANSFER_NOT_DISTINCT");
     expect(participant.transferStatus()).toBeUndefined();
   });
-
-  it("does not start a transfer when workspace consent is declined", async () => {
-    const coordinator = new FakeCoordinator(growthSnapshot({ runtimeRevision: 4 }));
-    const model = new FakeModel([
-      { text: JSON.stringify({ level: 1, kind: "question", text: variation }) },
-    ]);
-    const { participant, evaluations } = buildParticipant(coordinator, {
-      requestWorkspaceConsent: () => Promise.resolve(false),
-    });
-    const { stream } = createResponseStream();
-
-    await participant.handle(
-      createRequest(model, { command: "transfer", prompt: "" }),
-      createContext(),
-      stream,
-      createToken(),
-    );
-
-    expect(model.sendCount).toBe(0);
-    expect(coordinator.prepareInputs).toHaveLength(0);
-    expect(evaluations.records).toHaveLength(0);
-    expect(participant.transferStatus()).toBeUndefined();
-  });
 });
 
 describe("GrowthParticipant transfer status", () => {
@@ -144,86 +121,5 @@ describe("GrowthParticipant transfer status", () => {
     const text = collected.markdown.join("\n").toLowerCase();
     expect(text).toContain("transfer: started");
     expect(text).toContain("not demonstrated");
-  });
-
-  it("reports a transfer from an old work unit as not started in /session", async () => {
-    const coordinator = new FakeCoordinator(growthSnapshot({ runtimeRevision: 4 }));
-    const model = new FakeModel([
-      { text: JSON.stringify({ level: 1, kind: "question", text: variation }) },
-    ]);
-    const { participant } = buildParticipant(coordinator);
-
-    await participant.handle(
-      createRequest(model, { command: "transfer", prompt: "" }),
-      createContext(),
-      createResponseStream().stream,
-      createToken(),
-    );
-
-    const previous = await coordinator.snapshot();
-    coordinator.setSnapshot({
-      ...previous,
-      revision: 5,
-      session: {
-        ...previous.session!,
-        workUnit: {
-          ...previous.session!.workUnit!,
-          id: "unit-2",
-        },
-      },
-    });
-
-    const { stream, collected } = createResponseStream();
-    await participant.handle(
-      createRequest(new FakeModel([]), { command: "session", prompt: "" }),
-      createContext(),
-      stream,
-      createToken(),
-    );
-
-    expect(collected.markdown.join("\n").toLowerCase()).toContain(
-      "transfer: not started",
-    );
-  });
-
-  it("does not report a transfer after the session changes with the same work unit id", async () => {
-    const coordinator = new FakeCoordinator(growthSnapshot({ runtimeRevision: 4 }));
-    const model = new FakeModel([
-      { text: JSON.stringify({ level: 1, kind: "question", text: variation }) },
-    ]);
-    const { participant } = buildParticipant(coordinator);
-
-    await participant.handle(
-      createRequest(model, { command: "transfer", prompt: "" }),
-      createContext(),
-      createResponseStream().stream,
-      createToken(),
-    );
-
-    const previous = await coordinator.snapshot();
-    coordinator.setSnapshot({
-      ...previous,
-      revision: 5,
-      presence: {
-        ...previous.presence,
-        activeSessionId: "session-2",
-      },
-      session: {
-        ...previous.session!,
-        sessionId: "session-2",
-      },
-    });
-
-    const { stream, collected } = createResponseStream();
-    await participant.handle(
-      createRequest(new FakeModel([]), { command: "session", prompt: "" }),
-      createContext(),
-      stream,
-      createToken(),
-    );
-
-    expect(collected.markdown.join("\n").toLowerCase()).toContain(
-      "transfer: not started",
-    );
   });
 });

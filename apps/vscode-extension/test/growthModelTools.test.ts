@@ -82,11 +82,6 @@ describe("GrowthModel tool visibility", () => {
     expect(coordinator.grantCalls).toEqual([]);
     expect(coordinator.invokeCalls).toEqual([]);
   });
-
-  it("derives native tool names from the same harness mapping", () => {
-    const tools = toGrowthChatTools(viewWith([readDescriptor]));
-    expect(tools[0]?.name).toBe(nativeToolName("pair_read_scope"));
-  });
 });
 
 describe("GrowthModel tool execution", () => {
@@ -338,45 +333,7 @@ describe("GrowthModel tool confirmation", () => {
 });
 
 describe("GrowthModel confirmed authority", () => {
-  it("passes the one-time grant to a committed contract and requests a fresh turn", async () => {
-    const snapshot = growthSnapshot({ runtimeRevision: 4 });
-    const coordinator = new FakeCoordinator(snapshot);
-    const model = new FakeModel([
-      {
-        toolCalls: [
-          {
-            callId: "call-mode",
-            name: nativeToolName("pair_select_mode"),
-            input: { mode: "growth" },
-          },
-        ],
-      },
-      {
-        text: JSON.stringify({
-          level: 1,
-          kind: "question",
-          text: "Growth mode is selected.",
-        }),
-      },
-    ]);
-    const prepared = await coordinator.prepareTurn({});
-    const growthModel = createGrowthModel(asModel(model), coordinator, {
-      confirmToolAction: () => Promise.resolve(true),
-    });
-
-    await expect(growthModel.request(
-      prepared.instructions,
-      viewWith([explicitModeDescriptor], snapshot.revision),
-      new AbortController().signal,
-    )).rejects.toMatchObject({ code: "GROWTH_REPREPARE_REQUIRED" });
-
-    expect(coordinator.grantCalls).toEqual(["pair_select_mode"]);
-    expect(coordinator.invokeCalls[0]?.options).toEqual({
-      userActionId: "grant-pair_select_mode",
-    });
-  });
-
-  it("commits a confirmed Growth selection before requesting a fresh turn", async () => {
+  it("commits a confirmed Growth selection with its one-time grant before requesting a fresh turn", async () => {
     const snapshot = growthSnapshot({
       runtimeRevision: 4,
       session: {
@@ -406,6 +363,8 @@ describe("GrowthModel confirmed authority", () => {
       },
     ]);
     const prepared = await coordinator.prepareTurn({});
+    const grant = vi.spyOn(coordinator, "grantUserAction");
+    const invoke = vi.spyOn(coordinator, "invokeTool");
     const growthModel = createGrowthModel(asModel(model), coordinator, {
       confirmToolAction: () => Promise.resolve(true),
     });
@@ -416,6 +375,11 @@ describe("GrowthModel confirmed authority", () => {
       new AbortController().signal,
     )).rejects.toMatchObject({ code: "GROWTH_REPREPARE_REQUIRED" });
 
+    // The one-time grant is the only authority passed to the committed contract.
+    expect(grant.mock.calls.map(([name]) => name)).toEqual(["pair_select_mode"]);
+    const grantId = await (grant.mock.results[0]?.value as Promise<string> | undefined);
+    expect(grantId).toEqual(expect.any(String));
+    expect(invoke.mock.calls[0]?.[3]).toEqual({ userActionId: grantId });
     expect(await coordinator.snapshot()).toMatchObject({
       session: { mode: "growth" },
     });

@@ -13,12 +13,7 @@ import {
   createToken,
   growthSnapshot,
 } from "./growthTestHarness.js";
-
-const deferred = <Value>() => {
-  let resolve!: (value: Value) => void;
-  const promise = new Promise<Value>(complete => { resolve = complete; });
-  return { promise, resolve };
-};
+import { deferred } from "./growthRouteBoundaryHarness.js";
 
 const modeSnapshot = (mode: OperatingMode | undefined) => {
   const before = growthSnapshot({ runtimeRevision: 4 });
@@ -35,11 +30,14 @@ const responseModel = () => new FakeModel([{
   text: JSON.stringify({ level: 1, kind: "question", text: "Which invariant did you check?" }),
 }]);
 
-describe.each(["pair", "delivery", undefined] as const)("Growth route mode %s", mode => {
+// Pair and Delivery sessions are rejected by the real-coordinator matrix in
+// growthRouteBoundaries.test.ts. An unselected mode is the only fixture whose
+// work unit still says Growth, so it alone isolates the session-mode check.
+describe("Growth route without a selected mode", () => {
   it.each([undefined, "hint", "reveal", "transfer"])(
     "rejects %s before consent, reveal confirmation, or any Growth action",
     async command => {
-      const coordinator = new FakeCoordinator(modeSnapshot(mode));
+      const coordinator = new FakeCoordinator(modeSnapshot(undefined));
       const requestWorkspaceConsent = vi.fn(() => Promise.resolve(true));
       const confirmSolutionReveal = vi.fn(() => Promise.resolve(true));
       const { participant } = buildParticipant(coordinator, { requestWorkspaceConsent, confirmSolutionReveal });
