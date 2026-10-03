@@ -339,9 +339,10 @@ complete and merged (PR #12), following P2a (PR #11). P2a supplies bounded journ
 read-only inspection, not a durable store or working resume feature. P2b adds a
 separate closed, minimized journal format, exact historical replay, trusted
 candidate projection with explicit commit resolution, and a non-authorizing
-restart assessment. The separate storage port has a test-only fault model;
-it is not a disk adapter or a second application-wired journal. No existing
-journal is serialized wholesale, and no recovered record grants live authority.
+restart assessment. The separate storage port is specified by a conformance
+suite run against a test-only reference fake; it is not a disk adapter or a
+second application-wired journal. No existing journal is serialized wholesale,
+and no recovered record grants live authority.
 Disk storage, live restoration, Pair ownership/handoff, and P3 editing/UI retain
 their separate design, review, verification, and merge gates.
 
