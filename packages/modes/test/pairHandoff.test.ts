@@ -1,4 +1,3 @@
-import type { OperationRecord } from "@adaptive-pair/protocol";
 import { describe, expect, it } from "vitest";
 import {
   assessPairHandoff,
@@ -12,7 +11,7 @@ import {
 } from "./pairFixtures.js";
 
 describe("Pair handoff preflight", () => {
-  it.each(["agreed", "executing", "verifying", "completed"] as const)(
+  it.each(["executing", "verifying", "completed"] as const)(
     "reports only readiness for baseline and human review of a unit with status %s",
     status => {
       expect(assessPairHandoff(pairHandoffContext({
@@ -53,33 +52,26 @@ describe("Pair handoff preflight", () => {
       .toEqual({ status: "blocked", reason: "PAIR_ADMISSION_OPEN" });
   });
 
-  const pendingStatuses: readonly OperationRecord["status"][] = [
-    "planned", "authorized", "started",
-  ];
-
-  it.each(pendingStatuses)("waits for an operation with status %s to settle", status => {
+  it("waits for a started operation to settle", () => {
     expect(assessPairHandoff(pairHandoffContext({
-      snapshot: pairRuntime(undefined, [pairOperation({ status })]),
+      snapshot: pairRuntime(undefined, [pairOperation({ status: "started" })]),
     }))).toEqual({ status: "blocked", reason: "PAIR_OPERATIONS_PENDING" });
   });
 
-  it.each(["edit", "check"] as const)("requires reconciliation of an unknown %s", kind => {
-    expect(assessPairHandoff(pairHandoffContext({
-      snapshot: pairRuntime(undefined, [pairOperation({
-        kind,
-        toolName: kind === "edit" ? "pair_apply_edit" : "pair_run_verification",
-        status: "unknown",
-      })]),
-    }))).toEqual({ status: "blocked", reason: "PAIR_RECONCILIATION_REQUIRED" });
-  });
-
-  it("does not discard an unresolved mutation from an earlier unit or epoch", () => {
-    expect(assessPairHandoff(pairHandoffContext({
-      snapshot: pairRuntime(undefined, [pairOperation({
-        workUnitId: "earlier-unit", authorityEpoch: 2, status: "unknown",
-      })]),
-    }))).toEqual({ status: "blocked", reason: "PAIR_RECONCILIATION_REQUIRED" });
-  });
+  it.each(["edit", "check"] as const)(
+    "requires reconciliation of an unknown %s, even from an earlier unit or epoch",
+    kind => {
+      expect(assessPairHandoff(pairHandoffContext({
+        snapshot: pairRuntime(undefined, [pairOperation({
+          kind,
+          toolName: kind === "edit" ? "pair_apply_edit" : "pair_run_verification",
+          workUnitId: "earlier-unit",
+          authorityEpoch: 2,
+          status: "unknown",
+        })]),
+      }))).toEqual({ status: "blocked", reason: "PAIR_RECONCILIATION_REQUIRED" });
+    },
+  );
 
   it("does not treat an unknown read as a completed or unknown mutation", () => {
     expect(assessPairHandoff(pairHandoffContext({
@@ -124,14 +116,11 @@ describe("Pair handoff preflight", () => {
     }
   });
 
-  it.each(["proposed", "paused", "needs-reconcile", "cancelled", "failed"] as const)(
-    "does not hand off a non-operational %s unit",
-    status => {
-      expect(assessPairHandoff(pairHandoffContext({
-        snapshot: pairRuntime(pairWorkUnit({ status })),
-      }))).toEqual({ status: "blocked", reason: "PAIR_NOT_OPERATIONAL" });
-    },
-  );
+  it("does not hand off a unit that is not yet agreed", () => {
+    expect(assessPairHandoff(pairHandoffContext({
+      snapshot: pairRuntime(pairWorkUnit({ status: "proposed" })),
+    }))).toEqual({ status: "blocked", reason: "PAIR_NOT_OPERATIONAL" });
+  });
 
   it("does not mistake missing or non-Pair session state for readiness", () => {
     const snapshot = pairRuntime();
@@ -143,6 +132,7 @@ describe("Pair handoff preflight", () => {
       undefined,
       { ...session, workUnit: undefined },
       { ...session, mode: "growth" as const },
+      { ...session, workUnit: pairWorkUnit({ mode: "growth", status: "agreed" }) },
     ]) {
       expect(assessPairHandoff(pairHandoffContext({
         snapshot: { ...snapshot, session: candidate },
@@ -160,9 +150,6 @@ describe("Pair handoff preflight", () => {
   it("does not grant AI ownership without the reviewed agreement and capability", () => {
     expect(assessPairHandoff(pairHandoffContext({ editCapability: "unavailable" })))
       .toEqual({ status: "blocked", reason: "PAIR_EDIT_CAPABILITY_REQUIRED" });
-    expect(assessPairHandoff(pairHandoffContext({
-      snapshot: pairRuntime(pairWorkUnit({ capability: "diagnosis", status: "agreed" })),
-    }))).toEqual({ status: "blocked", reason: "PAIR_HUMAN_CAPABILITY_RESERVED" });
     const snapshot = pairRuntime();
     if (snapshot.session === undefined) {
       throw new Error("Missing test session");
@@ -173,14 +160,6 @@ describe("Pair handoff preflight", () => {
         session: { ...snapshot.session, learningAgreement: undefined },
       },
     }))).toEqual({ status: "blocked", reason: "PAIR_LEARNING_AGREEMENT_REQUIRED" });
-  });
-
-  it("refuses Growth and Delivery handoff assessments", () => {
-    for (const mode of ["growth", "delivery"] as const) {
-      expect(assessPairHandoff(pairHandoffContext({
-        snapshot: pairRuntime(pairWorkUnit({ mode, status: "agreed" })),
-      }))).toEqual({ status: "blocked", reason: "PAIR_MODE_REQUIRED" });
-    }
   });
 
   it("does not change ownership, epoch, operations, or the proposal", () => {

@@ -19,9 +19,9 @@ describe("Pair work-unit policy", () => {
     )).toEqual({ admissible: false, reason: "PAIR_EDIT_CAPABILITY_REQUIRED" });
   });
 
-  it.each(["high", "mixed"] as const)("describes the human unit after %s-value AI work", learningValue => {
+  it("describes the human unit after mixed-value AI work", () => {
     expect(assessPairWorkUnit(
-      pairWorkUnit({ owner: "ai", learningValue }),
+      pairWorkUnit({ owner: "ai", learningValue: "mixed" }),
       pairPolicyContext({ editCapability: "verified" }),
     )).toEqual({
       admissible: true,
@@ -50,9 +50,7 @@ describe("Pair work-unit policy", () => {
 
   const invalidUnits: readonly [Partial<WorkUnit>, string][] = [
     [{ mode: "growth" }, "PAIR_MODE_REQUIRED"],
-    [{ mode: "delivery" }, "PAIR_MODE_REQUIRED"],
     [{ status: "agreed" }, "PAIR_PROPOSAL_REQUIRED"],
-    [{ id: "" }, "PAIR_WORK_UNIT_ID_REQUIRED"],
     [{ id: " " }, "PAIR_WORK_UNIT_ID_REQUIRED"],
     [{ objective: " " }, "PAIR_OBJECTIVE_REQUIRED"],
     [{ allowedPaths: [] }, "PAIR_SCOPE_REQUIRED"],

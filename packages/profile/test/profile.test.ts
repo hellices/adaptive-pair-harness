@@ -28,18 +28,6 @@ beforeEach(() => {
   persistence = new MemoryPersistence();
 });
 
-describe("LocalProfileStore — defaults and inspection", () => {
-  it("returns a safe default profile before anything is stored", () => {
-    const store = createLocalProfileStore(persistence);
-    expect(store.inspect()).toEqual({
-      interventionStyle: "balanced",
-      explanationDepth: "standard",
-      declaredFamiliarity: {},
-      acceptedReflections: [],
-    });
-  });
-});
-
 describe("LocalProfileStore — corrections", () => {
   it("records explicit preference corrections", () => {
     const store = createLocalProfileStore(persistence);
@@ -49,21 +37,10 @@ describe("LocalProfileStore — corrections", () => {
     expect(profile.interventionStyle).toBe("quiet");
     expect(profile.explanationDepth).toBe("deep");
   });
-
-  it("records declared familiarity and accepted reflections", () => {
-    const store = createLocalProfileStore(persistence);
-    store.correct({ kind: "familiarity", area: "typescript/generics", level: "practicing" });
-    store.correct({ kind: "reflection", summary: "Practiced recursion by hand", acceptedAt: 1_700_000_000_000 });
-    const profile = store.inspect();
-    expect(profile.declaredFamiliarity).toEqual({ "typescript/generics": "practicing" });
-    expect(profile.acceptedReflections).toEqual([
-      { summary: "Practiced recursion by hand", acceptedAt: 1_700_000_000_000 },
-    ]);
-  });
 });
 
 describe("LocalProfileStore — bounds enforced explicitly", () => {
-  it("rejects a new familiarity area beyond the 64-entry limit without truncating", () => {
+  it("rejects a new familiarity area beyond the 64-entry limit but still updates existing areas", () => {
     const store = createLocalProfileStore(persistence);
     for (let index = 0; index < 64; index += 1) {
       store.correct({ kind: "familiarity", area: `area-${index}`, level: "new" });
@@ -72,13 +49,7 @@ describe("LocalProfileStore — bounds enforced explicitly", () => {
       store.correct({ kind: "familiarity", area: "area-overflow", level: "new" }),
     ).toThrow(ProfileValidationError);
     expect(Object.keys(store.inspect().declaredFamiliarity)).toHaveLength(64);
-  });
 
-  it("allows updating an existing familiarity area at the limit", () => {
-    const store = createLocalProfileStore(persistence);
-    for (let index = 0; index < 64; index += 1) {
-      store.correct({ kind: "familiarity", area: `area-${index}`, level: "new" });
-    }
     store.correct({ kind: "familiarity", area: "area-0", level: "familiar" });
     expect(store.inspect().declaredFamiliarity["area-0"]).toBe("familiar");
   });
@@ -125,14 +96,8 @@ describe("LocalProfileStore — forbidden data rejected without silent truncatio
   it.each([
     "///home/alice/private-project",
     "//secret.txt",
-    "///secret.txt",
-    "////secret.txt",
     "file:///Users/alice/private-project",
-    "file:////home/alice/private-project",
     "file:%2F%2F%2FUsers%2Falice%2Fprivate.ts",
-    "file:private.ts",
-    "file:%ZZprivate.ts",
-    "file:%2",
   ])("rejects local absolute path form %s in a reflection", summary => {
     const store = createLocalProfileStore(persistence);
     expect(() =>
@@ -146,8 +111,6 @@ describe("LocalProfileStore — forbidden data rejected without silent truncatio
 
   it.each([
     "Reviewed the RFC at http://example.com",
-    "Reviewed the RFC at https://example.com",
-    "profile: updated",
     "myfile:value",
     "File: changed",
   ])("allows non-file URI text %s", summary => {

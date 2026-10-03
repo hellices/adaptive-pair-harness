@@ -98,85 +98,34 @@ it("binds instruction metadata to the snapshot revision and epoch", () => {
   });
 });
 
+const hintedRuntime = (level: 2 | 3 | 4 | 5): ReturnType<typeof growthRuntime> =>
+  growthRuntime({
+    session: {
+      assistance: {
+        attempt: undefined,
+        hypothesis: undefined,
+        hint: { level, recordedAt: 10 },
+        solutionReveal:
+          level === 5 ? { previewOnly: true, recordedAt: 10 } : undefined,
+      },
+    },
+  });
+
 it("derives the maximum response class from hint and reveal state", () => {
   expect(
-    compileInstructions({
-      snapshot: growthRuntime(),
-    }).maximumResponseClass,
+    compileInstructions({ snapshot: growthRuntime() }).maximumResponseClass,
   ).toBe("question");
-
   expect(
-    compileInstructions({
-      snapshot: growthRuntime({
-        session: {
-          assistance: {
-            attempt: undefined,
-            hypothesis: undefined,
-            hint: {
-              level: 3,
-              recordedAt: 10,
-            },
-            solutionReveal: undefined,
-          },
-        },
-      }),
-    }).maximumResponseClass,
+    compileInstructions({ snapshot: hintedRuntime(2) }).maximumHintLevel,
+  ).toBe(2);
+  expect(
+    compileInstructions({ snapshot: hintedRuntime(3) }).maximumResponseClass,
   ).toBe("hint");
   expect(
-    compileInstructions({
-      snapshot: growthRuntime({
-        session: {
-          assistance: {
-            attempt: undefined,
-            hypothesis: undefined,
-            hint: {
-              level: 2,
-              recordedAt: 10,
-            },
-            solutionReveal: undefined,
-          },
-        },
-      }),
-    }).maximumHintLevel,
-  ).toBe(2);
-
-  expect(
-    compileInstructions({
-      snapshot: growthRuntime({
-        session: {
-          assistance: {
-            attempt: undefined,
-            hypothesis: undefined,
-            hint: {
-              level: 4,
-              recordedAt: 10,
-            },
-            solutionReveal: undefined,
-          },
-        },
-      }),
-    }).maximumResponseClass,
+    compileInstructions({ snapshot: hintedRuntime(4) }).maximumResponseClass,
   ).toBe("pseudocode");
-
   expect(
-    compileInstructions({
-      snapshot: growthRuntime({
-        session: {
-          assistance: {
-            attempt: undefined,
-            hypothesis: undefined,
-            hint: {
-              level: 5,
-              recordedAt: 11,
-            },
-            solutionReveal: {
-              previewOnly: true,
-              recordedAt: 11,
-            },
-          },
-        },
-      }),
-    }).maximumResponseClass,
+    compileInstructions({ snapshot: hintedRuntime(5) }).maximumResponseClass,
   ).toBe("solution");
 });
 
@@ -210,17 +159,6 @@ it("omits absent layers instead of interpolating undefined", () => {
   expect(envelope.layers.map(layer => layer.content).join("\n")).not.toContain(
     "undefined",
   );
-});
-
-it("caps each layer to its prescribed bound", () => {
-  const envelope = compileInstructions({
-    snapshot: growthRuntime(),
-    presenceSummary: "x".repeat(5_000),
-    userRequest: "y".repeat(5_000),
-    repositoryContext: "z".repeat(9_000),
-  });
-
-  expectJsonFencesToParseWithinCaps(envelope);
 });
 
 it("renders oversized mode payloads as parseable bounded JSON", () => {
@@ -329,9 +267,11 @@ it("renders oversized work-unit payloads as parseable bounded JSON", () => {
   });
 });
 
-it("renders oversized untrusted payloads as parseable bounded JSON", () => {
+it("caps each layer and renders oversized untrusted payloads as parseable bounded JSON", () => {
   const envelope = compileInstructions({
     snapshot: growthRuntime(),
+    presenceSummary: "x".repeat(5_000),
+    userRequest: "y".repeat(5_000),
     repositoryContext: "repo ".repeat(2_500),
     toolResults: Array.from({ length: 40 }, (_, index) =>
       `tool-${index}-${"t".repeat(400)}`,
